@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createHost, ROOT } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
+import { memorySessions } from '../../sdk/src/sessions.js';
 import { raise } from '../../sdk/src/plugins.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -310,6 +311,54 @@ it('opens no stretch for a machine it finds stopped', async () => {
   // Nothing: a machine that was never up this daemon's time has no stretch to
   // close, and a record here would charge an hour of a machine that was not
   // there for it.
+  expect(usage.entries).toEqual([]);
+});
+
+it('leaves another daemon\'s disposable machine alone: it is neither removed nor charged for', async () => {
+  const dir = temp();
+  const held = join(dir, 'docker.json');
+  const usage = meter();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(at);
+  // A millisecond rather than the five minutes it usually is, so that a
+  // removal this daemon wrongly started has happened before the test looks.
+  const profiles = { claude: { title: 'Claude', disposable: true, disposableDelay: 1 } };
+
+  /*
+   * Two daemons on one Docker. This one makes a disposable machine for a
+   * session; the other starts over the same Docker while that session runs,
+   * which is the case the decision is about.
+   */
+  const { options: mine } = await load({ ...base(), sessions: memorySessions() }, held, { profiles }).loaded;
+  const mineClient = await serving(mine);
+  await mineClient.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/one',
+      provider: 'echo',
+      config: { computer: 'disposable:claude' },
+      workingDirectories: [dir],
+    },
+  });
+  await until(() => dockerHeld(held).machines.length === 1);
+  const box = dockerHeld(held).machines[0]?.name as string;
+  expect(box).toBeDefined();
+
+  const second = load(base(usage), held, { profiles });
+  const { options: other, problems } = await second.loaded;
+  expect(problems).toEqual([]);
+  await until(() => second.lines.some((one) => one.includes(`left the disposable machine ${box} alone`)));
+
+  // Nothing is armed for it, so nothing removes it. Waited for rather than
+  // asserted at once, because the delay is a millisecond of real time.
+  await until(() => dockerHeld(held).calls.some((one) => one[0] === 'rm'), 200);
+  expect(dockerHeld(held).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(dockerHeld(held).machines.map((one) => one.name)).toEqual([box]);
+
+  // And no up time is charged for it: this daemon opened no stretch, since the
+  // machine is not one of its own to charge.
+  vi.setSystemTime(new Date(at.getTime() + 600_000));
+  await providerOf(other).write(`computer://${box}/state`, said('stopped'));
   expect(usage.entries).toEqual([]);
 });
 

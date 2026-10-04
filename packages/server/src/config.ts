@@ -1,6 +1,7 @@
 /** What this daemon was told before anybody typed a flag, and where it is. */
 
-import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
@@ -233,6 +234,89 @@ export const configPath = (): string => join(configDir(), 'config.json');
  * its neighbour.
  */
 export const daemonPath = (): string => join(configDir(), 'daemon.json');
+
+/** The file this daemon's own id is kept in. */
+export const hostIdPath = (): string => join(configDir(), 'host-id');
+
+/** A UUID, which is what this code writes and the only thing it reads back. */
+const HOST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * This daemon's own id, the same across every restart.
+ *
+ * Made once on the first start and read after, so a plugin labelling a machine
+ * with it has written something that survives the run that made it: an id that
+ * changed with the process could not tell a daemon its own leftover from one a
+ * daemon that has been and gone left behind. Owner-only, because it is a key
+ * to nothing anybody else has and there is no reason to hand it round.
+ *
+ * It is never replaced. A machine is found by this id, so a new one written
+ * where the old one was orphans every machine this daemon made - and a file
+ * this daemon cannot read, or one holding something that is not an id, stops
+ * the start with a sentence naming the file rather than quietly becoming a
+ * different daemon from the one that wrote it.
+ */
+export const hostId = (): string => saidIn(hostIdPath());
+
+/** The id that file holds, a new one made where there is nothing, and a refusal otherwise. */
+const saidIn = (file: string): string => {
+  const said = readIn(file);
+  if (said === undefined) return made(file);
+  if (!HOST_ID.test(said)) {
+    throw new Error(`${file} does not hold a daemon id, and this daemon will not replace it: a machine is found by the id of the daemon that made it, so a new one here would orphan every machine this one made`);
+  }
+  return said;
+};
+
+/**
+ * What that file says, and nothing where there is no file.
+ *
+ * Only nothing there is the first start. Anything else going wrong is a
+ * configuration this daemon cannot act on, and reading it as missing would give
+ * it a new id and orphan every machine the last run under this name made.
+ */
+const readIn = (file: string): string | undefined => {
+  try {
+    return readFileSync(file, 'utf8').trim();
+  }
+  catch (error) {
+    if (isMissing(error)) return undefined;
+    throw new Error(`${file} cannot be read, so this daemon cannot tell which machines are its own: ${why(error)}. Fix or move that file`);
+  }
+};
+
+/** A new id, kept to whichever daemon gets to the file first. */
+const made = (file: string): string => {
+  const mine = randomUUID();
+  try {
+    mkdirSync(configDir(), { recursive: true });
+    // Created with `wx` and not written beside and renamed: two daemons starting
+    // at once would each rename their own over the other's, and the first would
+    // go on running with an id nothing on disk says. The one that loses the race
+    // reads the winner's instead.
+    writeFileSync(file, `${mine}\n`, { mode: 0o600, flag: 'wx' });
+    return mine;
+  }
+  catch (error) {
+    if (isTaken(error)) {
+      // The other daemon's id is the one that stays, and it is a file this one
+      // can read: the create failed only because the file is there. Not the
+      // other way round, which would leave two daemons disagreeing.
+      const theirs = readIn(file);
+      if (theirs !== undefined && HOST_ID.test(theirs)) return theirs;
+      throw new Error(`${file} was taken by another daemon starting at the same time, and does not hold an id this one can use: fix or move that file`);
+    }
+    throw new Error(`${file} cannot be written, so this daemon has no id of its own: ${why(error)}`);
+  }
+};
+
+/** An error from the filesystem, which carries its own code. */
+const isMissing = (error: unknown): boolean => code(error) === 'ENOENT';
+/** And one from creating a file that is already there, which is not a failure here. */
+const isTaken = (error: unknown): boolean => code(error) === 'EEXIST';
+const code = (error: unknown): string | undefined =>
+  typeof error === 'object' && error !== null ? (error as { code?: unknown }).code as string | undefined : undefined;
+const why = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /**
  * Where a detached daemon's output goes.

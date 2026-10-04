@@ -7,13 +7,14 @@
  * `connectUrl` for the person copying it out of the 0600 file.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { announcementOf, claim, forget, logSince, readyUrl, recordOf, running, start, statusLine, stop } from '../src/daemon.js';
-import { isIdentifier, namedIssuer, personalUrl, signInIdentifier } from '../src/config.js';
+import { isIdentifier, hostId, namedIssuer, personalUrl, signInIdentifier } from '../src/config.js';
 import type { Running } from '../src/daemon.js';
 
 const ANNOUNCED = 'ahpd on ws://127.0.0.1:9187 (node), sessions in /a, /b\nautomations in /c, schedules fire\n';
@@ -314,5 +315,116 @@ describe('the record on disk', () => {
     const found = running();
     expect(found?.url).not.toContain('secret');
     expect(found?.connectUrl).toBe('ws://127.0.0.1:9187/?tkn=secret');
+  });
+});
+
+/*
+ * The daemon's own id.
+ *
+ * What a machine is labelled with, so a daemon restarting can tell a leftover
+ * of its own from one a daemon that has been and gone left behind. It cannot be
+ * the process id, which changes every run, and it cannot be a name a person
+ * chose, which two daemons on one Docker may share.
+ */
+describe('hostId', () => {
+  let home: string;
+  let had: string | undefined;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'ahpd-host-id-'));
+    had = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = home;
+  });
+  afterEach(() => {
+    if (had === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = had;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('makes an id on the first start and reads it back after', () => {
+    const first = hostId();
+    expect(first).not.toBe('');
+    expect(readFileSync(join(home, 'ahpd', 'host-id'), 'utf8').trim()).toBe(first);
+    // The same value on the next start, which is the whole point: a label
+    // written by the run before this one has to match this one.
+    expect(hostId()).toBe(first);
+  });
+
+  it('keeps the file to the person who owns this configuration', () => {
+    hostId();
+    expect(statSync(join(home, 'ahpd', 'host-id')).mode & 0o777).toBe(0o600);
+  });
+
+  it('reads an id a daemon before it wrote, rather than replacing it', () => {
+    mkdirSync(join(home, 'ahpd'), { recursive: true });
+    const said = randomUUID();
+    writeFileSync(join(home, 'ahpd', 'host-id'), `${said}\n`);
+    expect(hostId()).toBe(said);
+  });
+
+  /*
+   * Nothing is ever written over that file. A machine is found by the id of
+   * the daemon that made it, so a new id is the same as saying every machine
+   * this daemon made belongs to nobody.
+   */
+  it('refuses a file it cannot read rather than writing a new id over it', () => {
+    mkdirSync(join(home, 'ahpd'), { recursive: true });
+    const file = join(home, 'ahpd', 'host-id');
+    const said = randomUUID();
+    writeFileSync(file, `${said}\n`, { mode: 0o600 });
+    chmodSync(file, 0o000);
+    try {
+      // Read as missing, before, and a new id was written over a daemon that
+      // had made machines. That is this daemon orphaning its own.
+      expect(() => hostId()).toThrow(file);
+    }
+    finally {
+      // The person running this needs the file back to delete it.
+      chmodSync(file, 0o600);
+    }
+    // Which is the point: the id is the one that was in there.
+    expect(hostId()).toBe(said);
+  });
+
+  it('refuses a file holding something that is not an id', () => {
+    mkdirSync(join(home, 'ahpd'), { recursive: true });
+    const file = join(home, 'ahpd', 'host-id');
+    writeFileSync(file, 'garbage, with\nnewline\n');
+    expect(() => hostId()).toThrow(file);
+    // Still the same file, still the same bytes: this daemon did not become a
+    // different one because it could not read who it was.
+    expect(readFileSync(file, 'utf8')).toBe('garbage, with\nnewline\n');
+  });
+
+  it('keeps one id when two daemons start at once', async () => {
+    mkdirSync(join(home, 'ahpd'), { recursive: true });
+    const file = join(home, 'ahpd', 'host-id');
+    const theirs = randomUUID();
+
+    /*
+     * The winner of that race is made real here: another daemon's id is written
+     * into the file the moment this one is about to create it. Written beside
+     * and renamed, this daemon would have put its own over the winner's and
+     * gone on running with an id nothing on disk said; created with `wx`, it
+     * finds the file taken, reads the winner's id and uses that.
+     */
+    vi.resetModules();
+    vi.doMock('node:fs', async (importOriginal) => {
+      const real = await importOriginal<typeof import('node:fs')>();
+      return {
+        ...real,
+        writeFileSync: (at: string, what: unknown, options?: unknown): void => {
+          if (at === file) real.writeFileSync(file, `${theirs}\n`);
+          (real.writeFileSync as (a: unknown, b: unknown, c?: unknown) => void)(at, what, options);
+        },
+      };
+    });
+    try {
+      const { hostId: raced } = await import('../src/config.js');
+      expect(raced()).toBe(theirs);
+      expect(readFileSync(file, 'utf8').trim()).toBe(theirs);
+    }
+    finally {
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    }
   });
 });

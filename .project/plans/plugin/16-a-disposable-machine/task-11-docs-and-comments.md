@@ -1,6 +1,6 @@
 ---
 title: The docs say what a disposable machine does, and the comments document
-status: todo
+status: done
 depends: [task-05-a-machine-is-left-when-its-session-moves-away.md, task-06-a-resumed-session-counts-as-a-user.md, task-07-a-daemon-adopts-only-its-own-leftovers.md, task-08-a-disposable-alone-machine-refuses-another-session.md, task-09-a-machine-made-for-a-session-counts.md, task-10-the-session-folder-needs-the-profiles-flag.md]
 layer: "docs"
 refs:

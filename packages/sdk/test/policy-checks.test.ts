@@ -22,12 +22,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { memoryAutomations } from '../src/automations.js';
 import { computersFor } from '../src/computers.js';
 import { createHost, ROOT } from '../src/host.js';
 import { memoryPolicies } from '../src/policies.js';
 import { fileUsers } from '../src/users.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ComputerPort } from '../src/types/computers.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { Policies, Policy } from '../src/types/policies.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Users } from '../src/types/users.js';
@@ -104,7 +106,7 @@ const unreadable = async (): Promise<Policies> => ({
  * `withPeople` is what makes the exemptions different from one another: without
  * it there is no directory and so no principal behind any connection.
  */
-const host = async (check: boolean, withPeople = true, held?: Policies) => {
+const host = async (check: boolean, withPeople = true, held?: Policies, more: Partial<HostOptions> = {}) => {
   const users = withPeople ? await directory() : undefined;
   return {
     users,
@@ -119,6 +121,7 @@ const host = async (check: boolean, withPeople = true, held?: Policies) => {
       policies: held ?? await store(),
       policiesCheck: check,
       computers: machines(),
+      ...more,
     }),
   };
 };
@@ -222,6 +225,55 @@ describe('a session, with the switch on', () => {
     // is what lets example 21 reach a turn at all.
     await expect(makeSession(client, 'bob', 'claude', 'kvm-shared')).resolves.toBeUndefined();
   });
+
+  it('asks the same question of a source on all three roads that make one', async () => {
+    const automations = memoryAutomations();
+    // What a host with a computer plugin has, and this is what makes the
+    // change below a restart rather than a key the backend does not take.
+    const made = await host(true, true, undefined, {
+      automations,
+      sessionConfig: { computer: { type: 'string', title: 'Computer', sessionMutable: false } },
+    });
+    // The grant naming a source needs, which is not what is under test here:
+    // without it the boundary refuses first and the policy is never asked.
+    await made.users?.addRole('maker', ['computer:write', 'automation:write']);
+    await made.users?.add('bob', ['member', 'maker']);
+    const { client, said } = await signedIn(made, 'bob');
+
+    // The road this file already covered: a client naming the source as it
+    // creates the session. No row in the store holds it for anybody.
+    const refused = await refusalOf(client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/one', provider: 'claude', config: { computer: 'disposable:s' } },
+    }));
+    expect(refused.message).toContain('no policy allows computer disposable:s');
+
+    // A session C2 does allow, changed before its first turn to the source.
+    // The change is undone whole and answered with the same words.
+    await makeSession(client, 'two', 'claude', 'kvm-shared');
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: 'claude:/two',
+        action: { type: 'session/configChanged', config: { computer: 'disposable:s' } },
+      },
+    });
+    await settle();
+    expect(rejection(said)).toContain('no policy allows computer disposable:s');
+
+    // And an automation's start, which nobody is at the keyboard to notice.
+    automations.create('ahp-automation:/nightly', {
+      title: 'nightly',
+      enabled: true,
+      message: { text: 'review' },
+      session: { provider: 'claude', config: { computer: 'disposable:s' }, workingDirectories: [`file://${root}`] },
+      triggers: [],
+    }, 'user:bob');
+    await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/nightly' } });
+    const run = automations.runs('ahp-automation:/nightly').items[0] as { lifecycle: { status: string; error?: { message: string } } };
+    expect(run.lifecycle.status).toBe('failed');
+    expect(run.lifecycle.error?.message).toContain('no policy allows computer disposable:s');
+  });
 });
 
 describe('a turn, with the switch on', () => {
@@ -262,7 +314,7 @@ describe('example 26, which is the machine and not a policy', () => {
   it('is refused by the port the host hands the agent, naming what the machine carries', async () => {
     // The echo backend never asks to enter a machine, so this is the port the
     // host would have handed it, and the check it carries.
-    const gated = computersFor(machines(), 'cofold');
+    const gated = computersFor(machines(), 'cofold', 'cofold:/one');
     await expect(gated.how?.('sandbox-alice', { command: 'cofold' })).rejects.toThrow('prepared for claude, pi');
   });
 });
@@ -316,7 +368,7 @@ describe('the same cases with the switch off', () => {
   it('still refuses nobody the machine does not carry', async () => {
     // Example 26 with the switch off: the machine's check was never a policy's
     // and the switch was never its gate.
-    const gated = computersFor(machines(), 'cofold');
+    const gated = computersFor(machines(), 'cofold', 'cofold:/one');
     await expect(gated.how?.('sandbox-alice', { command: 'cofold' })).rejects.toThrow('prepared for claude, pi');
   });
 });

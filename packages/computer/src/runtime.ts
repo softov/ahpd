@@ -52,6 +52,22 @@ export interface Machine {
    */
   disposable?: { profile: string; alone: boolean };
   /**
+   * The session this machine was made for, when it was made for one.
+   *
+   * Read back from the machine's own `ahpd.session` label: a daemon that
+   * restarted adopts a leftover only when the session it names is one it keeps,
+   * and a `disposableAlone` machine answers for that one session alone.
+   */
+  session?: string;
+  /**
+   * The daemon that made this machine, when the daemon said which it was.
+   *
+   * Read back from the machine's own `ahpd.host` label, which is what tells a
+   * daemon that a machine labelled for a session it keeps was not made by this
+   * daemon, and is not its to adopt or to enter.
+   */
+  host?: string;
+  /**
    * Whose the machine is, and what its work is charged under.
    *
    * Read back from the machine's own labels rather than from a table this
@@ -140,6 +156,24 @@ export interface MachineSpec {
    */
   disposable?: { profile: string; alone?: boolean };
   /**
+   * The session this machine is made for, recorded as a label.
+   *
+   * The session URI the caller was asked for, which outlives the daemon that
+   * made it: it is what tells a later daemon that a leftover found at startup
+   * is one to adopt rather than one to leave alone - decision
+   * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps` - and
+   * it is what a `disposableAlone` machine's own session is read back from.
+   */
+  session?: string;
+  /**
+   * The daemon making this machine, recorded as a label beside the session.
+   *
+   * The daemon's own id rather than a name a person chose, because it is what a
+   * leftover has to be matched against before it is adopted or entered, and two
+   * daemons on one Docker keep their sessions under the same ids.
+   */
+  host?: string;
+  /**
    * The profile this machine was made from, recorded as a label.
    *
    * Every machine a body makes from a profile carries it, disposable or not,
@@ -210,6 +244,48 @@ export interface ComputerRuntime {
   stats(id: string): Promise<MachineStats | undefined>;
   capabilities(): RuntimeCapabilities;
 }
+
+/**
+ * The machines already here when one more would pass `max`, or nothing.
+ *
+ * Every road that makes a machine asks this: a write to `computer://<name>`,
+ * the tool that asks for one in words, and a session that names a source it is
+ * started in. One count rather than three, because a limit one road checks and
+ * another does not is no limit at all - decision
+ * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+ *
+ * The machines come back with it, because each road says so in its own words:
+ * the ones already here to a tool that has to name them, and the one that
+ * would not fit to a request that names what was refused. They are the caller's
+ * own listing rather than a listing of their own, so a road that counts them
+ * against something else - a name that is taken - lists them once.
+ */
+export const roomFor = (held: Machine[], max: number): Machine[] | undefined =>
+  held.length >= max ? held : undefined;
+
+/** The turn each runtime takes, which is the last one asked for and not yet over. */
+const turns = new WeakMap<ComputerRuntime, Promise<unknown>>();
+
+/**
+ * One create at a time per runtime.
+ *
+ * `max` is a count, and a count read and then acted on is read too early: two
+ * calls at once both read the same listing, both find room, and one more machine
+ * exists than the limit says. So the count and the create it allows go in one
+ * turn, and a caller that arrives second counts the first create as one of the
+ * machines rather than racing it.
+ *
+ * Per runtime rather than per host: two runtimes are two sets of machines, and
+ * a limit on one is not a limit on the other. A turn a create fails in is over
+ * like any other, and the next one starts.
+ */
+export const inTurn = <T>(runtime: ComputerRuntime, work: () => Promise<T>): Promise<T> => {
+  const next = (turns.get(runtime) ?? Promise.resolve()).then(work);
+  // What is held is the turn after this one and never its result, so a create
+  // that threw does not refuse every create behind it.
+  turns.set(runtime, next.catch(() => {}));
+  return next;
+};
 
 /**
  * What a machine is using, as numbers rather than as a runtime's display text.
@@ -422,6 +498,33 @@ export const MACHINE_OWNER = 'ahpd.owner';
 export const MACHINE_TEAM = 'ahpd.team';
 export const MACHINE_PROJECT = 'ahpd.project';
 
+/**
+ * The label a machine made for a session carries, naming that session.
+ *
+ * The session URI, so a daemon that finds a disposable machine at startup can
+ * ask whether the session it was made for is one this daemon keeps, and adopt
+ * it only then - decision
+ * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps`. The
+ * same label is what a `disposableAlone` machine's own session is read back
+ * from, so the two answers outlive the daemon that made them.
+ */
+export const MACHINE_SESSION = 'ahpd.session';
+
+/**
+ * The label a machine made for a session carries, naming the daemon that made it.
+ *
+ * A machine's session label alone is not enough to say whose machine it is: a
+ * client picks the channel a session id comes from, so another daemon on the
+ * same Docker keeps sessions under the same ids and a leftover would look like
+ * one of this daemon's. This is the daemon's own id, kept beside its
+ * configuration so it is the same across its restarts, and a machine labelled
+ * with another is left where it lies.
+ *
+ * Absent on a machine made by a daemon that named no id, which is a daemon
+ * that labels nothing and therefore matches a daemon that also labels nothing.
+ */
+export const MACHINE_HOST = 'ahpd.host';
+
 /** A typed reference a label held, or nothing when it names no kind. */
 export const ownerSaid = (value: unknown): Owner | undefined =>
   typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
@@ -534,6 +637,31 @@ export const disposableOf = (found: Record<string, unknown>): { profile: string;
 };
 
 /**
+ * The session a machine was made for, from the record `inspect` answered.
+ *
+ * The one place a single machine's session label is read, as `disposableOf` is
+ * for its profile: the port that answers for one machine and the listing that
+ * answers for all of them are the same question asked of the same record.
+ */
+export const sessionOf = (found: Record<string, unknown>): string | undefined => {
+  const session = labelsOf(found)[MACHINE_SESSION];
+  return typeof session === 'string' && session !== '' ? session : undefined;
+};
+
+/**
+ * The daemon that made a machine, from the record `inspect` answered.
+ *
+ * The other half of `sessionOf`, and what a leftover has to be matched against
+ * before it is adopted: a session id is the client's to choose, so on one
+ * Docker two daemons keep sessions under the same ones. Nothing for a machine
+ * made before the label existed, which is a machine no daemon has claimed.
+ */
+export const hostOf = (found: Record<string, unknown>): string | undefined => {
+  const said = labelsOf(found)[MACHINE_HOST];
+  return typeof said === 'string' && said !== '' ? said : undefined;
+};
+
+/**
  * The profile a machine was made from, from the record `inspect` answered.
  *
  * A disposable machine records its profile under the disposable label, which
@@ -550,15 +678,13 @@ export const profileOf = (found: Record<string, unknown>): string | undefined =>
 /**
  * The labels a listing reads, by name.
  *
- * A listing does not read the `Labels` column. `docker ps` prints every label
- * of a machine as one column of `key=value` pairs joined by commas, so a value
- * holding a comma cannot be told from the pair after it: the agents a machine
- * was prepared for lose every one after the first, and a dev container folder
- * with a comma in it is a folder no listing can match again. The labels come
- * back as one JSON object instead, where every value is quoted and escaped, so
- * nothing a value holds - a comma, a tab, a newline - can be read as the
- * boundary between two things. A label added to a machine later is read by
- * adding it here.
+ * A listing does not read the `Labels` column: `docker ps` prints every label
+ * of a machine as one comma-joined column of `key=value` pairs whatever the
+ * `--format` says, so a value holding a comma cannot be told from the pair
+ * after it, and the agents a machine was prepared for lose every one after the
+ * first. The labels come from `inspect` instead, which holds them as a real map
+ * where a value is a value. A label added to a machine later is read by adding
+ * it here.
  */
 const LISTED_LABELS = [
   MACHINE_AGENTS,
@@ -568,55 +694,90 @@ const LISTED_LABELS = [
   MACHINE_OWNER,
   MACHINE_TEAM,
   MACHINE_PROJECT,
+  MACHINE_SESSION,
+  MACHINE_HOST,
 ] as const;
 
-/** The `--format` a listing asks with: its own fields, then every label at once. */
-const LISTED_FORMAT = [
-  '{{.Names}}',
-  '{{.Image}}',
-  '{{.Status}}',
-  '{{.CreatedAt}}',
-  '{{json .Labels}}',
-].join('\t');
+/** The `--format` a listing asks with: the four fields a machine is read from. */
+const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}}'].join('\t');
+
+/**
+ * The `--format` the labels come back by.
+ *
+ * `.Config.Labels` is a map rather than the listing's column, so every value
+ * is quoted and escaped and nothing a value holds - a comma, a tab, a newline -
+ * can be read as the boundary between two things. One call for every machine
+ * the listing named.
+ *
+ * The name is asked for with it, because the answer is one line per machine and
+ * a machine removed between the two calls is a line that is not there: without
+ * the name beside it a line cannot be told from whose it is.
+ */
+const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}'].join('\t');
 
 /** The labels one row answered, by the keys `LISTED_LABELS` holds. */
 type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
 
-/** One row's labels as JSON, as a record of what a machine carries. */
-const labelsOfRow = (said: string | undefined): Record<string, unknown> => {
-  if (said === undefined) return {};
-  try {
-    const parsed = JSON.parse(said) as unknown;
-    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  }
-  catch { return {}; }
-};
-
 /**
- * One machine as a listing answered it, with every label it carries.
+ * One machine as a listing answered it, before any label is read.
  *
  * A tab between the columns, which is what `LISTED_FORMAT` joins with, so the
- * fields come in the order that string holds them and the labels come back whole
- * from the one JSON object at the end. A label the machine does not carry
- * answers empty rather than being absent, so a row is read the same way whatever
- * it holds.
+ * fields come in the order that string holds them.
  */
-const listed = (said: string): { name: string; image: string; status: string; created: string; labels: ListedLabels }[] =>
+const listed = (said: string): { name: string; image: string; status: string; created: string }[] =>
   said
     .split('\n')
     .filter((line) => line !== '')
     .map((line) => {
-      const [name, image, status, created, labels] = line.split('\t');
-      return {
-        name: name ?? '',
-        image: image ?? '',
-        status: status ?? '',
-        created: created ?? '',
-        labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(labelsOfRow(labels)[key])])) as ListedLabels,
-      };
+      const [name, image, status, created] = line.split('\t');
+      return { name: name ?? '', image: image ?? '', status: status ?? '', created: created ?? '' };
     });
+
+/**
+ * The labels `inspect` answered, by the machine each line named.
+ *
+ * `inspect` prints a machine that is not there as an error and a non-zero exit,
+ * with every other machine still printed, so the lines are read by name rather
+ * than by their order: the order a caller asked in is not the order that comes
+ * back once one of them is gone. A machine with no labels at all is not a row
+ * either - `inspect` says `null` for a container that carries none.
+ */
+const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
+  const byName = new Map<string, Record<string, unknown>>();
+  for (const line of said.split('\n')) {
+    if (line.trim() === '') continue;
+    const [named, labels] = line.split('\t');
+    if (named === undefined || labels === undefined) continue;
+    let parsed: unknown;
+    try { parsed = JSON.parse(labels); } catch { continue; }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) continue;
+    // `inspect` names a container with a leading `/` where a listing does not.
+    byName.set(named.startsWith('/') ? named.slice(1) : named, parsed as Record<string, unknown>);
+  }
+  return byName;
+};
+
+/**
+ * One listing row with the labels `inspect` answered for that same machine.
+ *
+ * A row whose labels came back with nothing is dropped rather than answered
+ * empty: a machine this listing named and the call after it did not is one that
+ * was removed in between, and an empty label is how a machine says it has no
+ * owner and no session. A label the machine does carry answers empty rather than
+ * being absent, so a row is read the same way whatever it holds.
+ */
+const withLabels = (
+  found: { name: string; image: string; status: string; created: string }[],
+  held: Map<string, Record<string, unknown>>,
+): { name: string; image: string; status: string; created: string; labels: ListedLabels }[] =>
+  found.flatMap((row) => {
+    const labels = held.get(row.name);
+    if (labels === undefined) return [];
+    return [{
+      ...row,
+      labels: Object.fromEntries(LISTED_LABELS.map((key) => [key, text(labels[key])])) as ListedLabels,
+    }];
+  });
 
 /**
  * Whether a machine from a listing is up.
@@ -670,26 +831,54 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   return {
     kind: 'docker',
 
-    list: async () => listed(await must([
-      'ps', '-a', '--filter', `label=${options.label}`, '--format', LISTED_FORMAT,
-    ]))
-      .map((row) => {
-        const profile = row.labels[MACHINE_DISPOSABLE];
-        const folder = row.labels[DEVCONTAINER_FOLDER];
-        return {
-          id: row.name,
-          image: row.image,
-          status: row.status,
-          created: row.created,
-          ...(folder === '' ? {} : { folder }),
-          agents: agentsSaid(row.labels[MACHINE_AGENTS]),
-          ...(profile === '' ? {} : { disposable: { profile, alone: row.labels[MACHINE_ALONE] === 'true' } }),
-          // Who is paying for these, said by the machine itself rather than by
-          // whatever this daemon happens to remember making.
-          ...claimedBy(row.labels),
-        };
-      })
-      .filter((one) => one.id !== ''),
+    /*
+     * A listing is two calls: `ps` for what is there, then one `inspect` for
+     * the labels of exactly those, because a listing prints a label map as one
+     * comma-joined column and a value holding a comma cannot be told from the
+     * pair after it. One `inspect` for the whole listing rather than one per
+     * machine, so the answer is not one call per machine on a host with `max`
+     * of them.
+     *
+     * The second call is not held to a zero exit. `inspect` prints the machines
+     * it found and exits non-zero when one it was asked for is gone, which is
+     * what a machine removed between the two calls looks like; a listing that
+     * threw there would be failing over a machine that is no longer a problem.
+     * A machine whose labels came back with nothing is dropped rather than
+     * answered empty ones, which is how a machine says it has no owner and no
+     * session.
+     */
+    list: async () => {
+      const found = listed(await must([
+        'ps', '-a', '--filter', `label=${options.label}`, '--format', LISTED_FORMAT,
+      ]));
+      const held = found.length === 0
+        ? new Map<string, Record<string, unknown>>()
+        : labelRecords((await ran(options, [
+          'inspect', '--type', 'container', '--format', LISTED_LABELS_FORMAT, ...found.map((one) => one.name),
+        ])).stdout);
+      return withLabels(found, held)
+        .map((row) => {
+          const profile = row.labels[MACHINE_DISPOSABLE];
+          const folder = row.labels[DEVCONTAINER_FOLDER];
+          const session = row.labels[MACHINE_SESSION];
+          const host = row.labels[MACHINE_HOST];
+          return {
+            id: row.name,
+            image: row.image,
+            status: row.status,
+            created: row.created,
+            ...(folder === '' ? {} : { folder }),
+            agents: agentsSaid(row.labels[MACHINE_AGENTS]),
+            ...(profile === '' ? {} : { disposable: { profile, alone: row.labels[MACHINE_ALONE] === 'true' } }),
+            ...(session === '' ? {} : { session }),
+            ...(host === '' ? {} : { host }),
+            // Who is paying for these, said by the machine itself rather than by
+            // whatever this daemon happens to remember making.
+            ...claimedBy(row.labels),
+          };
+        })
+        .filter((one) => one.id !== '');
+    },
 
     inspect: async (id) => {
       const held = await ran(options, ['inspect', '--format', '{{json .}}', id]);
@@ -790,6 +979,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // inside is - survives the daemon that made it.
       if (spec.profile !== undefined && spec.profile !== '') {
         flags.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
+      }
+      // And the session it was made for, which has to survive the same restart
+      // too: that is what tells a daemon finding it whether it is a leftover of
+      // its own to adopt or one to leave running for somebody else, and what an
+      // alone machine answers for.
+      if (spec.session !== undefined && spec.session !== '') {
+        flags.push('--label', `${MACHINE_SESSION}=${spec.session}`);
+      }
+      // And the daemon that is making it, which is the other half of the same
+      // question: a leftover has to be matched against this daemon before it is
+      // adopted or entered, and a session id is not enough to say whose it is.
+      if (spec.host !== undefined && spec.host !== '') {
+        flags.push('--label', `${MACHINE_HOST}=${spec.host}`);
       }
       // And who the machine belongs to, which has to survive the same restart
       // the recipe does: the time it spends up is charged to this owner, and a

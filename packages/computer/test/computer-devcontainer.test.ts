@@ -405,6 +405,25 @@ it('makes it at session start, with the harness needs as --mount and --remote-en
   await answered(dockerState, 2);
 });
 
+it('counts a machine made for a session against max, as one made from the form is', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  // A machine the host already holds, made from somewhere else entirely.
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{ name: 'held', image: 'node:22', labels: { 'ahpd.computer': '1' } }],
+    calls: [],
+  }));
+
+  const { options: loaded } = await load(optionsOf(devState, dockerState, { max: 1 }), [agentWith()], join(dir, 'config'));
+  const { open } = await room(loaded);
+  await expect(open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder))
+    .rejects.toThrow(/This host holds 1 computers already/);
+  // Nothing was asked of the CLI, which is what the count is for.
+  expect(devHeld(devState).calls).toEqual([]);
+});
+
 it('binds one entry where a copy-in is the same bind as a need', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');

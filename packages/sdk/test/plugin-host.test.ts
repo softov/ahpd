@@ -1,11 +1,12 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { AGENT_CLASH, foldHostOptions } from '../src/plugins.js';
+import { AGENT_CLASH, foldHostOptions, pluginHost } from '../src/plugins.js';
+import { memorySessions } from '../src/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { usageProvider } from '../src/usage.js';
 import type { Agent } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
-import type { Contribution } from '../src/types/plugin.js';
+import type { Contribution, PluginContext } from '../src/types/plugin.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Usage } from '../src/types/usage.js';
 
@@ -36,6 +37,60 @@ const contributed: Agent = {
 };
 
 const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {} };
+
+it('answers whether it keeps a session, from the store and by the id in the URI', async () => {
+  const store = memorySessions();
+  store.setConfig('one', { computer: 'computer://box' });
+  store.setProvider('one', 'echo');
+  const context: PluginContext = {
+    path: '/tmp/plugin-host',
+    paths: ['/tmp/plugin-host'],
+    version: '0.0.0',
+    hostName: 'host',
+    configDir: '/tmp/plugin-host',
+    log: () => {},
+    say: () => {},
+  };
+
+  // The URI's scheme is the backend's own, so a session kept under another
+  // provider's id is not this one: the store is keyed by the id inside the
+  // URI, and a client that opens `echo:/one` after a session named `acp:/one`
+  // has gone writes the same row.
+  expect(await pluginHost('fixture', context, { sessions: () => store }).host.sessionKept('echo:/one')).toBe(true);
+  expect(await pluginHost('fixture', context, { sessions: () => store }).host.sessionKept('acp:/one')).toBe(false);
+  expect(await pluginHost('fixture', context, { sessions: () => store }).host.sessionKept('echo:/two')).toBe(false);
+  // A host that keeps no sessions has no leftovers of its own to adopt, which
+  // is an answer rather than a failure.
+  expect(await pluginHost('fixture', context).host.sessionKept('echo:/one')).toBe(false);
+});
+
+it('waits for the store rather than answering before the fold has named it', async () => {
+  const store = memorySessions();
+  store.setConfig('one', { computer: 'computer://box' });
+  store.setProvider('one', 'echo');
+  const context: PluginContext = {
+    path: '/tmp/plugin-host',
+    paths: ['/tmp/plugin-host'],
+    version: '0.0.0',
+    hostName: 'host',
+    configDir: '/tmp/plugin-host',
+    log: () => {},
+    say: () => {},
+  };
+
+  /*
+   * What the daemon hands over: a store that is not named yet, because the fold
+   * runs after every plugin has applied. A plugin that adopts a leftover asks
+   * while the plugins after it are still loading, and an answer of `false`
+   * until the fold ran would make a slow plugin decide what this daemon keeps.
+   */
+  let named: (held: ReturnType<typeof memorySessions> | undefined) => void = () => {};
+  const later = new Promise<typeof store | undefined>((resolve) => { named = resolve; });
+  const host = pluginHost('fixture', context, { sessions: () => later }).host;
+  const asked = host.sessionKept('echo:/one');
+  named(store);
+  expect(await asked).toBe(true);
+});
 
 it('serves a backend a plugin contributed, beside the daemon\'s own', async () => {
   const { options, problems } = foldHostOptions(base(), [contribution]);

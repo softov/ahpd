@@ -1,5 +1,6 @@
 import type { Start } from './types/agent.js';
 import type { ComputerPort, MachineSource, NestedStart } from './types/computers.js';
+import type { Owner } from './types/usage.js';
 
 /**
  * Refuse a session that was told to run in a computer this backend cannot enter.
@@ -86,16 +87,22 @@ export const openComputer = async (
 /**
  * What stops `provider` running on machine `id`, or nothing.
  *
- * A machine is prepared for the agents its profile named, and remembers them
- * in its `ahpd.agents` label. The picker already offers only machines prepared
- * for the asking agent, but a value can be set by hand, or arrive from a client
- * that read an older list - and a session running in a machine that was not
- * prepared for it fails much later and further away, if it runs at all.
+ * Two rules, both read from the machine itself and both refused in one
+ * sentence. A machine is prepared for the agents its profile named, and
+ * remembers them in its `ahpd.agents` label: the picker already offers only
+ * machines prepared for the asking agent, but a value can be set by hand, or
+ * arrive from a client that read an older list - and a session running in a
+ * machine that was not prepared for it fails much later and further away, if
+ * it runs at all. A machine made from a `disposableAlone` profile is kept for
+ * the one session it was made for, and the picker is not consulted when an id
+ * is typed - decision `a-disposable-alone-machine-refuses-another-session`.
  *
  * A machine with no label is one made before this existed, and is offered to
- * every agent; a port that cannot answer labels is one this reader cannot ask.
- * The sentence names the agents the machine was made for rather than only the
- * one it was not, because that is what tells a person where to go.
+ * every agent and to every session; a port that cannot answer labels is one
+ * this reader cannot ask. The sentence names the agents the machine was made
+ * for rather than only the one it was not, because that is what tells a person
+ * where to go. The one about a machine kept for another session names neither
+ * session, since what it says is that this machine is not this session's.
  *
  * A sentence rather than a throw, because the three places that ask are three
  * different shapes of refusal: a request that answers an error, an action that
@@ -105,7 +112,29 @@ export const machineRefusal = async (
   computers: ComputerPort | undefined,
   id: string,
   provider: string,
+  session: string,
+  owner?: Owner,
 ): Promise<string | undefined> => {
+  const keptFor = computers?.keptFor;
+  const mine = keptFor === undefined
+    ? undefined
+    : await keptFor(id, { session, ...(owner === undefined ? {} : { owner }) });
+  if (mine !== undefined && mine.mine === false) {
+    return `computer://${id} is another daemon's machine, and this daemon neither runs in it nor removes it; make a machine of your own for this session or run it on the host`;
+  }
+  if (mine !== undefined && mine.session !== session) {
+    return `computer://${id} belongs to another session, which is the only one it runs; make a machine of your own for this session or run it on the host`;
+  }
+  /*
+   * The owner, which the session's own id cannot stand in for.
+   *
+   * A channel is the client's to choose, so a session opened under a disposed
+   * one's id spells the same URI and passes the first rule while running in a
+   * machine built for somebody else's needs and folder.
+   */
+  if (mine !== undefined && owner !== undefined && mine.owner !== undefined && mine.owner !== owner) {
+    return `computer://${id} was made for another owner, which is the only one it runs for; make a machine of your own for this session or run it on the host`;
+  }
   const for_ = computers?.agents === undefined ? undefined : await computers.agents(id);
   if (for_ === undefined || for_.length === 0 || for_.includes(provider)) return undefined;
   return `computer://${id} was prepared for ${for_.join(', ')}, and this session runs ${provider}; make a machine prepared for ${provider} or run this session on the host`;
@@ -119,10 +148,10 @@ export const machineRefusal = async (
  * makes a session or starts one again, so a wrong machine fails where the
  * person is rather than at the first turn.
  */
-export const computersFor = (computers: ComputerPort, provider: string): ComputerPort => {
+export const computersFor = (computers: ComputerPort, provider: string, session: string, owner?: Owner): ComputerPort => {
   /** Refuse a machine prepared for somebody else, before either verb reaches it. */
   const prepared = async (id: string): Promise<void> => {
-    const said = await machineRefusal(computers, id, provider);
+    const said = await machineRefusal(computers, id, provider, session, owner);
     if (said !== undefined) throw new Error(said);
   };
   return {

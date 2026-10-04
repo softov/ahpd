@@ -43,7 +43,7 @@ import {
 import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { automationsPath, configDir, configPath, daemonLog, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
+import { automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
@@ -620,6 +620,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     base,
     paths: options.paths,
     configDir: configDir(),
+    hostId: hostId(),
     cwd: process.cwd(),
     log: stamp,
     say: (line) => {

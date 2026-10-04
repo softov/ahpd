@@ -83,15 +83,19 @@ if (verb === 'ps') {
    * Any `--format` a provider asks with, as Docker renders it.
    *
    * `{{.Field}}` is one of the listing's own fields, `{{.Label "key"}}` one
-   * label by name, and `{{json .Labels}}` every label as one JSON object, which
-   * is the only one of the three a value holding a tab or a newline survives.
-   * `{{json .}}` keeps its own shape, with every label in one comma-joined
-   * column, because that is what it says it is.
+   * label by name, and `{{json .}}` keeps its own shape.
+   *
+   * `.Labels` is the one that is not JSON whatever is asked of it: a listing
+   * prints every label as one column of `key=value` pairs joined by commas,
+   * with or without `json` in front of it. So a value holding a comma cannot be
+   * told from the pair after it, which is why a provider that means to read
+   * labels asks `inspect` for them instead - see the `inspect` below.
    */
+  const joined = (labels) => Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(',');
   const render = (format, row, labels) => format.replace(
     /\{\{\s*(json\s+)?\.(\w+)(?:\s+"([^"]*)")?\s*\}\}/gu,
     (whole, json, field, label) => {
-      if (field === 'Labels') return JSON.stringify(labels);
+      if (field === 'Labels') return joined(labels);
       if (json !== undefined) return JSON.stringify(String(row[field] ?? ''));
       if (field === 'Label') return String(labels[label] ?? '');
       return String(row[field] ?? '');
@@ -114,52 +118,110 @@ if (verb === 'ps') {
     // comma-joined column and a value holding a comma cannot be told from the
     // pair after it. Any other format is rendered field by field.
     process.stdout.write(format === undefined || format === '{{json .}}'
-      ? `${JSON.stringify({ ...row, Labels: Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(',') })}\n`
+      ? `${JSON.stringify({ ...row, Labels: joined(labels) })}\n`
       : `${render(format, row, labels)}\n`);
+  }
+  /*
+   * A machine removed between this listing and the call that follows it.
+   *
+   * `vanishAfterPs` names a machine this listing has just answered and then
+   * drops, which is what a machine somebody else took away in between looks
+   * like: the `inspect` after it is asked for a machine that is not there and
+   * answers the others with a non-zero exit.
+   */
+  if (typeof held.vanishAfterPs === 'string') {
+    held.machines = held.machines.filter((machine) => machine.name !== held.vanishAfterPs);
   }
   keep();
   process.exit(0);
 }
 
+/*
+ * What one machine's record says, as `docker inspect` gives it.
+ *
+ * The labels are a real map here, which is the whole difference from a listing:
+ * a value holding a comma, a tab or a newline is a value.
+ */
+const recordOf = (found) => ({
+  Name: `/${found.name}`,
+  Image: found.image,
+  Created: '2026-09-22T00:00:00Z',
+  // `Running` as well as the word, because the provider answers the state
+  // leaf from the boolean and a reader of the record still wants the word.
+  State: {
+    Status: found.state ?? 'running',
+    Running: (found.state ?? 'running') === 'running',
+  },
+  // The label the provider puts on its own, because the provider now reads
+  // it back: a container without it is not a computer, and a fixture that
+  // left it out would be testing a case that cannot happen.
+  Config: {
+    WorkingDir: found.workdir ?? '',
+    Labels: found.bare === true ? { ...(found.labels ?? {}) } : { 'ahpd.computer': '1', ...(found.labels ?? {}) },
+  },
+  // The limits as docker records them: nanoseconds of CPU per second, and
+  // bytes. A gauge is drawn against these, so the units have to be real.
+  HostConfig: {
+    ...(found.cpus === undefined ? {} : { NanoCpus: Number(found.cpus) * 1e9 }),
+    Memory: 0,
+  },
+  // As `docker inspect` reports them, because a caller's path is read
+  // through these to find where it is inside the machine.
+  Mounts: (found.mounts ?? []).map((one) => {
+    const [source, target] = one.split(':');
+    return { Type: 'bind', Source: source, Destination: target };
+  }),
+});
+
+/** One `.a.b` path into a record, for `--format '{{json .a.b}}'`. */
+const at = (record, path) => path.split('.').reduce(
+  (held, key) => (typeof held === 'object' && held !== null ? held[key] : undefined),
+  record,
+);
+
+/*
+ * `--format` as docker renders it over a record, whatever is asked of it.
+ *
+ * `{{.Field}}` is one value as a string, `{{json .}}` the whole record and
+ * `{{json .Config.Labels}}` one map - and a format may ask for both at once,
+ * which is how a caller asks for the machine a line belongs to beside the
+ * labels that machine carries. `{{.Name}}` keeps the leading `/` docker gives a
+ * container's name in a record, which a listing does not print.
+ */
+const renderRecord = (format, record) => format.replace(
+  /\{\{\s*(json\s+)?\.([\w.]*)\s*\}\}/gu,
+  (whole, json, path) => {
+    const value = path === '' ? record : at(record, path);
+    if (json !== undefined) return JSON.stringify(value ?? null);
+    return typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
+  },
+);
+
 if (verb === 'inspect') {
-  const id = args[args.length - 1];
-  const found = held.machines.find((machine) => machine.name === id);
-  if (found === undefined) {
-    process.stderr.write(`Error: No such object: ${id}\n`);
-    keep();
+  /*
+   * `--format` as docker renders it, over every id asked for.
+   *
+   * One line per machine that is there, one machine that is not there as an
+   * error on stderr and a non-zero exit, with the others still printed, which
+   * is what docker does - and the reason a caller reads these lines by name
+   * rather than by the order it asked in.
+   */
+  const formatAt = args.indexOf('--format');
+  const format = formatAt === -1 ? '{{json .}}' : args[formatAt + 1];
+  const missing = [];
+  for (const id of args.slice(formatAt === -1 ? 1 : formatAt + 2)) {
+    const found = held.machines.find((machine) => machine.name === id);
+    if (found === undefined) {
+      missing.push(id);
+      continue;
+    }
+    process.stdout.write(`${renderRecord(format, recordOf(found))}\n`);
+  }
+  keep();
+  if (missing.length > 0) {
+    process.stderr.write(`Error: No such object: ${missing.join(', ')}\n`);
     process.exit(1);
   }
-  process.stdout.write(`${JSON.stringify({
-    Name: `/${found.name}`,
-    Image: found.image,
-    Created: '2026-09-22T00:00:00Z',
-    // `Running` as well as the word, because the provider answers the state
-    // leaf from the boolean and a reader of the record still wants the word.
-    State: {
-      Status: found.state ?? 'running',
-      Running: (found.state ?? 'running') === 'running',
-    },
-    // The label the provider puts on its own, because the provider now reads
-    // it back: a container without it is not a computer, and a fixture that
-    // left it out would be testing a case that cannot happen.
-    Config: {
-      WorkingDir: found.workdir ?? '',
-      Labels: found.bare === true ? { ...(found.labels ?? {}) } : { 'ahpd.computer': '1', ...(found.labels ?? {}) },
-    },
-    // The limits as docker records them: nanoseconds of CPU per second, and
-    // bytes. A gauge is drawn against these, so the units have to be real.
-    HostConfig: {
-      ...(found.cpus === undefined ? {} : { NanoCpus: Number(found.cpus) * 1e9 }),
-      Memory: 0,
-    },
-    // As `docker inspect` reports them, because a caller's path is read
-    // through these to find where it is inside the machine.
-    Mounts: (found.mounts ?? []).map((one) => {
-      const [source, target] = one.split(':');
-      return { Type: 'bind', Source: source, Destination: target };
-    }),
-  })}\n`);
-  keep();
   process.exit(0);
 }
 

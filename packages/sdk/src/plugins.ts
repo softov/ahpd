@@ -16,8 +16,10 @@ import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
+import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
 import type { Vault } from './types/vault.js';
+import { idOf, schemeOf } from './catalog.js';
 import { readSecret } from './vault.js';
 import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
 
@@ -297,6 +299,18 @@ export interface HostRecordingOptions {
    * one who has to read them and the loader is what that person reads from.
    */
   problem?: (line: string) => void;
+  /**
+   * The sessions this host keeps, read when `sessionKept` is called.
+   *
+   * A function, and `undefined` for the store, for the same reason `usage` is:
+   * the store belongs to the host and not to this plugin, so a plugin that
+   * registers one may load after this one, and a host in a test may have none.
+   *
+   * It may answer late, because the fold that names the store has not run yet
+   * while any one plugin is applying - and a plugin asking before the fold has
+   * run waits rather than being told there are no sessions.
+   */
+  sessions?: () => SessionStore | undefined | Promise<SessionStore | undefined>;
 }
 
 /**
@@ -378,6 +392,30 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       const vault = options.vault?.();
       if (vault === undefined) throw new Error(`${name} cannot be read: this host has no vault`);
       return readSecret(vault, name, work);
+    },
+    /*
+     * The store is keyed by id and a machine records the session URI, so the
+     * name is asked of the URI. `false` rather than a throw when there is no
+     * store, the way `recordUsage` drops: a host that keeps no sessions has no
+     * leftovers of its own to adopt, which is an answer and not a failure.
+     *
+     * Awaited because a plugin can ask before the host it is being applied to
+     * has named its store, and the answer has to be the same whatever else is
+     * still loading.
+     */
+    sessionKept: async (uri) => {
+      const sessions = await options.sessions?.();
+      if (sessions === undefined || sessions.config(idOf(uri)) === undefined) return false;
+      /*
+       * The provider has to be the URI's own scheme.
+       *
+       * A session id comes from the client's channel, so a client that opens
+       * `echo:/one` after a session named `acp:/one` has gone writes the same
+       * row, and a leftover labelled for that id would be adopted as though it
+       * were a session of this kind - a machine with another backend's needs
+       * charged to a session that cannot run in it.
+       */
+      return sessions.provider(idOf(uri)) === schemeOf(uri);
     },
     registerAgent(agent) {
       checkAgent(agent, by);

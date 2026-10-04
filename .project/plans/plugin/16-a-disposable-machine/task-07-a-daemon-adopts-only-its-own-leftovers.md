@@ -1,6 +1,6 @@
 ---
 title: A daemon adopts only the disposable machines whose session it keeps
-status: todo
+status: done
 depends: [task-06-a-resumed-session-counts-as-a-user.md]
 layer: "computer | sdk | server"
 refs:

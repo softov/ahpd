@@ -107,6 +107,31 @@ export interface MachineSource {
   project?: string;
 }
 
+/** The session asking about a machine, and whoever is behind it. */
+export interface KeptForAsked {
+  /** The asking session's URI, as every other question about a session spells it. */
+  session: string;
+  /** Whoever owns the asking session, and nothing when nobody does. */
+  owner?: Owner;
+}
+
+/** What a machine is kept for alone, read from its own labels. */
+export interface KeptFor {
+  /** The session the machine was made for, as its label spells it. */
+  session: string;
+  /** Whose the machine's work is charged to, and nothing when nobody owns it. */
+  owner?: Owner;
+  /**
+   * Whether the daemon answering made this machine, as its own label says.
+   *
+   * `false` for a machine on the same runtime that another daemon made, which
+   * is not this one's to hand out: it is that daemon's to remove and that
+   * daemon's to charge for. Absent on a port that keeps no such record, which
+   * is a machine this reader cannot place rather than one of somebody else's.
+   */
+  mine?: boolean;
+}
+
 /**
  * One machine, reached as a process.
  *
@@ -128,6 +153,27 @@ export interface ComputerPort {
    * the host cannot make rather than a machine prepared for nobody.
    */
   agents?(id: string): Promise<string[] | undefined>;
+  /**
+   * The session a machine is kept for alone, or nothing when any may run in it.
+   *
+   * The machine's own labels, read back the way `agents` is: a machine made
+   * from a `disposableAlone` profile belongs to the session it was made for,
+   * and a second session naming it is refused rather than sharing a machine
+   * that was built for one - decision
+   * `a-disposable-alone-machine-refuses-another-session`.
+   *
+   * The owner is the second half of the same refusal and is what a client
+   * cannot choose: a session id comes from the client's own channel, so a new
+   * session opened under a disposed one's id spells the same URI, while the
+   * owner is what the machine was built for.
+   *
+   * Nothing for a machine any session may enter, nothing for one made before
+   * the label existed, whose own session may still be resumed into it, and
+   * nothing for a machine another daemon made. Absent on a port that keeps no
+   * such record, which is a check the host cannot make rather than a machine
+   * kept for nobody.
+   */
+  keptFor?(id: string, asked?: KeptForAsked): Promise<KeptFor | undefined>;
   /**
    * Start a whole host inside a machine, in stdio mode.
    *
@@ -160,19 +206,34 @@ export interface ComputerPort {
   /**
    * A session has started in this machine.
    *
-   * The one moment a machine's session count goes up. Called once per session
-   * that starts, whether or not this plugin made the machine: a session that
-   * picked an existing one counts the same as the session that made it. Not
-   * called when a session is started again before its first turn, which is the
-   * same session with a different setting and not a second user.
+   * The one moment a machine's session count goes up, and the host says it from
+   * the one place every road to a running backend goes through: a session
+   * created, one resumed from the list after a daemon restart, a restart before
+   * its first turn, a chat started again, a fork, a truncate. A session that
+   * picked an existing machine counts the same as the session that made it.
+   *
+   * A set rather than a count, so one session that enters twice - the same one
+   * after a restart, which is the same session with a different setting and not
+   * a second user - is still one user.
+   *
+   * May be a promise, because a plugin that finds its machines by listing them
+   * at startup cannot count a session into a machine it has not found yet, and
+   * a session that starts before the listing is over is still a session in it.
    */
-  enter?(id: string, session: string): void;
+  enter?(id: string, session: string): void | Promise<void>;
   /**
    * A session that was running in this machine is gone.
    *
-   * The one moment the count goes down. A machine whose last session has left
-   * is a machine nothing is using, which is what a disposable one waits out
-   * its delay for.
+   * The one moment the count goes down: the session was disposed, it moved to
+   * another machine, or the host forgot or pruned the stored session it was
+   * running in. A machine whose last session has left is a machine nothing is
+   * using, which is what a disposable one waits out its delay for.
+   *
+   * The machine left is the one the session was in, which on a move away is the
+   * one before it. The machine the session moved to is entered by the start
+   * that follows.
+   *
+   * May be a promise, for the reason `enter`'s is.
    */
-  leave?(id: string, session: string): void;
+  leave?(id: string, session: string): void | Promise<void>;
 }

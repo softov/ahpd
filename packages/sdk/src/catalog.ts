@@ -45,5 +45,11 @@ export const idOf = (uri: string): string => {
   const colon = uri.indexOf(':');
   return (colon < 0 ? uri : uri.slice(colon + 1)).replace(/^\/+/, '');
 };
+
+/** The scheme a channel URI names, or nothing where it names none. */
+export const schemeOf = (uri: string): string | undefined => {
+  const said = /^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1];
+  return said === undefined ? undefined : said.toLowerCase();
+};
 /** The same, and the name it goes by where a session rather than a chat is meant. */
 export const idFor = idOf;

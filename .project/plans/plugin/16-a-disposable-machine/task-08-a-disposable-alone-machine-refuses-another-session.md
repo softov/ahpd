@@ -1,6 +1,6 @@
 ---
 title: A disposable-alone machine refuses another session
-status: todo
+status: done
 depends: [task-07-a-daemon-adopts-only-its-own-leftovers.md]
 layer: "sdk | computer"
 refs:

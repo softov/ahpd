@@ -1,6 +1,6 @@
 ---
 title: A resumed session counts as a user of its disposable machine
-status: todo
+status: done
 depends: [task-05-a-machine-is-left-when-its-session-moves-away.md]
 layer: "sdk"
 refs:

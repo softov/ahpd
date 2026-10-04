@@ -1,6 +1,6 @@
 ---
 title: A machine made for a session counts against max and needs computer:write
-status: todo
+status: done
 depends: []
 layer: "computer | sdk"
 refs:
@@ -32,7 +32,7 @@ An automation's start acts as its owner through `principalFor(owner)`, and is re
 - `UPDATE: packages/sdk/src/host.ts:7163-7218` - `capabilityFor('createSession', params)` answers `['session:write', 'computer:write']` when `computerSource(params.config?.computer)` names a source, so the boundary refuses with `refusalReason`.
 - `UPDATE: packages/sdk/src/host.ts:9545-9546` - a `session/configChanged` whose `computer` names a source adds `computer:write` to the set the dispatch gate asks.
 - `UPDATE: packages/sdk/src/host.ts:6875-6900` - `beginAutomation` reads its principal once as `principalFor(owner)`; when the session names a source and the host has a users directory, an unknown principal is refused with a sentence saying the owner has not signed in since the daemon started, and a known one is checked for `computer:write`, before `placedIn`.
-- `UPDATE: packages/sdk/src/host.ts:8746-8751` - the `policy/01` kinds `createSession` asks become one function, `machineChecked(principal, scope, provider, config)`, which `createSession`, the pre-turn change of `computer` (`host.ts:10436-10460`) and `beginAutomation` all call; the pre-turn change undoes its keys on a refusal as `plugin/15` task 11 does.
+- `UPDATE: packages/sdk/src/host.ts:8746-8751` - the `policy/01` kinds `createSession` asks stay where all three roads already go through them, in `admitted`, which `createSession`, the pre-turn change of `computer` (`host.ts:10436-10460`) and `beginAutomation` all call; the pre-turn change undoes its keys on a refusal as `plugin/15` task 11 does.
 - `UPDATE: packages/computer/test/computer-disposable.test.ts`, `packages/computer/test/computer-devcontainer.test.ts`, `packages/sdk/test/users-gate.test.ts` - the cases below.
 
 ## Steps
@@ -40,7 +40,7 @@ An automation's start acts as its owner through `principalFor(owner)`, and is re
 1. One function counts the plugin's machines and refuses past `max`; the three roads that make a machine call it.
 2. The grant is asked at the boundary, where every other grant is, so the staleness test in `packages/sdk/test/users-gate.test.ts` still classifies `createSession`.
 3. A host with no users directory, and a root connection, are not gated, as everywhere else.
-4. The policy check runs on all three roads through `machineChecked`, before `plugin/15` task 11's label check, so which kinds are asked and on which roads is one function to change.
+4. The policy check runs on all three roads through `admitted`, before `plugin/15` task 11's label check, so which kinds are asked and on which roads is one function to change.
 5. The automation's principal is read in one place on its road, so a later change of who an automation acts as touches that line only.
 
 ## Validation

@@ -318,6 +318,29 @@ const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Record<strin
 };
 
 /**
+ * The grant a session's own change needs beyond the write, when the setting it
+ * carries names a source.
+ *
+ * Picking `disposable:<profile>` or `devcontainer://<folder>` makes a machine
+ * for the session as surely as `createSession` does, and is held to what
+ * `createSession` is held to - decision
+ * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+ * A `computer://<id>` that already exists names no source, so a session moving
+ * between machines that are already there is no write here.
+ *
+ * Beside `dispatchNeeds` rather than inside it, because that one is asked of a
+ * channel as well as of an action, and only a session's own change carries a
+ * `computer`.
+ */
+const computerNeeds = (action: Record<string, unknown>): Grant | undefined => {
+  if (action.type !== 'session/configChanged') return undefined;
+  const config = (typeof action.config === 'object' && action.config !== null
+    ? action.config
+    : {}) as Record<string, unknown>;
+  return computerSource(config.computer) === undefined ? undefined : 'computer:write';
+};
+
+/**
  * The root config keys that are a person's, not the host's.
  *
  * The record a client pushes to `ahp-root://` carries both kinds. Whether
@@ -1728,6 +1751,60 @@ export function createHost(options: HostOptions): Host {
    * would be made for it.
    */
   const sessionMachines = new Map<string, { source: string; machine: string }>();
+  /**
+   * The machine a session is inside, as the plugin was told.
+   *
+   * Not the same as the config's `computer://<id>`: that is what the session
+   * is being started into, and a restart before the first turn rewrites it.
+   * This is where it actually is, which is the machine whose delay a disposal
+   * starts and the one a session moving away lets go.
+   */
+  const enteredIn = new Map<string, string>();
+
+  /**
+   * Tell the port that a session is in a machine, or that it is not any more.
+   *
+   * The port may do work before it answers - a plugin that finds its machines
+   * by listing them at startup cannot count a session into one it has not found
+   * yet - so either may answer a promise, and a promise nobody waits on that
+   * throws takes this process down rather than losing one machine's count.
+   * Nothing here is held up by it either: a session starting is not a session
+   * that failed because a plugin's own bookkeeping did.
+   */
+  const inMachine = (id: string | undefined, uri: string, entering: boolean): void => {
+    if (id === undefined) return;
+    // Asked inside a promise rather than around a call, because a port that
+    // throws before it answers is the same failure as one that rejects after,
+    // and a `try` around the call would have caught only the first of them.
+    void Promise.resolve()
+      .then(() => (entering ? options.computers?.enter?.(id, uri) : options.computers?.leave?.(id, uri)))
+      .catch((error: unknown) => {
+        log(`computers: ${entering ? 'enter' : 'leave'} of ${id} for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  };
+
+  /**
+   * Let a gone session's machine go, for a session that never entered one here.
+   *
+   * A disposable machine records the session it was made for, and a daemon
+   * adopts it when it keeps that session, counting it as a user until the
+   * session is disposed. One of the two ways a session this daemon kept can go
+   * says so itself: a disposal is a thing a session running in this process
+   * does, and it has entered the machine it was started in. The other is a
+   * listing that no longer finds the session - a transcript deleted outside
+   * this host - which has no session to dispose. This is that one: the stored
+   * config still names the machine, and the port is told the session has left
+   * it.
+   *
+   * One function, so the answer to "when does a forgotten session let its
+   * machine go" is in one place and another signal can be added beside it. A
+   * source or no setting at all names no machine and does nothing, and a
+   * session that already left is harmless: the port's set does not count it
+   * twice.
+   */
+  const leaveForgotten = (uri: string, config: Record<string, unknown> | undefined): void => {
+    inMachine(computerId(config?.computer), uri, false);
+  };
   /** The marks on a session, empty until somebody makes one. */
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
@@ -3701,7 +3778,7 @@ export function createHost(options: HostOptions): Host {
        */
       ...(options.resources !== undefined ? { resources: options.resources } : {}),
       ...(options.terminals !== undefined ? { terminals: heldTerminals(options.terminals, uri, chatUri) } : {}),
-      ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider) } : {}),
+      ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider, uri, kept.owner(idOf(uri))) } : {}),
       /*
        * The MCP servers, when there are any.
        *
@@ -4002,6 +4079,22 @@ export function createHost(options: HostOptions): Host {
       session.setDraft(typed);
     }
     owners.set(uri, agent);
+    /*
+     * The machine this session is now running in, told to the plugin that owns
+     * it.
+     *
+     * Here rather than in each caller, because `spawn` is the one place every
+     * road to a running backend goes through: a session created, one resumed
+     * from the list after a daemon restart, a restart, a chat started again, a
+     * fork and a truncate all call it, and a disposable machine whose last
+     * session has left is waiting out its delay. A road that reached a backend
+     * without saying so would have its machine removed under it.
+     */
+    const inside = computerId(config.computer);
+    if (inside !== undefined) {
+      inMachine(inside, uri, true);
+      enteredIn.set(uri, inside);
+    }
     return session;
   };
   /**
@@ -4230,6 +4323,7 @@ export function createHost(options: HostOptions): Host {
      * whose provider nothing has ever named. Both are kept: what is kept for
      * them is the owner, the title and the senders of a session somebody opened.
      */
+    const forgotten: Array<[string, Record<string, unknown> | undefined]> = [];
     const gone = (id: string): boolean => {
       if (claimed.has(id) || offered.has(id))
         return false;
@@ -4238,9 +4332,20 @@ export function createHost(options: HostOptions): Host {
         return false;
       const named = names.get(id);
       const dir_ = named === undefined ? undefined : dirOf(named);
-      return dir_ !== undefined && read.has(dir_);
+      if (named === undefined || dir_ === undefined || !read.has(dir_)) return false;
+      /*
+       * A session about to be forgotten, and the config it is being forgotten
+       * with, kept for after the prune.
+       *
+       * The prune deletes the row, so the machine its config names can only be
+       * read before it. A session nobody resumed never entered its machine in
+       * this process, so nothing else here would ever let it go.
+       */
+      forgotten.push([named, kept.config(id)]);
+      return true;
     };
     if (answered > 0 && !refused) kept.prune?.(gone);
+    for (const [uri, config] of forgotten) leaveForgotten(uri, config);
     return found;
   };
 
@@ -4664,17 +4769,31 @@ export function createHost(options: HostOptions): Host {
    * calls sit next to each other here rather than at each road, so the order is
    * one line to change and every road keeps it.
    *
+   * The policy is asked for the two kinds a session is checked for, and only
+   * those: the harness it asked for and the machine it named, the source read
+   * as the machine it is yet to be made from.
+   *
    * `createSession`, a change before the first turn and an automation's start
    * all come through here, which is the point: a check that one of them has and
    * the others do not is a check nobody can rely on. Only a `computer://<id>`
    * is read for its label - a `disposable:` source is made by `placedIn` with
    * `for: <provider>`, so it is prepared for the agent asking by construction.
+   *
+   * `owner` is who is asking, and each road reads it where its owner is: the
+   * connection's on `createSession`, the run's on an automation's start, and
+   * the session's own recorded owner on a change before the first turn. It is
+   * taken from the caller rather than from the store because the store has not
+   * been written yet on two of the three roads - a session's owner is recorded
+   * when it opens, which is after this - and a session id is the client's to
+   * choose, so the owner is what tells two people apart.
    */
   const admitted = async (
     principal: Principal | undefined,
     scope: Scope | undefined,
     config: Record<string, unknown>,
     provider: string,
+    session: string,
+    owner?: Owner,
   ): Promise<string | undefined> => {
     const machine = machineFor(config);
     const refused = await checked(principal, scope, [
@@ -4683,7 +4802,9 @@ export function createHost(options: HostOptions): Host {
     ]);
     if (refused !== undefined) return refused;
     const named = computerId(config.computer);
-    return named === undefined ? undefined : machineRefusal(options.computers, named, provider);
+    return named === undefined
+      ? undefined
+      : machineRefusal(options.computers, named, provider, session, owner);
   };
 
   /**
@@ -5078,10 +5199,18 @@ export function createHost(options: HostOptions): Host {
      *
      * A disposable machine's last session leaving is what starts the delay
      * before it is removed, so this and `enter` are the only two moments its
-     * count moves.
+     * count moves. The machine is the one it entered rather than the one the
+     * config names now: a session that moved away from its machine and came
+     * back would otherwise leave a machine it has long since left.
+     *
+     * A disposal of a session nobody resumed is not here: disposing is a thing
+     * a session running in this process does, and `spawn` enters the machine
+     * every one of them starts in. The session a daemon adopted a machine for
+     * and never ran is let go by the listing that stops finding it.
      */
-    const left = computerId(held.config.computer);
-    if (left !== undefined) options.computers?.leave?.(left, uri);
+    const left = enteredIn.get(uri);
+    inMachine(left, uri, false);
+    enteredIn.delete(uri);
     sessionMachines.delete(uri);
     // Gone from the map first, so a handler asking about it is told the truth.
     void fire({ type: 'session_end', session: uri, reason: 'disposed' });
@@ -5190,6 +5319,23 @@ export function createHost(options: HostOptions): Host {
        * machine is left exactly as it was.
        */
       await placedIn(uri, held.agent.provider, held.config, to, kept.owner(idOf(uri)));
+      /*
+       * And the machine it is leaving, when this restart puts it somewhere
+       * else.
+       *
+       * A session that picked a disposable profile and then chose this host, or
+       * another machine, is not in that machine any more - and a disposable one
+       * waits out its delay for exactly this. The source it named goes too:
+       * picking the same profile again has to make a new machine rather than
+       * hand back the one it left, which is the machine a client is naming
+       * now that no session is in.
+       */
+      const left = enteredIn.get(uri);
+      if (left !== undefined && left !== computerId(held.config.computer)) {
+        inMachine(left, uri, false);
+        enteredIn.delete(uri);
+        sessionMachines.delete(uri);
+      }
       spawn(
         held.agent,
         uri,
@@ -5202,6 +5348,15 @@ export function createHost(options: HostOptions): Host {
       );
     }
     catch (error) {
+      /*
+       * The machine it was in, which nothing is in any more: the old backend
+       * is gone and the new one would not start, so this session is over
+       * whatever the caller does with the refusal.
+       */
+      const left = enteredIn.get(uri);
+      inMachine(left, uri, false);
+      enteredIn.delete(uri);
+      sessionMachines.delete(uri);
       /*
        * A session that existed and now does not.
        *
@@ -5222,14 +5377,11 @@ export function createHost(options: HostOptions): Host {
     }
     log(`restarted ${uri}${to === undefined ? '' : ` in ${to}`}`);
     /*
-     * And the machine, when this restart is the first one to reach it.
-     *
-     * A restart of a session already inside a machine adds the same session
-     * again, which a set of sessions does not count twice and which cancels
-     * nothing that was running: a pre-turn restart is not a second user.
+     * The machine it is in was told by `spawn`, which the restart above reached.
+     * A restart of a session already inside one adds the same session again,
+     * which a set of sessions does not count twice and which cancels nothing
+     * that was running: a pre-turn restart is not a second user.
      */
-    const inside = computerId(held.config.computer);
-    if (inside !== undefined) options.computers?.enter?.(inside, uri);
     if (before === to) return;
     /*
      * Replaced, not removed and re-added.
@@ -7010,17 +7162,6 @@ export function createHost(options: HostOptions): Host {
     dispatch(uri, { type: 'session/ready' });
     sessionAdded(uri);
     activeSessionsMoved();
-    /*
-     * The machine this session runs in, told to the plugin that owns it.
-     *
-     * A disposable machine counts its sessions and waits out a delay once the
-     * last one is gone, and this is the one moment a count goes up: a session
-     * that picked an existing machine counts the same as the one that made it.
-     * A pre-turn restart never comes through here, which is what keeps a
-     * restart from looking like a second session.
-     */
-    const inside = computerId(config.computer);
-    if (inside !== undefined) options.computers?.enter?.(inside, uri);
     // Named and in the map, which is the moment a handler can act on it.
     void fire({ type: 'session_start', session: uri, provider });
   };
@@ -7055,10 +7196,33 @@ export function createHost(options: HostOptions): Host {
      */
     const owner = wanted.owner;
     const person = principalFor(owner);
+    /*
+     * `computer:write`, which only a source asks for: naming one is a machine
+     * made for this run, held to the same grant a client's `createSession` is.
+     * It is asked of the owner, who is who this run acts as, and read in this
+     * one place - decision
+     * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+     *
+     * Asked before the sign-in below, because it is the narrower of the two:
+     * an owner this process has never met has no grants to ask about, and what
+     * this run cannot do is make a machine, which is what it says. A host with
+     * no users directory gates nothing here as anywhere else.
+     *
+     * And only a `user:` owner, which is the only owner with a person behind
+     * it: an automation the host owns, or one nobody owns, is not a somebody's
+     * machine to hand a grant to, and a root connection is not gated as
+     * anywhere else.
+     */
+    if (options.users !== undefined && computerSource(config.computer) !== undefined && owner?.startsWith('user:') === true) {
+      if (person === undefined) {
+        throw new RpcError(-32009, `${owner} has not signed in since this daemon started, so this run cannot make a machine for itself; sign in on this host, or start it without a computer`);
+      }
+      if (!person.can('computer:write')) throw new RpcError(-32009, refusalReason(person.id, 'computer:write'), {});
+    }
     if (owner?.startsWith('user:') === true && person === undefined) {
       throw new RpcError(-32009, `${owner.slice('user:'.length)} has to sign in once before an automation of theirs may run`);
     }
-    const wrong = await admitted(person, charged.get(uri)?.scope, config, provider);
+    const wrong = await admitted(person, charged.get(uri)?.scope, config, provider, uri, owner);
     if (wrong !== undefined) throw new RpcError(-32009, wrong);
     // A source in the config is made into a machine before anything runs, the
     // same step a client's `createSession` takes.
@@ -7374,6 +7538,20 @@ export function createHost(options: HostOptions): Host {
          * the session as well as to its files.
          */
         if (method === 'invokeChangesetOperation') return ['file:write', 'session:write'];
+        /*
+         * A session naming a source is asking for a machine to be made for it,
+         * which is a `computer:write` on top of the `session:write` any
+         * session needs - decision
+         * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+         * A `computer://<id>` that already exists is not a source, so a session
+         * that names one needs nothing beyond `session:write`.
+         */
+        if (method === 'createSession') {
+          const config = (typeof params.config === 'object' && params.config !== null
+            ? params.config
+            : {}) as Record<string, unknown>;
+          if (computerSource(config.computer) !== undefined) return ['session:write', 'computer:write'];
+        }
         const plain = NEEDS[method];
         if (plain === undefined) return undefined;
         const at = plain.indexOf(':');
@@ -8877,7 +9055,7 @@ export function createHost(options: HostOptions): Host {
              * none, against the computer the client asked for and the scope the
              * session is charged to.
              */
-            const refused = await admitted(connection.principal, charged.get(uri)?.scope, config, provider);
+            const refused = await admitted(connection.principal, charged.get(uri)?.scope, config, provider, uri, ownerFor(connection));
             if (refused !== undefined) throw new RpcError(-32009, refused);
             // A `disposable:<profile>` setting is a machine made for this
             // session, with this harness's needs and this folder, before the
@@ -9735,7 +9913,7 @@ export function createHost(options: HostOptions): Host {
            * because the handler below acts on the resolved one, and what the
            * action needs: the strictest of them is asked.
            */
-          const all = [...new Set([dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), family?.needs])]
+          const all = [...new Set([dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), family?.needs, computerNeeds(action)])]
             .filter((one): one is Grant => one !== undefined);
           const needed = all.find((one) => connection.principal !== undefined && !connection.principal.can(one)) ?? all[0];
           const needs = needed === undefined ? '' : ` needs ${needed}`;
@@ -10759,7 +10937,7 @@ export function createHost(options: HostOptions): Host {
                    * lead chat with. The session stays exactly where it was.
                    */
                   const work = (async () => {
-                    const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider);
+                    const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
                     if (wrong !== undefined) {
                       for (const [key] of moved) undo(key);
                       for (const [key] of rescoped) undo(key);
@@ -10775,7 +10953,10 @@ export function createHost(options: HostOptions): Host {
                     await restart(uri, tokensFor(owning.agent.provider));
                     return true;
                   })();
-                  restarting.set(uri, work.then(() => undefined));
+                  // The promise a close waits on, which is not the work's own: a refusal is
+                  // answered to the client below, and a promise nobody reads must
+                  // not carry the rejection a second time.
+                  restarting.set(uri, work.then(() => undefined, () => undefined));
                   const held = restarting.get(uri);
                   const clear = (): void => {
                     if (restarting.get(uri) === held) restarting.delete(uri);

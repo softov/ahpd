@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
+import { memorySessions } from '../../sdk/src/sessions.js';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
@@ -87,10 +88,11 @@ const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
   };
 };
 
-const base = (agents: Agent[]): HostOptions => ({
+const base = (agents: Agent[], more: Partial<HostOptions> = {}): HostOptions => ({
   path: '/tmp/computer-disposable',
   agents,
   resources: fileResources(),
+  ...more,
 });
 
 /** The echo backend, declaring what a machine needs for it to run. */
@@ -103,9 +105,11 @@ const load = (
   pluginOptions: Record<string, unknown>,
   agents: Agent[] = [],
   log: (message: string) => void = () => {},
+  more: Partial<HostOptions> = {},
+  hostId?: string,
 ) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
-  { base: base(agents), configDir: REPO, cwd: REPO, log },
+  { base: base(agents, more), configDir: REPO, cwd: REPO, log, ...(hostId === undefined ? {} : { hostId }) },
 );
 
 /** The options every test starts from: the fixture as the runtime. */
@@ -197,7 +201,7 @@ it('makes a machine at session start from the profile, the harness needs and the
   mkdirSync(folder);
 
   const { options: loaded, problems } = await load(options(state, {
-    profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true } },
+    profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true } },
   }), [agentWith({ config: { directory: configDir, target: '/ahpd/config', required: true } })]);
   expect(problems).toEqual([]);
 
@@ -445,6 +449,756 @@ it('gives a leftover disposable machine the delay again at startup', async () =>
 });
 
 /*
+ * Task 05: a session that moves away before its first turn.
+ */
+it('lets the machine go when the session moves to this host, and makes a new one if it asks again', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { scratch: { title: 'Scratch', disposable: true, disposableDelay: 1000 } },
+  }), [agentWith()]);
+  const { client, open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:scratch' }, folder);
+  await until(() => held(state).machines.length === 1);
+  const first = held(state).machines[0]?.name as string;
+  expect(first).toBeDefined();
+
+  // The person changes their mind before the first turn: this host, no machine.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: '' } } },
+  });
+  await wait(200);
+  await settle();
+
+  // Nothing is running in it now, so the delay runs and it goes.
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => held(state).machines.length === 0);
+  expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === first)).toBe(true);
+
+  // And asking for the same profile again is a new machine rather than the
+  // one it left, whose id the host still remembered.
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: 'ahp-session:/one',
+      action: { type: 'session/configChanged', config: { computer: 'disposable:scratch' } },
+    },
+  });
+  await until(() => held(state).machines.length === 1);
+  const second = held(state).machines[0]?.name as string;
+  expect(second).toBeDefined();
+  expect(second).not.toBe(first);
+});
+
+it('lets the machine go when the new value is refused', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: {
+      one: { title: 'One', disposable: true, disposableDelay: 1000 },
+      two: { title: 'Two', disposable: true },
+    },
+  }), [agentWith()]);
+  const { client, open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:one' }, folder);
+  await until(() => held(state).machines.length === 1);
+  const box = held(state).machines[0]?.name as string;
+  expect(box).toBeDefined();
+
+  // A session already running in one machine may not switch to another before
+  // its first turn, and the refusal is what it is answered with.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: 'ahp-session:/one', action: { type: 'session/configChanged', config: { computer: 'disposable:two' } } },
+  });
+  await wait(200);
+  await settle();
+  // No second machine was made: the refusal is about switching, not about the
+  // profile being unknown.
+  expect(held(state).machines.map((one) => one.name)).toEqual([box]);
+
+  // And the session is over, so the machine it was in waits out the delay and
+  // goes rather than holding it for the rest of the daemon's life.
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => held(state).machines.length === 0);
+  expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === box)).toBe(true);
+});
+
+/*
+ * Task 06: a session resumed from the list counts as a user of its machine.
+ */
+it('holds the machine while a session resumed from the list runs in it', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  // What a daemon that stopped left behind: the timers died with it, so the one
+  // this host finds at startup is armed with nothing running in it.
+  writeFileSync(state, JSON.stringify({
+    machines: [{ name: 'left-behind', image: 'node:22', labels: { 'ahpd.disposable': 'claude' } }],
+    calls: [],
+  }));
+  const profiles = { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } };
+  /*
+   * One backend and one session store across both hosts, which is what a
+   * restart over the same folder is: the catalogue and what was kept about
+   * each row survive it, and the running sessions do not.
+   */
+  const agent = agentWith();
+  const store = memorySessions();
+  // Named by the provider, which is what a later host calls it once the
+  // catalogue has said whose session it is.
+  const session = 'echo:/one';
+  const chat = `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  const { options: first } = await load(options(state, { profiles }), [agent], () => {}, { sessions: store });
+  const before = await room(first);
+  await before.open(session, { computer: 'computer://left-behind' });
+  // A turn, so the backend's own catalogue holds the session with something in
+  // it - which is what lets a later host resume it rather than refuse it.
+  await before.client.handle({ method: 'subscribe', params: { channel: chat } });
+  await before.client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+  });
+  await until(() => actions(before.peer, chat).some((one) => one.type === 'chat/turnComplete'));
+
+  // The daemon restarts. The machine is found again and armed, and nothing has
+  // told this host yet that anybody is in it.
+  const lines: string[] = [];
+  const { options: second } = await load(options(state, { profiles }), [agent], (line) => { lines.push(line); }, { sessions: store });
+  const after = await room(second);
+  await until(() => lines.some((one) => one.includes('found the disposable machine left-behind')));
+
+  // The session is resumed from the list, in the machine it was running in.
+  await after.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  await after.client.handle({ method: 'subscribe', params: { channel: chat } });
+  await after.client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+  });
+  await wait(200);
+  await settle();
+  // Waited for rather than slept past: the turn cannot have run before the
+  // backend was started, and a backend is started before it says it entered.
+  await until(() => actions(after.peer, chat).some((one) => one.type === 'chat/turnComplete'));
+
+  // So the delay passes and the machine is still there. It used to be removed
+  // about five minutes into the run it was holding. The wait is real, so a
+  // removal that was going to happen has landed in the record before it is
+  // looked for.
+  await vi.advanceTimersByTimeAsync(10000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['left-behind']);
+
+  // And disposing it really is the end of it.
+  await after.dispose(session);
+  await settle();
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => held(state).machines.length === 0);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(true);
+});
+
+/*
+ * Task 07: a daemon adopts only the leftovers whose session it keeps.
+ */
+it('keeps a session\'s machine across a restart, and lets it go when the session is disposed', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+  const profiles = { scratch: { title: 'Scratch', disposable: true, disposableDelay: 1000 } };
+
+  const agent = agentWith();
+  const store = memorySessions();
+  const { options: first } = await load(options(state, { profiles }), [agent], () => {}, { sessions: store });
+  const before = await room(first);
+  await before.open('echo:/one', { computer: 'disposable:scratch' }, folder);
+  await until(() => held(state).machines.length === 1);
+  const box = held(state).machines[0]?.name as string;
+  expect(box).toBeDefined();
+  // The session it was made for, as the machine itself says it.
+  expect(held(state).machines[0]?.labels?.['ahpd.session']).toBe('echo:/one');
+
+  /*
+   * The config a client sends on its first turn, which is where the store
+   * learns this session exists and which machine it is running in. A daemon
+   * that kept nothing about a session cannot adopt the machine made for it.
+   */
+  await before.client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: 'echo:/one',
+      action: { type: 'session/configChanged', config: { computer: 'disposable:scratch' } },
+    },
+  });
+  await until(() => store.config('one')?.computer !== undefined);
+
+  // The daemon restarts, over the same Docker and the same store.
+  const lines: string[] = [];
+  const { options: second } = await load(options(state, { profiles }), [agent], (line) => { lines.push(line); }, { sessions: store });
+  await room(second);
+  await until(() => lines.some((one) => one.includes('found the disposable machine')));
+  // Adopted rather than armed: the session it was made for is one this daemon
+  // keeps, and nothing has to be running in it for that to be true.
+  expect(lines.some((one) => one.includes('is held for echo:/one'))).toBe(true);
+
+  // So the delay passes and the machine is still there, held by a session
+  // nobody resumed. It used to be removed about five minutes into the run.
+  await vi.advanceTimersByTimeAsync(10000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual([box]);
+
+  // And the session going away is what lets it go.
+  await before.dispose('echo:/one');
+  await settle();
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => held(state).machines.length === 0);
+  expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === box)).toBe(true);
+});
+
+it('leaves alone a leftover whose session this daemon does not keep', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  // Another daemon's machine, up and running, with the session it was made for
+  // on its label. This daemon keeps no sessions at all.
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'theirs',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/theirs' },
+    }],
+    calls: [],
+  }));
+
+  const lines: string[] = [];
+  await load(options(state, {
+    profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
+  }), [], (line) => { lines.push(line); });
+
+  await until(() => lines.some((one) => one.includes('left the disposable machine theirs alone')));
+  // Said instead of the line a machine this daemon's own gets, which is what a
+  // person reading the log needs to tell the two apart.
+  expect(lines.some((one) => one.includes('found the disposable machine theirs'))).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['theirs']);
+});
+
+it('labels a machine with the daemon that made it', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { scratch: { title: 'Scratch', disposable: true } },
+  }), [agentWith()], () => {}, {}, 'daemon-here');
+  const { open } = await room(loaded);
+  await open('echo:/one', { computer: 'disposable:scratch' }, folder);
+  await until(() => held(state).machines.length === 1);
+
+  // Beside the session, which is not enough on its own: the session id is the
+  // client's to choose, so the machine has to say whose it is.
+  expect(held(state).machines[0]?.labels).toMatchObject({
+    'ahpd.session': 'echo:/one',
+    'ahpd.host': 'daemon-here',
+  });
+});
+
+it('leaves alone a leftover another daemon made, for a session this one keeps', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  // Another daemon's machine, up, with this daemon's own session on its label.
+  // The session is kept here and has the same id the other daemon kept it
+  // under, because the two daemons keep sessions on one store's terms.
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'theirs',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/one', 'ahpd.host': 'daemon-there' },
+    }],
+    calls: [],
+  }));
+
+  const store = memorySessions();
+  store.setProvider('one', 'echo');
+  store.setConfig('one', { computer: 'computer://theirs' });
+
+  const lines: string[] = [];
+  await load(
+    options(state, { profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } } }),
+    [],
+    (line) => { lines.push(line); },
+    { sessions: store },
+    'daemon-here',
+  );
+
+  await until(() => lines.some((one) => one.includes('theirs')));
+  // Said as the other daemon's, which is what it is, rather than as a session
+  // this daemon does not keep - it keeps that one. Adopting it would find it
+  // instead, and a machine of this daemon's found at startup is one it is now
+  // watching.
+  expect(lines.some((one) => one.includes('left the disposable machine theirs alone'))).toBe(true);
+  expect(lines.some((one) => one.includes('it is another daemon\'s machine'))).toBe(true);
+  expect(lines.some((one) => one.includes('found the disposable machine theirs'))).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(10000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['theirs']);
+});
+
+it('refuses an alone machine another daemon made, and says whose one of its own was made for', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const alone = { 'ahpd.disposable': 'claude', 'ahpd.disposable.alone': 'true', 'ahpd.session': 'echo:/one', 'ahpd.owner': 'user:ana' };
+  writeFileSync(state, JSON.stringify({
+    machines: [
+      { name: 'theirs', image: 'node:22', labels: { ...alone, 'ahpd.host': 'daemon-there' } },
+      { name: 'ours', image: 'node:22', labels: { ...alone, 'ahpd.host': 'daemon-here' } },
+    ],
+    calls: [],
+  }));
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { claude: { title: 'Claude', disposable: true, disposableAlone: true } },
+  }), [agentWith()], () => {}, {}, 'daemon-here');
+  const port = loaded.computers;
+  if (port === undefined) throw new Error('the computer plugin registered no port');
+
+  /*
+   * Said rather than said nothing: a machine another daemon made is still
+   * alone for its own session, and answering nothing would let any session run
+   * in a machine built for one and charged to somebody else.
+   */
+  expect(await port.keptFor?.('theirs')).toEqual({ session: 'echo:/one', mine: false });
+  // And one of this daemon's says whose it was made for, which is the half a
+  // client cannot choose for itself: the channel is the client's.
+  expect(await port.keptFor?.('ours')).toEqual({ session: 'echo:/one', owner: 'user:ana' });
+});
+
+it('lets an adopted machine go when its session is pruned from the store', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'left-behind',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/one' },
+    }],
+    calls: [],
+  }));
+
+  /*
+   * What a daemon before this one kept about a session: which harness ran it,
+   * and the machine it was running in.
+   */
+  const store = memorySessions();
+  store.setProvider('one', 'echo');
+  store.setConfig('one', { computer: 'computer://left-behind' });
+
+  /*
+   * The catalogue a listing reads, which the test takes away when the
+   * transcript it names is deleted outside this host.
+   */
+  const rows = [{
+    id: 'one',
+    title: 'Echo session',
+    createdAt: '2026-10-03T12:00:00.000Z',
+    modifiedAt: '2026-10-03T12:00:00.000Z',
+    workingDirectories: [`file://${folder}`],
+  }];
+  const agent: Agent = {
+    ...echo({ path: folder, pace: 0 }),
+    // Serving the folder this session ran in, which is what makes a listing
+    // speak for it: one opened elsewhere is kept rather than called gone.
+    list: async () => [...rows],
+  };
+
+  const lines: string[] = [];
+  const { options: loaded } = await load(
+    options(state, { profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } } }),
+    [agent],
+    (line) => { lines.push(line); },
+    { sessions: store, path: folder },
+  );
+  const here = await room(loaded);
+  await until(() => lines.some((one) => one.includes('is held for echo:/one')));
+
+  // Listed once, so this host knows what the session was and where it ran.
+  await here.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  await until(() => store.config('one') !== undefined);
+
+  // The session is kept and nobody is running in the machine, which is what the
+  // adoption is for: the delay passes over it untouched.
+  await vi.advanceTimersByTimeAsync(1000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['left-behind']);
+
+  // The transcript is gone, so the next listing does not find it: a row no
+  // backend offers any more is a row this host forgets.
+  rows.length = 0;
+  await here.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  await until(() => store.config('one') === undefined);
+
+  // Which is the session leaving the machine that was adopted for it, and so
+  // the only thing left that could start the delay.
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => held(state).machines.length === 0);
+  expect(held(state).calls.some((one) => one[0] === 'rm' && one[2] === 'left-behind')).toBe(true);
+});
+
+it('adopts its own leftover whatever else is still loading', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'left-behind',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.session': 'echo:/one' },
+    }],
+    calls: [],
+  }));
+
+  // What a daemon before this one kept about the session its machine was made
+  // for, so adoption has something true to find.
+  const store = memorySessions();
+  store.setProvider('one', 'echo');
+  store.setConfig('one', { computer: 'computer://left-behind' });
+
+  const lines: string[] = [];
+  /*
+   * The computer plugin first and a slow one after it, so the adoption runs
+   * while this daemon has still not named its store: the fold that names it
+   * happens after every plugin has applied. A plugin order that let the slow
+   * one decide would leave the machine alone instead of holding it, which is
+   * the same daemon removing its own leftover later.
+   */
+  const { problems } = await loadPlugins(
+    [
+      { name: SOURCE, options: options(state, { profiles: { claude: { title: 'Claude', disposable: true } } }) },
+      { name: './packages/computer/test/fixtures/slow.mjs' },
+    ],
+    { base: base([], { sessions: store }), configDir: REPO, cwd: REPO, log: (line) => { lines.push(line); } },
+  );
+  expect(problems).toEqual([]);
+
+  await until(() => lines.some((one) => one.includes('left-behind')), 400);
+  expect(lines.some((one) => one.includes('is held for echo:/one'))).toBe(true);
+  expect(lines.some((one) => one.includes('left the disposable machine left-behind alone'))).toBe(false);
+});
+
+it('ignores a leave for a session the machine does not hold', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({
+    // No session in it: nobody is counting, so the machine is on its delay.
+    machines: [{
+      name: 'left-behind',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude' },
+    }],
+    calls: [],
+  }));
+
+  const lines: string[] = [];
+  const { options: loaded } = await load(
+    options(state, { profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } } }),
+    [],
+    (line) => { lines.push(line); },
+  );
+  await until(() => lines.some((one) => one.includes('left-behind left behind; it goes 1000ms from now')), 400);
+
+  /*
+   * A session this machine never had, which is what a signal from another
+   * daemon or a second one of the same looks like. Nothing is counting it, and
+   * a leave nobody was counting must not put the machine's last minute back to
+   * where it was: the timer is not restarted, so the machine still goes at the
+   * 1000ms the listing gave it rather than 1000ms after this.
+   */
+  await vi.advanceTimersByTimeAsync(600);
+  await loaded.computers?.leave?.('left-behind', 'echo:/other');
+  await settle();
+  await vi.advanceTimersByTimeAsync(600);
+  // The removal is a subprocess, so it lands on real time whatever the clock
+  // says: waited for rather than slept past, which is what makes this hold
+  // when the whole suite is running beside it.
+  await until(() => held(state).machines.length === 0, 400);
+  expect(held(state).machines.map((one) => one.name)).toEqual([]);
+});
+
+/*
+ * Task 08: an alone machine is kept for the one session it was made for.
+ */
+it('refuses another session the machine an alone profile made, and takes its own back', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: {
+      alone: { title: 'Alone', disposable: true, disposableAlone: true },
+      shared: { title: 'Shared', disposable: true },
+    },
+  }), [agentWith()]);
+  const { client, open } = await room(loaded);
+  await open('echo:/one', { computer: 'disposable:alone' }, folder);
+  await until(() => held(state).machines.length === 1);
+  const box = held(state).machines[0]?.name as string;
+  expect(box).toBeDefined();
+  expect(held(state).machines[0]?.labels).toMatchObject({
+    'ahpd.disposable.alone': 'true',
+    'ahpd.session': 'echo:/one',
+  });
+
+  /*
+   * The picker keeps the machine out of a second session's list, and a client
+   * that read an older one, or a person who typed the id, is refused at its own
+   * creation. Neither session is named in the sentence: what it says is that
+   * the machine is not this one's.
+   */
+  await expect(client.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/two',
+      provider: 'echo',
+      config: { computer: `computer://${box}` },
+      workingDirectories: [folder],
+    },
+  })).rejects.toThrow(`computer://${box} belongs to another session`);
+
+  /*
+   * And its own session sends its whole config bag on the first turn, still
+   * naming the source it picked rather than the machine that came back. The
+   * two are the same choice, so it is taken back rather than refused for
+   * belonging to another session.
+   */
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: 'echo:/one',
+      action: { type: 'session/configChanged', config: { computer: 'disposable:alone' } },
+    },
+  });
+  await wait(200);
+  await settle();
+  expect(held(state).machines.map((one) => one.name)).toEqual([box]);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+});
+
+it('refuses another session only for a machine that is alone', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { shared: { title: 'Shared', disposable: true } },
+  }), [agentWith()]);
+  const { client, open } = await room(loaded);
+  await open('echo:/one', { computer: 'disposable:shared' }, folder);
+  await until(() => held(state).machines.length === 1);
+  const box = held(state).machines[0]?.name as string;
+  expect(box).toBeDefined();
+
+  // A machine nothing says is alone is a machine any session may enter, which
+  // is what picking the profile by hand means.
+  await client.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/two',
+      provider: 'echo',
+      config: { computer: `computer://${box}` },
+      workingDirectories: [folder],
+    },
+  });
+  await until(() => held(state).machines.length === 1);
+});
+
+it('takes the session an alone machine was made for back into it after a restart', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'alone',
+      image: 'node:22',
+      labels: {
+        'ahpd.disposable': 'alone',
+        'ahpd.disposable.alone': 'true',
+        'ahpd.session': 'echo:/one',
+      },
+    }],
+    calls: [],
+  }));
+  const profiles = { alone: { title: 'Alone', disposable: true, disposableAlone: true, disposableDelay: 1000 } };
+  const at = new Date('2026-10-03T12:00:00.000Z');
+  const rows = [{
+    id: 'one',
+    title: 'Echo session',
+    createdAt: at.toISOString(),
+    modifiedAt: at.toISOString(),
+    workingDirectories: [`file://${folder}`],
+  }];
+  const agent: Agent = {
+    ...echo({ path: folder, pace: 0 }),
+    list: async () => [...rows],
+    // A row with a transcript behind it is one a client can open, which is
+    // what the resume below needs before it sends anything.
+    transcript: async () => [],
+  };
+
+  const store = memorySessions();
+  store.setProvider('one', 'echo');
+  store.setConfig('one', { computer: 'computer://alone' });
+
+  const lines: string[] = [];
+  const { options: loaded } = await load(options(state, { profiles }), [agent], (line) => { lines.push(line); }, { sessions: store, path: folder });
+  const here = await room(loaded);
+  await until(() => lines.some((one) => one.includes('is held for echo:/one')));
+
+  // The session resumed from the list is the one the machine was made for, so
+  // the refusal the port carries has nothing to say to it.
+  const chat = `ahp-chat://default/${Buffer.from('echo:/one', 'utf8').toString('base64url')}`;
+  await here.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+  await here.client.handle({ method: 'subscribe', params: { channel: chat } });
+  await here.client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'again' } } },
+  });
+  await until(() => actions(here.peer, chat).some((one) => one.type === 'chat/turnComplete'));
+
+  await vi.advanceTimersByTimeAsync(10000);
+  await wait(300);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['alone']);
+});
+
+/*
+ * Task 09: a machine made for a session is counted like any other.
+ */
+it('counts a machine made for a session against max, and refuses the next one', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    max: 1,
+    profiles: { claude: { title: 'Claude', disposable: true } },
+  }), [agentWith()]);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+  await until(() => held(state).machines.length === 1);
+
+  // The host is full, so the second session is refused the sentence a write to
+  // `computer://<name>` is refused with - decision
+  // `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+  await expect(open('ahp-session:/two', { computer: 'disposable:claude' }, folder))
+    .rejects.toThrow(/This host holds 1 computers already/);
+  await settle();
+  expect(held(state).machines).toHaveLength(1);
+});
+
+/*
+ * The count and the create it allows are one thing, so a machine being made is
+ * one of the machines this host holds.
+ */
+it('counts a machine being made against max, so two sessions at once make one', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    max: 1,
+    profiles: { claude: { title: 'Claude', disposable: true } },
+  }), [agentWith()]);
+  const { open } = await room(loaded);
+
+  // Two sessions naming a source in the same breath, which count the machines
+  // this host holds before either of them is made.
+  const asked = await Promise.allSettled([
+    open('ahp-session:/one', { computer: 'disposable:claude' }, folder),
+    open('ahp-session:/two', { computer: 'disposable:claude' }, folder),
+  ]);
+  const refused = asked.filter((one) => one.status === 'rejected');
+  expect(refused).toHaveLength(1);
+  expect(String((refused[0] as PromiseRejectedResult).reason)).toMatch(/This host holds 1 computers already/);
+  await settle();
+  expect(held(state).machines).toHaveLength(1);
+});
+
+/*
+ * Task 10: the session's folder is the profile's to allow.
+ */
+it('leaves the folder of a session out of a machine whose profile did not ask for it', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true, workdir: '/ahpd' } },
+  }), [agentWith()]);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+
+  // Nothing of the session's folder is in the machine, and the session starts
+  // where the profile said rather than in a folder it cannot see - decision
+  // `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts ?? []).toEqual([]);
+  expect(box.workdir).toBe('/ahpd');
+});
+
+it('mounts the session\'s folder read-write at the same path where the profile says sessionFolder', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'project');
+  mkdirSync(folder);
+
+  const { options: loaded } = await load(options(state, {
+    profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true, workdir: '/ahpd' } },
+  }), [agentWith()]);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+
+  // One `-v`, the same path on both sides and no `:ro`, so a harness keys its
+  // own record the same inside and out.
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${folder}:${folder}`]);
+  // The profile's own `workdir` is the operator's, and the folder does not
+  // take it.
+  expect(box.workdir).toBe('/ahpd');
+});
+
+/*
  * Task 04: the docs' own example.
  *
  * The object below is the `profiles` half of the example in `docs/COMPUTER.md`,
@@ -468,6 +1222,7 @@ it('loads the disposable example from docs/COMPUTER.md', async () => {
         disposable: true,
         disposableDelay: 300000,
         disposableAlone: true,
+        sessionFolder: true,
       },
     },
   };

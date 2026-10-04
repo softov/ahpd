@@ -515,7 +515,7 @@ it('refuses an automation whose owner this host has never met', async () => {
 it('the port a backend is handed refuses the same machine', async () => {
   // The check the host and the port share, and the one every road that does not
   // create a session reaches: the label read before the backend enters.
-  const guarded = computersFor(machines(), 'acp');
+  const guarded = computersFor(machines(), 'acp', 'acp:/one');
   await expect(guarded.how('box', { command: 'node' })).rejects.toThrow(/computer:\/\/box was prepared for claude/);
   expect(await guarded.how('open', { command: 'node' })).toEqual({ command: process.execPath, args: [FIXTURE] });
 });

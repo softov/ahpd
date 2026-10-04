@@ -103,6 +103,20 @@ export interface PluginContext {
    * nowhere else - decision `a-dev-container-owner-is-kept-beside-the-config`.
    */
   readonly configDir: string;
+  /**
+   * What this daemon is, as one id that is the same across its restarts.
+   *
+   * A random value made once and kept beside the configuration, read after -
+   * not a process id, because what a plugin labels a machine with has to
+   * outlive the run that made it, or a daemon restarting could not tell a
+   * leftover of its own from one a daemon that has been and gone left
+   * behind.
+   *
+   * Optional because the loader is what knows the configuration folder: a
+   * loader that names none leaves it absent, and a plugin then labels nothing
+   * with it, which matches every daemon that also labels nothing.
+   */
+  readonly hostId?: string;
   /** One line to the daemon's log. */
   log(message: string): void;
   /**
@@ -192,6 +206,23 @@ export interface PluginHost extends PluginContext {
    * port refuses the name rather than answering it with nothing.
    */
   secret(name: string, work?: SecretWork): Promise<string>;
+  /**
+   * Whether this daemon keeps one session, read when called.
+   *
+   * The computer plugin asks at startup about a disposable machine it found,
+   * to know whether that leftover is one of its own to adopt - decision
+   * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps`. The
+   * store is the host's own and the plugin that made the machine may have
+   * loaded before the session was ever kept, so it is read when it is asked
+   * for.
+   *
+   * A promise, because the store is named by the fold that runs after every
+   * plugin has applied and a plugin asks while the later ones are still
+   * loading: an answer of "no" until the fold has run would make a slow plugin
+   * decide which leftovers this daemon adopts. A host that keeps no sessions
+   * answers `false` for all of them, and adopts nothing.
+   */
+  sessionKept(uri: string): Promise<boolean>;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */

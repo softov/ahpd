@@ -661,3 +661,32 @@ it('reads a label value holding a tab or a newline as it was written', async () 
   // is what a value cannot break: the separators are escaped inside it.
   expect((await runtime.list())[0]).toMatchObject({ id: 'wrapped', owner, project: 'ahpd\tdocs\nold' });
 });
+
+it('answers a machine removed between the listing and its labels with the ones that stayed', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({
+    machines: [
+      { name: 'gone', image: 'node:22', labels: { 'ahpd.computer': '1', 'ahpd.session': 'echo:/gone' } },
+      { name: 'stays', image: 'node:22', labels: { 'ahpd.computer': '1', 'ahpd.session': 'echo:/stays' } },
+    ],
+    // The listing answers both, and drops one before the `inspect` after it.
+    vanishAfterPs: 'gone',
+    calls: [],
+  }));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    label: 'ahpd.computer=1',
+  });
+
+  /*
+   * `inspect` prints the machine it found and exits non-zero over the one it
+   * could not, which is not a failure of the listing: the machine is gone, and
+   * the listing is of what is there. The line that did come back is `stays`,
+   * and it is matched by the name beside it rather than by its place in the
+   * answer, which would give `stays` the labels of `gone`.
+   */
+  expect(await runtime.list()).toMatchObject([{ id: 'stays', session: 'echo:/stays' }]);
+});

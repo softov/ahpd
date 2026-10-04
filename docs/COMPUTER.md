@@ -263,7 +263,7 @@ The names are published in the create schema as an `enum` with titles and descri
 
 ## Disposable machines
 
-A profile that sets `disposable: true` has no machine until a session starts. It is offered in the session's `computer` picker as `disposable:<profile>`, labelled with the profile's title, and the machine is made at session start from the profile, that session's harness needs and the session's folder mounted at the same path:
+A profile that sets `disposable: true` has no machine until a session starts. It is offered in the session's `computer` picker as `disposable:<profile>`, labelled with the profile's title, and the machine is made at session start from the profile, that session's harness needs and, where the profile says so, the session's folder mounted at the same path:
 
 ```json
 { "plugins": [{ "name": "@ahpd/computer", "options": {
@@ -275,7 +275,8 @@ A profile that sets `disposable: true` has no machine until a session starts. It
       "needs": { "claudeConfigDirectory": "/srv/claude-home" },
       "disposable": true,
       "disposableDelay": 300000,
-      "disposableAlone": true
+      "disposableAlone": true,
+      "sessionFolder": true
     }
   }
 } }] }
@@ -285,11 +286,20 @@ A profile that sets `disposable: true` has no machine until a session starts. It
 | --- | --- |
 | `disposable` | The profile is offered as a `disposable:<profile>` row instead of being made ahead of time. The machine takes the `machine()` needs of the harness the session runs, so the profile names no `agents`. |
 | `disposableDelay` | Milliseconds after the last session using the machine is disposed before it is removed. Default `300000`, five minutes. A session that picks the machine again in that window cancels the timer. |
-| `disposableAlone` | The machine is not listed in the picker, so only the session it was made for runs in it. The `disposable:<profile>` row is still offered. |
+| `disposableAlone` | The machine is not listed in the picker, so only the session it was made for runs in it. The `disposable:<profile>` row is still offered, and a second session that names the machine by its `computer://<id>` is refused rather than sharing a machine built for one. |
+| `sessionFolder` | The session's working folder is mounted read-write at the same path inside the machine, so Claude keys its history the same inside and out. Off by default: the folder is the client's and this is the host's filesystem inside a machine, so a profile opts in. Without it a session's history written in the machine is not this host's, and the session starts in the profile's `workdir` or the image's. A profile's own `folder` is the operator's and is mounted either way. |
 
-The machine is labelled `ahpd.disposable=<profile>`, so a daemon that restarts finds the machines it left behind and gives each the delay again. Its `computer` setting is the `computer://<id>` it became, so a session started again before its first turn keeps the machine it already made rather than making a second one.
+A machine made this way is held to the plugin's `max`, the same as one made from the form, and the request that names the source needs `computer:write` as well as `session:write`: a `disposable:<profile>` or `devcontainer://<folder>` on `createSession`, on a change before the session's first turn and on an automation's start. A full host refuses with the same words a write to `computer://<name>` gets.
+
+Counting and making a machine are one turn per Docker, so `max` is `max` and not a race two sessions run to get past. The cost of that is that the turn runs for as long as the create takes, and a `devcontainer up` that builds an image holds every other session's create behind it until it ends. A session waiting on a full host would be refused; a session waiting on a slow one waits.
+
+The machine is labelled `ahpd.disposable=<profile>`, `ahpd.session=<uri>` and `ahpd.host=<id>`, so a daemon that restarts finds the machines it left behind, knows which session each was made for and knows which daemon made it. The session id alone is not enough: a client picks the channel a session id comes from, so two daemons on one Docker keep their sessions under the same ids. Its `computer` setting is the `computer://<id>` it became, so a session started again before its first turn keeps the machine it already made rather than making a second one.
 
 A session that picks the running machine, by its `computer://<id>`, counts as a user of it too; the delay starts when the last of them is disposed. A machine that could not be made answers the session with the runtime's own sentence.
+
+At startup a daemon lists the machines labelled `ahpd.disposable` and adopts the ones that carry its own `ahpd.host` and whose `ahpd.session` it still holds, counting that session among its users. An adopted machine arms no timer: the delay starts when its last session leaves, as it would have on a machine that never went out. A leftover this daemon does not adopt - one whose session was deleted while they were all down, or one another daemon made and is keeping - is left exactly where it is. The daemon that made it is the one that adopts and removes it; where there is none, no daemon removes it and no daemon is charged for the time it is up. Find those with `docker ps -a --filter label=ahpd.disposable`, and remove one with `docker rm -f <id>`.
+
+A `disposableAlone` machine is refused as well to a session whose owner is not the owner it was made for, and to every session on a daemon that did not make it: a channel is the client's to choose, so a session opened under a disposed one's id spells the same URI and the owner is what tells the two apart, and a machine another daemon made is that daemon's to run and to remove.
 
 **A copy-in is paid on every create**, so a disposable profile prefers mounts. A need delivered as a copy is paid again for every session's machine and lost with it, which is the opposite of what a profile picked per session wants.
 

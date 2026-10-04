@@ -3,6 +3,7 @@ import type { HostTool } from '@ahpd/sdk';
 import { allowedImages, isFlag } from './manifest.js';
 import { allowedBy } from './reference.js';
 import type { ComputerRuntime } from './runtime.js';
+import { inTurn, roomFor } from './runtime.js';
 
 /**
  * Making a machine, using one, and throwing it away.
@@ -68,13 +69,17 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       effects: { writes: true, network: true },
       advancedPermission: true,
       instruction: 'Ask for one when a task needs a machine of its own - something to install into, break, or run work in that should not touch this host. Release it when the work is done.',
-      run: async (input) => {
+      run: async (input) => inTurn(runtime, async () => {
         const asked = object(input);
-        const held = await runtime.list();
-        if (held.length >= options.max) {
-          return `There are already ${held.length} computers, which is the most this host will have. Release one first: ${held.map((one) => `computer://${one.id}`).join(', ')}`;
-        }
         const name = said(asked.name) ?? `${options.prefix}-${randomUUID().slice(0, 8)}`;
+        // One listing for both questions, in the same turn as the create: a
+        // create in flight is a machine this host holds by the time the next
+        // call counts.
+        const held = await runtime.list();
+        const full = roomFor(held, options.max);
+        if (full !== undefined) {
+          return `There are already ${full.length} computers, which is the most this host will have. Release one first: ${full.map((one) => `computer://${one.id}`).join(', ')}`;
+        }
         if (held.some((one) => one.id === name)) {
           return `There is already a computer called ${name}.`;
         }
@@ -98,7 +103,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
           ...(memory === undefined ? {} : { memory }),
         });
         return `computer://${made.id} is running on ${made.image}. Read computer://${made.id}/status for what it is, or run something in it with computer_exec.`;
-      },
+      }),
     },
     {
       definition: {

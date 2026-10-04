@@ -1,7 +1,7 @@
 ---
 title: A disposable machine is made for a session and goes after it
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -87,28 +87,32 @@ another session names an alone machine -> [new] refused
 | For now adoption reads `sessionKept` at startup as it is, and the host calls `leave` for the machine a session's stored config names when it forgets or prunes that session, so an adopted leftover goes once its session is pruned; the leave is one host function, so another way to see a gone session can replace it | Softov, 2026-10-03, asked "how does adoption see that a kept session is gone before the store prunes it?": "leave on forget/prune" | 07 |
 | For now an automation's start acts as its owner, through `principalFor(owner)`, and is refused a source when that owner has not signed in since the daemon started; the principal is read in one place on that road | Softov, 2026-10-03, asked "which principal does an automation's start act as for `computer:write`?": "its owner via principalFor(owner), refused if the owner has not signed in since start" | 09 |
 | For now the `policy/01` check also runs on a pre-turn restart that picks a source and on an automation's start, with the same kinds as `createSession`, through one function the three roads share | Softov, 2026-10-03, asked "does the `policy/01` check also run on a pre-turn restart and an automation's start?": "yes, same kinds" | 09 |
+| (defaulted: a daemon has an identity of its own, a random id made once and kept in its config dir at 0600, read after, and named to plugins as `PluginContext.hostId`; it is not a process id, because adoption has to survive a restart. A disposable machine is labelled `ahpd.host=<id>` beside `ahpd.session`, and adoption and `keptFor` place a machine by that label, so a leftover of another daemon is left where it is and is refused to every session here) | the review of 2026-10-03, finding 4: `PluginContext.hostName` is a name, not something unique to a process, and a session id is the client's to choose, so neither can say whose machine it is | 07, 08 |
+| (defaulted: `sessionKept` also asks that the session's provider is the URI's own scheme, so a client that opens `echo:/one` over a disposed `acp:/one` does not adopt a leftover made for the other backend) | the review of 2026-10-03, finding 4: the store is keyed by the id inside the URI and two providers share those ids | 07 |
+| (defaulted: `ComputerPort.keptFor` answers `{ session, owner, mine }` rather than a session string. `machineRefusal` refuses an owner that differs from the machine's own `ahpd.owner` label, and refuses a machine this daemon did not make before it compares the session at all. An owner on either side is optional: a host with no users directory has no owner to disagree about) | the review of 2026-10-03, finding 4: the refusal compares two strings a client can choose, and the smaller half of it needs the asking session's owner to reach the port | 08 |
+| (defaulted: a new session that reuses a disposed session's id from the same owner on the same daemon still reaches that session's old alone machine. The two rules the review offers are not available here: `SessionStore` keeps no creation time to compare the machine against, and `Machine.created` is Docker's display string rather than a timestamp. Closing it needs a per-session nonce on the machine's label, which is a change to the store this plan does not make) | the review of 2026-10-03, finding 4, the "a new session reusing a disposed session's id" case | 08 |
 
 ## Proposed architecture
 
 - **State flow** - the host keeps, per session, the machine it entered (`enter` in `spawn`, `leave` at dispose and when a restart moves it), and `sessionMachines` only for a machine made from a source; the plugin keeps the set of sessions per disposable machine; the machine keeps its profile, alone flag and session as labels.
-- **Layer responsibilities** - sdk: `enter`/`leave` placement, `leaveForgotten` for a session forgotten or pruned, the grant check, `machineChecked` for the `policy/01` kinds on all three roads, `PluginHost.sessionKept`, the shared machine refusal reader · computer: labels, adoption, `max`, `sessionFolder`, the port's alone answer.
+- **Layer responsibilities** - sdk: `enter`/`leave` placement, `leaveForgotten` for a session a listing stops finding, the grant check, `admitted` for the `policy/01` kinds on all three roads, `PluginHost.sessionKept` with the provider asked of it, the daemon's own id in the config dir, the shared machine refusal reader · computer: labels, adoption, `max`, `sessionFolder`, the port's alone answer.
 - **Source-of-truth files** - [`code://packages/computer/src/plugin.ts`](../../../../packages/computer/src/plugin.ts), [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/computers.ts`](../../../../packages/sdk/src/computers.ts)
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A disposable profile is offered in the picker](task-01-offered-in-the-picker.md) | implemented | - |
-| [02 - The machine is made when the session starts](task-02-made-at-session-start.md) | implemented | 01 |
-| [03 - It goes after the last session, unless picked again](task-03-it-goes-after-the-last-session.md) | implemented | 02 |
-| [04 - Docs](task-04-docs.md) | implemented | 03 |
-| [05 - A machine is left when its session moves away before the first turn](task-05-a-machine-is-left-when-its-session-moves-away.md) | todo | - |
-| [06 - A resumed session counts as a user](task-06-a-resumed-session-counts-as-a-user.md) | todo | 05 |
-| [07 - A daemon adopts only its own leftovers](task-07-a-daemon-adopts-only-its-own-leftovers.md) | todo | 06, plugin/15 task 08 |
-| [08 - A disposable-alone machine refuses another session](task-08-a-disposable-alone-machine-refuses-another-session.md) | todo | 07, plugin/15 task 11 |
-| [09 - A machine made for a session counts against max and needs computer:write](task-09-a-machine-made-for-a-session-counts.md) | todo | - |
-| [10 - The session folder needs the profile's flag](task-10-the-session-folder-needs-the-profiles-flag.md) | todo | - |
-| [11 - Docs and comments](task-11-docs-and-comments.md) | todo | 05, 06, 07, 08, 09, 10 |
+| [01 - A disposable profile is offered in the picker](task-01-offered-in-the-picker.md) | done | - |
+| [02 - The machine is made when the session starts](task-02-made-at-session-start.md) | done | 01 |
+| [03 - It goes after the last session, unless picked again](task-03-it-goes-after-the-last-session.md) | done | 02 |
+| [04 - Docs](task-04-docs.md) | done | 03 |
+| [05 - A machine is left when its session moves away before the first turn](task-05-a-machine-is-left-when-its-session-moves-away.md) | done | - |
+| [06 - A resumed session counts as a user](task-06-a-resumed-session-counts-as-a-user.md) | done | 05 |
+| [07 - A daemon adopts only its own leftovers](task-07-a-daemon-adopts-only-its-own-leftovers.md) | done | 06, plugin/15 task 08 |
+| [08 - A disposable-alone machine refuses another session](task-08-a-disposable-alone-machine-refuses-another-session.md) | done | 07, plugin/15 task 11 |
+| [09 - A machine made for a session counts against max and needs computer:write](task-09-a-machine-made-for-a-session-counts.md) | done | - |
+| [10 - The session folder needs the profile's flag](task-10-the-session-folder-needs-the-profiles-flag.md) | done | - |
+| [11 - Docs and comments](task-11-docs-and-comments.md) | done | 05, 06, 07, 08, 09, 10 |
 
 ## Risks and tradeoffs
 
@@ -119,21 +123,18 @@ another session names an alone machine -> [new] refused
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 implemented on 2026-09-26 and reviewed the same day; their code is on main as of 2026-10-02.
-- **Next action:** [task-05-a-machine-is-left-when-its-session-moves-away.md](task-05-a-machine-is-left-when-its-session-moves-away.md), then 06 and 07 (after `plugin/15` task 08); 09 and 10 go in any order; 08 after `plugin/15` task 11.
-- **Open questions:** none.
-- **Watch out for:** a session that restarts before its first turn must not start the removal timer; the session's `computer` setting is rewritten to `computer://<id>`, a re-sent source is matched through the host's `sessionMachines`, and `enter` is a set rather than a count so a restart cannot look like a second user; `plugin/15` task 11 adds a create-time machine reader that task 08's refusal joins; `container/05-p1` changes how env values reach a machine and is not this plan's work.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] Picking `disposable: claude` starts a Claude session in a new machine.
-- [ ] The machine is removed `disposableDelay` after its last session is disposed, and survives if another session picks it first.
-- [ ] A session that switches away before its first turn lets its machine go after the delay, including when the new source is refused.
-- [ ] A session resumed from the list after a daemon restart holds its machine until it is disposed.
-- [ ] A kept session holds its machine across a daemon restart, and a second daemon on the same Docker neither removes it nor opens an up-time stretch for it.
-- [ ] `disposableAlone` rows never appear for a second session, and a hand-typed id is refused at creation.
-- [ ] `max` and `computer:write` hold for `disposable:` and `devcontainer://` machines made at session start, on `createSession`, a pre-turn restart and an automation's start, the automation acting as its owner.
-- [ ] A `policy/01` computer refusal holds on a pre-turn restart that picks a source and on an automation's start, as on `createSession`.
-- [ ] An adopted leftover goes `disposableDelay` after its session is pruned from the store.
-- [ ] A profile without `sessionFolder` makes a machine with no session folder.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/COMPUTER.md`, `plans/index.md` updated.
+- [x] Picking `disposable: claude` starts a Claude session in a new machine.
+- [x] The machine is removed `disposableDelay` after its last session is disposed, and survives if another session picks it first.
+- [x] A session that switches away before its first turn lets its machine go after the delay, including when the new source is refused.
+- [x] A session resumed from the list after a daemon restart holds its machine until it is disposed.
+- [x] A kept session holds its machine across a daemon restart, and a second daemon on the same Docker neither removes it nor opens an up-time stretch for it.
+- [x] `disposableAlone` rows never appear for a second session, and a hand-typed id is refused at creation.
+- [x] `max` and `computer:write` hold for `disposable:` and `devcontainer://` machines made at session start, on `createSession`, a pre-turn restart and an automation's start, the automation acting as its owner.
+- [x] A `policy/01` computer refusal holds on a pre-turn restart that picks a source and on an automation's start, as on `createSession`.
+- [x] An adopted leftover goes `disposableDelay` after its session is pruned from the store.
+- [x] A profile without `sessionFolder` makes a machine with no session folder.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/COMPUTER.md` updated. (`plans/index.md` was left alone, as the work's own rules say.)

@@ -1,6 +1,6 @@
 ---
 title: A disposable machine is left when its session moves away before the first turn
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

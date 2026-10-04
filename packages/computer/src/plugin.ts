@@ -8,7 +8,7 @@ import { patternOf } from './reference.js';
 import { revealed } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import type { Profile } from './manifest.js';
-import { claimedOf, devcontainerFolder, dockerRuntime, isRunning, preparedFor, profileOf } from './runtime.js';
+import { claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, roomFor, sessionOf } from './runtime.js';
 import type { ComputerRuntime, MachineSpec } from './runtime.js';
 import { claimOwned, forgetOwned, ownedOf } from './owners.js';
 import { computerTools } from './tools.js';
@@ -169,6 +169,11 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // disagree.
       ...(said.disposable === true ? { disposable: true, disposableDelay: whole(said.disposableDelay, defaults.disposableDelay) } : {}),
       ...(said.disposableAlone === true ? { disposableAlone: true } : {}),
+      // And whether the session that made the machine brings its folder in,
+      // which is the host's filesystem inside a machine the client chose to be
+      // somewhere else - decision
+      // `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
+      ...(said.sessionFolder === true ? { sessionFolder: true } : {}),
     };
   }
   return Object.keys(held).length === 0 ? undefined : held;
@@ -548,10 +553,18 @@ export const apply: Plugin['apply'] = (host, options) => {
     held.timer = timer;
   };
 
-  /** Start watching a machine, whether this daemon made it or found it. */
-  const watch = (id: string, profile: string, delay: number): void => {
+  /**
+   * Start watching a machine, whether this daemon made it or found it.
+   *
+   * `first` is the session an adopted machine starts with already in it, so
+   * that it is not given the delay for a session that is running in it: the
+   * session it was made for is the one that decides, and it may well be.
+   */
+  const watch = (id: string, profile: string, delay: number, first?: string): void => {
     if (disposables.has(id)) return;
-    disposables.set(id, { profile, delay, sessions: new Set() });
+    const sessions = new Set<string>();
+    if (first !== undefined) sessions.add(first);
+    disposables.set(id, { profile, delay, sessions });
     arm(id);
   };
 
@@ -562,9 +575,31 @@ export const apply: Plugin['apply'] = (host, options) => {
    * is given the delay again. Its profile may be gone from the options, and the
    * default stands then. A machine the listing cannot reach is answered for
    * where a listing is asked for, so nothing is said here.
+   *
+   * The book below is not complete until this is over, so a session that enters
+   * or leaves one of these machines waits for it rather than being counted
+   * against a machine this daemon has not found yet: an `enter` that arrived
+   * first would be dropped, and the machine armed by this listing would then
+   * be removed out from under the session running in it.
    */
-  void made.list().then((found) => {
+  const listing = made.list().then(async (found) => {
     for (const one of found) {
+      /*
+       * A disposable machine names the session it was made for, and only the
+       * daemon that made it and keeps that session adopts it: a session id is
+       * the client's to choose and two daemons on the same Docker keep
+       * sessions under the same ones, so the machine's own `ahpd.host` is what
+       * says whose it is - decision
+       * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps`.
+       */
+      const mine = one.host === host.hostId;
+      const adopted = one.disposable !== undefined && one.session !== undefined && mine && await host.sessionKept(one.session);
+      if (one.disposable !== undefined && one.session !== undefined && !adopted) {
+        host.log(mine
+          ? `${name}: left the disposable machine ${one.id} alone; ${one.session} is not a session this daemon keeps`
+          : `${name}: left the disposable machine ${one.id} alone; it is another daemon's machine`);
+        continue;
+      }
       // Up before this daemon was watching, and still up: its stretch starts
       // now, because the stretch a daemon before this one was keeping is one
       // that daemon's to write. A machine that is stopped is not up, and a
@@ -572,10 +607,13 @@ export const apply: Plugin['apply'] = (host, options) => {
       if (isRunning(one)) open(one.id);
       if (one.disposable === undefined) continue;
       const delay = profiles?.[one.disposable.profile]?.disposableDelay ?? defaults.disposableDelay;
-      watch(one.id, one.disposable.profile, delay);
+      watch(one.id, one.disposable.profile, delay, one.session);
       // Said out loud because a machine nobody remembers making, and that a
-      // timer is about to remove, is the sort of thing a person looks for.
-      host.log(`${name}: found the disposable machine ${one.id} left behind; it goes ${delay}ms from now`);
+      // timer may be about to remove, is the sort of thing a person looks for.
+      // An adopted one is not going anywhere yet: it is waiting on its session.
+      host.log(adopted
+        ? `${name}: found the disposable machine ${one.id} left behind; it is held for ${one.session}`
+        : `${name}: found the disposable machine ${one.id} left behind; it goes ${delay}ms from now`);
     }
   }).catch(() => {});
 
@@ -706,6 +744,41 @@ export const apply: Plugin['apply'] = (host, options) => {
       return held === undefined ? undefined : preparedFor(held);
     },
     /*
+     * And the session a machine is kept for alone, read from the same record.
+     *
+     * Three halves are needed: a machine is only alone because its profile
+     * said so, the session it is alone for is on its own label, and the owner
+     * it was built for is on another - a channel is the client's to choose, so
+     * a session opened under a disposed one's id spells the same URI and the
+     * owner is what tells the two apart. A machine made before either label
+     * existed answers nothing, so its own session may still be resumed into it.
+     *
+     * The daemon that made it is the fourth, and it is said rather than kept
+     * quiet: a machine another daemon made is still alone for its own session,
+     * and a machine this daemon neither made nor removes is not one to hand out
+     * - decision
+     * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps` for
+     * the daemon label, `a-disposable-alone-machine-refuses-another-session`
+     * for the refusal.
+     */
+    keptFor: async (id) => {
+      const held = await made.inspect(id);
+      if (held === undefined || disposableOf(held)?.alone !== true) return undefined;
+      if (hostOf(held) !== host.hostId) {
+        /*
+         * Somebody else's, and said so rather than said nothing: a machine made
+         * by another daemon is still alone for its own session, and answering
+         * nothing would let any session onto a machine built for one.
+         */
+        return { session: sessionOf(held) ?? '', mine: false };
+      }
+      const said = claimedOf(held);
+      return {
+        session: sessionOf(held) ?? '',
+        ...(said.owner === undefined ? {} : { owner: said.owner }),
+      };
+    },
+    /*
      * And the machine a session starts in, made from what its setting named.
      *
      * The profile says what the machine is; the session says which harness it
@@ -762,15 +835,26 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(asked.team === undefined ? {} : { team: asked.team }),
           ...(asked.project === undefined ? {} : { project: asked.project }),
         });
-        try {
-          // The CLI decides the container's name, so the id is the one it made
-          // rather than the one this host suggested.
-          const machine = await made.run({ ...spec, label });
-          return machine.id;
-        }
-        catch (error) {
-          throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        // Counted before it is made, and with the same count a write to
+        // `computer://<name>` passes: a machine made for a session is a machine
+        // this host holds - decision
+        // `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+        // The count and the create are one turn, so a second session starting
+        // while this one is making its machine counts the machine being made.
+        return inTurn(made, async () => {
+          const full = roomFor(await made.list(), max);
+          if (full !== undefined) {
+            throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
+          }
+          try {
+            // The CLI decides the container's name, so the id is the one it made
+            // rather than the one this host suggested.
+            return (await made.run({ ...spec, label })).id;
+          }
+          catch (error) {
+            throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        });
       }
       const prefixOf = 'disposable:';
       if (!asked.source.startsWith(prefixOf)) return undefined;
@@ -806,10 +890,16 @@ export const apply: Plugin['apply'] = (host, options) => {
        * profile rather than the body: a body's `folder` is the deployment's to
        * allow, and this one is the operator's own source plus the host's own
        * session folder.
+       *
+       * Only where the profile says `sessionFolder`. The folder is the client's
+       * and this is the host's filesystem inside a machine, so it reaches one
+       * machine the profile opted in - decision
+       * `a-session-folder-reaches-a-machine-only-where-its-profile-allows`. A
+       * profile's own `folder` is the operator's and is untouched either way.
        */
       const chosen: Profile = {
         ...profile,
-        ...(asked.folder === undefined ? {} : { folder: asked.folder }),
+        ...(asked.folder === undefined || profile.sessionFolder !== true ? {} : { folder: asked.folder }),
         ...(own === undefined ? {} : { needs: own }),
       };
       const id = `${prefix}-${randomUUID().slice(0, 8)}`;
@@ -834,31 +924,56 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(asked.team === undefined ? {} : { team: asked.team }),
         ...(asked.project === undefined ? {} : { project: asked.project }),
       });
-      try {
-        await made.run({
-          ...spec,
-          label,
-          disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
-        });
-      }
-      catch (error) {
-        // The runtime's own sentence, kept: it is the only thing that says
-        // what Docker refused, and the session reads it as its creation error.
-        throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
-      }
+      // Counted before it is made, and with the same count a write to
+      // `computer://<name>` passes: a machine made for a session is a machine
+      // this host holds - decision
+      // `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+      // The count and the create are one turn, so a second session starting
+      // while this one is making its machine counts the machine being made.
+      await inTurn(made, async () => {
+        const full = roomFor(await made.list(), max);
+        if (full !== undefined) {
+          throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
+        }
+        try {
+          await made.run({
+            ...spec,
+            label,
+            disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
+            // The session this machine is made for, which is what a daemon
+            // restarting finds it by, and the daemon making it, which is what
+            // keeps it out of a daemon that keeps the same session ids.
+            session: asked.session,
+            ...(host.hostId === undefined ? {} : { host: host.hostId }),
+          });
+        }
+        catch (error) {
+          // The runtime's own sentence, kept: it is the only thing that says
+          // what Docker refused, and the session reads it as its creation error.
+          throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      });
       // Watched before the host says the session entered, so a session that
       // never starts still leaves a machine that goes.
       watch(id, key, delay);
       return id;
     },
     /*
-     * The count, which only a session starting or a session disposed moves.
+     * The count, which only a session starting or a session gone moves.
      *
-     * A session leaving is what starts the delay; a session arriving again -
-     * the same one after a restart the host did not report as a start, or
-     * another one that picked the machine - cancels it.
+     * A set of sessions rather than a number, so the same one entering twice -
+     * a restart before its first turn, which the host reports as a start like
+     * any other - is one user. A session leaving is what starts the delay; one
+     * arriving again, the same session after such a restart or another that
+     * picked the machine, cancels it.
+     *
+     * Both wait for the startup listing, which is what fills the book they
+     * count in: a session that enters a machine this daemon has not found yet
+     * would otherwise be counted against nothing, and the listing would then
+     * arm that machine's delay under the session running in it.
      */
-    enter: (id, session) => {
+    enter: async (id, session) => {
+      await listing;
       const held = disposables.get(id);
       if (held === undefined) return;
       held.sessions.add(session);
@@ -867,10 +982,16 @@ export const apply: Plugin['apply'] = (host, options) => {
         delete held.timer;
       }
     },
-    leave: (id, session) => {
+    leave: async (id, session) => {
+      await listing;
       const held = disposables.get(id);
-      if (held === undefined) return;
-      held.sessions.delete(session);
+      /*
+       * A session this machine is not counting is a session saying nothing:
+       * the host tells the port about a session that entered one, and a signal
+       * that arrives twice or from a machine another daemon owns must not start
+       * the delay over a session that is still in there.
+       */
+      if (held === undefined || !held.sessions.delete(session)) return;
       if (held.sessions.size === 0) arm(id);
     },
   });

@@ -1,6 +1,6 @@
 ---
 title: The session folder reaches a machine only where its profile says sessionFolder
-status: todo
+status: done
 depends: []
 layer: "computer | docs"
 refs:

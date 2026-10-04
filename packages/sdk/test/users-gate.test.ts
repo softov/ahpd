@@ -15,6 +15,7 @@ import type { ChangesetSource } from '../src/types/changes.js';
 import type { ResourceProvider } from '../src/types/resources.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Grant, Users } from '../src/types/users.js';
+import type { Owner } from '../src/types/usage.js';
 
 /*
  * The one gate.
@@ -1484,4 +1485,89 @@ it('routes nothing to a person removed while connected, and binds no id to a con
   await two.handle({ method: 'initialize', params: { protocolVersions: ['0.9.0'] } });
   expect(await call(two, 'authenticate', { channel: ROOT, resource: RECORD.resource, token: 'q' })).toHaveProperty('result');
   expect(await call(admin.client, 'resourceRead', { channel: ROOT, uri: 'virtual://anonymous/f' })).not.toMatchObject({ result: { data: expect.anything() } });
+});
+
+it('needs computer:write to name a source for a session, and no more to name a machine', async () => {
+  const made = host({
+    users: directory({
+      a: ['file:read', 'session:read', 'session:write', 'computer:read', 'computer:write'],
+      w: ['file:read', 'session:read', 'session:write'],
+    }),
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
+  });
+  const admin = await withRole(made, 'a');
+  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+
+  // A session on this host, and one in a machine that is already there, are
+  // `session:write` and nothing more.
+  const worker = await withRole(made, 'w');
+  expect(await call(worker.client, 'createSession', { channel: 'ahp-session:/two', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(worker.client, 'createSession', {
+    channel: 'ahp-session:/three', provider: 'claude', config: { computer: 'computer://box' },
+  })).toHaveProperty('result');
+
+  // Naming a source is asking for a machine to be made for the session, which
+  // is what the grant is for - decision
+  // `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+  expect(await call(worker.client, 'createSession', {
+    channel: 'ahp-session:/four', provider: 'claude', config: { computer: 'disposable:s' },
+  })).toMatchObject({ code: -32009, message: 'w may not computer:write here' });
+  // And the change that makes one before the first turn, which is asked of the
+  // same gate rather than of a session nobody is watching yet.
+  await worker.send('claude:/two', { type: 'session/configChanged', config: { computer: 'disposable:s' } });
+  expect(worker.refused()).toEqual(['claude:/two: w may not computer:write here']);
+});
+
+it('asks an automation\'s owner for computer:write, and refuses a run it cannot check', async () => {
+  const store = memoryAutomations();
+  const made = host({
+    users: directory({
+      a: ['file:read', 'session:read', 'session:write', 'computer:write', 'automation:read', 'automation:write'],
+      w: ['file:read', 'session:read', 'session:write'],
+    }),
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
+    automations: store,
+    // A machine maker that answers with one box, which is all this test needs:
+    // what is asked here is who may ask for it.
+    computers: { how: async () => undefined, create: async () => 'box' },
+  });
+  const admin = await withRole(made, 'a');
+  // Nobody this process met signing in, which is the only way an owner can be
+  // a name with no principal behind it.
+  await withRole(made, 'w');
+  const session = { provider: 'claude', config: { computer: 'disposable:s' }, workingDirectories: [`file://${root}`] };
+  const runOf = async (resource: string, owner: Owner | undefined) => {
+    // Its own copy of the template: a run that makes its machine rewrites the
+    // source into `computer://` on the config it was handed, and a shared one
+    // would leave the runs after it asking for a machine that is already there.
+    store.create(resource, {
+      title: 'nightly', enabled: true, message: { text: 'review' },
+      session: { ...session, config: { ...session.config } }, triggers: [],
+    }, owner);
+    await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource });
+    return store.runs(resource).items[0] as { lifecycle: { status: string; error?: { message: string } } };
+  };
+
+  // An owner who may not make machines, refused in the words the boundary
+  // refuses a connection with.
+  const missing = await runOf('ahp-automation:/missing', 'user:w');
+  expect(missing.lifecycle.status).toBe('failed');
+  expect(missing.lifecycle.error?.message).toBe('w may not computer:write here');
+
+  // An owner this process has never seen has no grants to ask about, so the
+  // run waits for them rather than going unchecked.
+  const unseen = await runOf('ahp-automation:/unseen', 'user:ghost');
+  expect(unseen.lifecycle.error?.message).toContain('user:ghost has not signed in since this daemon started');
+
+  // And the owner who may, whose run goes on to make its machine.
+  const allowed = await runOf('ahp-automation:/allowed', 'user:a');
+  expect(allowed.lifecycle.status).not.toBe('failed');
+
+  // An automation nobody signed in for - this host's own, or nobody's - is not
+  // somebody's machine, so the gate above has no person to ask and the run goes
+  // on to make its machine as a root connection does everywhere else.
+  const roots = await runOf('ahp-automation:/root', 'root:workstation');
+  expect(roots.lifecycle.status).not.toBe('failed');
+  const unowned = await runOf('ahp-automation:/unowned', undefined);
+  expect(unowned.lifecycle.status).not.toBe('failed');
 });

@@ -103,6 +103,18 @@ export interface Profile {
    * session can still ask for a machine of its own.
    */
   disposableAlone?: boolean;
+  /**
+   * Whether a machine made for a session from this profile carries the folder
+   * that session works in.
+   *
+   * Mounted read-write at the same path, so a harness keys its history the same
+   * inside and out. It is the client's folder and this is the host's
+   * filesystem inside a machine, so it takes the profile saying yes rather than
+   * arriving by itself: decision
+   * `a-session-folder-reaches-a-machine-only-where-its-profile-allows`. A
+   * profile's own `folder` is the operator's and says nothing about this.
+   */
+  sessionFolder?: boolean;
 }
 
 /** What the provider holds, and what a manifest may leave out. */

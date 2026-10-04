@@ -7,6 +7,7 @@ import { bodyText, MANIFEST_SCHEMA, manifestOf, pickedOf } from './manifest.js';
 import type { Profile } from './manifest.js';
 import { revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
+import { inTurn, roomFor } from './runtime.js';
 
 /**
  * The `computer:` scheme.
@@ -363,16 +364,20 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       if (await runtime.inspect(held.id) !== undefined) {
         throw new RpcError(-32010, `${held.id} is already a computer; destroy it or choose another name`);
       }
-      const existing = await runtime.list();
-      if (existing.length >= options.max) {
-        throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${held.id} would be one more`);
-      }
-      try {
-        await runtime.run({ ...spec, label: options.label });
-      }
-      catch (error) {
-        throw new RpcError(-32603, error instanceof Error ? error.message : String(error));
-      }
+      // The count and the create in one turn, so a second write arriving while
+      // this one is making its machine counts the machine being made.
+      await inTurn(runtime, async () => {
+        const full = roomFor(await runtime.list(), options.max);
+        if (full !== undefined) {
+          throw new RpcError(-32602, `This host holds ${options.max} computers already, and ${held.id} would be one more`);
+        }
+        try {
+          await runtime.run({ ...spec, label: options.label });
+        }
+        catch (error) {
+          throw new RpcError(-32603, error instanceof Error ? error.message : String(error));
+        }
+      });
     },
 
     /**

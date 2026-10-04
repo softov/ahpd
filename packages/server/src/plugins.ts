@@ -28,7 +28,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { foldHostOptions, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, SessionStore, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -362,6 +362,13 @@ export interface LoadOneOptions {
    */
   hostName?: string;
   /**
+   * What this daemon is, as one id that is the same across its restarts.
+   *
+   * Optional here and on `PluginContext`, because only the daemon has a
+   * configuration folder to keep it in and a loader in a test has none.
+   */
+  hostId?: string;
+  /**
    * Where a plugin's usage records go, read when one is written.
    *
    * A function for the reason `agents` is one: the port belongs to the host and
@@ -376,6 +383,17 @@ export interface LoadOneOptions {
    * listed after them has not been folded in yet.
    */
   vault?: () => Vault | undefined;
+  /**
+   * The sessions this daemon keeps, read when a plugin asks whether it keeps one.
+   *
+   * A function for the reason `agents` is one, and it may answer late: a
+   * machine records the session it was made for, and a daemon adopting a
+   * leftover asks that question while it is applying, before the fold has
+   * named the store. So the daemon's own hands over a promise that settles when
+   * the fold has run, rather than a value that is `undefined` until then - which
+   * would make a slow plugin decide what this daemon adopts.
+   */
+  sessions?: () => SessionStore | undefined | Promise<SessionStore | undefined>;
 }
 
 /** What one `loadOne` managed: a plugin, or the reasons it is not one. */
@@ -697,6 +715,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     version: options.version,
     hostName: options.hostName ?? 'host',
     configDir: options.configDir,
+    ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
     log: options.log,
     say: options.say ?? (() => {}),
   }, {
@@ -704,6 +723,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
     problem: (line) => { told.push(line); },
+    ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
   });
   try {
     await apply.call(plugin, host, values);
@@ -771,6 +791,14 @@ export interface LoadOptions {
   paths?: string[];
   /** The SDK version a peer range is checked against; defaults to this one. */
   version?: string;
+  /**
+   * What this daemon is, as one id that is the same across its restarts.
+   *
+   * `config.hostId()`, read once here and handed to every plugin. Absent where
+   * the caller keeps no id, which is a loader in a test: a plugin then labels
+   * nothing with a daemon and matches every daemon that also labels nothing.
+   */
+  hostId?: string;
 }
 
 /** One host's worth of options, and what happened on the way to them. */
@@ -815,8 +843,16 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
    * Assigned once the fold has run and read at write time rather than now,
    * because the fold may have replaced the daemon's store with a plugin's, and
    * a recorder still holding the daemon's own would write where nobody reads.
+   *
+   * A plugin asking about the sessions waits on `hosted` instead, because it
+   * asks while the later plugins are still applying: a computer plugin adopts
+   * its leftovers at startup, and answering "this daemon keeps nothing" until
+   * the fold has run would make the order plugins load in decide which
+   * leftovers it owns.
    */
   let reached: HostOptions | undefined;
+  let settled: (host: HostOptions) => void = () => {};
+  const hosted = new Promise<HostOptions>((resolve) => { settled = resolve; });
 
   /*
    * The vault a load resolves against: the daemon's own, unless a plugin listed
@@ -868,8 +904,10 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       ...(options.say === undefined ? {} : { say: options.say }),
       agents: () => known,
       ...(options.base.hostName === undefined ? {} : { hostName: options.base.hostName }),
+      ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
       usage: () => reached?.usage,
       vault: vaultInForce,
+      sessions: () => hosted.then((host) => host.sessions),
     });
     problems.push(...one.problems);
     if (one.loaded !== undefined) {
@@ -890,6 +928,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   const folded = foldHostOptions(options.base, contributions);
   problems.push(...folded.problems);
   reached = folded.options;
+  settled(folded.options);
   return { options: folded.options, contributions, problems, loaded };
 }
 
