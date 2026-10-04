@@ -9,7 +9,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L2693](../../packages/sdk/src/host.ts#L2693) - `disposeSession`, which removes only what the daemon holds"
   - "[code://packages/agent-claude/src/catalog.ts#L20](../../packages/agent-claude/src/catalog.ts#L20) - the Claude catalogue is the SDK's `listSessions` over the configured paths"
   - "[code://packages/sdk/src/host/catalogue.ts#L280-L330](../../packages/sdk/src/host/catalogue.ts#L280-L330) - a listed row is given to the first agent that reads its directory when no owner is recorded"
-  - npm://@anthropic-ai/claude-agent-sdk@0.3.278 - exports `deleteSession(sessionId)`
+  - npm://@anthropic-ai/claude-agent-sdk@0.3.278 - `deleteSession(sessionId, { dir })` removes `<id>.jsonl` and the `<id>/` subagent folder from the projects dir, and throws when the session is not found
 ---
 
 ## Symptom
@@ -45,6 +45,6 @@ none
 
 Undecided. Candidates:
 
-- Delete the transcript with the SDK's `deleteSession(sessionId)` on dispose, which the SDK documents as the way to remove a session from its store.
+- Delete the transcript with the SDK's `deleteSession(sessionId, { dir })` on dispose; nothing in ahpd calls it today.
 - Keep a record of deleted ids in the host store and filter them out of every listing, leaving the transcript on disk.
 - Let `disposeSession` accept a listed row by asking its agent to delete it, whichever of the two above is chosen.
