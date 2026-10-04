@@ -37,14 +37,15 @@ The files read are the `refs` above.
 
 | What | Source | Task |
 | --- | --- | --- |
-| A completed AskUserQuestion carries the input the tool ran with: its questions plus `answers`, keyed by question text, a multi-select as an array, as the SDK is handed them; where on the completed call it travels is the open question below | Softov, 2026-09-30, asked "Plan the answered-questions layout?": "claude/11 + ahpapp"; the shape is the SDK's and VS Code's `{ ...input, answers }` | 01, 02 |
+| A completed AskUserQuestion carries the input the tool ran with: its questions plus `answers`, keyed by question text, a multi-select as an array, as the SDK is handed them | Softov, 2026-09-30, asked "Plan the answered-questions layout?": "claude/11 + ahpapp"; the shape is the SDK's and VS Code's `{ ...input, answers }` | 01, 02 |
+| The answered input `{ ...input, answers }` travels as the completed call's `result.structuredContent`, the protocol's own structured result; `toolInput` stays the input as sent | Softov, 2026-10-03, asked "claude/11: where do an answered AskUserQuestion's answers travel on the completed tool call (live and after a restart)?": "result.structuredContent" | 01, 02 |
 | A replayed call takes the answers from the transcript's `toolUseResult.answers`; a call with none keeps its input as sent | (defaulted: the transcript is the only record after a restart) | 02 |
 | A denied or cancelled question keeps its input as sent | (defaulted: nothing was answered) | 01 |
 | [A restored AskUserQuestion is drawn as the answered question](../../../decisions/a-restored-question-is-drawn-answered.md): a restored turn carries the answered `inputRequest` part, built by the code the live question uses | Softov, 2026-09-30, asked "Should ahpd rebuild the answered question on restore?": "Rebuild it, in claude/11" | 03 |
 
 ## Proposed architecture
 
-- **Data flow** - live: the settle at 3786 builds `{ ...input, answers }` and it reaches clients on the complete action, in the place the open question settles; replay: `transcript.ts` reads `toolUseResult.answers` and puts them in the same place on the replayed call.
+- **Data flow** - live: the settle at 3786 builds `{ ...input, answers }` and it reaches clients as the complete action's `result.structuredContent`; replay: `transcript.ts` reads `toolUseResult.answers` and puts them in the replayed call's `result.structuredContent`.
 - **Layer responsibilities** - agent-claude only.
 - **Source-of-truth files** - [`code://packages/agent-claude/src/session.ts`](../../../../packages/agent-claude/src/session.ts), [`code://packages/agent-claude/src/transcript.ts`](../../../../packages/agent-claude/src/transcript.ts)
 
@@ -58,13 +59,13 @@ The files read are the `refs` above.
 
 ## Risks and tradeoffs
 
-- The protocol's complete action has no `toolInput`, so the input sent on the ready action stays the call's `toolInput`; the answers travel beside it, where the open question settles.
+- The protocol's complete action has no `toolInput`, so the input sent on the ready action stays the call's `toolInput`; the answers travel in `result.structuredContent` (still so in 1.0.0).
 
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** ask the question below, then [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md); claude/08 is committed (fd3295b).
-- **Open question (ask before task 01):** `ChatToolCallCompleteAction` carries only `result` and `requiresResultConfirmation` (protocol 0.9.0), so the answered input cannot be sent as a new `toolInput` on the complete action - (a) the answers travel in `result.structuredContent`, or (b) in the complete action's `_meta`; task 02's replayed call carries them in the same place.
+- **Next action:** [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md); claude/08 is committed (fd3295b).
+- **Open questions:** none.
 - **Watch out for:** VS Code hides a completed AskUserQuestion row and draws only the `inputRequest` part, so tasks 01 and 02 alone change nothing in VS Code. ahpapp's chat/01 draws from this; keep the answer values as the SDK has them, strings and arrays of strings.
 
 ## Final verification checklist

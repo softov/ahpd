@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-A restored AskUserQuestion call whose transcript entry has `toolUseResult.answers` carries them in the same place as the live call of task 01, which waits on the plan's open question.
+A restored AskUserQuestion call whose transcript entry has `toolUseResult.answers` carries them in its `result.structuredContent`, as the live call of task 01 does.
 
 ## Files
 
