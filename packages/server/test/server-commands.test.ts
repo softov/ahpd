@@ -237,12 +237,58 @@ describe('--plugin-option', () => {
       .toEqual([{ name: 'a', options: { ids: { id: '12345678901234567890', n: 9007199254740992, x: -1.5, s: '1.0' } } }]);
   });
 
-  it('splits a scoped name and a path at the last dot before the value', () => {
+  it('finds a scoped name and a path by asking the list, not by counting dots', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['@ahpd/agent-claude', './p/index.ts'] }));
     expect(plugins({ pluginOptions: ['@ahpd/agent-claude.workerStop=session', './p/index.ts.mode=fast'] })).toEqual([
       { name: '@ahpd/agent-claude', options: { workerStop: 'session' } },
       { name: './p/index.ts', options: { mode: 'fast' } },
     ]);
+  });
+
+  it('sets a key deep into the entry\'s options and leaves the others as they are', () => {
+    writeFileSync(config, JSON.stringify({
+      plugins: [{ name: '@ahpd/agent-claude', options: { presets: { x: { model: 'opus' }, y: { model: 'sonnet' } }, workerStop: 'session' } }],
+    }));
+    expect(plugins({ pluginOptions: ['@ahpd/agent-claude.presets.x.model=haiku'] })).toEqual([
+      { name: '@ahpd/agent-claude', options: { presets: { x: { model: 'haiku' }, y: { model: 'sonnet' } }, workerStop: 'session' } },
+    ]);
+  });
+
+  it('makes a key on the way down that is not there, the way mkdir -p makes a directory', () => {
+    writeFileSync(config, JSON.stringify({ plugins: [{ name: 'a', options: { presets: { x: { model: 'opus' } } } }] }));
+    expect(plugins({ pluginOptions: ['a.presets.z.model=sonnet'] })).toEqual([
+      { name: 'a', options: { presets: { x: { model: 'opus' }, z: { model: 'sonnet' } } } },
+    ]);
+    expect(plugins({ pluginOptions: ['a.deep.er.still=1'] })).toEqual([
+      { name: 'a', options: { deep: { er: { still: 1 } }, presets: { x: { model: 'opus' } } } },
+    ]);
+  });
+
+  it('reads the value of a key on the way down as it reads any other', () => {
+    writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
+    expect(plugins({ pluginOptions: ['a.x.n=1', 'a.x.s=t', 'a.x.o={"k":[1]}'] }))
+      .toEqual([{ name: 'a', options: { x: { n: 1, s: 't', o: { k: [1] } } } }]);
+  });
+
+  it('refuses a key path going through something that is not an object, naming it', () => {
+    writeFileSync(config, JSON.stringify({ plugins: [{ name: 'a', options: { presets: 5, list: [1], s: 'x' } }] }));
+    for (const [typed, where, held] of [['a.presets.x.model=1', 'presets', '5'], ['a.list.0=1', 'list', '[1]'], ['a.s.x=1', 's', '"x"']] as const) {
+      expect(() => plugins({ pluginOptions: [typed] }))
+        .toThrow(`--plugin-option sets ${typed}, and ${where} holds ${held}, which is not an object the rest of the path could be set in.`);
+    }
+  });
+
+  it('refuses a key path through an object\'s prototype', () => {
+    writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
+    for (const [typed, key] of [['a.__proto__.x=1', '__proto__'], ['a.constructor.prototype.x=1', 'constructor'], ['a.x.prototype=1', 'prototype']] as const) {
+      expect(() => plugins({ pluginOptions: [typed] }))
+        .toThrow(`--plugin-option sets ${typed}, and ${key} is not a key an option can be set under.`);
+    }
+  });
+
+  it('takes the longest name this run loads that the text starts with', () => {
+    writeFileSync(config, JSON.stringify({ plugins: ['a', 'a.b'] }));
+    expect(plugins({ pluginOptions: ['a.b.k=1'] })).toEqual(['a', { name: 'a.b', options: { k: 1 } }]);
   });
 
   it('sets an option on a plugin named by a typed --plugin', () => {
@@ -254,6 +300,8 @@ describe('--plugin-option', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
     expect(() => plugins({ pluginOptions: ['c.k=1'] })).toThrow('--plugin-option names c, which is not a plugin this run loads.');
     expect(() => plugins({ plugins: ['b'], pluginOptions: ['a.k=1'] })).toThrow('--plugin-option names a');
+    expect(() => plugins({ plugins: ['b'], pluginOptions: ['@ahpd/agent-claude.presets.x.model=1'] }))
+      .toThrow('--plugin-option names @ahpd/agent-claude, which is not a plugin this run loads.');
   });
 
   it('refuses a plugin whose entry is switched off, which this run does not load', () => {
@@ -264,7 +312,7 @@ describe('--plugin-option', () => {
 
   it('refuses one that is not <plugin>.<key>=<value>', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
-    for (const bad of ['a.k', 'ak=1', '.k=1', 'a.=1']) {
+    for (const bad of ['a.k', 'ak=1', '.k=1', 'a.=1', 'a.b.=1', '=1']) {
       expect(() => plugins({ pluginOptions: [bad] })).toThrow(`--plugin-option takes <plugin>.<key>=<value>, not ${bad}`);
     }
   });

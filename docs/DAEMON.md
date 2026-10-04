@@ -279,7 +279,7 @@ anything has been let go of.
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines, one message per line with an `_ahpLog` beside it - the shape VS Code's agent host writes its traffic log in, so a capture opens in whatever reads that. A line over 1 MiB is written again with its strings cut and `_ahpLog.truncated` set; a file over 75 MiB rolls to `<file>.1` and five files are kept. The capture holds every token a client sent in `authenticate`, so each of its files is `0600`. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
 | `--no-plugins` | Load none, whatever the configuration file says |
-| `--plugin-option <plugin>.<key>=<value>` | Set one option of a loaded plugin for this run. Repeatable. See below |
+| `--plugin-option <plugin>.<key>[.<key>...]=<value>` | Set one option of a loaded plugin for this run, as deep in its options as the key path goes. Repeatable. See below |
 | `--update-check`, `--no-update-check` | Ask npm, in the background, whether a newer version exists. On by default; `--no-update-check`, `NO_UPDATE_NOTIFIER`, `CI` and `"updateCheck": false` turn it off. See below |
 | `--version`, `-v` | What version this is |
 | `--help`, `-h` | |
@@ -441,12 +441,21 @@ Nothing a running daemon loaded changes until it is restarted, and each of these
 
 ```bash
 ahpd --plugin-option @ahpd/agent-claude.workerStop=session
+ahpd --plugin-option @ahpd/agent-claude.presets.x.model=haiku
 ```
 
 It is repeated for each option, and its value is read the same way as `plugin config`'s.
-The plugin is the text before the last `.` ahead of the `=`, so a scoped name or a path works as it is written.
+The plugin is the longest name this run loads that the text ahead of the `=` starts with, so a scoped name or a path is found by asking the list rather than by counting dots, and everything after it is a key path, set as deep into the plugin's options as it goes: `presets.x.model` changes that one preset's model and leaves the others, where `presets` alone would replace all of them.
+A key on the way down that the options do not have is made, the way `mkdir -p` makes the directories on its way, so one run can add a preset the file has never heard of; one that is there and is not an object is refused, naming it, because setting into it would drop what it holds.
 It must name a plugin this run loads, the file's or a typed `--plugin`, and not one switched off with `enabled: false`, and the option is checked when the plugin loads, so a value the schema refuses skips that plugin with the option named in the log.
-A value typed at the shell lands in its history, so a credential is better set with `plugin config`.
+A plain value is written down twice over: it lands in the shell's history, and a flag's lands again in the daemon record's `argv`, which `ahpd restart` starts from. A credential is given as a `$secret` reference instead, and the value stays in the [vault](#the-vault):
+
+```bash
+ahpd --plugin-option '@ahpd/plugin-orders.apiKey={"$secret":"host:stripe"}'
+ahpd plugin config @ahpd/plugin-orders apiKey '{"$secret":"host:stripe"}'
+```
+
+The first leaves only the reference in the record a restart reads, and the second only the reference in `config.json`; neither holds the credential itself.
 
 `ahpd plugin list` prints one line per spec - its state, where it resolves, and
 the name and title its manifest declares - without importing any of it. The

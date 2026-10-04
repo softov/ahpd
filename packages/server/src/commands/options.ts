@@ -206,6 +206,36 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
+ * `options` with `value` set at `path`, as an object none of the input holds.
+ *
+ * A key on the way down that is not there is made, the way `mkdir -p` makes
+ * the directories on its way, so one run can add a preset the file has never
+ * heard of. One that is there and is not a plain object is refused rather than
+ * replaced, because setting into it would drop whatever it holds.
+ *
+ * `typed` is the flag as it was written, which the refusal quotes.
+ */
+/** Keys that name an object's prototype rather than a value it holds. */
+const UNSETTABLE = new Set(['__proto__', 'constructor', 'prototype']);
+
+const setAt = (options: Record<string, unknown> | undefined, path: readonly string[], value: unknown, typed: string): Record<string, unknown> => {
+  const [key, ...rest] = path as [string, ...string[]];
+  if (UNSETTABLE.has(key)) stop(`--plugin-option sets ${typed}, and ${key} is not a key an option can be set under.`);
+  const here: Record<string, unknown> = { ...options };
+  if (rest.length === 0) {
+    here[key] = value;
+    return here;
+  }
+  const held = here[key];
+  if (held !== undefined && !isObject(held)) {
+    const where = path.slice(0, path.length - rest.length).join('.');
+    stop(`--plugin-option sets ${typed}, and ${where} holds ${JSON.stringify(held)}, which is not an object the rest of the path could be set in.`);
+  }
+  here[key] = setAt(isObject(held) ? held : undefined, rest, value, typed);
+  return here;
+};
+
+/**
  * `mcpServers` as this run offers them, and what is wrong with the rest.
  *
  * The entries are not described by the schema on the key, because the JSON
@@ -375,8 +405,8 @@ export const serverFields = {
   pluginOptions: {
     type: 'array',
     items: { type: 'string' },
-    description: 'Set one option of a plugin for this run, over the configuration file: <plugin>.<key>=<value>, the value read as JSON when it parses and as text otherwise. Repeatable.',
-    cli: { flag: '--plugin-option', value: 'PLUGIN.KEY=VALUE' },
+    description: 'Set one option of a plugin for this run, over the configuration file: <plugin>.<key>=<value>, where everything after the plugin is a key path set as deep into the plugin\'s options as it goes, a key on the way down that is not there made as it goes; the value is read as JSON when it parses and as text otherwise. Repeatable.',
+    cli: { flag: '--plugin-option', value: 'PLUGIN.KEY[.KEY...]=VALUE' },
   },
   updateCheck: {
     type: 'boolean',
@@ -653,26 +683,46 @@ const noCwd = input['noCwd'] === true;
   /*
    * `--plugin-option`, over the options of the plugin it names.
    *
-   * Split at the first `=`, so a value may hold one, and the name at the last
-   * `.` before it, since a scoped package name holds none and a path's last dot
-   * is its extension's. The value is JSON when it parses. The plugin must be
-   * one this run loads, enabled, because an option for a plugin that is not loaded is a
+   * Split at the first `=`, so a value may hold one, and what is left of it is
+   * `<plugin>.<key path>`, the path set as deep into the entry's options as it
+   * goes. The value is JSON when it parses. The plugin must be one this run
+   * loads, enabled, because an option for a plugin that is not loaded is a
    * setting nobody would see take effect.
    */
+  // An entry switched off is one this run does not load.
+  const loadedName = (spec: PluginSpec): string | undefined =>
+    typeof spec === 'string' ? spec : spec.enabled === false ? undefined : spec.name;
   for (const typedOption of (input['pluginOptions'] as string[] | undefined) ?? []) {
     const equals = typedOption.indexOf('=');
-    const dot = equals === -1 ? -1 : typedOption.lastIndexOf('.', equals);
-    if (dot <= 0 || dot + 1 === equals) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
-    const name = typedOption.slice(0, dot);
-    const key = typedOption.slice(dot + 1, equals);
-    const value = typedValue(typedOption.slice(equals + 1));
-    // An entry switched off is one this run does not load.
-    const at = plugins.findIndex((spec) => (typeof spec === 'string' ? spec : spec.enabled === false ? undefined : spec.name) === name);
-    if (at === -1) stop(`--plugin-option names ${name}, which is not a plugin this run loads.`);
+    const head = equals === -1 ? '' : typedOption.slice(0, equals);
+    /*
+     * The plugin is the longest name this run loads that the text ahead of the
+     * `=` starts with, so a scoped package name and a path whose extension
+     * holds a dot are both found by asking the list rather than by counting
+     * dots, and everything after that name is the key path.
+     */
+    let at = -1;
+    let named = '';
+    plugins.forEach((spec, index) => {
+      const name = loadedName(spec);
+      if (name !== undefined && name !== '' && head.startsWith(`${name}.`) && name.length > named.length) {
+        at = index;
+        named = name;
+      }
+    });
+    if (at === -1) {
+      // Nothing this run loads is named here, so the first dot says which name was meant.
+      const dot = head.indexOf('.');
+      if (equals === -1 || dot <= 0) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
+      stop(`--plugin-option names ${head.slice(0, dot)}, which is not a plugin this run loads.`);
+    }
     const spec = plugins[at] as PluginSpec;
+    const path = head.slice(named.length + 1).split('.');
+    if (path.some((key) => key === '')) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
+    const value = typedValue(typedOption.slice(equals + 1));
     plugins[at] = typeof spec === 'string'
-      ? { name: spec, options: { [key]: value } }
-      : { ...spec, options: { ...spec.options, [key]: value } };
+      ? { name: spec, options: setAt(undefined, path, value, typedOption) }
+      : { ...spec, options: setAt(spec.options, path, value, typedOption) };
   }
 
   const paths = [...given('paths') ?? []];

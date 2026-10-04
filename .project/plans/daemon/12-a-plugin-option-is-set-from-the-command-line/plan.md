@@ -40,6 +40,8 @@ The files read are the `refs` above.
 | What | Source | Task |
 | --- | --- | --- |
 | Everything after the plugin in `--plugin-option` is a key path set deep into the file's value, so `@ahpd/agent-claude.presets.x.model=...` changes one preset's model for the run and leaves the others | Softov, 2026-10-04, asked "daemon/12: `--plugin-option` sets one top-level key, so `@ahpd/agent-claude.presets.x.model=...` fails and a typed `presets` replaces every preset. What should it do?": "Nested key path" | 04 |
+| A key on the way down that the options do not have is made, the way `mkdir -p` makes the directories on its way, so one run can add a preset the file has never heard of; one that is there and is not a plain object is refused, naming it, because setting into it would drop what it holds | Softov, 2026-10-04, asked "daemon/12: `--plugin-option` sets a key path now. What does a key that is not there on the way down do?": "A missing intermediate is created, like mkdir -p, so one run can add a preset" | 04 |
+| The plugin is the longest name among the plugins this run loads that the text ahead of the `=` starts with, so a scoped name and a path whose extension holds a dot are found by asking the list rather than by counting dots | Softov, 2026-10-04, asked "daemon/12: a key path takes the dots a scoped name or a path's extension holds too. Where does the plugin name end?": "The plugin name ends at the longest name among the plugins this run loads that prefixes the text before the `=`; the rest is the key path" | 04 |
 | `ahpd plugin config <name>` shows the options, `<name> <key>` one, `<name> <key> <value>` sets it, `--unset` removes it; the value is JSON when it parses, otherwise a string | Softov, 2026-09-29, asked what "--flags" meant: "Both", a config command and start flags | 01 |
 | `ahpd plugin enable <name>` and `disable <name>` set the entry's `enabled` | (defaulted: root config can turn a plugin on and off, and the terminal matches it) | 01 |
 | A set is checked against the plugin's `optionsSchema`, importing the module the loader would; a plugin that cannot be imported is written and said to be checked at the next start | (defaulted: refuse what is known bad, never block on what cannot be read) | 01 |
@@ -68,18 +70,18 @@ The files read are the `refs` above.
 | [01 - `ahpd plugin config`, `enable` and `disable`](task-01-plugin-config-enable-and-disable.md) | implemented | - |
 | [02 - `--plugin-option`](task-02-plugin-option.md) | implemented | - |
 | [03 - Docs](task-03-docs.md) | implemented | 01, 02 |
-| [04 - A credential on the command line is a `$secret`](task-04-a-credential-on-the-command-line-is-a-secret.md) | todo | 03 |
+| [04 - A credential on the command line is a `$secret`](task-04-a-credential-on-the-command-line-is-a-secret.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
 - A value typed at the shell lands in the shell's history and in the daemon record's `argv`, which a restart starts again; a credential is given as a `$secret` reference (task 04).
-- `--plugin-option` today sets one top-level key; task 04 makes everything after the plugin a key path, so one preset's field changes without replacing the others.
+- A key path is made as deep as it goes, so a key typed wrong is added where it was meant to be rather than reaching the one that was meant; the value is checked against the schema at load, where a wrong key is a warning and the plugin still runs.
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
+- **Done so far:** tasks 01, 02, 03 and 04 implemented, awaiting review. Task 04 gave `--plugin-option` a key path set as deep as it goes, made as `mkdir -p` makes it, under a plugin found by asking the list, and said a credential is a `$secret` reference by either flag or `plugin config`.
 - **Reviews applied:** the review of 2026-09-30, the second, and the third, which refuses a typed value holding an inexact whole number, the fourth, which refuses only a number that would not keep its value, and the fifth, which holds a number to reading back as typed at every depth.
-- **Next action:** [task-04-a-credential-on-the-command-line-is-a-secret.md](task-04-a-credential-on-the-command-line-is-a-secret.md); then review, `implemented.md` and `status: built`.
+- **Next action:** review, `implemented.md` and `status: built`. The checklist is by hand and has not been run.
 - **Open questions:** none.
 - Served `plugin config` showing non-`writeOnly` values while `plugin list` and `config` mask every value is daemon/11's (task 04).
 - **Watch out for:** a typed `--plugin` replaces the file's list; `--plugin-option` for a plugin not in the list, or switched off, is refused, naming it.
