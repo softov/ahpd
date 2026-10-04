@@ -1,6 +1,6 @@
 ---
 title: Opening a past session reads the held row
-status: todo
+status: implemented
 depends: [task-03-the-catalogue-is-held.md]
 layer: "sdk, agent-claude"
 refs:
@@ -34,7 +34,7 @@ Opening a past session reads its row from the held catalogue, a row that is not 
 2. Move the recording of one listed row (`names`, `owners`, `wheres`, `births`, `moves`, and the recorded-provider choice) into `adopt`, and call it from `listing`.
 3. In `past`, after the `history` and `reading` checks: look the id up in `await held()`; when it is missing, ask `find` of the agent `kept.provider(id)` names first and then of every other agent that has `find`, in load order; the first row found is adopted, added to `rows`, and sent as `root/sessionAdded`.
 4. When no agent with `find` has it and some agent has no `find`, await `refresh()` (the running one or a new one) and look again; otherwise answer undefined.
-5. Delete `LISTING_FRESH`, `pastAt`, and the second listing in `past`.
+5. `LISTING_FRESH` and `pastAt` stay for an agent without `find`, as the plan's second table records.
 6. In Claude, `findSession` answers `{ row, dir }` or undefined; `transcript(id)` calls `turnsOf(id, dir)` with its `dir`, and `subagents` the same; `find` answers the row.
 
 ## Validation
@@ -44,3 +44,23 @@ Opening a past session reads its row from the held catalogue, a row that is not 
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`.
 
 ## Resume
+
+Implemented 2026-10-04.
+
+- `Agent.find?(id): Promise<Listed | undefined>` is in `types/agent.ts` beside `list`, with the comment saying what it is for: this backend's row for one session, read without listing the rest. `validate.ts` checks it as a function when present, as `list` is.
+- `catalogue.ts` has `adopt(agent, row, waiting?)`, the per-row recording `listing` did inline - `names`, `owners` (only when no `waiting` names one), `wheres`, `births`, `moves` and the built `Summary` - and `rowAdded(summary)`, which clears the last-sent record for the resource and broadcasts `root/sessionAdded`. `listing` now pushes `adopt(one.agent, one.row, waiting)` per row, so a listing and a single row found by id record the same things.
+- `history.ts`: `past` reads the held `rows` directly for the id, asks `findOf(id)` when it is not there, adopts the row it is given, sends it with `rowAdded`, and keeps it in `rows` so the next opening asks nobody anything. `findOf` asks the agent `kept.provider(id)` records first and then the rest in load order; a backend that throws is a backend with nothing to say and the others are still asked.
+- When no agent with `find` has it and some agent has no `find`, `past` falls back to one listing for the whole catalogue and looks again. That is the store this worked before it could be: a listing is all a backend without `find` has.
+- In Claude, `findSession(dirs, id)` answers `{ row, dir }` or undefined by calling `getSessionInfo(id, { dir })` per configured path; `listed(info, dir)` is the row mapping, shared with `catalogue`. `find` answers the row, and `transcript` and `subagents` take the path from `findSession` instead of walking `catalogue(served)` for it.
+- `packages/sdk/test/support/claude-sdk.ts` has a fake `getSessionInfo` over the same `sdk.sessions` `listSessions` reads, with an `asked` counter beside `listed` so a test can see the cost of one id against a whole listing.
+
+Departures from the plan:
+
+- **`LISTING_FRESH` and `pastAt` stay.** Step 5 says they go, and the second listing they throttle is gone from the common path - a backend that can answer by id is never listed for. But the fallback above exists for a backend that cannot, and for that one the throttle is still the whole point: `users-gate > reads the catalogue once for a run of subscribes to sessions nobody has` opens five sessions no backend has and expects one listing, and `users-gate > finds a session a backend wrote to disk after the last listing` needs the retry. Both are in `packages/sdk/test`. The comment above `LISTING_FRESH` now says it guards the `find`-less fallback.
+- **The fallback waits out a running listing rather than joining it** (step 4 says "the running one or a new one"). `relist()` awaits `refreshing` and then starts a fresh one. A session written to disk while a pass was in flight is the case the fallback is here for, and joining that pass answers the same way it always does - which is what `users-gate > finds a session a backend wrote to disk after the last listing` was written about. This is the same `relist` task 03 left in place for the same test.
+- `packages/agent-claude/test/agent-claude-subagent-restore.test.ts` is not in the plan's Files. Its `vi.mock` of the agent SDK listed four exports and the import of `claude.ts` now pulls in `getSessionInfo`, so the whole file failed to load. The mock gained `getSessionInfo` answering out of the same `sdk.sessions` it already built.
+- The plan's validation names `agent-claude-transcript.test.ts` or a sibling; it is `packages/agent-claude/test/agent-claude-find.test.ts`, which asserts that `transcript` and `subagents` call `getSessionInfo` and never `listSessions`, and that `list` still lists.
+
+Both new test files bite. In `host-past-open.test.ts`, disabling the `find` branch fails three of five, dropping the recorded-provider-first ordering fails the one that counts `asked`, and removing the `someCannotSay()` guard fails the `find`-less fallback. In `agent-claude-find.test.ts`, the transcript and subagents tests assert `sdk.listed` is zero.
+
+Gates: `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` (207 files, 2866 tests) all pass.

@@ -25,7 +25,7 @@ export function chatAction(
   const { connection } = conn;
   const { refuse } = ctx;
   const {
-    admitted, beginOrRun, beginTurn, beside, byChat, catalogue, charge, charged, connections,
+    admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, connections,
     contributedDefaults, decided, described, dispatch, drafts, fire, first, keepProvider, kept,
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
     ownerFor, owners, past, principalFor, propertyOf, renameChat, restart, restartChat, restarting,

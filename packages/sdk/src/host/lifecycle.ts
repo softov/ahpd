@@ -83,7 +83,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     sessionMachines, enteredIn, inMachine, placedIn,
     isolating, charged, senders, checked, principalFor, machineFor,
     spawn, keepTitle, keepProvider,
-    sessionAdded, activeSessionsMoved,
+    sessionAdded, forgetSent, activeSessionsMoved,
   } = ctx;
 
   /**
@@ -366,6 +366,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // `resource` a client reads `undefined` and takes nothing out, so a
     // disposed session stayed in every catalogue until something else
     // made that client re-read the list.
+    forgetSent(uri);
     broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
     if (failure !== undefined) throw failure;

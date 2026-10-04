@@ -19,6 +19,21 @@ export const sdk = {
   transcript: [] as Record<string, unknown>[],
   /** How many times a transcript was actually read off disk. */
   reads: 0,
+  /**
+   * How many times the projects directory was listed.
+   *
+   * The cost this host's largest is made of: every variant of the Claude
+   * plugin reads the same directory for the same sessions, so a count of three
+   * for one answer is two passes over the same files that need not happen.
+   */
+  listed: 0,
+  /**
+   * How many times the store was asked about one session by id.
+   *
+   * What a client opening a row the host does not hold costs, against `listed`:
+   * one file read rather than a pass over every transcript on the machine.
+   */
+  asked: 0,
   /** How many of the next reads should throw, so a retry can be seen. */
   throwOnce: 0,
   init: {} as Record<string, unknown>,
@@ -48,7 +63,21 @@ export const sdk = {
 
 export const fake = {
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  listSessions: async () => sdk.sessions,
+  listSessions: async () => {
+    sdk.listed += 1;
+    // A tick, so callers meant to share one listing really do overlap: a
+    // listing that answers synchronously is finished before the second caller
+    // asks for it, and one pass and three are then indistinguishable.
+    await new Promise((r) => { setTimeout(r, 0); });
+    return sdk.sessions;
+  },
+  getSessionInfo: async (id: string) => {
+    sdk.asked += 1;
+    await new Promise((r) => { setTimeout(r, 0); });
+    // The same store `listSessions` reads, so a row found by id is the row a
+    // listing would have offered - which is what the CLI's own answer is.
+    return sdk.sessions.find((one) => one['sessionId'] === id);
+  },
   getSessionMessages: async () => {
     sdk.reads += 1;
     // A tick, so concurrent callers actually overlap: an implementation that
@@ -110,6 +139,8 @@ export function resetSdk(): void {
   sdk.sessions.length = 0;
   sdk.transcript.length = 0;
   sdk.reads = 0;
+  sdk.listed = 0;
+  sdk.asked = 0;
   sdk.throwOnce = 0;
   sdk.mcp.length = 0;
   sdk.skills.length = 0;

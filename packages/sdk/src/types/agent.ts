@@ -474,6 +474,22 @@ export interface Agent {
   list?(): Promise<Listed[]>;
 
   /**
+   * This backend's row for one session, read without listing the rest.
+   *
+   * What a client opening a row the host does not hold costs without it: a
+   * link from another machine, a session written to disk after the last
+   * listing. `list` answers that by reading every transcript on the machine,
+   * for one id - and on a machine with a few thousand of them that is the
+   * difference between a window opening and a window waiting.
+   *
+   * `id` is the one the host holds a session under, which is the id in the row
+   * `list` would have answered, and `undefined` is a real answer: this backend
+   * has no such session. Left out is a backend whose store cannot be asked
+   * about one session, and the host falls back to listing for it.
+   */
+  find?(id: string): Promise<Listed | undefined>;
+
+  /**
    * Remove this backend's own copy of a session, and nothing else.
    *
    * What makes a delete a delete: without it the host forgets a session and

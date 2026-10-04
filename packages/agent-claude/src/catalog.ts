@@ -1,7 +1,8 @@
-import { deleteSession, listSessions } from '@anthropic-ai/claude-agent-sdk';
+import { deleteSession, getSessionInfo, listSessions } from '@anthropic-ai/claude-agent-sdk';
 import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import type { Listed } from '@ahpd/sdk';
 
 /**
@@ -20,15 +21,66 @@ import type { Listed } from '@ahpd/sdk';
  * `dir`, and an unrecognised key is ignored rather than refused, so the wrong
  * spelling answers with every session on the machine and looks like it worked.
  */
+/** One SDK session as a row, under the directory it was asked for. */
+const listed = (info: SDKSessionInfo, dir: string): Listed => ({
+  id: info.sessionId,
+  title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
+  createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
+  modifiedAt: new Date(info.lastModified).toISOString(),
+  workingDirectories: [`file://${info.cwd ?? dir}`],
+});
+
 export async function catalogue(dir: string): Promise<Listed[]> {
   const found = await listSessions({ dir });
-  return found.map((info) => ({
-    id: info.sessionId,
-    title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
-    createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
-    modifiedAt: new Date(info.lastModified).toISOString(),
-    workingDirectories: [`file://${info.cwd ?? dir}`],
-  }));
+  return found.map((info) => listed(info, dir));
+}
+
+/**
+ * One session's own row, as the SDK answers it without listing the rest.
+ *
+ * `getSessionInfo` reads one session file where `listSessions` reads every one
+ * of them, which is what a client opening a row the host does not hold costs:
+ * a link from another machine, a session written to disk after the last
+ * listing. Same shape as `catalogue`'s rows and the same mapping, so a row
+ * found this way is the row a listing would have offered.
+ *
+ * `dir` is passed per path rather than left out because the path is the answer
+ * here as well as the row: the transcript reader wants the directory the
+ * session ran in, and this is the one call that says which it was without a
+ * listing. The paths are asked in turn, since a session lives under exactly one
+ * of them and the first that has it is the only one that will.
+ */
+export async function findSession(dirs: string[], id: string): Promise<{ row: Listed; dir: string } | undefined> {
+  for (const dir of dirs) {
+    const info = await getSessionInfo(id, { dir }).catch(() => undefined);
+    if (info === undefined) continue;
+    return { row: listed(info, dir), dir };
+  }
+  return undefined;
+}
+
+/**
+ * One listing the variants of one load of this plugin share.
+ *
+ * Every preset is registered as an agent of its own, and every one of them
+ * reads the same projects directory for the same sessions - so three presets
+ * is three passes over the same files for one answer, which is the single
+ * largest cost in a `listSessions`. The host cannot see that two agents read
+ * one store: `registerAgent` records no plugin and `Agent` has no key for a
+ * store, so the sharing is here instead.
+ *
+ * Only the run is shared, never the answer. It is dropped the moment it
+ * settles, because the host holds the catalogue (host 56, task 03) and a
+ * listing kept here would be a second, older copy of the same rows.
+ */
+export function sharedCatalogue(dirs: string[]): () => Promise<Listed[]> {
+  let running: Promise<Listed[]> | undefined;
+  return () => {
+    running ??= Promise.all(dirs.map((dir) => catalogue(dir)))
+      .then((lists) => lists.flat())
+      .finally(() => { running = undefined; });
+    return running;
+  };
 }
 
 /**

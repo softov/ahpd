@@ -1,6 +1,6 @@
 ---
 title: A summary that did not change is not sent
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,15 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+Implemented 2026-10-04.
+
+- `lastSent` in `createCatalogue`; `summaryMoved` compares `JSON.stringify(changes)` and returns without broadcasting on a match; `sessionAdded` deletes the entry before it broadcasts; `forgetSent(uri)` is on the interface and called from `removeSession` beside the `root/sessionRemoved` broadcast.
+- Tests: the four cases, plus the two hosts the plan does not name - the listed-row one builds its own host because the row has to live outside `browsable()` for there to be a second read of it, and it arms a `changes.watch` to produce that second read.
+
+Departures from the plan:
+
+- The listed-row repeat is driven through a `changes` source with a `watch`, not through `isReadChanged` twice: that dispatch returns early when the flag does not move, so a repeat there is decided before `summaryMoved` and would test nothing. The watch is the path that really reaches `summaryMoved` twice with the same `{ status, changes }`.
+- The re-created case uses `vi.useFakeTimers({ toFake: ['Date'] })` so the new session's `modifiedAt` equals the disposed one's. Without it the rows differ and the case passes whatever the last-sent check does. Both the `sessionAdded` delete and the dispose's `forgetSent` are needed for it, and neither alone is enough; checked by removing both and seeing it fail.
+
+Gates: `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` (202 files, 2844 tests) all pass.

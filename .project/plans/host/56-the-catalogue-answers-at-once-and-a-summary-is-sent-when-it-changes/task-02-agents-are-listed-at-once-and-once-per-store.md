@@ -1,6 +1,6 @@
 ---
 title: Agents are listed at once, and Claude's variants read their store once
-status: todo
+status: implemented
 depends: []
 layer: "sdk, agent-claude"
 refs:
@@ -40,3 +40,16 @@ A listing asks every agent at the same time, and the Claude variants of one load
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+Implemented 2026-10-04.
+
+- `listing` maps every agent that has a `list` to a promise and awaits them with one `Promise.all`. `Promise.all` answers in the order it was given its work, so the fold below is still the load order and `both[0]` is still the first-loaded agent; that is said in the comment beside it because the property is invisible in the code and load-bearing for which row an id is.
+- `sharedCatalogue(dirs)` in `packages/agent-claude/src/catalog.ts`, imported as `oneListing` in `plugin.ts`, built once per `optionsOf` call and handed to every variant through the new optional `ClaudeOptions.sharedCatalogue`. `list` uses it when given and reads `dirs` itself when not, and copies the shared array per call.
+- `sdk.listed` and a tick before `listSessions` answers, in the fake SDK. Nothing in `packages/sdk/test` reads `sdk.listed` yet; task 03's held-catalogue test is where it pays, and the agent-claude test counts its own.
+
+Departures from the plan:
+
+- The plan's second case for the fold - "to the recorded one when it is [recorded]" - is not in `host-catalogue-parallel.test.ts`. It is not reachable there: within one process `kept.provider(id)` can only name a backend that already owns the row, so a host cannot be made to record a second backend for an id without a session store. `session-provider.test.ts` already covers that choice against a real store (`goes to the harness the host recorded, whichever one loaded first`), and it is what would catch a fold-order break, so it is left where it is.
+- `host-catalogue-parallel.test.ts` builds its own host rather than going through `support/host.ts`, because `serving()` registers one agent and these tests need three.
+
+Gates: `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` (204 files, 2851 tests) all pass.

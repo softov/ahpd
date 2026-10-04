@@ -24,6 +24,9 @@ const sdk = vi.hoisted(() => ({
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   listSessions: async () => sdk.sessions,
+  // One session by id, out of the same store: how a past session's own
+  // directory is settled without listing every path to find it.
+  getSessionInfo: async (id: string) => sdk.sessions.find((one) => one['sessionId'] === id),
   getSessionMessages: async () => sdk.messages,
   createSdkMcpServer: () => ({}),
   /*

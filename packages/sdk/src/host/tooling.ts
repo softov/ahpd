@@ -57,7 +57,7 @@ export interface Tooling {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, first, kept, terminals, learned, rootConfig,
-    activeClientsOf, leadOf, heldAs, ownerOf, listing, setArtifacts, forWhom,
+    activeClientsOf, leadOf, heldAs, ownerOf, allRows, setArtifacts, forWhom,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
     isolated, settle, openSession, backendsOwn, removeSession, spawn,
   } = ctx;
@@ -220,7 +220,7 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Every operation here is one a client already has - a command, or an
    * action a client may dispatch - reached from a turn rather than a socket.
-   * The catalogue is `listing()`, which is what `listSessions` answers; a
+   * The catalogue is `allRows()`, which is what `listSessions` answers; a
    * message is `begin` or `queue` on the chat, which is what `chat/turnStarted`
    * and `chat/pendingMessageSet` come to; a session is `openSession`, which is
    * what `createSession` comes to. Nothing is reachable from here that is not
@@ -234,7 +234,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const active = chat === undefined ? undefined : (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
       return typeof active?.id === 'string' ? active.id : undefined;
     },
-    sessions: () => listing(),
+    sessions: () => allRows(),
     chats: (session) => {
       const held = sessions.get(heldAs(session));
       if (!held) return [];

@@ -34,7 +34,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const {
     about, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat, charged, chatOf,
     chatSummary, claimable, claims, dir, dispatch, drafts, first, forWhom, heldAs, isolating,
-    isolated, kept, leadOf, listNow, log, madeFrom, meantBy, messageFrom, openSession, options,
+    isolated, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionFor, sessionSchema, sessions, settle, snapshotOf, spawn, unheld, waitingFor, watches,
     withSender,
@@ -400,7 +400,25 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      * whole catalogue to both of them.
      */
     listSessions: async (params) => {
-      const rows = await listNow();
+      /*
+       * The running sessions built now and the held rows behind them.
+       *
+       * Neither half waits for the other: a live row is read out of memory and
+       * is never stale, and the listed ones are whatever the last refresh
+       * found. So a client is answered in the time it takes to sort, however
+       * long a pass over the machine's transcripts takes.
+       */
+      const rows = await allRows();
+      /*
+       * And a refresh behind that answer.
+       *
+       * The catalogue is held rather than listed per question, so what brings
+       * it up to date is somebody's job. `refresh` shares a listing that is
+       * already running and says what moved to every client, so a client that
+       * asks again while this is in flight is answered from the rows it has
+       * and told about the rest rather than waiting for the same pass twice.
+       */
+      void ctx.refresh().catch(() => {});
       const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
       const after = cursor === undefined
         ? 0

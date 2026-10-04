@@ -17,9 +17,27 @@ export interface Catalogue {
   activityOf(held: Held): string | undefined;
   sessionAdded(uri: string): void;
   summaryMoved(uri: string): void;
+  forgetSent(uri: string): void;
   activeSessionsMoved(): void;
   learnModels(uri: string): void;
-  listing(): Promise<Summary[]>;
+  /** Every backend's rows, with what a refusing backend had last time carried over. */
+  listing(before?: Summary[]): Promise<Summary[]>;
+  /** Record one listed row and build it, as a listing does for every row it finds. */
+  adopt(agent: Agent, row: Listed, waiting?: string): Summary;
+  /** Tell every client about a listed row this host did not have. */
+  rowAdded(summary: Summary): void;
+  /**
+   * The rows of the sessions this host is running, built now.
+   *
+   * The half of the answer that is never held, and rebuilt on every
+   * `listSessions` because a live row moves on its own and holding it would
+   * make it a second behind.
+   */
+  liveRows(): Summary[];
+  /** The whole catalogue as a client is handed it: the live rows and the held ones. */
+  allRows(): Promise<Summary[]>;
+  /** Tell every client what a refresh changed: added, removed, or moved. */
+  rowsMoved(before: Summary[], after: Summary[]): void;
   waitingFor(id: string): string | undefined;
   readStored(): Promise<void>;
 }
@@ -193,7 +211,26 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const sessionAdded = (uri: string): void => {
     const summary = summaryOf(uri);
     if (!summary) return;
+    /*
+     * Forgetting what was last sent, because the row that goes with it is one
+     * no client has: the added row is a whole row and the next move is a
+     * partial, so nothing the client already holds can be what the partial is
+     * compared against.
+     */
+    lastSent.delete(uri);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
+  };
+  /**
+   * What each session's last sent `changes` serialised to.
+   *
+   * The memory that makes the check below possible, and it is bounded by the
+   * sessions this host is serving rather than by the catalogue: a row is only
+   * compared against what went out for it while it was being served.
+   */
+  const lastSent = new Map<string, string>();
+  /** A session's row is gone, so nothing it was sent can be compared to. */
+  const forgetSent = (uri: string): void => {
+    lastSent.delete(uri);
   };
   /**
    * A session already in the catalogue moved.
@@ -215,6 +252,13 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * is something somebody does from the catalogue, to a session nobody has
    * opened. Its diff stat goes with it, which is the directory's and is known
    * without any process: a listed row's counts are read after it was listed.
+   *
+   * And nothing at all is sent when the row is the row that went out last,
+   * because the five callers of this are reached on every turn, every tool
+   * call and every re-read of a directory - and for most of those the row is
+   * byte for byte the one every client is already holding. One build session
+   * sent about 28 of these a second, of which 210 of 225 in a row were
+   * identical to the one before.
    */
   const summaryMoved = (uri: string): void => {
     const summary = summaryOf(uri);
@@ -236,6 +280,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        */
       changes = { ...mutable, activity: mutable.activity ?? null };
     }
+    sayMoved(uri, changes);
+  };
+  /**
+   * Say a row moved, unless it is the row every client already holds.
+   *
+   * The one place a `root/sessionSummaryChanged` leaves from, so that "does this
+   * say anything new" is decided once rather than by each caller remembering to
+   * ask. A live row and a listed row arrive here by different roads and are
+   * judged the same way, which is what lets a client keep one list against both.
+   */
+  const sayMoved = (uri: string, changes: Bag): void => {
+    const said = JSON.stringify(changes);
+    if (lastSent.get(uri) === said) return;
+    lastSent.set(uri, said);
     ctx.broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };
   /**
@@ -263,7 +321,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents: ctx.descriptors() });
   };
 
-  const listing = async (): Promise<Summary[]> => {
+  const listing = async (before: Summary[] = []): Promise<Summary[]> => {
     const claimed = new Set<string>();
     for (const [uri, held] of sessions) {
       claimed.add(idFor(uri));
@@ -279,7 +337,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * A backend that refused lists nothing, and every row it would have offered
      * would look the same as a transcript deleted outside this host. So a
      * listing only prunes when every backend answered and at least one of them
-     * was asked - a listing from no backend at all is not a listing.
+     * was asked - a listing from no backend at all is not a listing. What a
+     * refusing backend's rows were last time is carried forward here, and is
+     * not this listing's to prune or to forget.
      *
      * What each answered backend read is kept beside that, since a listing only
      * speaks for the directories it read. Claude's catalogue is its configured
@@ -287,22 +347,39 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      * listing has ever offered, and a row for it is not a session that is gone.
      */
     let answered = 0;
-    let refused = false;
+    /** The providers that refused, whose rows this listing says nothing about. */
+    const silent = new Set<string>();
     /** The providers that answered, and every directory they read. */
     const spoken = new Set<string>();
     const read = new Set<string>();
     /** Every agent's row for an id, in the order the agents were loaded. */
     const offered = new Map<string, { agent: Agent; row: Listed }[]>();
-    for (const agent of agents.values()) {
+    /*
+     * Every backend at once, and folded in the order they were loaded.
+     *
+     * Asked in turn this listing costs the sum of every store on the machine:
+     * a host serving Claude and two variants of it read the same projects
+     * directory three times, and on dev-01 that was fifty seconds of it.
+     *
+     * `Promise.all` answers in the order it was given its work rather than the
+     * order that work finished, so the fold below is still the load order - and
+     * that order is what decides whose row an id two backends both list is, so
+     * it cannot be left to whichever store happened to be quicker.
+     */
+    const answers = await Promise.all([...agents.values()].map(async (agent) => {
       if (!agent.list)
-        continue;
+        return undefined;
       // One backend refusing is not the catalogue refusing. The others still
       // have rows, and a list that failed because a second harness is not
       // signed in is a client that can open nothing.
       answered += 1;
-      const rows = await agent.list().catch(() => { refused = true; return undefined; });
-      if (rows === undefined)
+      const rows = await agent.list().catch(() => { silent.add(agent.provider); return undefined; });
+      return { agent, rows };
+    }));
+    for (const one of answers) {
+      if (one === undefined || one.rows === undefined)
         continue;
+      const { agent, rows } = one;
       spoken.add(agent.provider);
       for (const dir_ of agent.directories?.() ?? []) read.add(dir_);
       for (const row of rows) {
@@ -335,58 +412,32 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const one = waiting === undefined ? both.find((it) => it.agent.provider === recorded) ?? both[0] : both[0];
       // Never empty: an id is in the map only because an agent listed it.
       if (one === undefined) continue;
-      const agent = one.agent;
-      const row = one.row;
-      const provider = waiting ?? agent.provider;
-      const resource = `${provider}:/${id}`;
-      // Remembered as it is listed: opening a row asks its backend for the
-      // transcript, and the URI says neither whose it is nor where it ran.
-      names.set(id, resource);
-      if (waiting === undefined) owners.set(resource, agent);
-      wheres.set(resource, row.workingDirectories);
-      births.set(resource, row.createdAt);
-      moves.set(resource, row.modifiedAt);
-      found.push({
-        resource,
-        provider,
-        title: row.title,
-        // Nothing this host started is running yet, so activity is idle and
-        // the only bits set are the client's own.
-        status: Status.Idle | kept.flags(id),
-        createdAt: row.createdAt,
-        modifiedAt: row.modifiedAt,
-        workingDirectories: row.workingDirectories,
-        ...changesOf(resource),
-        ...ctx.describes(resource),
-      });
+      found.push(adopt(one.agent, one.row, waiting));
+    }
+    /*
+     * What a refusing backend had last time, kept as it was.
+     *
+     * A backend that did not answer said nothing about its sessions, and this
+     * host reads that as what it is rather than as a store that was emptied
+     * between one pass and the next. So its rows carry over: they are still what
+     * that store offered, a client is answered with them, and nothing is said
+     * about them - which is the part that matters, since a client told a session
+     * is gone closes it, and this one never stopped being there.
+     *
+     * A row another backend answered for is that backend's own, and a row a
+     * session this host runs now claims is not a listed row at all.
+     */
+    for (const held of before) {
+      if (!silent.has(held.provider) || claimed.has(idFor(held.resource)))
+        continue;
+      if (offered.has(idFor(held.resource)) || found.some((one) => one.resource === held.resource))
+        continue;
+      found.push(held);
     }
     // The protocol says a server SHOULD order them most-recently-modified
     // first, and a client that has to sort a list it was handed is a client
     // doing the server's job.
     found.sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
-    // Sessions this host started are real and are not listed by a backend yet.
-    // A catalogue that dropped them would lose the one being looked at.
-    for (const [uri, held] of sessions) {
-      const lead = leadOf(held);
-      if (!lead)
-        continue;
-      const started = origins.get(uri);
-      found.unshift({
-        resource: uri,
-        provider: held.agent.provider,
-        title: lead.title(),
-        status: statusOf(uri),
-        // What it is doing, so a list of twenty sessions says which one is
-        // busy with what rather than only which one is busy.
-        ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
-        createdAt: held.createdAt,
-        modifiedAt: modifiedOf(held),
-        workingDirectories: lead.workingDirectories(),
-        ...(started !== undefined ? { origin: started } : {}),
-        ...changesOf(uri),
-        ...ctx.describes(uri),
-      });
-    }
     /*
      * What no backend lists any more is gone - a transcript deleted outside
      * this host - and what is kept for it is for a row nothing can open again.
@@ -419,9 +470,211 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       forgotten.push([named, kept.config(id)]);
       return true;
     };
-    if (answered > 0 && !refused) kept.prune?.(gone);
+    if (answered > 0 && silent.size === 0) kept.prune?.(gone);
     for (const [uri, config] of forgotten) ctx.leaveForgotten(uri, config);
     return found;
+  };
+
+  /**
+   * One listed row, recorded as it is listed.
+   *
+   * Remembered because opening a row asks its backend for the transcript, and
+   * the URI says neither whose it is nor where it ran: the owner, the title and
+   * the dates are all this map. A listing and an opening that finds a row are
+   * the same thing told twice, so they build it the same way here rather than
+   * in each.
+   *
+   * `waiting` is a provider the host recorded for this session and is not
+   * serving, so the row keeps its own provider and no owner: nothing here can
+   * open it, and the session waits for the agent it actually ran on.
+   */
+  const adopt = (agent: Agent, row: Listed, waiting?: string): Summary => {
+    const provider = waiting ?? agent.provider;
+    const resource = `${provider}:/${row.id}`;
+    names.set(row.id, resource);
+    if (waiting === undefined) owners.set(resource, agent);
+    wheres.set(resource, row.workingDirectories);
+    births.set(resource, row.createdAt);
+    moves.set(resource, row.modifiedAt);
+    return {
+      resource,
+      provider,
+      title: row.title,
+      // Nothing this host started is running yet, so activity is idle and the
+      // only bits set are the client's own.
+      status: Status.Idle | kept.flags(row.id),
+      createdAt: row.createdAt,
+      modifiedAt: row.modifiedAt,
+      workingDirectories: row.workingDirectories,
+      ...changesOf(resource),
+      ...ctx.describes(resource),
+    };
+  };
+  /**
+   * A listed row this host did not have, said whole.
+   *
+   * `sessionAdded` speaks for a session this host is running and builds the row
+   * from it; this one is a row a backend answered for a session that is not
+   * being run, which is what a client opening a link from another machine finds.
+   *
+   * Forgetting what was last sent, as that one does: the row that goes with it
+   * is one no client has, so nothing a client holds can be what the next move is
+   * compared against.
+   */
+  const rowAdded = (summary: Summary): void => {
+    lastSent.delete(summary.resource);
+    ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
+  };
+
+  /**
+   * The rows of the sessions this host is running, built now.
+   *
+   * Not held, and that is the whole of the decision behind it: a live row
+   * moves every second and building one reads a handful of in-memory objects,
+   * while a backend row costs a pass over every transcript on the machine. The
+   * held catalogue keeps the expensive half and this is rebuilt on each answer,
+   * so a session somebody is looking at is never a second behind.
+   */
+  const liveRows = (): Summary[] => {
+    // Sessions this host started are real and are not listed by a backend yet.
+    // A catalogue that dropped them would lose the one being looked at.
+    const live: Summary[] = [];
+    for (const [uri, held] of sessions) {
+      const lead = leadOf(held);
+      if (!lead)
+        continue;
+      const started = origins.get(uri);
+      live.unshift({
+        resource: uri,
+        provider: held.agent.provider,
+        title: lead.title(),
+        status: statusOf(uri),
+        // What it is doing, so a list of twenty sessions says which one is
+        // busy with what rather than only which one is busy.
+        ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+        createdAt: held.createdAt,
+        modifiedAt: modifiedOf(held),
+        workingDirectories: lead.workingDirectories(),
+        ...(started !== undefined ? { origin: started } : {}),
+        ...changesOf(uri),
+        ...ctx.describes(uri),
+      });
+    }
+    return live;
+  };
+
+  /**
+   * Every row a client is handed, as one list: the running sessions now, the
+   * held rows behind them, most recently modified first.
+   *
+   * One place for the two halves to be put together, because they are one
+   * answer: `listSessions` pages over this and so does the `list_sessions`
+   * tool. A session this host is running is dropped out of the held rows by
+   * its id, since it is in the first half and a row twice is a row a client
+   * has to reconcile.
+   */
+  const allRows = async (): Promise<Summary[]> => {
+    const running = liveRows();
+    const claimed = new Set(running.map((row) => idFor(row.resource)));
+    const listed = await ctx.held();
+    // The protocol says a server SHOULD order them most-recently-modified
+    // first, and a client that has to sort a list it was handed is a client
+    // doing the server's job.
+    return [...running, ...listed.filter((row) => !claimed.has(idFor(row.resource))).map(hereNow)]
+      .sort((a_, b_) => b_.modifiedAt.localeCompare(a_.modifiedAt));
+  };
+  /**
+   * A held row with what this host knows about it read again.
+   *
+   * What a backend said about a session is held, because learning it cost a
+   * pass over every transcript on the machine. What this host knows about it is
+   * not held and not asked for either: a row a client marked read, and the
+   * counts and facts of a directory read since, move on their own and cost
+   * nothing to read.
+   *
+   * Read here rather than at listing time, or a client that marked a row and
+   * listed again would be handed the flag it had just set one refresh late, and
+   * the list it was holding would disagree with the notification that told it
+   * about the change.
+   */
+  const hereNow = (row: Summary): Summary => ({
+    resource: row.resource,
+    provider: row.provider,
+    title: row.title,
+    createdAt: row.createdAt,
+    modifiedAt: row.modifiedAt,
+    workingDirectories: row.workingDirectories,
+    // Nothing this host started is running yet, so activity is idle and the
+    // only bits set are this host's own and the client's.
+    status: Status.Idle | kept.flags(idFor(row.resource)),
+    ...changesOf(row.resource),
+    ...ctx.describes(row.resource),
+  });
+
+  /**
+   * What a refresh found, told to every client.
+   *
+   * The catalogue is held, so nobody has to ask for it to learn that a session
+   * appeared or is gone: what changed since the last listing goes out as the
+   * three protocol notifications a client already reduces its list against.
+   *
+   * A row this host is running is left out entirely. `summaryMoved` speaks for
+   * it, every second or so, and a row listed here is built from a listing that
+   * is already behind by the time it is answered.
+   */
+  const rowsMoved = (before: Summary[], after: Summary[]): void => {
+    /*
+     * Nothing is said on the first fill.
+     *
+     * A host that has answered nobody has told nobody, so a listing's whole
+     * contents are not an addition to an empty catalogue - and every client
+     * connected while this was read gets its catalogue from the answer to its
+     * own `listSessions` rather than from a flood of additions.
+     */
+    if (before.length === 0) return;
+    const was = new Map(before.map((row) => [row.resource, row]));
+    for (const row of after) {
+      const had = was.get(row.resource);
+      was.delete(row.resource);
+      if (sessions.has(row.resource))
+        continue;
+      if (had === undefined) {
+        lastSent.delete(row.resource);
+        ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary: row });
+        continue;
+      }
+      if (!movedSince(had, row)) continue;
+      /*
+       * A whole mutable row rather than the fields that differ, because a
+       * client applies a partial by spreading it over what it holds and
+       * setting a field to the value it already has costs nothing.
+       */
+      const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
+      sayMoved(row.resource, mutable);
+    }
+    for (const [resource] of was) {
+      forgetSent(resource);
+      ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
+    }
+  };
+  /**
+   * Whether a listed row says anything a client does not already hold.
+   *
+   * The fields a listing can change and nothing else: `resource`, `provider`
+   * and `createdAt` are who the row is rather than what it says, and `_meta` is
+   * the session's own channel to change them on. Everything else on a row is
+   * read off the transcript, so it is one of these or it does not move.
+   */
+  const movedSince = (was: Summary, now: Summary): boolean => {
+    // `changes` is a row's own field and not on `Summary`, the way `_meta` is
+    // not either: both are spread onto the row by the module that owns them.
+    const before = was as unknown as Bag;
+    const after = now as unknown as Bag;
+    return was.title !== now.title
+      || was.modifiedAt !== now.modifiedAt
+      || was.status !== now.status
+      || JSON.stringify(was.workingDirectories ?? []) !== JSON.stringify(now.workingDirectories ?? [])
+      || JSON.stringify(before.changes ?? null) !== JSON.stringify(after.changes ?? null);
   };
 
   /**
@@ -453,7 +706,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    */
   const readStored = async (): Promise<void> => {
     const served = new Set(browsable());
-    const rows = await listing().catch(() => [] as Summary[]);
+    /*
+     * The first refresh, and the same one a `listSessions` would have started:
+     * a listing of its own here would leave the two disagreeing, and whichever
+     * finished last would decide what the catalogue holds.
+     */
+    const rows = await ctx.refresh().catch(() => [] as Summary[]);
     const dirs = new Set<string>();
     for (const row of rows) {
       // A live session's directory is read by what that session does.
@@ -471,7 +729,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
 
   return {
     statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
-    activityOf, sessionAdded, summaryMoved, activeSessionsMoved, learnModels,
-    listing, waitingFor, readStored,
+    activityOf, sessionAdded, summaryMoved, forgetSent, activeSessionsMoved, learnModels,
+    listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
 }

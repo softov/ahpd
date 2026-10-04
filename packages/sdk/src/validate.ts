@@ -72,6 +72,7 @@ const AGENT_OPTIONAL: Record<string, Kind> = {
   machine: 'function',
   directories: 'function',
   list: 'function',
+  find: 'function',
   delete: 'function',
   stateFile: 'function',
   endpoints: 'function',

@@ -1,7 +1,7 @@
 ---
 title: The catalogue answers at once, and a summary is sent only when it changes
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -100,7 +100,7 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 | Opening a past session reads its row from the held catalogue, and when the row is missing asks the agents for that one id through an optional `Agent.find(id)`, the recorded provider first | Softov's report, 2026-10-04 | 04 |
 | An agent with no `find` has a missing row answered by the running refresh, or by one it starts | (defaulted: pi, cofold and ACP keep finding a session written after the last listing) | 04 |
 | Claude's `transcript`, `subagents` and `find` locate a session with `getSessionInfo(id, { dir })` per path rather than a listing | (defaulted: the SDK reads one file for it) | 04 |
-| `LISTING_FRESH` goes | Softov's report, 2026-10-04, "if nothing needs it"; nothing does once `past` reads the held catalogue | 04 |
+| `LISTING_FRESH` stays, only for an agent without `find`; a later plan gives pi, cofold and ACP a `find`, after which it goes | Softov, 2026-10-04, asked "pi, cofold and ACP have no `find` yet; what do we do with them?": keep it, plan `find` | 04 |
 | The memory is not changed on a guess: task 05 measures it, and what it finds is a plan of its own | Softov's report, 2026-10-04 | 05 |
 | dev02 refuses ahpapp with -32005 No protocol version in common because its ahpd predates protocol 1.0.0; updating ahpd on dev02 fixes it, and it is not this plan's work | Softov's report, 2026-10-04 | - |
 
@@ -116,10 +116,10 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A summary that did not change is not sent](task-01-a-summary-that-did-not-change-is-not-sent.md) | todo | - |
-| [02 - Agents are listed at once, and Claude's variants read their store once](task-02-agents-are-listed-at-once-and-once-per-store.md) | todo | - |
-| [03 - The catalogue is held, and a refresh sends what moved](task-03-the-catalogue-is-held.md) | todo | 01, 02 |
-| [04 - Opening a past session reads the held row](task-04-opening-a-past-session-reads-the-held-row.md) | todo | 03 |
+| [01 - A summary that did not change is not sent](task-01-a-summary-that-did-not-change-is-not-sent.md) | implemented | - |
+| [02 - Agents are listed at once, and Claude's variants read their store once](task-02-agents-are-listed-at-once-and-once-per-store.md) | implemented | - |
+| [03 - The catalogue is held, and a refresh sends what moved](task-03-the-catalogue-is-held.md) | implemented | 01, 02 |
+| [04 - Opening a past session reads the held row](task-04-opening-a-past-session-reads-the-held-row.md) | implemented | 03 |
 | [05 - Measured before and after, by hand](task-05-measured-before-and-after.md) | todo | 01, 02, 03, 04 |
 
 ## Risks and tradeoffs
@@ -133,10 +133,10 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-summary-that-did-not-change-is-not-sent.md](task-01-a-summary-that-did-not-change-is-not-sent.md), then [task-02-agents-are-listed-at-once-and-once-per-store.md](task-02-agents-are-listed-at-once-and-once-per-store.md), then task 03.
+- **Done so far:** tasks 01, 02, 03 and 04, implemented on 2026-10-04 and uncommitted. A `root/sessionSummaryChanged` is not sent when its `changes` equal the last one for that session (01); the catalogue asks every agent at once and Claude's variants of one load share one listing per store (02); the catalogue is held, `listSessions` answers from it, and a background refresh sends only what moved (03); `past` reads the held row and asks the backends for one id through `Agent.find` rather than listing, and Claude settles a session's directory with `getSessionInfo` (04).
+- **Next action:** [task-05-measured-before-and-after.md](task-05-measured-before-and-after.md), by hand on this machine and on dev-01. The changes are uncommitted and want a review first.
 - **Open questions:** none.
-- **Watch out for:** `listing` has side effects (`names`, `owners`, `wheres`, `births`, `moves`, the prune), so a refresh is a call to it and not a copy of it; `summaryMoved` is called for listed rows too, which have no `Held` and send `status` and `changes` only.
+- **Watch out for:** `listing` has side effects (`names`, `owners`, `wheres`, `births`, `moves`, the prune), so a refresh is a call to it and not a copy of it; `summaryMoved` is called for listed rows too, which have no `Held` and send `status` and `changes` only; the held rows are handed out with `status`, `changes` and `_meta` read again from this host's own state (`allRows`), so a listing's answer is not frozen for as long as the rows are held; `past` still lists for a backend that has no `find`, throttled to once in two seconds, so the cost is gone for Claude and not for pi, cofold and ACP.
 
 ## Final verification checklist
 

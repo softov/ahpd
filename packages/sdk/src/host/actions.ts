@@ -32,7 +32,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const { connection, tokensFor } = conn;
   const { refuse } = ctx;
   const {
-    advancedTools, catalogue, changed, channelKind, contributed, contributing, daemonKey, decided,
+    advancedTools, changed, channelKind, contributed, contributing, daemonKey, decided,
     dir, dirOf, dispatch, first, homeOf, kept, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, past, permitted, presence, relayed, restart, restartNeeded, retool,
     rootConfig, served, sessionFor, sessions, starting, summaryMoved, terminals, toolDefinitions,

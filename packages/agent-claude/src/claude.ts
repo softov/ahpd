@@ -2,7 +2,7 @@ import { probe } from './probe.js';
 import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf, subagentsOf } from './transcript.js';
-import { catalogue, forgetSession, transcriptOf } from './catalog.js';
+import { catalogue, findSession, forgetSession, transcriptOf } from './catalog.js';
 import { offeredModels, ownModels, type ModelEntry, type OfferedModel } from './models.js';
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -10,7 +10,7 @@ import { isAbsolute, join } from 'node:path';
 import { machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, Spawned } from './spawn.js';
-import type { Agent, Bag, MachineNeed, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Start } from '@ahpd/sdk';
 
 /**
  * The host's Claude Code CLI, as the installer leaves it.
@@ -119,6 +119,17 @@ export interface ClaudeOptions {
   keepCliModels?: boolean;
   /** Where a model list that could not be fetched is said. */
   log?: (line: string) => void;
+  /**
+   * The listing this harness shares with the other variants of one load.
+   *
+   * Written by `apply`, which registers one agent per preset and builds this
+   * once for all of them: every variant of one load reads the same `paths` out
+   * of the same `CLAUDE_CONFIG_DIR`, so one pass over the projects directory
+   * answers for all of them. Left out - an embedder calling `claude()` itself -
+   * and the harness lists those paths itself, which is what a single variant
+   * wants and what a preset with its own paths must have.
+   */
+  sharedCatalogue?: () => Promise<Listed[]>;
 }
 
 /** Claude Code on one or more directories, ready to be handed to `createHost`. */
@@ -407,8 +418,22 @@ export function claude(options: ClaudeOptions): Agent {
 
     // Every directory it serves, as one list. A session is listed by the
     // catalogue of the directory it ran in, and a host serving several has
-    // one catalogue.
-    list: async () => (await Promise.all(dirs.map((served) => catalogue(served)))).flat(),
+    // one catalogue. The shared listing is copied rather than handed over:
+    // the host's fold does not touch a row, and one variant handing another
+    // its array is a row that changes under a caller that owns it.
+    list: async () => (options.sharedCatalogue === undefined
+      ? (await Promise.all(dirs.map((served) => catalogue(served)))).flat()
+      : [...await options.sharedCatalogue()]),
+
+    /*
+     * One session, without a listing.
+     *
+     * What a client opening a row the host does not hold costs: a link from
+     * another machine, a session written to disk after the last listing. The
+     * store is asked about that id and nothing else, which is one file read
+     * where a listing is every transcript on the machine.
+     */
+    find: async (id) => (await findSession(dirs, id))?.row,
 
     /*
      * The transcript on disk, which is the CLI's own record of a session, and
@@ -431,14 +456,11 @@ export function claude(options: ClaudeOptions): Agent {
     }],
 
     // Whichever directory holds it. The transcript reader wants the one the
-    // session ran in, and only its own catalogue knows which that was.
+    // session ran in, and asking the store about this one id is what says so,
+    // rather than listing every directory to find out.
     transcript: async (id) => {
-      for (const served of dirs) {
-        const rows = await catalogue(served).catch(() => []);
-        if (rows.some((row) => row.id === id))
-          return turnsOf(id, served);
-      }
-      return undefined;
+      const found = await findSession(dirs, id);
+      return found === undefined ? undefined : await turnsOf(id, found.dir);
     },
 
     /*
@@ -451,12 +473,9 @@ export function claude(options: ClaudeOptions): Agent {
      * than linked to the wrong call.
      */
     subagents: async (id, turns) => {
-      for (const served of dirs) {
-        const rows = await catalogue(served).catch(() => []);
-        if (!rows.some((row) => row.id === id)) continue;
-        return subagentsOf(id, served, turns ?? await turnsOf(id, served));
-      }
-      return undefined;
+      const found = await findSession(dirs, id);
+      if (found === undefined) return undefined;
+      return subagentsOf(id, found.dir, turns ?? await turnsOf(id, found.dir));
     },
 
     /*

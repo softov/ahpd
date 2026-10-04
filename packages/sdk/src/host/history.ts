@@ -1,6 +1,6 @@
 import { idFor } from '../catalog.js';
 import { subagentChatUri } from './channels.js';
-import type { Agent } from '../types/agent.js';
+import type { Agent, Listed } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
 import type { WireTurn } from '../types/wire.js';
@@ -27,8 +27,13 @@ export interface History {
   restoredSubagents(id: string, owner: Agent, turns?: WireTurn<Turn>[]): Promise<Bag[]>;
   restoredParentChat(session: string, lead: string, one: Bag): string;
   linkedTurns(session: string, turns: Bag[], workers: Bag[]): Bag[];
-  listNow(): Promise<Summary[]>;
-  catalogue(): Promise<Summary[]>;
+  /**
+   * A new listing of the backends, shared with every other caller that asks
+   * while it runs, and told to the clients as it lands.
+   */
+  refresh(): Promise<Summary[]>;
+  /** The rows as last listed: held when there are any, and the first listing when there are not. */
+  held(): Promise<Summary[]>;
   past(id: string): Promise<Bag[] | undefined>;
 }
 
@@ -120,32 +125,108 @@ export function createHistory(ctx: HostContext): History {
    * disagree about what the conversation is called.
    */
   const titles = new Map<string, string>();
-  /** The last listing started, by `past` or by `listSessions`, and when. */
-  let listed: { at: number; rows: Promise<Summary[]> } | undefined;
-  /** When `past` last started a listing of its own. */
+  /**
+   * The backend rows as last listed, and what holds them up to date.
+   *
+   * The catalogue used to be listed for every `listSessions` and every
+   * subscribe to a session this host is not running, and each of those is a
+   * pass over every transcript on the machine. It is listed here once, held
+   * while clients come and go, and brought up to date by a refresh a
+   * `listSessions` starts behind its own answer - so a client that asks
+   * twice pays for one listing and sees what changed either way.
+   */
+  let rows: Summary[] = [];
+  /** The listing in flight, so a second ask joins it rather than starting one. */
+  let refreshing: Promise<Summary[]> | undefined;
+  /** When `past` last listed for itself, and so did not read the held rows. */
   let pastAt = -Infinity;
-  /** A new listing, recorded as the one `catalogue` answers with. */
-  const listNow = (): Promise<Summary[]> => {
-    const rows = listing();
-    listed = { at: Date.now(), rows };
-    rows.catch(() => { if (listed?.rows === rows) listed = undefined; });
-    return rows;
+  /**
+   * List the backends again, and tell every client what moved.
+   *
+   * One at a time: two callers inside the same listing get the same rows, and
+   * the second does not have a catalogue of its own to diff against the
+   * first. What went out for each row is compared here, once, rather than by
+   * each caller working out what its own answer changed.
+   *
+   * A listing that throws leaves the held rows as they were, and a backend that
+   * refuses inside a listing that answered keeps the rows it had last time: a
+   * backend that is not answering is a backend with nothing to say, not one whose
+   * sessions have been deleted. Either way a failed pass costs a client a
+   * catalogue it already had rather than an empty one - and, for the second,
+   * does not tell it to close the sessions it has open.
+   */
+  const refresh = (): Promise<Summary[]> => {
+    const already = refreshing;
+    if (already !== undefined) return already;
+    const asked = (async (): Promise<Summary[]> => {
+      const found = await listing(rows);
+      ctx.rowsMoved(rows, found);
+      rows = found;
+      return found;
+    })();
+    refreshing = asked;
+    const clear = (): void => { if (refreshing === asked) refreshing = undefined; };
+    asked.then(clear, clear);
+    return asked;
   };
   /**
-   * The catalogue as `past` reads it: a listing started within
-   * `LISTING_FRESH`, running or finished, or else a new one.
+   * The catalogue as `listSessions` and `past` read it: the held rows, or the
+   * first listing when there has not been one.
+   *
+   * Empty rather than waiting is the case that decides the shape: a host that
+   * has not listed yet has nothing to answer with, and the first client to ask
+   * is the one who pays for the listing. Everyone after it is answered from
+   * what that one left behind.
    */
-  const catalogue = (): Promise<Summary[]> => {
-    if (listed === undefined || Date.now() - listed.at >= LISTING_FRESH) {
-      pastAt = Date.now();
-      return listNow();
-    }
-    return listed.rows;
+  const held = (): Promise<Summary[]> => (rows.length === 0 ? refresh() : Promise.resolve(rows));
+  /**
+   * A listing of its own, for an id the held rows do not have.
+   *
+   * It waits for a listing already running rather than joining it, because
+   * that one started before this caller knew it wanted the row: a session
+   * written to disk while a pass was in flight is exactly the case this is
+   * here for, and joining that pass would answer the same way it always does.
+   */
+  const relist = async (): Promise<Summary[]> => {
+    const running = refreshing;
+    if (running !== undefined) await running.catch(() => {});
+    return await refresh();
   };
+  /**
+   * One backend's row for an id, from the backends that can answer by id.
+   *
+   * The recorded provider first, then the rest in load order. A transcript does
+   * not say which harness wrote it, so the record is what the host wrote when
+   * the session ran - but a row is opened on this host and not on the machine
+   * that wrote it, so a backend that did not record anything is asked too.
+   *
+   * A backend that refuses is a backend with nothing to say, the same as one
+   * that answers nothing: the others are still asked.
+   */
+  const findOf = async (id: string): Promise<{ agent: Agent; row: Listed } | undefined> => {
+    const asked = [...ctx.agents.values()].filter((agent) => agent.find !== undefined);
+    const recorded = ctx.kept.provider(id);
+    const order = recorded === undefined
+      ? asked
+      : [...asked.filter((agent) => agent.provider === recorded), ...asked.filter((agent) => agent.provider !== recorded)];
+    for (const agent of order) {
+      const row = await agent.find?.(id).catch(() => undefined);
+      if (row !== undefined) return { agent, row };
+    }
+    return undefined;
+  };
+  /**
+   * Whether any backend here cannot be asked about one session.
+   *
+   * What decides whether a missing id costs a listing: a host whose every
+   * backend answers by id is told the id is nobody's, and one that cannot is
+   * listed for once, since that is all such a backend has.
+   */
+  const someCannotSay = (): boolean => [...ctx.agents.values()].some((agent) => agent.find === undefined);
   const past = async (id: string): Promise<Bag[] | undefined> => {
-    const held = history.get(id);
-    if (held)
-      return held;
+    const cached = history.get(id);
+    if (cached)
+      return cached;
     /*
      * One read per transcript, however many callers arrive together.
      *
@@ -161,14 +242,39 @@ export function createHistory(ctx: HostContext): History {
     const already = reading.get(id);
     if (already) return await already;
     const asked = (async (): Promise<Bag[] | undefined> => {
-      // The listing is what says whose session this is, so it is asked first.
-      const before = pastAt;
-      let found = await catalogue();
-      let row = found.find((item) => idFor(item.resource) === id);
-      if (!row && pastAt === before && Date.now() - pastAt >= LISTING_FRESH) {
+      // The held rows are what says whose session this is, so they are read
+      // first, and nothing is listed to find a row that is in them.
+      let row = rows.find((item) => idFor(item.resource) === id);
+      if (!row) {
+        const one = await findOf(id);
+        if (one !== undefined) {
+          /*
+           * Recorded and held, rather than remembered for this caller only.
+           *
+           * What the host knows about a row is what a client is sent for the
+           * next move of it, and this row is in the catalogue as surely as one
+           * a listing found - so it goes in with the rest, is said to every
+           * client, and the next opening of it asks nobody anything.
+           */
+          const found = ctx.adopt(one.agent, one.row);
+          ctx.rowAdded(found);
+          if (!rows.some((heldRow) => heldRow.resource === found.resource)) rows.push(found);
+          row = found;
+        }
+      }
+      if (!row && someCannotSay() && Date.now() - pastAt >= LISTING_FRESH) {
+        /*
+         * One more listing for an id the held rows do not have.
+         *
+         * Only for a backend that cannot be asked about one session, which is
+         * the store this worked before it could be: a listing is all it has.
+         * At most once in `LISTING_FRESH`, since whoever is opening sessions
+         * nobody has - a client with a stale list, or a link to a session that
+         * was deleted - would otherwise cost a pass over the machine's
+         * transcripts each.
+         */
         pastAt = Date.now();
-        found = await listNow();
-        row = found.find((item) => idFor(item.resource) === id);
+        row = (await relist()).find((item) => idFor(item.resource) === id);
       }
       const owner = owners.get(nameOf(id));
       if (!row || !owner?.transcript)
@@ -197,6 +303,6 @@ export function createHistory(ctx: HostContext): History {
   };
 
   return {
-    history, subHistory, titles, restoredSubagents, restoredParentChat, linkedTurns, listNow, catalogue, past,
+    history, subHistory, titles, restoredSubagents, restoredParentChat, linkedTurns, refresh, held, past,
   };
 }

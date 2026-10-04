@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Request } from '../src/types/rpc.js';
 import {
-  resetSdk, actions, emit, hello, open, peer,
+  claude, createHost, machine, resetSdk, actions, emit, hello, open, peer,
   sdk, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
@@ -627,4 +628,161 @@ it('takes a client into a session the catalogue has listed, before anybody reads
     snapshot: { state: { activeClients: { clientId: string }[] } };
   }).snapshot.state;
   expect(state.activeClients.map((one) => one.clientId)).toEqual(['probe']);
+});
+
+/*
+ * A build session sends a summary many times a second, and for most of those
+ * times the row is byte for byte the row a client is already holding. Sending
+ * it anyway is a flood of about 1.1 KB per second per client for nothing, and
+ * it is the whole reason a host with two builds on it could not answer a
+ * `listSessions` at all.
+ */
+describe('a summary that did not change', () => {
+  /** The `changes` a session has been sent, in order. */
+  const rowsMoved = (p: ReturnType<typeof peer>, session: string): Record<string, unknown>[] => p.notes
+    .filter((n) => n.method === 'root/sessionSummaryChanged')
+    .map((n) => n.params as { session: string; changes: Record<string, unknown> })
+    .filter((n) => n.session === session)
+    .map((n) => n.changes);
+
+  /** The same title again, which is a move of nothing. */
+  const retitle = async (client: { handle(request: Request): Promise<unknown> }, channel: string, title: string) => {
+    await client.handle({ method: 'dispatchAction', params: { channel, action: { type: 'session/titleChanged', title } } });
+    await settle();
+  };
+
+  it('sends one summary for however many calls moved nothing', async () => {
+    const { client, peer: p } = await running();
+    await retitle(client, 'claude:/live', 'Paging');
+    expect(rowsMoved(p, 'claude:/live')).toHaveLength(1);
+
+    // The same title again, and again: a rename a client makes twice, a
+    // `rename_chat` the agent calls after its own, and the diff stat a
+    // directory reports the same count for - all of it one row, unchanged.
+    await retitle(client, 'claude:/live', 'Paging');
+    await retitle(client, 'claude:/live', 'Paging');
+    expect(rowsMoved(p, 'claude:/live')).toHaveLength(1);
+  });
+
+  it('sends again for a title that moved, and for an activity that moved', async () => {
+    const { client, peer: p, chatUri } = await running();
+    await retitle(client, 'claude:/live', 'Paging');
+    expect(rowsMoved(p, 'claude:/live')).toHaveLength(1);
+
+    await retitle(client, 'claude:/live', 'Paging, again');
+    expect(rowsMoved(p, 'claude:/live')).toHaveLength(2);
+    expect(rowsMoved(p, 'claude:/live').at(-1)?.title).toBe('Paging, again');
+
+    // Which was the field that moved last in the measurements: a turn
+    // starting and ending. Both have to get through, or the row a client
+    // draws goes stale on exactly the session it is watching.
+    const said = rowsMoved(p, 'claude:/live').length;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'read it' } } },
+    });
+    await settle();
+    const busy = rowsMoved(p, 'claude:/live');
+    expect(busy.length).toBeGreaterThan(said);
+    expect(busy.at(-1)?.activity).toEqual(expect.any(String));
+  });
+
+  /**
+   * A host whose directories say one file, and remember how to say it again.
+   *
+   * A row nobody is running takes its `changes` from the directory it is in,
+   * and the directory is read at boot and again for every watcher a client
+   * opened on it - so the same `{ status, changes }` comes back more than once
+   * for a row that did not move. Which is the case this is here for.
+   */
+  const counted = () => {
+    const watching: (() => void)[] = [];
+    return {
+      watching,
+      source: {
+        scopes: () => [{ id: 'uncommitted', label: 'Uncommitted', changeKind: 'uncommitted' }],
+        state: async () => ({ status: 'ready' as const, files: [] }),
+        summary: () => ({ files: 4 }),
+        refresh: async () => true,
+        watch: (_dir: string, onChange: () => void) => { watching.push(onChange); return () => {}; },
+      },
+    };
+  };
+
+  it('sends a listed row once, and not again for the same read of it', async () => {
+    // The host's own path, and every directory its backend claims, is browsed
+    // before the stored rows are read - so the row has to live somewhere else
+    // for there to be a second read of it to be suppressed.
+    sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/github/elsewhere' });
+    const counted_ = counted();
+    const host = createHost({
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), changes: counted_.source,
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    // Reading the directory at boot is one read of it, and the summary that
+    // comes out is the row's `status` and its counts and nothing else.
+    await settle(12);
+    expect(rowsMoved(p, 'claude:/old')).toHaveLength(1);
+    expect(rowsMoved(p, 'claude:/old')[0]).toMatchObject({ status: 1, changes: { files: 4 } });
+
+    // A client showing the row's diff re-reads the directory on every change
+    // the source reports, which is the same answer for a working tree nobody
+    // touched.
+    await client.handle({ method: 'subscribe', params: { channel: 'claude:/old/changeset/uncommitted' } });
+    await settle(12);
+    const read = rowsMoved(p, 'claude:/old').length;
+    expect(counted_.watching).toHaveLength(1);
+    counted_.watching[0]?.();
+    await settle(12);
+    expect(rowsMoved(p, 'claude:/old')).toHaveLength(read);
+
+    // And a flag is a change, so it goes out - once, and not twice.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/old', action: { type: 'session/isReadChanged', isRead: true } },
+    });
+    await settle();
+    expect(rowsMoved(p, 'claude:/old')).toHaveLength(read + 1);
+    expect(rowsMoved(p, 'claude:/old').at(-1)?.status).toBe(33);
+    counted_.watching[0]?.();
+    await settle(12);
+    expect(rowsMoved(p, 'claude:/old')).toHaveLength(read + 1);
+  });
+
+  it('sends the first move of a session re-created under the same URI', async () => {
+    /*
+     * The clock held still, because what this is about is a row that comes
+     * back exactly as it was: the last summary sent for the URI was recorded
+     * against the session that was disposed, and a client has nothing of the
+     * new one to start from.
+     */
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    try {
+      const { client, peer: p, uri } = await running();
+      await retitle(client, uri, 'Paging');
+      expect(rowsMoved(p, 'claude:/live')).toHaveLength(1);
+      await retitle(client, uri, 'Paging');
+      expect(rowsMoved(p, 'claude:/live')).toHaveLength(1);
+
+      await client.handle({ method: 'disposeSession', params: { channel: uri } });
+      await settle();
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      await settle();
+      // The same conversation, under the same name, with nothing on it - and a
+      // client that watched it go has an empty row for it. The row it is sent
+      // here is byte for byte the row the disposed session last sent.
+      const before = rowsMoved(p, 'claude:/live').length;
+      await retitle(client, uri, 'Paging');
+      expect(rowsMoved(p, 'claude:/live')).toHaveLength(before + 1);
+      await retitle(client, uri, 'Paging');
+      expect(rowsMoved(p, 'claude:/live')).toHaveLength(before + 1);
+    }
+    finally {
+      vi.useRealTimers();
+    }
+  });
 });

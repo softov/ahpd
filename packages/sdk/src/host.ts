@@ -760,7 +760,7 @@ export function createHost(options: HostOptions): Host {
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
     permitted, toolDefinitions, retool, renameChat,
     commanded, terminalInfo, heldTerminals, changed, due, startForAutomation,
-    past, history, subHistory, titles, listNow, catalogue,
+    past, history, subHistory, titles, refresh, held,
     snapshotOf, value,
   } = ctx;
   /*

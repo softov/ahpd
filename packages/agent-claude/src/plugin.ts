@@ -16,6 +16,7 @@ import type { Plugin, PluginHost } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
+import { sharedCatalogue as oneListing } from './catalog.js';
 import { presetSchema } from './options.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
@@ -190,6 +191,10 @@ const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Pro
   const paths = said.paths ?? host.paths;
   const shared = {
     log: (line: string) => host.log(line),
+    // One listing for all of them, and one load's worth of it: every variant
+    // below reads the same `paths` out of the same configuration directory, so
+    // there is one pass over the projects directory for the lot.
+    sharedCatalogue: oneListing(paths),
     ...(said.computerExecutable === undefined ? {} : { computerExecutable: said.computerExecutable }),
     ...(said.computerConfigDir === undefined ? {} : { computerConfigDir: said.computerConfigDir }),
     ...(said.workerStop === undefined ? {} : { workerStop: said.workerStop }),

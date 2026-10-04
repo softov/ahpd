@@ -1,6 +1,6 @@
 ---
 title: The catalogue is held, and a refresh sends what moved
-status: todo
+status: implemented
 depends: [task-01-a-summary-that-did-not-change-is-not-sent.md, task-02-agents-are-listed-at-once-and-once-per-store.md]
 layer: "sdk"
 refs:
@@ -41,3 +41,21 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+Implemented 2026-10-04.
+
+- `listing` now answers the backend rows only, and `liveRows()` builds the sessions this host is running, moved out of it. `held()` in `history.ts` answers the rows as last listed and `refresh()` starts a listing, joins one that is already running, and - when it lands - calls `rowsMoved(rows, found)` before holding what it found. A listing that throws leaves the held rows alone.
+- `rowsMoved(before, after)` in `catalogue.ts` says what changed by resource: `root/sessionAdded` for a row that was not there, `root/sessionRemoved` (with `forgetSent`) for one that is gone, and `root/sessionSummaryChanged` for one whose `title`, `modifiedAt`, `status`, `workingDirectories` or `changes` differ, through the same last-sent check task 01 put in `summaryMoved` - `sayMoved` is now the one place a `root/sessionSummaryChanged` leaves from. Nothing is said on the first fill.
+- `listSessions` answers `allRows()` and starts one background refresh behind that answer; `readStored` takes its rows from that same first refresh rather than a listing of its own.
+
+Departures from the plan:
+
+- **The held rows are handed out with what this host knows about them read again.** `allRows()` rebuilds each held row's `status`, `changes` and `_meta` from `kept.flags`, `changesOf` and `ctx.describes` when it answers, keeping the backend's title, dates and directories. The plan's step 5 says the answer is `[...liveRows(), ...await held()]` as listed, which freezes the rest for as long as the rows are held, and two existing tests are the reason that is wrong: `the flags a client sets > keeps read and archived, and tells everyone watching` (a client that marks a row and lists again was handed the flag one refresh late) and `changes-refresh > lists a stored session outside the path with its counts`. Both are in `packages/sdk/test` and were failing. What is held is what cost a pass over the machine's transcripts; these three read out of memory and cost nothing.
+- `packages/sdk/src/host/tooling.ts:237` is not in the plan's Files. `ToolCall.sessions` was `listing()`, which no longer carries the live rows, so the `list_sessions` tool stopped seeing the session it is running in and `host-tools.test.ts` lost nine tests. It is now `allRows()`, which is what `listSessions` answers, and the comment beside it says so.
+- `packages/sdk/src/host/actions.ts:35` and `packages/sdk/src/host/chatactions.ts:28` destructured `catalogue` and never used it; with History's `catalogue` gone they no longer compile, and the name is dropped from the two lists rather than renamed to `held` - both files already use `held` for something else in a dozen places.
+- `past` keeps `LISTING_FRESH` and `pastAt`. Its `catalogue()`/`listNow()` are now `held()` and `relist()`, and `relist` waits out a listing already in flight rather than joining it: the plan's files line says `pastAt` is replaced here and task 04 step 5 says it is deleted there, but `users-gate > finds a session a backend wrote to disk after the last listing` and `users-gate > reads the catalogue once for a run of subscribes to sessions nobody has` both need the two-second throttle, so it stays until task 04 takes it away with the `find` that replaces the second listing.
+- `host-catalogue-held.test.ts` builds its own host, as `host-catalogue-parallel.test.ts` does: `serving()` registers the built-in Claude and these tests need one backend whose `list` they control. Step 7's "the host's test handle exposes the running refresh" was not needed - the fake's `list` counts its calls and answers, and a test ticks until the answer it is waiting for has landed.
+
+Each of the five new tests was seen failing with the behaviour removed: without `held()` answering from the rows, three fail; without `rowsMoved` called, the two notification tests fail; with the first fill announced, the row that appeared test fails.
+
+Gates: `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` (205 files, 2856 tests) all pass.
