@@ -1,7 +1,7 @@
 ---
 title: A plugin option is set from the command line, in the file or for one run
 domain: daemon
-status: active
+status: built
 priority: medium
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -81,7 +81,7 @@ The files read are the `refs` above.
 
 - **Done so far:** tasks 01, 02, 03 and 04 implemented, awaiting review. Task 04 gave `--plugin-option` a key path set as deep as it goes, made as `mkdir -p` makes it, under a plugin found by asking the list, and said a credential is a `$secret` reference by either flag or `plugin config`.
 - **Reviews applied:** the review of 2026-09-30, the second, and the third, which refuses a typed value holding an inexact whole number, the fourth, which refuses only a number that would not keep its value, and the fifth, which holds a number to reading back as typed at every depth.
-- **Next action:** review, `implemented.md` and `status: built`. The checklist is by hand and has not been run.
+- **Next action:** Softov's review, which moves the tasks to `done`, and the three by-hand checks; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - Served `plugin config` showing non-`writeOnly` values while `plugin list` and `config` mask every value is daemon/11's (task 04).
 - **Watch out for:** a typed `--plugin` replaces the file's list; `--plugin-option` for a plugin not in the list, or switched off, is refused, naming it.
@@ -91,5 +91,5 @@ The files read are the `refs` above.
 - [ ] `ahpd plugin config @ahpd/agent-claude workerStop session` writes `config.json` and says to restart.
 - [ ] With a second agent loaded beside `@ahpd/agent-claude` (a daemon with no backend refuses to start), `ahpd --plugin-option @ahpd/agent-claude.workerStop=nope` starts with that plugin skipped and the option named.
 - [ ] A credential passed as `--plugin-option '<plugin>.<key>={"$secret":"<name>"}'` leaves only the reference in `daemon.json`.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.
