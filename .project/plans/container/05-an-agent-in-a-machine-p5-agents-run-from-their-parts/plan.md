@@ -96,6 +96,10 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 | The ahpd part's plugins are installed into `/opt/ahpd/ahpd/plugins` and found through `AHPD_PLUGIN_ROOT` | [p3 task 02](../05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/task-02-a-part-image-per-kind.md) | 03, 06 |
 | For now a new plugin-wide option `computerCli: "part" \| "host"`, `"part"` by default and shared by every variant like `computerExecutable`, turns the host binary mount on | Softov, 2026-10-03, asked "what turns the host binary mount on?": "a new plugin-wide option `computerCli: "part" \| "host"`, part default" | 01 |
 | For now the secrets are per variant: each variant signs in with what its own `env` names, and nothing of one variant's reaches another | Softov, 2026-10-03, asked "does a Claude variant on another endpoint still get the two secret env needs?": "per variant; a variant whose env names either declares none" | 04, 09 |
+| When the host cannot build the `claude` part (offline, or the build fails), the behaviour is a setting: by default the Claude machine is refused with a sentence naming the part, and the other setting falls back to the host binary mount with a log line saying so | Softov, 2026-10-04, asked "with `computerCli: "part"` the default, a host that cannot build the `claude` part (offline, or the build fails) refuses every Claude machine: keep the part strict, so the machine is refused with a sentence naming the part, or fall back to the host binary mount with a log line saying so?": configurable, strict by default, and falling back to the host binary mount with a log line as the other setting | 01, 08 |
+| The setting is `computerCliFallback: "refuse" \| "host"` on `@ahpd/agent-claude`, plugin-wide beside `computerCli` and shared by every variant, `"refuse"` by default, and read only when `computerCli` is `"part"` | (defaulted: `computerCli` already lives there and is plugin-wide, and the machine profile does not know which agent's binary it would fall back to) | 01, 08 |
+| A part need may carry `fallback`, a mount need the computer plugin makes in place of the part when the part is left out at create, logging one line naming the part and the fallback, and the machine's `ahpd.parts` label names that part as `<id>@host` so the session check finds it | (defaulted: only the plugin making the machine knows a part's build failed, and the host mount has to be in the machine when it is made) | 01 |
+| pi declares only the provider list's key variables; a custom variable name in pi's settings is the profile's to add as a need | Softov, 2026-10-04, asked "pi's settings may name a provider key variable of their own, beyond pi's provider list: declare only the provider list's variables, and a custom name is the profile's to add as a need, or read the host's pi settings at load and declare each variable they name as well?": declare only the provider list's variables, and a custom name is the profile's to add; later: [pi declares the variables its settings name](../../../ideas/pi-declares-the-variables-its-settings-name.md) | 07 |
 | For now every Claude variant of one load shares one state at `computerConfigDir` (`/ahpd/claude`), and identical needs collapse to one at create | Softov, 2026-10-03, asked in `container/05-p6` "where does each variant's state go?": "Share; dedupe identical needs" | 04 |
 | For now the ACP presets plan (acp/05, once rewritten) ships presets for the known agents, so a part's name and config dir are written once; task 02 fills a `machine` block per shipped preset | Softov, 2026-10-03, asked "does the ACP presets plan ship presets for the known agents, or document examples?": "shipped presets" | 02 |
 
@@ -107,7 +111,7 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude runs from its part](task-01-claude-runs-from-its-part.md) | todo | p4 task 01 |
+| [01 - Claude runs from its part](task-01-claude-runs-from-its-part.md) | todo | p4 tasks 01 and 02 |
 | [02 - ACP presets carry their machine](task-02-acp-presets-name-their-parts.md) | todo | acp 05 (the ACP presets plan) |
 | [03 - A cofold machine runs ahpd from its part](task-03-a-cofold-machine-runs-ahpd-from-its-part.md) | todo | p3 task 02 |
 | [04 - Claude keeps its state in a volume](task-04-claude-keeps-its-state-in-a-volume.md) | todo | 01, container/05-p6 task 05 |
@@ -125,9 +129,7 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 ## Resume state
 
 - **Done so far:** nothing; revalidated against main 2026-10-02, after claude/15 landed.
-- **Next action:** task 09, which needs nothing else; then 01 after p4 task 01 and once its open question is answered, and 03 after p3 task 02; then 04, 06 and 07; 02 and 05 wait for acp/05, rewritten as the ACP presets plan.
-- **Open question (ask before task 01):** with `computerCli: "part"` the default, a host that cannot build the `claude` part (offline, or the build fails) refuses every Claude machine - (a) keep the part strict, so the machine is refused with a sentence naming the part, or (b) fall back to the host binary mount with a log line saying so?
-- **Open question (ask before task 07):** pi's settings may name a provider key variable of their own, beyond pi's provider list - (a) declare only the provider list's variables, and a custom name is the profile's to add as a need, or (b) read the host's pi settings at load and declare each variable they name as well?
+- **Next action:** task 09, which needs nothing else; then 01 after p4 tasks 01 and 02, and 03 after p3 task 02; then 04, 06 and 07; 02 and 05 wait for acp/05, rewritten as the ACP presets plan.
 - **Watch out for:**
   - container 04's fix tasks change the nested start; land them first.
   - Two Claude variants on one profile share one state volume; main already makes one mount of identical mounts (`oneMountEach`), and `container/05-p6` task 05 collapses the identical state and env needs.
@@ -142,6 +144,7 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 - [ ] A Claude variant with its own endpoint answers a turn in a machine, and `env` inside shows its keys and not the host's `HOME`.
 - [ ] A profile naming the built-in Claude and a variant makes one machine with one state volume at `/ahpd/claude`.
 - [ ] `computerCli: "host"` makes today's machine with the host binary mounted.
+- [ ] With the `claude` part's build failing, a Claude session is refused naming the part, and with `computerCliFallback: "host"` it answers a turn from the host binary and the daemon logs the fallback.
 - [ ] A Codex preset in a disposable machine answers a turn.
 - [ ] A cofold session in a machine made from `debian:bookworm-slim` answers a turn.
 - [ ] A pi session in a machine made from `debian:bookworm-slim` answers a turn, with its settings from the state volume and its key by name.

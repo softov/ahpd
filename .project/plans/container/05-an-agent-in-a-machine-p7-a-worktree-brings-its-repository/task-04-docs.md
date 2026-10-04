@@ -10,6 +10,7 @@ refs:
 ## Objective
 
 `docs/COMPUTER.md` says a session's worktree and its repository's git directory are mounted, and what that lets a machine write.
+It says a machine with a git directory mounted runs its commands as the host user's uid:gid, so the image's own user is not used there.
 
 ## Files
 

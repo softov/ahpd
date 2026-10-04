@@ -10,6 +10,8 @@ refs:
 ## Objective
 
 `docs/COMPUTER.md` says each agent's CLI comes from its part and its configuration from a state volume, shows the host-binary opt-in and `state: "host"`, says a Claude variant takes its own `env` into its machine, drops the Dockerfile that installs ahpd from the nested section in favour of the part, and adds `@ahpd/agent-pi` to the table of backends in a machine as one that runs nested.
+It documents `computerCliFallback`: `"refuse"`, the default, refuses a Claude session whose machine could not get the `claude` part, naming the part, and `"host"` mounts the host binary instead and logs that it did.
+It says pi's key variables are the ones pi's provider list names, and that a custom variable in pi's settings is added as a need in the profile.
 
 ## Files
 
@@ -19,6 +21,8 @@ refs:
 
 1. Replace the `claudeExecutable` row; keep it under the opt-in.
 2. The nested section's image example becomes "any glibc image".
+3. Add `computerCliFallback` beside `computerCli`, with both values and its default.
+4. Show a profile that adds a custom pi key variable as a need.
 
 ## Validation
 

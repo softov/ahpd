@@ -28,7 +28,8 @@ refs:
 
 ## Goal
 
-An agent can declare a state directory with the few host files that seed it, and a machine gets that directory as a named volume per profile and state directory, shared by the variants of one plugin that declare it.
+An agent can declare a state directory with the few host files that seed it, and a machine gets that directory as a named volume per profile, owner and state directory, shared by the variants of one plugin that declare it.
+A profile may instead share its state volume between every owner, for a team that wants one shared bot state.
 The volume is seeded from the host the first time and again only when a seed file changed, so a disposable machine pays nothing, and nothing of the host's home is mounted.
 The host-home mounts stay as a profile's `state: "host"`.
 
@@ -39,9 +40,10 @@ The host-home mounts stay as a profile's `state: "host"`.
 ```
 agent.machine() { claudeState: { state: '/ahpd/claude', seed: [...] }, claudeConfigDirectory: { ..., when: 'host' } }
 profile.state = 'volume' (default) | 'host'
+profile.stateScope = 'owner' (default) | 'shared'
 -> resolveNeeds keeps the needs for that mode
 -> [new] identical needs of two agents collapse to one; differing ones at one target are refused
--> computer: volume ahpd-state-<profile>-ahpd-claude (named by the state directory) -> seed if its stamp differs -> -v volume:/ahpd/claude
+-> computer: volume ahpd-state-<profile>-<owner>-ahpd-claude, or ahpd-state-<profile>-ahpd-claude when shared (named by the state directory) -> seed if its stamp differs -> -v volume:/ahpd/claude
 ```
 
 ### Gaps
@@ -65,8 +67,11 @@ profile.state = 'volume' (default) | 'host'
 | A seed overwrites only the files it names, and keeps what the agent wrote | (defaulted: transcripts and caches live beside the seeded files) | 03 |
 | A seed may keep only some keys of a JSON file, or drop some by dotted path | the proposal: `.claude.json` without its account state | 03 |
 | A login file is never seeded; a secret reaches the machine as an env need, from the vault or the daemon's environment | the proposal: a shared refreshing login races; Softov, 2026-10-02, asked "What does the vault unlock first?": "Options and machines" | 01, 03 |
-| For now variants of one plugin share one state at the directory they declare (`/ahpd/claude` for every Claude variant); for now a volume is named `ahpd-state-<profile>-<state directory, slashes as dashes>` by one function, `stateVolumeOf`, so the naming can change | Softov, 2026-10-03, asked "where does each variant's state go, when every Claude variant declares `/ahpd/claude`?": "Share; dedupe identical needs" | 02 |
+| For now variants of one plugin share one state at the directory they declare (`/ahpd/claude` for every Claude variant); for now a volume is named by one function, `stateVolumeOf`, from the profile, the owner when the profile's state is per owner, and the state directory with slashes as dashes, so the naming can change | Softov, 2026-10-03, asked "where does each variant's state go, when every Claude variant declares `/ahpd/claude`?": "Share; dedupe identical needs" | 02 |
 | For now two env needs, or two state needs, that are the same collapse to one at create, through one function, `sameNeed`; a clash is refused only when they differ | Softov, 2026-10-03, same answer; mounts already collapse in [`code://packages/computer/src/manifest.ts#L408-L419`](../../../../packages/computer/src/manifest.ts#L408-L419) | 05 |
+| Who shares a profile's state volume is a profile setting with two values: per owner, `ahpd-state-<profile>-<owner>-<state directory>`, and shared, `ahpd-state-<profile>-<state directory>`; a bot, automation or plugin owner gets its own state as an owner, and a team that wants one shared bot state sets shared | Softov, 2026-10-04, asked "a profile's state volume is shared by every owner who makes a machine from that profile, so one person's seeded settings and agent history are another's: per profile, or per profile and owner?": "think in bots... maybe it need to be defined by the user or could be?" | 02, 04 |
+| A profile's state is per owner by default | (defaulted: a person's agent history is not another's; Softov, 2026-10-04, may change it) | 02, 04 |
+| The setting is the profile's `stateScope: "owner" \| "shared"`, beside `state`, and the owner in a volume name is the machine's owner as `claimOf` answers it, lowercased, with every character outside `[a-z0-9-]` written as a dash | (defaulted: `state` already sits in `Profile` and picks the mode, and a Docker volume name allows only a few characters while an owner is written `user:<id>` or `root:<host>`) | 02, 04 |
 | A machine made without a profile gets `ahpd-state-<machine id>-<state directory>`, named by `stateVolumeOf` and removed with it | (defaulted: nothing else would ever reuse it, and the provider is in no volume name) | 02 |
 | A seed copied in is chowned to the machine's user, and a seed whose host source is absent is skipped with a line | (defaulted: `docker cp` leaves root-owned files a non-root user cannot write; a missing seed is that seed's failure only) | 03 |
 
@@ -88,21 +93,21 @@ profile.state = 'volume' (default) | 'host'
 ## Risks and tradeoffs
 
 - Two variants of one plugin share one state, so a setting seeded for one is the other's too; they differ by endpoint and key, which reach the CLI per exec from each variant's own `env` (p5 task 09), never through the state or the container's env.
-- Two machines of one profile share a state volume at once - it holds settings and keys that do not refresh, so there is nothing to race; an agent's own history in there is written by both, and each agent keys it by session.
+- Two machines of one owner and profile, or of one shared profile, use a state volume at once - it holds settings and keys that do not refresh, so there is nothing to race; an agent's own history in there is written by both, and each agent keys it by session.
 - A person who edits a setting inside a machine loses it at the next seed of that file - the docs say to edit on the host.
 
 ## Resume state
 
 - **Done so far:** nothing; revalidated against main 2026-10-02.
 - **Next action:** [task-05-identical-needs-collapse-to-one.md](task-05-identical-needs-collapse-to-one.md), which makes a differing env need a refusal rather than a silent last-one-wins; then [task-01-the-sdk-has-a-state-need.md](task-01-the-sdk-has-a-state-need.md).
-- **Open question (ask before task 02):** a profile's state volume is shared by every owner who makes a machine from that profile, so one person's seeded settings and agent history are another's - (a) per profile, `ahpd-state-<profile>-<state directory>`, or (b) per profile and owner, `ahpd-state-<profile>-<owner>-<state directory>`?
 - **Watch out for:**
-  - plugin 16's disposable profile is the profile name for its volumes, so two disposable machines of one profile share state by design.
-  - A volume is named by its state directory, not by provider, so the built-in Claude and an OpenRouter variant of one profile both get `ahpd-state-<profile>-ahpd-claude`; agents whose state directories differ never share a volume.
+  - plugin 16's disposable profile is the profile name for its volumes, so two disposable machines of one owner and profile, or of one shared profile, share state by design.
+  - A volume is named by its state directory, not by provider, so the built-in Claude and an OpenRouter variant of one profile and owner both get `ahpd-state-<profile>-<owner>-ahpd-claude`; agents whose state directories differ never share a volume.
 
 ## Final verification checklist
 
-- [ ] A second disposable machine of one profile runs no copy.
+- [ ] A second disposable machine of one profile and owner runs no copy.
+- [ ] Two owners of one profile get two state volumes, and with `stateScope: "shared"` they get one.
 - [ ] Changing the host's seeded file reseeds on the next create, and a file the agent wrote survives it.
 - [ ] `state: "host"` makes exactly today's machine.
 - [ ] A profile naming the built-in Claude and a Claude variant makes one machine with one state volume, and two differing needs at one target are still refused.

@@ -22,9 +22,7 @@ A plain value goes into `containerEnv` in the override config `container/03` tas
 
 ## Files
 
-- `UPDATE: packages/computer/src/runtime.ts` - `overrideOf` (`container/03` task 09) leaves vault-named values out of `containerEnv`; the dev container's exec builder (`container/03` task 18) passes them by name through task 01's `byName`; `revealed` (`secrets.ts:53`) answers `{ values, named }`, where `named` is the `Set` of need names whose value came from a `$secret`; that set is threaded through `ManifestDefaults` into `MachineSpec` as `named`, and `manifestOf` copies it onto each env `ResolvedNeed` it builds as `named: true`, so the split in step 1 reads one field.
-- `UPDATE: packages/computer/src/secrets.ts:53-78` - the `{ values, named }` answer; every caller in `plugin.ts` and `provider.ts` reads `values`.
-- `UPDATE: packages/computer/src/runtime.ts:67` - `MachineSpec.named`, the need names that are vault-named.
+- `UPDATE: packages/computer/src/runtime.ts` - `overrideOf` (`container/03` task 09) leaves a need with `ResolvedNeed.named` (task 01) out of `containerEnv`; the dev container's exec builder (`container/03` task 18) passes the machine's held vault-named values by name through task 01's `byName`.
 - `UPDATE: packages/computer/test/fixtures/devcontainer.mjs` - the fake follows what the real CLI does with an override config: it replaces the folder's configuration rather than merging into it.
 - `UPDATE: packages/computer/test/devcontainer.test.ts` - the cases below.
 
@@ -32,16 +30,17 @@ A plain value goes into `containerEnv` in the override config `container/03` tas
 
 1. Split a machine's resolved env in two by `ResolvedNeed.named`: vault-named values, and the rest.
 2. The rest goes into the override's `containerEnv` as written.
-3. The vault-named values are kept in memory with the machine for its life in this daemon, never in `computers.json`, and every `docker exec` into it passes them as `-e NAME` with the value in the spawned environment, as task 01 does for `docker run`.
-4. After a daemon restart, a vault-named value is read again from the vault when the machine is next reached: the `SecretWork` is the machine's owner and team from `claimOf(id)` (`plugin.ts:403`, the record beside the config for a dev container), the needs are the vault-named ones under the plugin's `needs` and the machine's profile `needs`, for the agents the machine's `ahpd.agents` label names, and `revealed` reads them as at create.
-5. What a re-read that fails does waits on the open question in the plan's *Resume state*; until it is answered, write no failure path beyond logging the line.
+3. The vault-named values are held with the machine as task 01 holds them for a Docker machine, and every `docker exec` into it passes them as `-e NAME` with the value in the spawned environment.
+4. After a daemon restart, task 01's re-read and its `secretUnreadable` handling apply unchanged; for a dev container, `claimOf(id)` (`plugin.ts:403`) answers from the record beside the config.
 
 ## Validation
 
+Write each case first and see it fail against today's code, then build until it passes.
+
 - `devcontainer.test.ts`: a need from a `{ "$secret" }` reference is absent from the override file the fake CLI read and from every argv the fake `docker` saw, and the command in the container sees it.
 - The same file: a plain need is in the override's `containerEnv`.
-- The same file: after the plugin is loaded again with the same fake vault, the next exec into the machine passes the vault-named value by name, read for the machine's owner.
-- `computer-needs.test.ts`: `revealed` answers `named` holding exactly the needs written as `$secret`.
+- The same file: after the plugin is loaded again with the same fake vault, the next exec into the machine passes the vault-named value by name, read for the owner in the record beside the config.
+- The same file: after the plugin is loaded again with the secret removed from the fake vault, the exec fails naming the need with no `secretUnreadable`, and runs without the variable and logs one line with `secretUnreadable: "drop"`.
 - `pnpm --filter @ahpd/computer test` green.
 
 ## Resume
