@@ -77,6 +77,7 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | What | Source | Task |
 | --- | --- | --- |
+| pi's `find` opens the one file `findById` names and builds the row in ahpd, as `replayed` does; a test holds it equal to `list`'s row | Softov, 2026-10-04, asked "Open the one file `findById` names, or call pi's own list for that folder and pick the id?": open the one file | 01 |
 | `LISTING_FRESH` stays until pi, cofold and ACP have a `find`, and then it goes | Softov, 2026-10-04, asked "pi, cofold and ACP have no `find` yet; what do we do with them?": keep the throttle for now and plan `find` for them; once every agent has a `find`, the throttle goes | 04 |
 | pi's `find` asks pi's own store for the one session, per served directory, as `replayed` does | Softov's brief for this plan, 2026-10-04 | 01 |
 | cofold's `find` reads the one record with `store.sessions.get` and maps it as `list` maps a row | Softov's brief for this plan, 2026-10-04 | 02 |
@@ -115,9 +116,8 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** ask open question 1, then [task-01-pi-finds-a-session-by-id.md](task-01-pi-finds-a-session-by-id.md); tasks 01, 02 and 03 are independent and can run in any order.
-- **Open questions:**
-  1. Asked before task 01: pi's `find` either opens the one file `findById` names and builds the row itself, or calls `SessionManager.list` for that project folder and picks the id, which gives pi's own row but reads every file in the folder - proposed: open the one file, mirroring `replayed`, with task 01's test holding the row equal to `list`'s.
+- **Next action:** [task-01-pi-finds-a-session-by-id.md](task-01-pi-finds-a-session-by-id.md); tasks 01, 02 and 03 are independent and can run in any order.
+- **Open questions:** none.
 - **Watch out for:** `find` is optional on `Agent` and stays optional, because a third-party backend may not have one; ACP's `delete` is a getter read off the handshake, and `find` is not, because every ACP server can be listed or answered from the watched records; the throttle's two tests change meaning rather than disappear, so the `find`-less fallback stays covered.
 
 ## Final verification checklist
