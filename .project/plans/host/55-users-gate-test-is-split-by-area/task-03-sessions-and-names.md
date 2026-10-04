@@ -1,6 +1,6 @@
 ---
 title: Sessions and names are files of their own, and users-gate.test.ts is gone
-status: todo
+status: implemented
 depends: [task-02-the-command-and-dispatch-gates.md]
 layer: "sdk test"
 refs:
@@ -43,3 +43,9 @@ Line numbers below are today's; after tasks 01 and 02 find each block by its tes
 - The test count in `packages/sdk` equals the count recorded in step 1 and the count recorded before task 01, and `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is 60.
 
 ## Resume
+
+Done. `users-gate-sessions.test.ts` is 322 lines with 13 tests and `users-gate-names.test.ts` is 453 lines with 16 tests, and `users-gate.test.ts` is deleted. `users-gate.test.ts` held nothing but the 29 moved tests before it went, so nothing was left behind.
+The multiset of every non-blank, non-import line of the old file at `b4f1a4b` hashes the same as the union of the six new files' once `export ` is stripped and the eight import-continuation lines are taken out, and the multiset of the 60 `it(` lines hashes the same, so the move dropped nothing and rewrote nothing.
+`wc -l packages/sdk/test/users-gate-*.ts` is under 800 for every file. `vitest list packages/sdk/test/users-gate` is 60 and `vitest run packages/sdk` is green, `tsc --noEmit` and `pnpm boundary` pass.
+
+Nothing left to do; `plans/index.md` was left alone, as the plan's decisions ask.

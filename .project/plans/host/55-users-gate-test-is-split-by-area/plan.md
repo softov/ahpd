@@ -1,7 +1,7 @@
 ---
 title: users-gate.test.ts is split into one test file per area, with its shared helpers in one module
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -100,9 +100,9 @@ The 60 tests are 4 + 17 + 10 + 13 + 16.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The shared helpers and the table tests are files of their own](task-01-the-helpers-and-the-table-tests.md) | todo | - |
-| [02 - The command gate and the dispatch gate are files of their own](task-02-the-command-and-dispatch-gates.md) | todo | 01 |
-| [03 - Sessions and names are files of their own, and users-gate.test.ts is gone](task-03-sessions-and-names.md) | todo | 02 |
+| [01 - The shared helpers and the table tests are files of their own](task-01-the-helpers-and-the-table-tests.md) | implemented | - |
+| [02 - The command gate and the dispatch gate are files of their own](task-02-the-command-and-dispatch-gates.md) | implemented | 01 |
+| [03 - Sessions and names are files of their own, and users-gate.test.ts is gone](task-03-sessions-and-names.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -114,16 +114,16 @@ The 60 tests are 4 + 17 + 10 + 13 + 16.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-helpers-and-the-table-tests.md](task-01-the-helpers-and-the-table-tests.md).
+- **Done so far:** all three tasks. `packages/sdk/test/users-gate.test.ts` is gone and its 60 tests are five files beside `users-gate-helpers.ts`: tables 160 lines and 4 tests, commands 450 and 17, dispatch 285 and 10, sessions 322 and 13, names 453 and 16, helpers 155. `tsc --noEmit`, `pnpm boundary` and `vitest run packages/sdk` pass; `vitest list packages/sdk/test/users-gate` is 60.
+- **Next action:** nothing; the plan is implemented.
 - **Open questions:** none.
-- **Watch out for:** line numbers are at `b4f1a4b`; find each block by its test title or helper name first. `rootMeta` is declared in the root config block and belongs to the commands file. `asks a session's grants for completions in a session` sits in the names block today and goes to the sessions file. No helper body changes: the only edit to a moved line is `export` on a helper in the shared module.
+- **Watch out for:** `Bag` is imported `import type` from the helper module, because `verbatimModuleSyntax` makes it a type, where the tasks list it among the values. `plans/index.md` was not updated, which is the last item of the checklist below; the decisions table leaves it to whoever runs the plans index. The `vitest list packages/sdk` count reads 1380 before the first `pnpm` invocation of a worktree and 1351 after it, which is the workspace's `tools/ahp.strict.schema.json` being generated during prepare and is not this move: users-gate was 60 on both sides of it.
 
 ## Final verification checklist
 
-- [ ] `packages/sdk/test/users-gate.test.ts` no longer exists.
-- [ ] `wc -l packages/sdk/test/users-gate-*.ts` is under 800 for every file.
-- [ ] `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is 60, and the test count in `packages/sdk` equals the count recorded before task 01.
-- [ ] Every test title in the old file appears exactly once across the new files.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/sdk` pass.
+- [x] `packages/sdk/test/users-gate.test.ts` no longer exists.
+- [x] `wc -l packages/sdk/test/users-gate-*.ts` is under 800 for every file.
+- [x] `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is 60, and the test count in `packages/sdk` equals the count recorded before task 01.
+- [x] Every test title in the old file appears exactly once across the new files.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/sdk` pass.
 - [ ] `plans/index.md` updated.

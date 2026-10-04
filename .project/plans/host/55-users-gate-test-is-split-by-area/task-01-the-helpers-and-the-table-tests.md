@@ -1,6 +1,6 @@
 ---
 title: The shared helpers and the table tests are files of their own
-status: todo
+status: implemented
 depends: []
 layer: "sdk test"
 refs:
@@ -42,3 +42,8 @@ refs:
 - The test count in `packages/sdk` equals the count recorded in step 1, and `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is still 60.
 
 ## Resume
+
+Done. `users-gate-helpers.ts` (155 lines) and `users-gate-tables.test.ts` (160 lines) are written, and `users-gate.test.ts` is 1,488 lines holding the other 56 tests. `Bag` is imported `import type` from the helper module, because `verbatimModuleSyntax` makes it a type; the plan lists it among the values.
+`vitest list packages/sdk/test/users-gate` is 60, `vitest run packages/sdk` is green, `tsc --noEmit` and `pnpm boundary` pass.
+
+Next: task 02, the command and dispatch gates.

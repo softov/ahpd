@@ -1,6 +1,6 @@
 ---
 title: The command gate and the dispatch gate are files of their own
-status: todo
+status: implemented
 depends: [task-01-the-helpers-and-the-table-tests.md]
 layer: "sdk test"
 refs:
@@ -40,3 +40,8 @@ Line numbers below are today's; after task 01 find each block by its test title 
 - The test count in `packages/sdk` equals the count recorded in step 1, and `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is still 60.
 
 ## Resume
+
+Done. `users-gate-commands.test.ts` is 450 lines with 17 tests and `users-gate-dispatch.test.ts` is 285 lines with 10 tests, both with the imports this task's steps list them to have. `users-gate.test.ts` is 775 lines holding the 29 sessions and names tests. `Bag` is imported `import type` from the helper module, because `verbatimModuleSyntax` makes it a type.
+`vitest list packages/sdk/test/users-gate` is 60, `vitest run packages/sdk` is green, `tsc --noEmit` and `pnpm boundary` pass.
+
+Next: task 03, the sessions and names files, and deleting `users-gate.test.ts`.
