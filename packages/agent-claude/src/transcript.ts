@@ -7,6 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
+import { ranOn } from './models.js';
 
 /**
  * Reads a session that already happened, as turns.
@@ -360,7 +361,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
       ...(count(counted.cache_read_input_tokens) !== undefined
         ? { cacheReadTokens: count(counted.cache_read_input_tokens) }
         : {}),
-      ...(str(message.model) !== undefined ? { model: str(message.model) as string } : {}),
+      ...(ranOn(message.model) !== undefined ? { model: ranOn(message.model) as string } : {}),
     };
     const parts: Bag[] = [];
     const blocks = list(message.content);

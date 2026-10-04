@@ -5,6 +5,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, titleOf, toolInputOf } from '../input.js';
 import { toolMetaOf } from '../kinds.js';
+import { ranOn } from '../models.js';
 
 /**
  * Which half of one API call's usage each streaming event reports.
@@ -281,7 +282,7 @@ export function createStream(ctx: SessionContext): Stream {
     const of = str(message.id) ?? 'm';
     // The model a turn ran on is the session's own answer; a worker's may be
     // a different one and is not what the session reports.
-    if (scope === ctx.mainScope) ctx.ran = str(message.model) ?? ctx.ran;
+    if (scope === ctx.mainScope) ctx.ran = ranOn(message.model) ?? ctx.ran;
     const blocks = list(message.content);
 
     for (let index = 0; index < blocks.length; index++) {

@@ -65,6 +65,21 @@ it('counts one message\'s usage once however many frames repeat it', async () =>
   expect(turns[0]?.usage).toMatchObject({ outputTokens: 4, inputTokens: 10, model: 'claude-opus-5' });
 });
 
+it('keeps an API error Claude Code wrote as the turn\'s content, and not its model as the model the turn ran on', async () => {
+  const failed = frame('assistant', 'a2', {
+    id: 'm2', model: '<synthetic>', content: [{ type: 'text', text: 'API Error: Upstream idle timeout exceeded' }],
+    usage: { input_tokens: 0, output_tokens: 0 },
+  }, { isApiErrorMessage: true });
+  const turns = await read([
+    prompt('u1', 'split the file'),
+    said('a1', 'm1', [{ type: 'text', text: 'Starting.' }]),
+    failed,
+  ]);
+  const parts = turns[0]?.responseParts as Bag[];
+  expect(parts.at(-1)).toMatchObject({ content: 'API Error: Upstream idle timeout exceeded' });
+  expect(turns[0]?.usage).toMatchObject({ model: 'claude-opus-5' });
+});
+
 it('sums the usage of an exchange\'s distinct messages', async () => {
   const turns = await read([
     prompt('u1', 'two rounds'),

@@ -27,6 +27,18 @@ export type ModelEntry =
   | { id: string; name?: string }
   | { fetch: string; match?: string; key?: { fromEnv: string } };
 
+/** The model Claude Code names on an assistant message it wrote itself, such as an API error. */
+const SYNTHETIC = '<synthetic>';
+
+/**
+ * The model an assistant message ran on, or nothing for one no model wrote.
+ *
+ * The message itself is still a turn's content; only its model is not one the
+ * session ran on.
+ */
+export const ranOn = (model: unknown): string | undefined =>
+  (typeof model === 'string' && model !== SYNTHETIC ? model : undefined);
+
 /**
  * What is wrong with a `models` list, named; nothing when it holds.
  *
