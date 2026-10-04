@@ -1,6 +1,6 @@
 ---
 title: The shared helpers and the customization list are files of their own
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -47,3 +47,10 @@ No context exists yet: everything this task moves is module-level and reads no s
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*; `session.ts` is about 3,900.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/common.ts` (5 lines) and `session/customizations.ts` (345) created; `session.ts` is 3,896.
+- `session.ts` drops `existsSync`, `readFileSync`, `statSync`, `basename`, `fileURLToPath` and `McpServerState`, imports `bag`/`list`/`str` and `agentNameOf`/`customizationsOf`, and re-exports `INTERNAL_AGENT`, `agentNameOf`, `customizationsOf` and the type `Published`.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check run over the cumulative `git diff` rather than per task, because `git add -N` and committing are both out of bounds for this build: it prints import lines only, which is what the task predicts.
+

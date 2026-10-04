@@ -1,6 +1,6 @@
 ---
 title: The query and the MCP servers are files of their own
-status: todo
+status: implemented
 depends: [task-06-asking.md]
 layer: "agent-claude"
 refs:
@@ -52,3 +52,16 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/query.ts` (581 lines) and `session/servers.ts` (341 lines) created; `session/context.ts` is 244 and `session.ts` is 853.
+- Module-level `UUID` moved to `query.ts`. `createQuery(ctx)` holds `fromPreset`, `waiting`, `input`, `startQuery`, `reported`, `ends`, `take`, `switchAgent` and `consume`, and offers `waiting`, `startQuery`, `ends`, `take`, `switchAgent`, `consume`. `reported` is private to the factory: nothing outside it was left needing it.
+- `createServers(ctx)` holds `onServer`, `declared`, `wanted`, `discover`, `refreshMcp`, `serverNamed` and `describe`, and offers `onServer`, `declared`, `refreshMcp`, `describe` plus `methods: { setCustomizationEnabled, startMcpServer, authenticated, awaiting, stopMcpServer }`, spread into `self` as `...servers.methods`. `wanted`, `discover` and `serverNamed` are private.
+- The eleven `let`s are fields on `SessionContext`, each with the comment it had, and the `ctx` literal carries their initial values. `startNext` is a twelfth field, as the task's Files section asks, assigned with `ctx.startNext = startNext;` after its declaration.
+- The construction statements read `ctx.handle = ctx.startQuery(ctx.running, true)`, `void ctx.describe().catch(() => {})` and `void ctx.consume()`, in today's order. The `ahp` statement stays in `session.ts` between the factories and `startQuery`, and writes `ctx.declared.ahp`.
+- **Departure 7.** `turns` is a thirteenth field. `consume` pushes every finished turn onto it and reads its length for a compact boundary's id, so it crosses into `query.ts` as well; the plan's table does not name it, and `const turns` was otherwise a local of `createSession` that only `sessionState` also read.
+- **Departure 8.** `cwd` and `uri` are read as `ctx.options.cwd` and `ctx.options.uri`, and `chatUri` in `refreshMcp` as `ctx.options.chatUri`. All three are destructured locals of `createSession` on fields `SessionOptions` already declares, the same answer as Departure 6; without it `startQuery` would have had no cwd.
+- **Departure 9.** Two shorthands became explicit because the local is now a field: `customizations,` in the `session/customizationsChanged` emit and in `sessionState` are `customizations: ctx.customizations`. The pure-move check shows both, and nothing else moves.
+- The comment above `describe` ("Ask the CLI what it can do") had already been orphaned above `refreshMcp`'s own comment in `session.ts`; it moves with `describe` as the ref asks, and `refreshMcp` keeps "Re-read the MCP servers and say what changed".
+- `session.ts` drops `protectedResource`, `urlOf`, `flagSettingsOf`, `queryOptionsOf`, `Status`, `idOf`, `Scope` and `Published` from its imports and re-exports; `Published` is still re-exported, since `index.ts` imports it from `../session.js`.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.

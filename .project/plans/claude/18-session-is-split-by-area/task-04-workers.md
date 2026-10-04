@@ -1,6 +1,6 @@
 ---
 title: Subagents and their chats are a file of their own
-status: todo
+status: implemented
 depends: [task-03-turn-parts.md]
 layer: "agent-claude"
 refs:
@@ -47,3 +47,13 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/workers.ts` (423 lines) created; `session/context.ts` is 202 and `session.ts` is 2,757.
+- `createWorkers(ctx)` offers the maps the task names - `parts`, `calling`, `mainScope`, `scopes`, `spawning`, `background`, `tasks`, `byAgent`, `ended` - and with them the eight functions the rest of `session.ts` calls: `scopeFor`, `releaseHeld`, `recordSpawn`, `scopeOfCall`, `emitOn`, `settleOpen`, `endWorker`, `workerBlock`. The task's step 4 names only the maps; the functions have to be offered as well or nothing outside the factory can reach them, and the plan's list of *added* lines ("imports, the factory signature, the `Workers` interface, `SessionContext` fields and the `ctx` assignments") is satisfied either way - they are interface entries, not new code. `dropped` and `SPAWN_GRACE` stay private to the factory, as does `openWorker`, which nothing outside calls.
+- `mainScope`'s getter and setter for `streaming` read and write `ctx.streaming`, and `streaming` is a field; `ctx.self` is set once `self` is built, so `stopWorker` calls `ctx.self.cancel('')`.
+- `rounds` and `pastLines` stay declared in `session.ts` with their comments and are put on `ctx` by an assignment, as task 03 did `pending`.
+- **Departure 5.** `Scope` is still declared and exported by `session/context.ts`; `workers.ts` imports it and re-exports the type, so the task's "`Scope` and `Spawning` exported as types" holds without a second copy of the interface. `Spawning` moved to `workers.ts`, where it is declared.
+- `SessionContext` now extends `Omit<Workers, 'methods'>` as well, and declares `streaming`, `rounds`, `pastLines` and `self`.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check over the cumulative `git diff` plus the new files: the unmatched removed lines are the imports, the declarations that became fields, the shorthand `title,` / `status,` / `chats:` / `...(activity ...)` lines that became `ctx.`-prefixed reads, `emit('session', { type: 'session/titleChanged', title })`, and `stopWorker: (toolCallId) => {`, which is `const stopWorker = (toolCallId: string): void => {` in the factory.

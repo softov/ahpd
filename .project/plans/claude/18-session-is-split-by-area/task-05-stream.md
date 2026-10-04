@@ -1,6 +1,6 @@
 ---
 title: The stream translation is a file of its own
-status: todo
+status: implemented
 depends: [task-04-workers.md]
 layer: "agent-claude"
 refs:
@@ -47,3 +47,14 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/stream.ts` (600 lines) created; `session/context.ts` is 215 and `session.ts` is 2,184.
+- Module-level `INPUT_SIDE`, `OUTPUT_SIDE` and `resultText` sit at the top of the file; the factory holds `serverOf`, `rounds`, `editing`, `pastLines`, `edits` and the three functions, and offers `streamed`, `assistant`, `results`, `rounds` and `pastLines`. `serverOf`, `editing` and `edits` are private: nothing outside the factory calls them.
+- The stray `/** One line for a tool that is running. The name alone says too little. */` that task 03 left in `session.ts` above `edits` moved with it, as the task's ref says.
+- `onServer` and `answeredInputs` stay declared in `session.ts` and are put on `ctx` by an assignment, until tasks 07 and 06 take them.
+- `results` keeps its own `const ran = call.status !== 'cancelled'`, which shadows nothing now that the session's is `ctx.ran`; `assistant` writes `ctx.ran`.
+- `SessionContext` extends `Stream` and no longer declares `rounds` or `pastLines` itself.
+- `session.ts` drops `titleOf`, `StringOrMarkdown`, `ToolResultContent` and `SubagentChat` from its imports; `stream.ts` adds `toolMetaOf`, `OnWire`, `ToolCallCompletedState`, `ToolCallRunningState`, `ToolResultContent` and `StringOrMarkdown`.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check over the cumulative `git diff` plus the new files: the same 27 unmatched removed lines as after task 04 - the imports, the declarations that became fields, the four shorthand lines that became `ctx.`-prefixed reads, `emit('session', { type: 'session/titleChanged', title })` and `stopWorker: (toolCallId) => {`. Nothing new from this task.

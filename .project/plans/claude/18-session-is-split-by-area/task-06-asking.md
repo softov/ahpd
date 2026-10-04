@@ -1,6 +1,6 @@
 ---
 title: Asking a person is a file of its own
-status: todo
+status: implemented
 depends: [task-05-stream.md]
 layer: "agent-claude"
 refs:
@@ -48,3 +48,14 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/asking.ts` (447 lines) created; `session/context.ts` is 181 and `session.ts` is 1,763.
+- Module-level `PendingInput` (exported), `KEPT_IN` and `keptLabel` moved to the file; `keptLabel` is re-exported from `session.ts`, so `kept-label.test.ts` still imports it from `../src/session.js` and nothing in `packages/agent-claude/test` changed.
+- `createAsking(ctx)` offers `pending`, `answeredInputs` and `canUseTool` and returns `methods: { confirm, setAnswer, answer }`, spread into `self` as `...asking.methods`. `settled` stays private to the factory.
+- The `PendingInput` interface that task 03 put in `session/context.ts` moved on to `asking.ts`, as this task asks; `context.ts` no longer declares `pending`, `answeredInputs` or `PendingInput`.
+- `startQuery` passes `canUseTool: ctx.canUseTool`. `session.ts` keeps its own `const asking = createAsking(ctx)` next to `config`, `clientTools` and `workers` and assigns that, rather than calling the factory twice.
+- **Departure 6.** `const where = scope.chat?.uri ?? chatUri;` in `canUseTool` reads `ctx.options.chatUri`. `chatUri` is a destructured local of `createSession` and the plan does not name it as a context field; without this the line would have been a third spelling of the same thing and the pure-move check would have shown it changed.
+- `session.ts` drops `lineOf`, `pastLineOf`, `questionRequest`, `toolInputOf` and `toolMetaOf` from its imports; `asking.ts` takes them.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check over the cumulative `git diff` plus the new files: 30 unmatched removed lines, the previous 27 plus `import { toolMetaOf } from './kinds.js';`, `const where = scope.chat?.uri ?? chatUri;` and `canUseTool,` - the last being the shorthand the task's own Validation predicts.

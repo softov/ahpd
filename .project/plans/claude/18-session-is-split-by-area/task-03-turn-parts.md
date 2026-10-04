@@ -1,6 +1,6 @@
 ---
 title: What a turn holds is a file of its own
-status: todo
+status: implemented
 depends: [task-02-context-config-and-client-tools.md]
 layer: "agent-claude"
 refs:
@@ -48,3 +48,15 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/parts.ts` (328 lines) created; `session/context.ts` is 196 and `session.ts` is 3,109.
+- `createParts(ctx)` offers twenty functions; `spent` and `paid` stay in the factory, and `failurePart` stays with `addFailure` because nothing else calls it. `edits` stays in `session.ts` - it sits between `doing` and `busyWith` in the file but is not in this task's list.
+- `ctx.parts` is `Object.assign`ed in `createSession`; `ctx.pending`, `ctx.mainScope` and `ctx.emitOn` are put on the context where each is still declared, and `mainScope`'s getter and setter read and write `ctx.active`.
+- `self.status` is `status: () => ctx.status()` and `sessionState` and `chatState` say `status: ctx.status()`, as the task asks.
+- **Departure 3.** `emit` became a context field. `parts.ts` emits from `touch`, `doing`, `retitle`, `sayUsage`, `inputNeededSet` and `inputNeededRemoved`, and the plan's field list does not name `emit`; without it those lines would have read `ctx.options.emit` and the pure-move check would have shown six changed lines. With the field they read `ctx.emit` and are otherwise unchanged. `session.ts` keeps its own destructured `emit`.
+- **Departure 4.** The `Scope` and `PendingInput` interfaces moved to `session/context.ts` and are exported from there (`Scope`, `PendingInput` is private). `openTurn` and `addPart` take a `Scope` and `ctx.pending` is a `Map<string, PendingInput>`, so both types have to be visible to `parts.ts`; the plan does not say where they go. Task 06 moves `PendingInput` on with `pending` itself.
+- Three `let`s that shadow a field name - `ran` in the tool result handler, `title` in `workerBlock`, `status` in the `task_notification` branch - keep their own names. Caught by the test gates, not by the type checker.
+- `session.ts` drops `summarize`, `callTimes`, `startOf` and `withCallTimes` from its imports.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check over the cumulative `git diff` plus the new files: the unmatched removed lines are the imports, the declarations that became fields, and the four shorthand `status,` / `title,` / `chats:` / `...(activity ...)` lines that became `ctx.`-prefixed reads, plus `emit('session', { type: 'session/titleChanged', title })`, whose shorthand had no `title` in scope to name.

@@ -1,6 +1,6 @@
 ---
 title: The context, the session config and the client tools are files of their own
-status: todo
+status: implemented
 depends: [task-01-common-and-customizations.md]
 layer: "agent-claude"
 refs:
@@ -54,3 +54,12 @@ refs:
 - `wc -l packages/agent-claude/src/session.ts packages/agent-claude/src/session/*.ts` recorded in *Resume*.
 
 ## Resume
+
+- **Implemented** 2026-10-04 on `build/agents/6a395779`.
+- `session/context.ts` (103), `session/config.ts` (241) and `session/clienttools.ts` (230) created; `session.ts` is 3,427.
+- `session.ts` builds one `ctx` after the destructuring of `options`, calls `createConfig` and `createClientTools` into it, and spreads their two `methods` tables into `self`. `ctx.declared` and `ctx.doing` are put on it where each is declared, unchanged in order; the shell init construction statement keeps its place, the `declared.ahp` one keeps its place, and `ctx.handle = startQuery(running, true)` replaces `let handle`.
+- **Departure 1.** `SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>`. Both areas name their method table `methods`, so extending both unmodified is TS2320 and the two would have to be renamed instead; `Omit` keeps the name the plan gives them and each area's own interface still declares `methods` exactly as written. `createSession` keeps the two factory results in `config` and `clientTools` so the spreads are of the tables the session already runs on, not of a second pair built for the spread.
+- **Departure 2.** `ctx.handle` is typed `ReturnType<typeof query>`, not the union with `undefined`, and the literal holds `undefined as unknown as ...`. As a `let` declared where it was first built, TypeScript narrowed it and every read was unchecked; a field typed as a union would need a `!` at 29 sites. Nothing reads it before `startQuery` runs, and `ctx.handle !== mine` compares identities either way. Documented on the field in `context.ts`.
+- `session.ts` re-exports `EFFORTS`, `EFFORT_LABELS`, `permissionFor` and the type `ClaudeSessionOptions`; `index.ts`, `claude.ts` and `probe.ts` are untouched.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) pass.
+- Pure-move check over the cumulative `git diff` plus the new files: the only removed lines with no match are five import lines and the six declarations that became fields (`allowed`, `chosen`, `settings`, `offering`, `handle`).

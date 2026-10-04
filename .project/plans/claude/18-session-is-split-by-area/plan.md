@@ -1,7 +1,7 @@
 ---
 title: session.ts is split into one file per area, and session.ts only composes them
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -98,14 +98,14 @@ Estimated at 330 lines, from 4,234.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The shared helpers and the customization list are files of their own](task-01-common-and-customizations.md) | todo | - |
-| [02 - The context, the session config and the client tools are files of their own](task-02-context-config-and-client-tools.md) | todo | 01 |
-| [03 - What a turn holds is a file of its own](task-03-turn-parts.md) | todo | 02 |
-| [04 - Subagents and their chats are a file of their own](task-04-workers.md) | todo | 03 |
-| [05 - The stream translation is a file of its own](task-05-stream.md) | todo | 04 |
-| [06 - Asking a person is a file of its own](task-06-asking.md) | todo | 05 |
-| [07 - The query and the MCP servers are files of their own](task-07-query-and-servers.md) | todo | 06 |
-| [08 - The turn lifecycle is a file of its own, and session.ts only composes](task-08-turns.md) | todo | 07 |
+| [01 - The shared helpers and the customization list are files of their own](task-01-common-and-customizations.md) | implemented | - |
+| [02 - The context, the session config and the client tools are files of their own](task-02-context-config-and-client-tools.md) | implemented | 01 |
+| [03 - What a turn holds is a file of its own](task-03-turn-parts.md) | implemented | 02 |
+| [04 - Subagents and their chats are a file of their own](task-04-workers.md) | implemented | 03 |
+| [05 - The stream translation is a file of its own](task-05-stream.md) | implemented | 04 |
+| [06 - Asking a person is a file of its own](task-06-asking.md) | implemented | 05 |
+| [07 - The query and the MCP servers are files of their own](task-07-query-and-servers.md) | implemented | 06 |
+| [08 - The turn lifecycle is a file of its own, and session.ts only composes](task-08-turns.md) | implemented | 07 |
 
 ## Risks and tradeoffs
 
@@ -119,10 +119,13 @@ Estimated at 330 lines, from 4,234.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-common-and-customizations.md](task-01-common-and-customizations.md).
+- **Done so far:** all eight tasks, implemented on `build/agents/6a395779` on 2026-10-04 and left uncommitted for review. `session.ts` is 263 lines and holds only the imports and re-exports, the module comment, `createSession` with the `ctx` literal, the nine factory calls, the six construction statements and `self`. Thirteen files sit under `session/`: `asking` 447, `clienttools` 230, `common` 5, `config` 241, `context` 262, `customizations` 345, `parts` 328, `query` 581, `servers` 341, `stream` 600, `turns` 607, `workers` 423 - none over 700.
+- **Next action:** review, then commit. Nothing under `packages/agent-claude/test` changed and no file outside `packages/agent-claude/src` was touched.
+- **Gates:** `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) and the whole `pnpm test` suite (186 files, 2,839 tests) all pass. `packages/agent-pi/test/agent-pi-lazy.test.ts` passed this run.
+- **Pure-move check** over the whole diff against the commit task 01 started from, comparing both sides with indentation, `export ` and `ctx.` stripped: 55 removed lines do not reappear among the added. Ten are imports, three are the `common.ts` helpers, twenty-five are the `let`s that became `SessionContext` fields, and fifteen had to be rewritten rather than moved (the `session/titleChanged` emit, `title,`, `cwd,`, the two `UUID.test(idOf(uri))` lines, `canUseTool,`, `chat: chatUri,`, the `customizationsChanged` emit, `status,`, `chats: [...]`, `customizations,`, the `activity` and `draft` spreads, `stopWorker: (toolCallId) => {`, and one stray `},`). Every one is listed in the *Resume* of the task that made it.
 - **Open questions:**
   1. Do the ten open plans that cite `session.ts` get their refs rewritten to the new files? - proposed: not in this plan, which was asked not to edit other plans; each finds its code by symbol name, and a later pass like host/48 p11 rewrites them if Softov wants it.
+  2. Two fields the plan's tables do not name became `SessionContext` fields rather than being passed another way: `turns` (task 07, written by `consume`) and `draft`/`beginning` (task 08, which the plan does name). If a later plan would rather have `turns` offered by `turns.ts` itself, that is a small move.
 - **Watch out for:** line numbers are at `b4f1a4b` and each task moves the ones after it; find code by symbol name. A `let` in the closure is never copied off the context. A misplaced comment moves with the declaration directly below it and is not fixed here.
 
 ## Final verification checklist
