@@ -1,6 +1,6 @@
 ---
 title: Every gated method and client action needs one operation
-status: todo
+status: implemented
 depends: [task-01-operations-and-groups-are-one-table.md]
 layer: "sdk"
 refs:

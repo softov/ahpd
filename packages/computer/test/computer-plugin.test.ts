@@ -177,7 +177,7 @@ it('advertises the scheme on the handshake, before any machine exists', async ()
   expect(entry?.title).toBe('Computer');
   expect(entry?.root).toBe('computer://');
   // The host derives these from the provider's methods, not from a claim.
-  expect(entry?.operations).toEqual(['read', 'list', 'resolve', 'write', 'delete']);
+  expect(entry?.operations).toEqual(['get', 'list', 'resolve', 'put', 'delete']);
   expect(entry?.manifest.properties.image?.default).toBe('debian:bookworm-slim');
 });
 

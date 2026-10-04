@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { holds } from '../src/users.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ContainerPort, ContainerSink } from '../src/types/containers.js';
 import type { HostOptions } from '../src/types/host.js';
@@ -33,7 +34,7 @@ const directory = (tokens: Record<string, Grant[]>): Users => ({
   resource: { resource: 'ahpd://users', resource_name: 'ahpd users', required: false },
   verify: async (token) => {
     const held = tokens[token];
-    return held === undefined ? undefined : { id: token, roles: ['r'], can: (one: Grant) => held.includes(one) };
+    return held === undefined ? undefined : { id: token, roles: ['r'], can: (one: Grant) => holds(new Set(held), one) };
   },
   list: async () => [],
   grantsOfRoles: async () => [],
@@ -201,7 +202,7 @@ it('refuses a second container under a name the client is already using', async 
   expect(fake.opened).toBe(1);
 });
 
-it('asks for container:write rather than assuming it', async () => {
+it('asks for the container operation rather than assuming it', async () => {
   const fake = launcher();
   const users = directory({ reader: ['file:read'], maker: ['container:write'] });
   const poor = await open({ containers: fake.port, users });
@@ -211,7 +212,7 @@ it('asks for container:write rather than assuming it', async () => {
   expect((await call(poor.client, 'vscode/devContainers/isDockerAvailable', {})).result).toBe(true);
   const refused = await call(poor.client, 'vscode/devContainers/connect', connect);
   expect(refused).toMatchObject({ code: -32009 });
-  expect(refused.message).toContain('container:write');
+  expect(refused.message).toContain('container:connect');
   expect(fake.opened).toBe(0);
 
   const rich = await open({ containers: fake.port, users });

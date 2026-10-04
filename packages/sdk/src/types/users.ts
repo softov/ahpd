@@ -11,30 +11,31 @@
  */
 
 /**
- * What a grant does to its subject.
+ * The two names that group a subject's operations rather than being one.
  *
- * Two, and they are the convention every scope list uses: `contents:read` in
- * GitHub's app permissions, `channels:read` in Slack's, `s3:GetObject` in IAM.
- * A verb-first spelling exists in GitHub's legacy OAuth scopes and beside
- * subject-first entries in the same list, so it is not a convention.
+ * `read` and `write` are never an operation on any subject: they name the
+ * halves of one, so `user:read` is every read a role may do of people and
+ * `user:get` is one record - decision
+ * `a-grant-names-an-operation-and-read-and-write-are-its-groups`. A grant
+ * names one of these, a group of them, or an operation of its own.
  */
 export type Verb = 'read' | 'write';
 
 /**
- * One thing a role may do, as `<subject>:<verb>`.
+ * One thing a role may do, as `<subject>:<operation>`.
  *
- * The subject is one of the host's own five - `file`, `session`, `automation`,
- * `terminal`, `diagnostics` - or a plugin's URI scheme, which is what a
- * scheme-scoped grant was always for. `*` stands in either position: `*:read`
- * is every subject's read, `session:*` is every verb on sessions, and `*:*` is
- * everything.
+ * The subject is one of the host's own - `session`, `chat`, `file`,
+ * `automation`, `terminal`, `diagnostics`, `container`, `config` - a people
+ * scheme, or a plugin's URI scheme, which is what a scheme-scoped grant was
+ * always for. The operation is one the subject has (`session:dispose`), one of
+ * the two groups (`file:write`), or `*`.
  *
- * There is no bare token. `file:read` is what `read` used to be, and holding
- * `file:write` confers nothing on a plugin's scheme - a role reaches a scheme
- * by naming it or by naming a wildcard that names it - decision
- * `a-grant-is-a-subject-and-a-verb`.
+ * `*` stands in either position: `*:read` is every subject's read, `session:*`
+ * is every operation on sessions, and `*:*` is everything. Holding `file:write`
+ * confers nothing on a plugin's scheme - a role reaches a scheme by naming it
+ * or by naming a wildcard that names it.
  */
-export type Grant = `${string}:${Verb | '*'}`;
+export type Grant = `${string}:${string}`;
 
 /** Somebody the host has checked, for as long as their connection lasts. */
 export interface Principal {

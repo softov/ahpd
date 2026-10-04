@@ -38,7 +38,7 @@ const roleIn = (table: Record<string, Grant[]> | undefined, name: string): Grant
 
 /** The subjects the host itself answers to, beside any plugin's scheme. */
 export const SUBJECTS = [
-  'file', 'session', 'automation', 'terminal', 'diagnostics', 'container', 'config',
+  'session', 'chat', 'file', 'automation', 'terminal', 'diagnostics', 'container', 'config',
   // People, teams, projects and roles, one subject each, so somebody may be let
   // see a team's names without being let see who is on it - decision
   // `people-are-resource-schemes-with-a-grant-each`.
@@ -53,11 +53,172 @@ export const SUBJECTS = [
   'policy',
 ] as const;
 
-/** `<subject>:<verb>`, with `*` in either position. */
-const GRANT = /^[^:\s]+:(?:read|write|\*)$/;
+/** What one subject is, what may be done to it, and which group each act is in. */
+export interface SubjectOperations {
+  /** What a client shows for the subject. */
+  title: string;
+  /** What the subject covers, in the advertisement a client draws a role editor from. */
+  description: string;
+  /** Every operation the subject has, read before write. */
+  operations: readonly string[];
+  /** The two groups, which name the operations they hold. */
+  groups: { read: readonly string[]; write: readonly string[] };
+}
+
+/**
+ * The operations every resource subject has, which is `file`'s own.
+ *
+ * A plugin's scheme and the people schemes are all resources, and the same
+ * methods carry them, so they share one list rather than each naming its own -
+ * `get` is a `resourceRead`, `put` is a `resourceWrite`, and a role that may
+ * save a file may not, by that alone, make a computer.
+ */
+const RESOURCE: SubjectOperations = {
+  title: 'Files and resources',
+  description: 'The host\'s own resources, and every scheme beside them: one record is read with get, the whole scheme is listed with list, and anything that changes one is put, delete, mkdir, move, copy or request.',
+  operations: ['get', 'list', 'resolve', 'watch', 'put', 'delete', 'mkdir', 'move', 'copy', 'request'],
+  groups: {
+    read: ['get', 'list', 'resolve', 'watch'],
+    write: ['put', 'delete', 'mkdir', 'move', 'copy', 'request'],
+  },
+};
+
+/**
+ * Every built-in subject, with what may be done to it.
+ *
+ * A grant names one of these operations, one of the two groups, or `*`. Every
+ * operation is in exactly one group, and no subject has an operation called
+ * `read` or `write`: those two words are only ever the groups, so `user:read`
+ * is the whole of what a role may read and `user:get` is one record - decision
+ * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+ *
+ * The one act the table does not decide is `computer:write`, which is asked
+ * beside `session:create` rather than in place of it: a session naming a source
+ * is asking for a machine to be made for it - decision
+ * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+ * `computer` is not in the table and reads the resource operations, as every
+ * other scheme does.
+ */
+export const OPERATIONS: Record<string, SubjectOperations> = {
+  session: {
+    title: 'Sessions',
+    description: 'What an agent runs on: listed with list, opened and read with state, and made, closed, titled, configured and marked with the rest of the write group.',
+    operations: [
+      'list', 'state',
+      'create', 'dispose', 'rename', 'configure', 'folders', 'attach', 'mark', 'review', 'changes', 'worktree', 'artifacts',
+    ],
+    groups: {
+      read: ['list', 'state'],
+      write: ['create', 'dispose', 'rename', 'configure', 'folders', 'attach', 'mark', 'review', 'changes', 'worktree', 'artifacts'],
+    },
+  },
+  chat: {
+    title: 'Chats',
+    description: 'A conversation in a session. Its read and write groups are the session\'s: session:read covers chat:turns and session:write covers every operation below, which is what those groups covered before a chat had a subject of its own.',
+    operations: [
+      'turns',
+      'create', 'fork', 'dispose', 'move', 'send', 'cancel', 'answer', 'tool', 'draft', 'folders', 'mark', 'truncate',
+    ],
+    groups: {
+      read: ['turns'],
+      write: ['create', 'fork', 'dispose', 'move', 'send', 'cancel', 'answer', 'tool', 'draft', 'folders', 'mark', 'truncate'],
+    },
+  },
+  terminal: {
+    title: 'Terminals',
+    description: 'A shell on this machine: its output is read with output, and opening one, typing into it, resizing it, claiming it, titling it and clearing it are the write group.',
+    operations: ['output', 'create', 'dispose', 'input', 'resize', 'claim', 'rename', 'clear'],
+    groups: {
+      read: ['output'],
+      write: ['create', 'dispose', 'input', 'resize', 'claim', 'rename', 'clear'],
+    },
+  },
+  automation: {
+    title: 'Automations',
+    description: 'What runs without a client asking: the triggers and the runs are listed with list, and making, editing, removing, running and cancelling one are the write group.',
+    operations: ['list', 'create', 'update', 'remove', 'run', 'cancel'],
+    groups: {
+      read: ['list'],
+      write: ['create', 'update', 'remove', 'run', 'cancel'],
+    },
+  },
+  file: RESOURCE,
+  config: {
+    title: 'Host settings',
+    description: 'The daemon\'s own settings, read with settings; changing a host-wide root setting, or replacing the root config, is change.',
+    operations: ['settings', 'change'],
+    groups: { read: ['settings'], write: ['change'] },
+  },
+  diagnostics: {
+    title: 'Diagnostics',
+    description: 'What this host is doing and why it stopped: the logs it collects, the network it sees and the diagnostic bundles it fetches. There is nothing here to change.',
+    operations: ['logs', 'network', 'fetch'],
+    groups: { read: ['logs', 'network', 'fetch'], write: [] },
+  },
+  container: {
+    title: 'Dev containers',
+    description: 'Connecting this host to a dev container, disconnecting from it and relaying a frame into it. Nothing is read here: a container is reached through what is inside it.',
+    operations: ['connect', 'disconnect', 'relay'],
+    groups: { read: [], write: ['connect', 'disconnect', 'relay'] },
+  },
+};
+
+/** The two group names, which are operations nowhere and grants everywhere. */
+export const GROUPS = ['read', 'write'] as const;
+
+/** What a subject may be done with, which is its own entry or the resource one. */
+export const operationsOf = (subject: string): SubjectOperations => OPERATIONS[subject] ?? RESOURCE;
+
+/**
+ * Which group an operation is in, or nothing when it is no operation.
+ *
+ * Nothing for `read` and `write` themselves, which are the groups and not
+ * operations, and for any word a subject does not have - a scheme that was not
+ * loaded may still be named, and a grant holding one asks for exactly itself.
+ */
+export const groupOf = (subject: string, operation: string): 'read' | 'write' | undefined => {
+  if (operation === 'read' || operation === 'write') return undefined;
+  const groups = operationsOf(subject).groups;
+  return groups.read.includes(operation) ? 'read' : groups.write.includes(operation) ? 'write' : undefined;
+};
+
+/** An operation word on a scheme the table does not decide, which is taken as it is written. */
+const SPELLED = /^[a-z][a-zA-Z]*$/;
+
+/**
+ * Why a string is not a grant a role may hold, and nothing when it is one.
+ *
+ * On a subject the table decides, only one of its own operations, one of the
+ * two groups or `*` is taken: a role naming anything else would hold a grant
+ * that matches nothing and look on every later read like a permission. On any
+ * other subject - a plugin's scheme, which may not be loaded when the role is
+ * written - any operation word is taken, because the scheme's own list is not
+ * here to ask.
+ *
+ * A refusal names the operations the subject does have, which is the one way a
+ * person writing a role learns what they may write instead.
+ */
+export const grantProblem = (value: string): string | undefined => {
+  const at = value.indexOf(':');
+  const subject = value.slice(0, at);
+  if (at <= 0 || at === value.length - 1 || value.indexOf(':', at + 1) !== -1 || /\s/u.test(subject)) {
+    return `${value} is not <subject>:<operation>`;
+  }
+  const operation = value.slice(at + 1);
+  if (operation === '*') return undefined;
+  const groups = GROUPS.join(' or ');
+  const mine = OPERATIONS[subject];
+  if (mine === undefined) {
+    return SPELLED.test(operation) || GROUPS.includes(operation as 'read' | 'write')
+      ? undefined
+      : `${value} is not <subject>:<operation>, ${groups} or a *`;
+  }
+  if (GROUPS.includes(operation as 'read' | 'write') || mine.operations.includes(operation)) return undefined;
+  return `${value} is not one of ${subject}'s operations (${mine.operations.join(', ')}), ${groups} or a *`;
+};
 
 /** Whether a string is a grant a role may hold. */
-export const isGrant = (value: string): value is Grant => GRANT.test(value);
+export const isGrant = (value: string): value is Grant => grantProblem(value) === undefined;
 
 /**
  * What a grant written before the split is read as.
@@ -74,14 +235,27 @@ const LEGACY: Record<string, Grant> = { 'users:read': 'user:read', 'users:write'
  * Whether a set of grants covers one.
  *
  * Exact, or through a wildcard in either position, which is the whole of the
- * matching rule - decision `a-grant-is-a-subject-and-a-verb`.
+ * matching rule. Beyond that, an operation is held by its group and a chat's
+ * groups are the session's - decision
+ * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+ *
+ * A grant naming a *group* is answered only by that group or a wildcard, never
+ * by holding each operation in it: `chat:send` does not hold `chat:write`, and
+ * the answer cannot widen by being spelled the long way.
  */
 export const holds = (held: ReadonlySet<string>, grant: Grant): boolean => {
   if (held.has(grant) || held.has('*:*')) return true;
   const at = grant.indexOf(':');
   const subject = grant.slice(0, at);
-  const verb = grant.slice(at + 1);
-  return held.has(`*:${verb}`) || held.has(`${subject}:*`);
+  const operation = grant.slice(at + 1);
+  const group = groupOf(subject, operation);
+  if (group !== undefined) {
+    if (held.has(`${subject}:${group}`) || held.has(`*:${group}`)) return true;
+    // A chat lives in a session, which is what its own groups were before it
+    // had a subject: `session:write` is everything `chat:write` is.
+    if (subject === 'chat' && held.has(`session:${group}`)) return true;
+  }
+  return held.has(`*:${operation}`) || held.has(`${subject}:*`);
 };
 
 /**
@@ -397,10 +571,11 @@ export function fileUsers(options: FileUserOptions): Users {
             once(`${options.path}: role ${name} holds ${one}, which this host reads as ${legacy}; teams, projects and roles need a grant of their own`);
             continue;
           }
-          // A grant that is not `<subject>:<verb>` matches nothing, so it is
-          // reported and dropped rather than left looking like a permission.
-          if (isGrant(one)) kept.push(one);
-          else once(`${options.path}: role ${name} names ${one}, which is not <subject>:read, <subject>:write or a *`);
+          // A grant that is not `<subject>:<operation>` matches nothing, so it
+          // is reported and dropped rather than left looking like a permission.
+          const why = grantProblem(one);
+          if (why === undefined) kept.push(one as Grant);
+          else once(`${options.path}: role ${name} ${why}`);
         }
         roles[name] = kept;
       }
@@ -805,7 +980,7 @@ export function fileUsers(options: FileUserOptions): Users {
     addRole: async (id, grants) => {
       if (!SPELLABLE.test(id)) throw new Error(`${id} cannot name a role: it may not hold a space, a colon or a star`);
       /*
-       * A grant that is not `<subject>:<verb>` is refused rather than dropped.
+       * A grant that is not `<subject>:<operation>` is refused rather than dropped.
        *
        * The read reports one and drops it, which is what a file edited by hand
        * needs; a write is somebody asking for the role, and a role holding a
@@ -814,7 +989,8 @@ export function fileUsers(options: FileUserOptions): Users {
        */
       const kept: Grant[] = [];
       for (const one of grants) {
-        if (!isGrant(one)) throw new Error(`${one} is not <subject>:read, <subject>:write or a *`);
+        const why = grantProblem(one);
+        if (why !== undefined) throw new Error(why);
         kept.push(one);
       }
       const { file } = read();

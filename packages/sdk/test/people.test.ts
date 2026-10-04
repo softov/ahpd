@@ -165,9 +165,54 @@ it('creates and edits a role from its grants, and refuses one that confers nothi
   // A role that confers nothing holds nothing, and a body naming no grants is
   // said rather than written.
   await expect(schemes.role!.write('role://empty', body({}))).rejects.toMatchObject({ code: -32602 });
-  // And a grant that matches nothing is refused rather than stored.
-  await expect(schemes.role!.write('role://broken', body({ grants: ['team:edit'] }))).rejects.toMatchObject({ code: -32602 });
-  expect(await directory.roles()).toEqual([{ id: 'keeper', grants: ['team:read', 'team:write'] }]);
+  // And an operation no subject this host decides has is refused rather than
+  // stored, with the operations it does have named in the refusal.
+  await expect(schemes.role!.write('role://broken', body({ grants: ['session:edit'] })))
+    .rejects.toMatchObject({ code: -32602, message: expect.stringContaining('create, dispose, rename') });
+  // A grant on a scheme this host does not decide is the scheme's own to say
+  // what its operations are, so any word is kept - decision
+  // `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+  await schemes.role!.write('role://plugin', body({ grants: ['team:edit'] }));
+  expect(await read('role', 'plugin')).toEqual({ id: 'plugin', grants: ['team:edit'] });
+  expect(await directory.roles()).toEqual([
+    { id: 'keeper', grants: ['team:read', 'team:write'] },
+    { id: 'plugin', grants: ['team:edit'] },
+  ]);
+});
+
+it('writes a role of operations, beside one of groups', async () => {
+  const { directory, schemes } = served();
+
+  // The two halves a client draws a role editor from, held together: an
+  // operation of a subject, and the group that contains another.
+  await schemes.role!.write('role://senders', body({ grants: ['session:read', 'chat:send'] }));
+  expect(await read('role', 'senders')).toEqual({ id: 'senders', grants: ['session:read', 'chat:send'] });
+  expect(await directory.roles()).toEqual([{ id: 'senders', grants: ['session:read', 'chat:send'] }]);
+
+  // And one record of a scheme, which is `get` rather than the `read` group it
+  // is in: a person let see one account is not thereby let list them all.
+  await schemes.role!.write('role://readers', body({ grants: ['user:get', 'file:read'] }));
+  expect(await read('role', 'readers')).toEqual({ id: 'readers', grants: ['user:get', 'file:read'] });
+  expect(await directory.roles()).toContainEqual({ id: 'readers', grants: ['user:get', 'file:read'] });
+});
+
+it('refuses an operation the subject does not have, naming the ones it does', async () => {
+  const { directory, schemes } = served();
+  // The refusal is the whole of what lets somebody fix a typo: it lists the
+  // subject's operations and the two groups, in the subject's own order.
+  const refused = await schemes.role!.write('role://launchers', body({ grants: ['session:launch'] }))
+    .then(() => undefined, (error: { code: number; message: string }) => error);
+  expect(refused).toMatchObject({ code: -32602 });
+  for (const operation of ['dispose', 'list', 'state', 'changes']) {
+    expect(refused?.message, operation).toContain(operation);
+  }
+  // An operation that is another subject's is refused the same way, rather
+  // than kept as though this subject had it.
+  await expect(schemes.role!.write('role://chatty', body({ grants: ['chat:write', 'session:output'] })))
+    .rejects.toMatchObject({ code: -32602, message: expect.stringContaining("is not one of session's operations") });
+
+  // And nothing any of them refused was written.
+  expect(await directory.roles()).toEqual([]);
 });
 
 it('refuses a body that is not a JSON object, and a write to nothing in particular', async () => {
@@ -270,7 +315,7 @@ it('advertises the four on the handshake, with the operations each implements', 
   // the same way for each - decision `people-are-resource-schemes-with-a-grant-each`.
   for (const [scheme, title] of [['user', 'People'], ['team', 'Teams'], ['project', 'Projects'], ['role', 'Roles']] as const) {
     const entry = ready._meta?.['ahpd.resourceProviders']?.[scheme] as Record<string, unknown> | undefined;
-    expect(entry, scheme).toMatchObject({ title, root: `${scheme}://`, operations: ['read', 'list', 'resolve', 'write', 'delete'] });
+    expect(entry, scheme).toMatchObject({ title, root: `${scheme}://`, operations: ['get', 'list', 'resolve', 'put', 'delete'] });
     // And the create form it draws a body from.
     expect(Object.keys(entry?.['manifest'] as object), scheme).toContain('properties');
   }
@@ -288,10 +333,10 @@ it('asks each scheme for the subject that is its name', async () => {
   expect(await call(client, 'resourceWrite', { channel: ROOT, uri: 'team://backend', data: '{"title":"Backend"}', encoding: 'utf-8' })).toMatchObject({ result: {} });
   expect(await call(client, 'resourceDelete', { channel: ROOT, uri: 'team://backend' })).toMatchObject({ result: {} });
   for (const [method, params, subject] of [
-    ['resourceList', { uri: 'project://' }, 'project:read'],
-    ['resourceList', { uri: 'user://' }, 'user:read'],
-    ['resourceList', { uri: 'role://' }, 'role:read'],
-    ['resourceWrite', { uri: 'user://eve', data: '{}', encoding: 'utf-8' }, 'user:write'],
+    ['resourceList', { uri: 'project://' }, 'project:list'],
+    ['resourceList', { uri: 'user://' }, 'user:list'],
+    ['resourceList', { uri: 'role://' }, 'role:list'],
+    ['resourceWrite', { uri: 'user://eve', data: '{}', encoding: 'utf-8' }, 'user:put'],
   ] as const) {
     const refused = await call(client, method, { channel: ROOT, ...params });
     expect(refused, subject).toMatchObject({ code: -32009, message: expect.stringContaining(subject) });
@@ -310,17 +355,17 @@ it('answers a signed-in person their own record, and refuses them another\'s', a
   const client = await signedIn(made, directory, 'ana');
 
   // Their own, which a client showing somebody their account has to be able to
-  // read; the listing of people is still `user:read`.
+  // read; one record is `user:get` and the listing of people is `user:list`.
   const mine = await call(client, 'resourceRead', { channel: ROOT, uri: 'user://ana' });
   expect(mine).toMatchObject({ result: { data: expect.stringContaining('"id": "ana"') } });
   expect(await call(client, 'resourceRead', { channel: ROOT, uri: 'user://bob' }))
-    .toMatchObject({ code: -32009, message: expect.stringContaining('user:read') });
+    .toMatchObject({ code: -32009, message: expect.stringContaining('user:get') });
   expect(await call(client, 'resourceList', { channel: ROOT, uri: 'user://' }))
-    .toMatchObject({ code: -32009, message: expect.stringContaining('user:read') });
-  // And their own is still nobody else's: a write to it is `user:write`, own or
+    .toMatchObject({ code: -32009, message: expect.stringContaining('user:list') });
+  // And their own is still nobody else's: a write to it is `user:put`, own or
   // not, because a person's own record is not something they edit for
   // themselves.
   expect(await call(client, 'resourceWrite', { channel: ROOT, uri: 'user://ana', data: '{}', encoding: 'utf-8' }))
-    .toMatchObject({ code: -32009, message: expect.stringContaining('user:write') });
+    .toMatchObject({ code: -32009, message: expect.stringContaining('user:put') });
 });
 

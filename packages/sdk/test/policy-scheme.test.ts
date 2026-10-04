@@ -227,7 +227,7 @@ it('advertises policy on the handshake, with the operations it implements', asyn
   }) as { _meta?: Record<string, Record<string, Record<string, unknown>>> };
 
   const entry = ready._meta?.['ahpd.resourceProviders']?.['policy'];
-  expect(entry).toMatchObject({ title: 'Policies', root: 'policy://', operations: ['read', 'list', 'resolve', 'write', 'delete'] });
+  expect(entry).toMatchObject({ title: 'Policies', root: 'policy://', operations: ['get', 'list', 'resolve', 'put', 'delete'] });
   expect(Object.keys(entry?.['manifest'] as object)).toContain('properties');
 });
 
@@ -239,7 +239,7 @@ it('lets a role holding policy:read read and refuses the write with nothing writ
 
   const write = body(row());
   expect(await call(client, 'resourceWrite', { channel: ROOT, uri: 'policy://M1', data: write.data, encoding: 'utf-8' }))
-    .toMatchObject({ code: -32009, message: expect.stringContaining('policy:write') });
+    .toMatchObject({ code: -32009, message: expect.stringContaining('policy:put') });
 
   // The refusal wrote nothing, and a role that may read sees the empty store.
   expect(await filePolicies({ file }).list()).toEqual([]);
@@ -266,9 +266,9 @@ it('refuses a role holding neither, on both', async () => {
   const client = await signedIn(host(users), users, 'ana');
 
   for (const [method, params, subject] of [
-    ['resourceList', { uri: 'policy://' }, 'policy:read'],
-    ['resourceRead', { uri: 'policy://M1' }, 'policy:read'],
-    ['resourceWrite', { uri: 'policy://M1', data: JSON.stringify(row()), encoding: 'utf-8' }, 'policy:write'],
+    ['resourceList', { uri: 'policy://' }, 'policy:list'],
+    ['resourceRead', { uri: 'policy://M1' }, 'policy:get'],
+    ['resourceWrite', { uri: 'policy://M1', data: JSON.stringify(row()), encoding: 'utf-8' }, 'policy:put'],
   ] as const) {
     expect(await call(client, method, { channel: ROOT, ...params }))
       .toMatchObject({ code: -32009, message: expect.stringContaining(subject) });

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { fileUsers, signInRecord } from '../src/users.js';
+import { fileUsers, grantProblem, GROUPS, holds, isGrant, OPERATIONS, signInRecord, SUBJECTS } from '../src/users.js';
 import { scopeFor } from '../src/scopes.js';
 import type { Grant } from '../src/types/users.js';
 
@@ -165,7 +165,7 @@ it('lets a file role override a built-in, and says so when a role is defined now
   expect(said.some((one) => one.includes('ghost'))).toBe(true);
 });
 
-it('reports a grant that is not a subject and a verb, and drops it', async () => {
+it('reports a grant that is not a subject and an operation, and drops it', async () => {
   writeFileSync(path, JSON.stringify({
     roles: { odd: ['session:read', 'session', 'read:computer', 'session:edit', 'file:*'] },
     users: [{ id: 'o', roles: ['odd'], token: '' }],
@@ -174,14 +174,18 @@ it('reports a grant that is not a subject and a verb, and drops it', async () =>
   const users = open((one) => said.push(one));
   const held = await users.verify(await users.mint('o'));
 
-  // The four that are a subject and a verb survive, the wildcard included.
+  // A group and a wildcard survive; so does a scheme the table does not decide,
+  // which may name any operation word - `read:computer` is a scheme called
+  // `read` and nothing is here to say it is not a scheme.
   expect(held?.can('session:read')).toBe(true);
   expect(held?.can('file:read')).toBe(true);
   expect(held?.can('file:write')).toBe(true);
-  // A bare token, and the spelling this repository used to have.
-  expect(said.some((one) => one.includes('session,'))).toBe(true);
-  expect(said.some((one) => one.includes('read:computer'))).toBe(true);
-  expect(said.some((one) => one.includes('session:edit'))).toBe(true);
+  expect(held?.can('read:computer')).toBe(true);
+  // A bare token, and an operation `session` does not have. The second says
+  // what it does have, which is the only way anybody learns what to write.
+  expect(said.some((one) => one.includes('role odd session is not <subject>:<operation>'))).toBe(true);
+  expect(said.some((one) => one.includes("session:edit is not one of session's operations"))).toBe(true);
+  expect(said.some((one) => one.includes('list, state'))).toBe(true);
 });
 
 it('reads an old users grant as the user subject, and says so once per role', async () => {
@@ -617,4 +621,119 @@ it('keeps a title an add does not give, and refuses an id a membership could not
   for (const id of ['a:b', '*', 'two words']) {
     await expect(users.addTeam(id)).rejects.toThrow('may not hold a space, a colon or a star');
   }
+});
+
+it('answers a grant from the group its operation is in, and not from the other ones', () => {
+  const set = (...held: Grant[]) => new Set<string>(held);
+
+  // A held group covers every operation in it, and a chat's groups are the
+  // session's - which is what they were before a chat had a subject.
+  expect(holds(set('session:write'), 'session:dispose')).toBe(true);
+  expect(holds(set('session:write'), 'chat:send')).toBe(true);
+  expect(holds(set('session:write'), 'chat:turns')).toBe(false);
+  expect(holds(set('chat:send'), 'chat:cancel')).toBe(false);
+  expect(holds(set('session:read'), 'chat:turns')).toBe(true);
+  // Holding an operation is not holding its group: the answer cannot widen by
+  // being asked the other way round.
+  expect(holds(set('chat:send'), 'chat:write')).toBe(false);
+  expect(holds(set('file:read'), 'file:get')).toBe(true);
+  expect(holds(set('file:get'), 'file:read')).toBe(false);
+  expect(holds(set('user:write'), 'user:put')).toBe(true);
+  expect(holds(set('user:put'), 'user:write')).toBe(false);
+  // A subject the table does not decide reads the resource operations, so a
+  // scheme a plugin may not be loaded for is held by `computer:read` and not by
+  // any other subject's.
+  expect(holds(set('computer:read'), 'computer:list')).toBe(true);
+  expect(holds(set('file:read'), 'computer:list')).toBe(false);
+  expect(holds(set('computer:write'), 'computer:put')).toBe(true);
+});
+
+it('keeps every operation in exactly one group, and no subject a read or a write', () => {
+  for (const [subject, mine] of Object.entries(OPERATIONS)) {
+    const { operations, groups } = mine;
+    const every = [...groups.read, ...groups.write];
+    // The two groups between them hold every operation once: nothing is listed
+    // twice, and nothing is listed that is not an operation.
+    expect([...every].sort()).toEqual([...operations].sort());
+    expect(new Set(every).size).toBe(operations.length);
+    for (const operation of operations) {
+      // The two words that group a subject are operations nowhere, so a role
+      // holding one of them holds a group rather than a thing it may do.
+      expect(GROUPS).not.toContain(operation);
+      // And no subject has one as its own operation either, which would make
+      // `subject:read` mean one act and the whole group at once.
+      expect(operations).not.toContain(GROUPS[0]);
+      expect(operations).not.toContain(GROUPS[1]);
+    }
+    expect(`${subject} ${mine.title} ${mine.description}`.length).toBeGreaterThan(0);
+  }
+  // A group may be empty - there is nothing to change in the diagnostics and
+  // nothing to read of a container - and `OPERATIONS` still says so.
+  expect(OPERATIONS.diagnostics?.groups.write).toEqual([]);
+  expect(OPERATIONS.container?.groups.read).toEqual([]);
+});
+
+it('takes an operation of a subject it decides and any operation word of one it does not', () => {
+  // A table subject: its own operations, its groups and `*`.
+  expect(isGrant('session:dispose')).toBe(true);
+  expect(isGrant('session:read')).toBe(true);
+  expect(isGrant('session:write')).toBe(true);
+  expect(isGrant('session:*')).toBe(true);
+  expect(isGrant('session:launch')).toBe(false);
+  expect(isGrant('file:get')).toBe(true);
+  expect(isGrant('file:write')).toBe(true);
+  expect(isGrant('file:request')).toBe(true);
+  expect(isGrant('file:resourceRead')).toBe(false);
+  // A subject the table does not decide may not be loaded when the role is
+  // written, so its own list is not here to ask: any operation word is taken.
+  expect(isGrant('computer:launch')).toBe(true);
+  expect(isGrant('user:get')).toBe(true);
+  expect(isGrant('people:write')).toBe(true);
+  // What is not a subject and an operation at all.
+  expect(isGrant('session')).toBe(false);
+  expect(isGrant(':read')).toBe(false);
+  expect(isGrant('session:')).toBe(false);
+  expect(isGrant('a:b:c')).toBe(false);
+  expect(isGrant('two words:read')).toBe(false);
+  expect(isGrant('*:not-a-word')).toBe(false);
+
+  // The refusal says the same thing, and names what the subject does have.
+  expect(grantProblem('session:dispose')).toBeUndefined();
+  expect(grantProblem('session:launch')).toMatch(/^session:launch is not one of session's operations \(list, state,/u);
+  expect(grantProblem('session:launch')).toMatch(/read or write or a \*$/u);
+  expect(grantProblem('session')).toBe('session is not <subject>:<operation>');
+  expect(grantProblem('plugin:something')).toBeUndefined();
+});
+
+/*
+ * `docs/USERS.md` against the table it documents.
+ *
+ * The page is written by hand and the table is code, so this is the only thing
+ * that notices one of them moving without the other: a subject or an operation
+ * the host gates, that the page does not say a person may be granted, is a page
+ * a client cannot be built from.
+ */
+
+const PAGE = join(import.meta.dirname, '../../../docs/USERS.md');
+
+/** The row of the grants table a subject is in, or nothing when it has none. */
+const rowFor = (page: string, subject: string): string | undefined =>
+  page.split('\n').find((line) => line.startsWith(`| \`${subject}\` |`));
+
+it('documents every subject the host gates, and every operation it has', () => {
+  const page = readFileSync(PAGE, 'utf8');
+  for (const [subject, mine] of Object.entries(OPERATIONS)) {
+    const row = rowFor(page, subject);
+    expect(row, `${subject} has no row in docs/USERS.md`).toBeDefined();
+    // The two groups are named as the columns they are, so the page says which
+    // half an operation is in rather than leaving it to be guessed.
+    for (const operation of mine.groups.read) expect(row, `${subject}:${operation}`).toContain(`\`${operation}\``);
+    for (const operation of mine.groups.write) expect(row, `${subject}:${operation}`).toContain(`\`${operation}\``);
+  }
+
+  // And the two words are only ever groups, which the page says in so many
+  // words, so a reader does not go looking for `session:read` in the list.
+  expect(page).toContain('they are never an operation of their own');
+  // Every subject a role may name is in a table, so the page is the whole of it.
+  for (const subject of SUBJECTS) expect(rowFor(page, subject), `${subject} is in no table`).toBeDefined();
 });

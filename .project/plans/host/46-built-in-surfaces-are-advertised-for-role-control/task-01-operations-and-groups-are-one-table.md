@@ -1,6 +1,6 @@
 ---
 title: Operations and their groups are one table, and a grant names either
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:

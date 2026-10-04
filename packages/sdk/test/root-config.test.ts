@@ -143,7 +143,7 @@ it('refuses a write from a member, and never asks the daemon', async () => {
   });
   await settle();
   expect(writes).toEqual([]);
-  expect(heardOnRoot(member.heard)).toEqual([expect.objectContaining({ rejectionReason: expect.stringContaining('config:write') })]);
+  expect(heardOnRoot(member.heard)).toEqual([expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') })]);
 });
 
 it('sends an admin write to the daemon, and its echo to the admins only', async () => {
@@ -216,9 +216,15 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
   const { signedIn, rootOf, answerRestart } = served();
   const admin = await signedIn('admin', 'admin');
   const member = await signedIn('member', 'member');
-  // The principal is the only thing in there yet: nobody has asked for a
-  // restart, and the notice is the whole of what this is about.
-  expect((await rootOf(admin.client))._meta).toEqual({ 'ahpd.principal': 'user:ana' });
+  // The principal is the only thing about the host's own state in there yet:
+  // nobody has asked for a restart, and the notice is the whole of what this is
+  // about. `ahpd.grants` is beside it and says the same thing to everybody, so
+  // it is left out of what these three compare.
+  const apart = (meta: unknown): Record<string, unknown> => {
+    const { 'ahpd.grants': _grants, ...rest } = (meta ?? {}) as Record<string, unknown>;
+    return rest;
+  };
+  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.principal': 'user:ana' });
 
   answerRestart(true);
   await admin.client.handle({
@@ -229,8 +235,8 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
   // Held until the daemon restarts, and said to whoever reads the root, so a
   // member sees the notice without seeing the keys it is about - and each
   // snapshot names the person it was built for rather than the host's.
-  expect((await rootOf(admin.client))._meta).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:ana' });
-  expect((await rootOf(member.client))._meta).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:bo' });
+  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:ana' });
+  expect(apart((await rootOf(member.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:bo' });
 });
 
 it('gives a running session the advanced tools as soon as the daemon key is written', async () => {

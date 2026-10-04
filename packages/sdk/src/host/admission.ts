@@ -1,8 +1,7 @@
 import { RpcError } from '../rpc.js';
 import { computerSource } from '../computers.js';
 import { isRootChannel, schemeOf } from './channels.js';
-import type { ChannelKind } from './channels.js';
-import { NEEDS, refusalReason } from './gate.js';
+import { NEEDS, channelRead, refusalReason } from './gate.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -14,12 +13,10 @@ export interface Admission {
 export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admission {
   const { connection } = conn;
 
-  /** What reading a channel of each kind needs. */
-  const read: Record<ChannelKind, Grant> = { session: 'session:read', terminal: 'terminal:read', other: 'file:read' };
   /**
    * What a command needs, or nothing when it needs nothing.
    *
-   * Most methods are one entry in `NEEDS`. Two kinds are not:
+   * Most methods are one entry in `NEEDS`. Four kinds are not:
    *
    * `subscribe` reads the channel, because `ahp-root://` is the discovery a
    * client reads to find out where to sign in and a session channel is not.
@@ -28,7 +25,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
    * on `file:` and `resourceWrite` on a plugin's scheme are the same method
    * and not the same act. `file:` answers the plain capability, which is
    * what a role must have for a client to save the file it has open; any
-   * other scheme answers the scoped one, so a role that names plain `write`
+   * other scheme answers the scoped one, so a role that names plain `put`
    * does not acquire a plugin's scheme by accident. That is what `HANDOFF`'s
    * pending step 9 means by scoping the gate rather than restoring it.
    */
@@ -36,57 +33,71 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
     if (method === 'subscribe') {
       const channel = String(params.channel ?? '');
       if (isRootChannel(channel)) return undefined;
-      if (channel.startsWith('ahp-automations')) return ['automation:read'];
       /*
        * What the channel is spelt as and what it resolves to, both: the
        * snapshot is taken of the resolved channel, so a spelling that
-       * reads as something else cannot reach a session. Anything that is
-       * neither a session's nor a terminal's - a file, a resource watch,
-       * one another client relays - needs what `createResourceWatch`
-       * required to hand a watch over.
+       * reads as something else cannot reach a session.
        */
-      return [...new Set([read[ctx.channelKind(channel)], read[ctx.channelKind(ctx.meantBy(channel))]])];
+      return [...new Set([channelRead(channel, ctx.channelKind(channel)),
+        channelRead(ctx.meantBy(channel), ctx.channelKind(ctx.meantBy(channel)))])];
     }
     /*
      * Completions in a session are the session's commands, so they need
-     * what reading it does, as well as the `file:read` a path needs.
+     * what reading it does, as well as the `file:list` a path needs.
      */
     if (method === 'completions' && typeof params.channel === 'string' && params.channel !== '') {
       const channel = params.channel;
-      return [...new Set<Grant>(['file:read', read[ctx.channelKind(channel)], read[ctx.channelKind(ctx.meantBy(channel))]])];
+      return [...new Set<Grant>(['file:list',
+        channelRead(channel, ctx.channelKind(channel)),
+        channelRead(ctx.meantBy(channel), ctx.channelKind(ctx.meantBy(channel)))])];
+    }
+    /*
+     * A chat forked from another is not one started: it copies a transcript
+     * out of the chat it names and continues there, which is a wider act than
+     * `chat:create` and is asked for by its own operation. A side chat copies
+     * nothing, so it is a `chat:create` like any other.
+     */
+    if (method === 'createChat') {
+      const source = (typeof params.source === 'object' && params.source !== null
+        ? params.source
+        : {}) as Record<string, unknown>;
+      if (source.kind === 'fork') return ['chat:fork'];
     }
     /*
      * A changeset is a session's, so running an operation on it writes to
-     * the session as well as to its files.
+     * the session as well as to its files. The file half keeps the whole
+     * write group rather than one operation, because a changeset holds an
+     * edit, a new file, a rename and a removal, and a client that may run
+     * one of them has to be able to write them.
      */
-    if (method === 'invokeChangesetOperation') return ['file:write', 'session:write'];
+    if (method === 'invokeChangesetOperation') return ['file:write', 'session:changes'];
     /*
      * A session naming a source is asking for a machine to be made for it,
-     * which is a `computer:write` on top of the `session:write` any
+     * which is a `computer:write` on top of the `session:create` any
      * session needs - decision
      * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
      * A `computer://<id>` that already exists is not a source, so a session
-     * that names one needs nothing beyond `session:write`.
+     * that names one needs nothing beyond `session:create`.
      */
     if (method === 'createSession') {
       const config = (typeof params.config === 'object' && params.config !== null
         ? params.config
         : {}) as Record<string, unknown>;
-      if (computerSource(config.computer) !== undefined) return ['session:write', 'computer:write'];
+      if (computerSource(config.computer) !== undefined) return ['session:create', 'computer:write'];
     }
     const plain = NEEDS[method];
     if (plain === undefined) return undefined;
     const at = plain.indexOf(':');
     const subject = plain.slice(0, at);
-    const verb = plain.slice(at + 1);
+    const operation = plain.slice(at + 1);
     /*
      * Only the file subject is scoped by the URI.
      *
      * A resource method is the only one that carries a URI, and its subject
      * is the scheme that answers it, so `resourceRead` on `computer://` is
-     * `computer:read` and every `usage:` URI is `usage:read`. Every other
-     * method answers to its own area, which is a fixed subject and not
-     * something the request can name.
+     * `computer:get` and every `usage:` URI is `usage:get`. Every other
+     * method answers to its own subject, which is fixed and not something
+     * the request can name.
      *
      * The scheme's grant is what a read falls back to, not what it always
      * needs: `excused` below asks the provider first.
@@ -98,7 +109,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
     const needed = new Set<Grant>();
     for (const uri of uris) {
       const scheme = schemeOf(uri);
-      needed.add((scheme === '' || scheme === 'file' ? plain : `${scheme}:${verb}`) as Grant);
+      needed.add((scheme === '' || scheme === 'file' ? plain : `${scheme}:${operation}`) as Grant);
     }
     return [...needed];
   };
@@ -106,7 +117,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
   /**
    * Whether this command is one signed-in person reading their own record.
    *
-   * `user://<id>` is theirs and needs no `user:read`, because a client
+   * `user://<id>` is theirs and needs no `user:get`, because a client
    * showing a person their own account has to be able to, and a client
    * showing it to somebody else is refused by the grant as before - own
    * only, exactly as it is on `user primary`.
@@ -134,6 +145,11 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
    * about a read or a listing, and only of the scheme the URI is under, so
    * it can widen what somebody sees and never what they change.
    *
+   * The excuse is the operation the command is asking for rather than the
+   * whole read group, because `denied` compares it against what was asked:
+   * a provider that has authorized `user://ana` has said that record may be
+   * read, and it has said nothing about every record beside it.
+   *
    * A promise only where a provider has to be asked. Everything else is
    * answered here and now, because `admit` is at the front of every command
    * and a command no scheme is behind should not wait a turn of the loop
@@ -141,6 +157,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
    */
   const excusedBy = (method: string, params: Record<string, unknown>, who: Principal): Set<Grant> | Promise<Set<Grant>> => {
     if (method !== 'resourceRead' && method !== 'resourceList') return new Set();
+    const operation = method === 'resourceRead' ? 'get' : 'list';
     const asked = [params.uri, params.source, params.destination]
       .filter((one): one is string => typeof one === 'string')
       .map((uri) => {
@@ -154,7 +171,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
       const excused = new Set<Grant>();
       for (const one of asked) {
         if (await one.authorize(one.uri, who)) {
-          excused.add(`${one.scheme}:read` as Grant);
+          excused.add(`${one.scheme}:${operation}` as Grant);
         }
       }
       return excused;
@@ -211,7 +228,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
       });
     }
     const excused = ownRecord(method, params, who)
-      ? new Set<Grant>(['user:read'])
+      ? new Set<Grant>(['user:get'])
       : excusedBy(method, params, who);
     if (excused instanceof Promise) return excused.then((held) => { denied(who, needed, held); });
     denied(who, needed, excused);

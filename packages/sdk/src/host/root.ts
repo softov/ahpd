@@ -1,4 +1,5 @@
 import { seesConfig, PER_CONNECTION } from './gate.js';
+import { OPERATIONS } from '../users.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -11,6 +12,7 @@ export interface Root {
   daemonProperties(): Record<string, unknown>;
   daemonKey(key: string): boolean;
   advertisedSchemes(): Record<string, unknown> | undefined;
+  advertisedGrants(): Record<string, unknown>;
   rootState(mine?: Record<string, unknown>, connection?: Connection): Promise<Bag>;
 }
 
@@ -173,17 +175,63 @@ export function createRoot(ctx: HostContext): Root {
     if (providers === undefined) return undefined;
     const entries = Object.entries(providers);
     if (entries.length === 0) return undefined;
-    const order = ['read', 'list', 'resolve', 'write', 'delete', 'mkdir', 'move', 'copy'] as const;
+    /*
+     * The provider's method names, and the words a grant is made of.
+     *
+     * The order lists what a scheme does and the lookup says how: a provider
+     * implements `read`, `write` and `remove` and a role grants `get`, `put`
+     * and `delete`, so the advertised word is the one a client can put in a
+     * `role://` body and have it mean the method the host will call. They were
+     * `read` and `write` before, which named a group rather than an act, and
+     * a client that wrote `policy:read` into a role was naming a group the gate
+     * never asked for - decision
+     * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+     */
+    const order = ['get', 'list', 'resolve', 'put', 'delete', 'mkdir', 'move', 'copy'] as const;
+    const methodOf = (one: typeof order[number]): string =>
+      one === 'get' ? 'read' : one === 'put' ? 'write' : one === 'delete' ? 'remove' : one;
     return Object.fromEntries(entries.map(([scheme, provider]) => {
       const said = typeof provider.describe === 'function' ? provider.describe() : undefined;
       const held = provider as unknown as Record<string, unknown>;
       return [scheme, {
         ...(said ?? {}),
         root: `${scheme}://`,
-        operations: order.filter((one) => typeof held[one === 'delete' ? 'remove' : one] === 'function'),
+        operations: order.filter((one) => typeof held[methodOf(one)] === 'function'),
       }];
     }));
   };
+
+  /**
+   * Every subject a grant may name, and the operations each one has.
+   *
+   * Read off `OPERATIONS`, so what the host advertises and what the gate asks
+   * for cannot be two lists that drift. Eight subjects: the ones the gate
+   * itself asks for, with a scheme's own grant (`notes:get`) being the scheme's
+   * to say and not in here. Always present, with or without a directory: it
+   * says what a role *could* hold, not what anybody holds, and a host with no
+   * `users` still has a `role:` scheme to write a role into - step 2 of this
+   * task.
+   */
+  const advertisedGrants = (): Record<string, unknown> => Object.fromEntries(
+    Object.entries(OPERATIONS).map(([subject, mine]) => {
+      const { title, description, operations, groups } = mine;
+      return [subject, {
+        title,
+        /*
+         * A chat is a session's, so a `session:` grant covers it and this says
+         * so: `holds` answers `chat:turns` from `session:read` and a client
+         * drawing a form has to know that before it offers the two apart.
+         */
+        description: subject === 'chat'
+          ? `${description} A grant on \`session:\` covers this subject's groups, because a chat is a session's.`
+          : subject === 'file'
+            ? `${description} Every other scheme a host serves has the same operations under its own name, and these groups are where they belong.`
+            : description,
+        operations: [...operations],
+        groups: { read: [...groups.read], write: [...groups.write] },
+      }];
+    }),
+  );
 
   const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection): Promise<Bag> => {
     /*
@@ -202,6 +250,7 @@ export function createRoot(ctx: HostContext): Root {
     const schemes = advertisedSchemes();
     const meta = {
       ...(schemes === undefined ? {} : { 'ahpd.resourceProviders': schemes }),
+      'ahpd.grants': advertisedGrants(),
       ...(ctx.restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
       /*
        * Who this snapshot is for, in the block the handshake already uses.
@@ -262,6 +311,6 @@ export function createRoot(ctx: HostContext): Root {
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, advertisedSchemes, rootState,
+    daemonKey, advertisedSchemes, advertisedGrants, rootState,
   };
 }

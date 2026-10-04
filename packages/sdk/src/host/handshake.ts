@@ -21,7 +21,7 @@ export interface Handshake {
 export function createHandshake(ctx: HostContext, conn: ConnectionContext): Handshake {
   const { connection } = conn;
   const {
-    advertised, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting, dir, fire,
+    advertised, advertisedGrants, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting, dir, fire,
     holders, known, leaves, loginId, log, LOGS, METRICS, metaMoved, metadataFor, meantBy,
     options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, spellingOf, TRACES,
@@ -260,6 +260,12 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // What this host serves beside `file:`, so a client can draw a
           // screen for a scheme before it has a URI to ask.
           ...(advertisedSchemes() === undefined ? {} : { 'ahpd.resourceProviders': advertisedSchemes() }),
+          // Every subject a grant may name, and what it may be granted, so a
+          // client can draw the operation list for a role it is about to ask
+          // somebody to confirm. Always here: it says what a role could hold,
+          // not what anybody holds - decision
+          // `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+          'ahpd.grants': advertisedGrants(),
           // Who this connection is, so a client can read that person's own
           // `user://<id>` and needs no grant to do it. Absent where the
           // connection is nobody, which is every host with no users

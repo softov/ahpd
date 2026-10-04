@@ -159,12 +159,13 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
   /**
    * What a machine is doing, as one word a client can also write back.
    *
-   * A resource scheme has four verbs and none of them is `restart`, so the
-   * action is a *write to what the machine is*: reading `state` answers
-   * `running` or `stopped`, and writing one of `running`, `stopped` or
-   * `restarted` puts it there. That keeps starting a machine inside the same
-   * `computer:write` grant that makes and destroys one, with no new method for
-   * a gate to be taught about - decision `a-grant-is-a-subject-and-a-verb`.
+   * A resource scheme has four write operations and none of them is
+   * `restart`, so the action is a *write to what the machine is*: reading
+   * `state` answers `running` or `stopped`, and writing one of `running`,
+   * `stopped` or `restarted` puts it there. That keeps starting a machine
+   * inside the same `computer:put` grant that makes one, with no new method
+   * for a gate to be taught about - decision
+   * `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
    */
   const STATES = ['running', 'stopped', 'restarted'] as const;
 

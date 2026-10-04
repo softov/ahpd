@@ -273,6 +273,15 @@ when no provider is registered. The protocol says a client must ignore a key it
 does not know, and this one is `ahpd.`-prefixed, so no client is worse off for
 not reading it - decision `a-resource-scheme-is-advertised-in-meta`.
 
+`operations` names what the provider implements in the words a grant is made of,
+not the provider's method names: a `read` is advertised as `get` and a `write` as
+`put`, so `notes:get` in a role is exactly what `resourceRead` on `notes://` asks
+for. The words changed from `read` and `write` when grants stopped naming a
+group - decision `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+Every other operation keeps its provider's name, because a resource scheme has
+no other pair that differs. The groups those two belong to are in the
+`ahpd.grants` key beside it, under `file`.
+
 ```ts
 host.registerResourceProvider('computer', {
   read: async (uri) => ({ data: await machineStatus(uri), encoding: 'utf-8' }),

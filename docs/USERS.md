@@ -353,31 +353,61 @@ Three things worth knowing:
 
 ## Roles
 
-A grant is a **subject** and a **verb**: `session:read`, `file:write`,
-`computer:read`. The verb comes last, which is the convention every scope list
-uses - `contents:read` in GitHub's app permissions, `channels:read` in Slack's,
-`s3:GetObject` in IAM.
+A grant is a **subject** and an **operation**: `session:list`, `file:put`,
+`container:connect`. The operation comes last, which is the convention every
+scope list uses - `contents:read` in GitHub's app permissions, `channels:read` in
+Slack's, `s3:GetObject` in IAM.
 
-The subjects are the host's own and any plugin's URI scheme:
+`read` and `write` are the two **groups** a subject's operations fall into, and
+they are never an operation of their own. So `session:read` is the whole of what
+may be done to a session and `session:list` is listing them; `user:get` is one
+person's record and `user:read` is every one of them. A subject has no
+operation called `read` or `write`, and the two words in that position mean the
+group every time - decision
+`a-grant-names-an-operation-and-read-and-write-are-its-groups`.
 
-| Subject | Verbs | What they cover |
-| --- | --- | --- |
-| `file` | `read`, `write` | Resources, and a write is anything that changes one: save, delete, move, copy |
-| `session` | `read`, `write` | Read lists sessions, their turns and their config; write creates and disposes them |
-| `automation` | `read`, `write` | Read lists the triggers and the runs; write runs one |
-| `terminal` | `read`, `write` | Read watches a shell's output; write opens one, types into it and closes it |
-| `diagnostics` | `read` | `diagnosticsFetch` |
-| `config` | `read`, `write` | Read describes the host, as `status` and `plugin list` do; write changes a host-wide root setting, or replaces the root config |
-| `user` | `read`, `write` | Write adds, removes and mints for people, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. Read answers `user list`, and a person's own `user://<id>` record without any grant at all |
-| `team` | `read`, `write` | The teams this install names, which a membership is written out of. Read answers `team list`; write adds, titles and removes one |
-| `project` | `read`, `write` | The same for the projects, spelled after a membership's colon |
-| `role` | `read`, `write` | The roles this install defines. `user list` asks for `role:read` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
-| `usage` | `read` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no `usage:write`: records are written by the meters that charge them |
-| `policy` | `read`, `write` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
-| a plugin's scheme | `read`, `write` | That provider's resources, exactly as before |
+The host advertises this table in `_meta['ahpd.grants']` on the handshake and on
+the root state, so a client reads the operations from the wire rather than from
+this page.
+
+The subjects the host decides are these eight:
+
+| Subject | Read group | Write group | What they cover |
+| --- | --- | --- | --- |
+| `session` | `list`, `state` | `create`, `dispose`, `rename`, `configure`, `folders`, `attach`, `mark`, `review`, `changes`, `worktree`, `artifacts` | What an agent runs on: listed with `list`, opened and read with `state` |
+| `chat` | `turns` | `create`, `fork`, `dispose`, `move`, `send`, `cancel`, `answer`, `tool`, `draft`, `folders`, `mark`, `truncate` | A conversation in a session. **Its groups are the session's**: `session:read` covers `chat:turns` and `session:write` covers every operation below, which is what those groups covered before a chat had a subject of its own |
+| `terminal` | `output` | `create`, `dispose`, `input`, `resize`, `claim`, `rename`, `clear` | A shell on this machine: its output is read with `output`, and opening one, typing into it, resizing it, claiming it, titling it and clearing it are the write group |
+| `automation` | `list` | `create`, `update`, `remove`, `run`, `cancel` | What runs without a client asking: the triggers and the runs are listed with `list`, and making, editing, removing, running and cancelling one are the write group |
+| `file` | `get`, `list`, `resolve`, `watch` | `put`, `delete`, `mkdir`, `move`, `copy`, `request` | Every scheme a host serves, each under its own name. One record is read with `get`, the whole scheme is listed with `list`, and anything that changes one is `put`, `delete`, `mkdir`, `move`, `copy` or `request` |
+| `config` | `settings` | `change` | The daemon's own settings, read with `settings`; changing a host-wide root setting, or replacing the root config, is `change` |
+| `diagnostics` | `logs`, `network`, `fetch` | - | What this host is doing and why it stopped: the logs it collects, the network it sees and the diagnostic bundles it fetches. There is nothing here to change |
+| `container` | - | `connect`, `disconnect`, `relay` | Connecting this host to a dev container, disconnecting from it and relaying a frame into it. Nothing is read here: a container is reached through what is inside it |
+
+The rest are the people schemes and any plugin's, which share the `file`
+operations under their own name:
+
+| Subject | What they cover |
+| --- | --- |
+| `user` | Add, remove and mint for people with `put`, and only for a role or a person whose grants the caller already holds; re-adding a person counts the roles they hold as well as the ones given. The bound counts the roles in the users file, so a role an issuer's claim grants at sign-in is not among them. `list` answers `user list`, `get` a person's own `user://<id>` record without any grant at all |
+| `team` | The teams this install names, which a membership is written out of. `list` answers `team list`; `put` adds and titles one, `delete` removes it |
+| `project` | The same for the projects, spelled after a membership's colon |
+| `role` | The roles this install defines. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
+| `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
+| `policy` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
+| a plugin's scheme | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
-every verb on sessions, `*:*` is everything.
+every operation on sessions, `*:*` is everything.
+
+A role written before this table names a verb and keeps its meaning, because
+every verb that was a group still is one: `session:read` held everything in
+`session`'s read group and still does, and `file:write` still holds the whole
+write group. What changed is the other direction. A grant that was never a verb
+and is not an operation of its subject - `computer:edit`, say - is no longer
+refused as malformed by any host that decides that subject; it is simply a grant
+that matches nothing, because the table above is where an operation comes from.
+A grant naming no subject the host decides, such as one on a plugin's scheme, is
+the scheme's own to say what its operations are and any word is kept.
 
 A person reads their own usage without `usage:read` at all: their `user:<id>`
 pool, and the `team:` and `project:` pools of the teams and projects they are a
@@ -394,25 +424,26 @@ worth looking at twice: it lists the sessions and the automations and can do
 nothing about either - no file, no shell, no session of its own, no automation
 run.
 
-A plugin's scheme is never conferred by a plain subject. `file:write` is not
-`computer:write`; a role reaches a scheme by naming it (`computer:write`) or by
+A plugin's scheme is never conferred by a plain subject. `file:put` is not
+`computer:put`; a role reaches a scheme by naming it (`computer:put`) or by
 naming a wildcard that covers it (`*:*`). The computer is the worked example:
-reading a machine is `computer:read` and making or destroying one is
-`computer:write`, so a person who may save a file may not, by that alone, start
+reading a machine is `computer:get` and making or destroying one is
+`computer:put`, so a person who may save a file may not, by that alone, start
 a container - see [COMPUTER.md](COMPUTER.md). That is deliberate: a role that may
 save your files may not, by that alone, start a container on your host. The
 refusal tells you what to add - the `-32009` message is
-`<person> may not computer:write here` - so the way to discover a subject is to
+`<person> may not computer:put here` - so the way to discover a subject is to
 try it once and read the answer.
 
 Define your own in the same file; a file role overrides a built-in of the same
-name:
+name. A role of operations sits beside one of groups, and the two mix:
 
 ```json
 {
   "roles": {
     "viewer": ["*:read"],
-    "editor": ["file:read", "file:write", "session:read", "session:write"]
+    "editor": ["file:read", "file:put", "session:write"],
+    "senders": ["session:read", "chat:send", "file:get"]
   },
   "users": [
     { "id": "ana", "roles": ["admin"], "token": "sha256:…" },
@@ -423,9 +454,12 @@ name:
 
 A role name that is neither built in nor defined in the file is refused when the
 person is added, so a typo is a refusal rather than a person who may do nothing.
-A grant that is not a subject and a verb is reported when the file is read and
-dropped. A file that is malformed is read as nobody - it fails closed - and it
-is never written over.
+A grant that is not `<subject>:<operation>` is reported when the file is read and
+dropped: an operation is one the subject above has, one of the two group names,
+or `*`. A grant naming a subject the host does not decide is left alone, because
+the scheme behind it is the only thing that knows what its operations are. A file
+that is malformed is read as nobody - it fails closed - and it is never written
+over.
 
 A `users:read` or `users:write` written before the split is read as `user:read`
 or `user:write` and nothing more, and the daemon says so once at start for each
@@ -476,11 +510,18 @@ its operations and the form a create is drawn from, so a client can draw the
 screen before it has asked for anything. A host with no users directory serves
 none of the four.
 
-The grant for a scheme is the subject of its own name: `team:read` lists teams,
-`team:write` makes and takes them away, and neither reaches anybody's record.
-The one exception is a person's own `user://<id>`, which they may read with no
-grant at all - a client showing somebody their own account has to be able to -
-while listing people and reading anybody else's still needs `user:read`.
+Those operations are the grant's words and not the provider's method names: a
+provider's `read` is advertised as `get` and its `write` as `put`, so the entry
+for `team` reads `"operations": ["get", "list", "resolve", "put", "delete"]` and
+those are the words a role is written in. The groups those two belong to are in
+`ahpd.grants` under `file`, beside this key on the same handshake.
+
+The grant for a scheme is the subject of its own name: `team:list` lists teams,
+`team:put` makes and titles them and `team:delete` takes them away, and none of
+the three reaches anybody's record. The one exception is a person's own
+`user://<id>`, which they may read with no grant at all - a client showing
+somebody their own account has to be able to - while listing people and reading
+anybody else's still needs `user:list` or `user:get`.
 
 That exception needs an id, so a client is told which one it is.
 `_meta['ahpd.principal']` is the key, and it is spelled in two places: on the

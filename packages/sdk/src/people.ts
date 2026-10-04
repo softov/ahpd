@@ -18,6 +18,7 @@
  */
 
 import { RpcError } from './rpc.js';
+import { grantProblem } from './users.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from './types/resources.js';
 import type { Grant, Named, Users } from './types/users.js';
 
@@ -247,11 +248,20 @@ const named = (directory: Users, what: 'team' | 'project'): Records => {
  */
 const roles = (directory: Users): Records => ({
   title: 'Roles',
-  description: 'What a person holding this role may do, as <subject>:<verb>.',
+  /*
+   * Operations, not verbs.
+   *
+   * A grant is `<subject>:<operation>` and the operation is one the subject
+   * has - decision
+   * `a-grant-names-an-operation-and-read-and-write-are-its-groups`. `read` and
+   * `write` are still writable here because they are the two names that group a
+   * subject's operations, and `*` is still either half.
+   */
+  description: 'What a person holding this role may do, as <subject>:<operation>.',
   manifest: {
     type: 'object',
     properties: {
-      grants: lines('Grants', 'What somebody holding this role may do. `*` stands in for either half, as it does in every other role.'),
+      grants: lines('Grants', 'What somebody holding this role may do, one <subject>:<operation> each. `read` and `write` name a group of operations rather than one of them, and `*` stands in for either half, as it does in every other role.'),
     },
     required: ['grants'],
   },
@@ -270,7 +280,17 @@ const roles = (directory: Users): Records => ({
      * which is the reading the directory already refuses to give at
      * `user add`.
      */
-    if (grants === undefined) throw new RpcError(-32602, 'A role is written from {"grants": ["file:read"]}; that body names none');
+    if (grants === undefined) throw new RpcError(-32602, 'A role is written from {"grants": ["session:read"]}; that body names none');
+    /*
+     * Checked here rather than left to the directory, so the refusal names the
+     * subject's operations whether the directory behind this port is the file
+     * or somebody else's: an operation no subject has would be a grant that
+     * matches nothing, and the sentence is what lets somebody fix it.
+     */
+    for (const one of grants) {
+      const why = grantProblem(one);
+      if (why !== undefined) throw new RpcError(-32602, why);
+    }
     await directory.addRole(id, grants as Grant[]).catch(said);
   },
   drop: async (id) => directory.removeRole(id).catch(said),

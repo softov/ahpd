@@ -97,13 +97,15 @@ The handshake's `initialize._meta` (and the root state's `_meta`) carries `ahpd.
     "title": "Computer",
     "description": "A machine a session can run in.",
     "root": "computer://",
-    "operations": ["read", "list", "resolve", "write", "delete"],
+    "operations": ["get", "list", "resolve", "put", "delete"],
     "manifest": { "type": "object", "properties": { "image": { "type": "string", "title": "Image", "default": "debian:bookworm-slim" }, "...": {} } }
   }
 }
 ```
 
 `manifest` is the schema a create form is drawn from. The key is absent when the plugin is not loaded, and a request for a scheme nobody serves answers `-32601` with `nothing here serves computer:`. That is different from a permission refusal.
+
+`operations` are the words a grant is made of, not the provider's method names: `get` is the provider's `read` and `put` is its `write`, so `computer:get` in a role is what `resourceRead` on `computer://` asks for. The `ahpd.grants` key beside it carries every subject the host gates and what each may be granted; the `file` entry's groups there are what a resource scheme's `get` and `put` belong to.
 
 ## A session in one
 

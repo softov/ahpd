@@ -24,7 +24,7 @@ Every `_meta` key in the recorded traffic is `ahpd.`-prefixed, or is one of the 
 ## Steps
 
 1. Walk a frame and collect `{ key, at }` for every `_meta` object, with array indices folded as the checker folds them.
-2. Allow a key that starts with `ahpd.`, `vscode.`, `anthropic/` or `agentHost/`, and the reference keys by path, so `argumentHint` passes on a completion item and not on a skill.
+2. Allow a key that starts with `ahpd.`, `vscode.`, `anthropic/` or `agentHost/`, and the reference keys by path, so `argumentHint` passes on a completion item and not on a skill. `ahpd.grants` is one of the `ahpd.`-prefixed keys this allows and needs no entry of its own.
 3. `PENDING` holds what the traffic shows today, at least `owner`, `sender`, `model`, `argumentHint` on a skill, `cacheWriteTokens`, `cost`; the test fails on a key in neither list and on a `PENDING` entry that no longer occurs.
 4. Export `metaKeys` so the backend usage tests and the changeset tests run the same census over what they emit.
 

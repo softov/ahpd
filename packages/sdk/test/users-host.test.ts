@@ -2,11 +2,12 @@ import { expect, it, vi } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { isGrant } from '../src/users.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Offered } from '../src/types/probe.js';
 import type { Peer } from '../src/types/rpc.js';
-import type { Users } from '../src/types/users.js';
+import type { Grant, Users } from '../src/types/users.js';
 
 /*
  * The host half: a sign-in resource, and the one credential it checks.
@@ -331,4 +332,73 @@ it('sends the same list to every connection when there is no directory', async (
   expect(one).toEqual(two);
   // There is no sign-in resource to rewrite when there is nobody to sign in.
   expect(resourceIn(one, RECORD.resource)).toBeUndefined();
+});
+
+/*
+ * `ahpd.grants`, the operations a role may name, on the handshake and on the
+ * root snapshot.
+ *
+ * It is read off the same table the gate asks against, so the test asserts the
+ * shape and the two invariants a client drawing a role editor depends on: a
+ * subject's operations are its two groups and nothing else, and no operation
+ * is in both.
+ */
+
+interface Subject {
+  title: string;
+  description: string;
+  operations: string[];
+  groups: { read: string[]; write: string[] };
+}
+type Grants = Record<string, Subject>;
+
+/** The handshake's `ahpd.grants`, as this test reads it. */
+const grantsOf = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Grants> =>
+  ((await hello(client)) as { _meta?: { 'ahpd.grants'?: Grants } })._meta?.['ahpd.grants'] as Grants;
+
+/** The same key off the root snapshot, which is where a client that subscribes later reads it. */
+const snapshotGrants = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Grants> =>
+  (await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as {
+    snapshot: { state: { _meta?: { 'ahpd.grants'?: Grants } } };
+  }).snapshot.state._meta?.['ahpd.grants'] as Grants;
+
+it('advertises the operations of every subject it gates, on both blocks', async () => {
+  const { host } = served({ users: directory() });
+  const client = host.accept(peer(), undefined, true);
+  const grants = await grantsOf(client);
+
+  expect(Object.keys(grants)).toEqual([
+    'session', 'chat', 'terminal', 'automation', 'file', 'config', 'diagnostics', 'container',
+  ]);
+  // The root snapshot says the same thing the handshake said, to a client that
+  // only ever subscribes.
+  expect(await snapshotGrants(client)).toEqual(grants);
+
+  for (const [subject, one] of Object.entries(grants)) {
+    expect(one.title, subject).not.toBe('');
+    expect(one.description, subject).not.toBe('');
+    // Every operation is in exactly one group, and the groups are the whole of
+    // it: a client that offers these lists cannot offer an operation the host
+    // would refuse, and cannot leave one out.
+    expect([...one.groups.read, ...one.groups.write].sort(), subject).toEqual([...one.operations].sort());
+    expect(one.groups.read.filter((op) => one.groups.write.includes(op)), subject).toEqual([]);
+    // And the advertised words are grants the directory accepts.
+    for (const op of one.operations) expect(isGrant(`${subject}:${op}` as Grant), `${subject}:${op}`).toBe(true);
+  }
+
+  // `dispose` is a session's write and `list` is not: the groups a client draws
+  // are the groups `holds` answers from.
+  expect(grants['session']?.groups.write).toContain('dispose');
+  expect(grants['session']?.groups.write).not.toContain('list');
+  expect(grants['session']?.groups.read).toContain('list');
+  // A chat is a session's, and the description says so rather than leaving a
+  // client to work it out from the refusals.
+  expect(grants['chat']?.description).toContain('session:');
+});
+
+it('advertises the subjects on a host with no directory, because a role could still be held', async () => {
+  const with_ = await grantsOf(served({ users: directory() }).host.accept(peer(), undefined, true));
+  const without = await grantsOf(served().host.accept(peer(), undefined, true));
+  expect(Object.keys(without)).toEqual(Object.keys(with_));
+  expect(without).toEqual(with_);
 });

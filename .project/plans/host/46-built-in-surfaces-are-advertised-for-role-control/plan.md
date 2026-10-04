@@ -83,6 +83,8 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 | Asking whether somebody holds a group is answered by the group or a wildcard, not by holding each operation in it | (defaulted: `bounded` asks about groups when a role is handed out, and the simplest answer cannot widen) | 01 |
 | A role's grant on a built-in subject must name one of its operations, a group or `*`; on any other subject any operation word is taken | (defaulted: a plugin may not be loaded when the role is written) | 01 |
 | The server's commands keep their group grants (`config:read`, `config:write`, `user:write`, ...) | (defaulted: they are the daemon's commands, not AHP surfaces, and a group still gates them) | 02 |
+| `seesConfig` asks `config:settings` and `root/configChanged` asks `config:change`, operations rather than groups | Softov, 2026-10-04 | 02 |
+| A subject the table does not decide takes any operation word in `role://`, so `team:edit` is stored and matches only `team:edit` or `team:*` | Softov, 2026-10-04 | 04 |
 
 ## Proposed architecture
 
@@ -96,10 +98,10 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Operations and their groups are one table, and a grant names either](task-01-operations-and-groups-are-one-table.md) | todo | - |
-| [02 - Every gated method and client action needs one operation](task-02-every-method-and-action-needs-one-operation.md) | todo | 01 |
-| [03 - The host advertises its subjects in `ahpd.grants`](task-03-the-host-advertises-its-subjects.md) | todo | 01 |
-| [04 - Roles and the docs speak in operations](task-04-roles-and-docs-speak-in-operations.md) | todo | 02, 03 |
+| [01 - Operations and their groups are one table, and a grant names either](task-01-operations-and-groups-are-one-table.md) | implemented | - |
+| [02 - Every gated method and client action needs one operation](task-02-every-method-and-action-needs-one-operation.md) | implemented | 01 |
+| [03 - The host advertises its subjects in `ahpd.grants`](task-03-the-host-advertises-its-subjects.md) | implemented | 01 |
+| [04 - Roles and the docs speak in operations](task-04-roles-and-docs-speak-in-operations.md) | implemented | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -110,16 +112,19 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-operations-and-groups-are-one-table.md](task-01-operations-and-groups-are-one-table.md).
-- **Open questions:** none.
-- **Watch out for:** `subscribe` and `completions` ask for two grants today (the channel as spelt and as resolved); keep both, each now an operation. `invokeChangesetOperation` keeps its `file:write` beside `session:changes`. `ahpd.grants` is a new `_meta` key, so host/43 p1 task 04's census must list it.
+- **Done so far:** all four tasks, implemented and uncommitted. `OPERATIONS` in `users.ts` is the one table, `holds` answers an operation from a group or a wildcard, `NEEDS` and the new `ACTION_NEEDS` name one operation each, `_meta['ahpd.grants']` advertises the eight subjects on both blocks, and `docs/USERS.md` lists every subject's operations and groups with a test that reads the page. `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` (2764 tests) all pass.
+- **Next action:** review, then commit. Nothing is staged.
+- **Open questions:** three, all for Softov rather than for the work.
+  1. The plan's matrix validation names "the `operators` role in `docs/USERS.md`", which that document does not define; the test asserts the invariant instead (for every built-in role, holding the group answer and the operation answer the same), over `admin`, `member`, `guest`, `viewer` and `editor`.
+  2. A subject the table does not decide (a plugin's scheme, and the people schemes) now takes any operation word, so `team:edit` is stored where it used to be refused. That follows the decision's own rule; it is a widening of what `role://` accepts, not of what it grants.
+  3. `seesConfig` still asks `config:read`, the one gate entry that names a group, because task 03's step names it explicitly. `config:settings` would be the operation.
+- **Watch out for:** `subscribe` and `completions` still ask for two grants (the channel as spelt and as resolved), each now an operation; `invokeChangesetOperation` still asks for `file:write` beside `session:changes`. ahpapp must read `put` where it read `write` in `ahpd.resourceProviders` (softov-c6) before the client-visible rename is relied on.
 
 ## Final verification checklist
 
-- [ ] Every role in `docs/USERS.md` and every built-in role answers the same on every method and action as before (the matrix test in task 02).
-- [ ] A role holding only `chat:send` can send a turn and cannot dispose of the session.
-- [ ] `initialize` and root state carry `ahpd.grants` with every built-in subject.
-- [ ] No subject in `OPERATIONS` has an operation named `read` or `write`, and `ahpd.resourceProviders` lists `get` and `put` where it listed `read` and `write`.
-- [ ] `pnpm exec tsc --noEmit` and `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] Every built-in role answers the same on every method and action as before (`answers every method and action for a role of whole groups as the verb it replaced`, over the five roles the page defines).
+- [x] A role holding only `chat:send` can send a turn and cannot dispose of the session.
+- [x] `initialize` and root state carry `ahpd.grants` with every built-in subject.
+- [x] No subject in `OPERATIONS` has an operation named `read` or `write`, and `ahpd.resourceProviders` lists `get` and `put` where it listed `read` and `write`.
+- [x] `pnpm exec tsc --noEmit` and `pnpm test` pass.
+- [ ] `plans/index.md` updated (left alone on purpose; the plan owner does it).

@@ -573,9 +573,12 @@ describe('a request signs in', () => {
   }, 30000);
 
   it('refuses a caller the roles and people it does not hold', async () => {
-    writeFileSync(usersFile, JSON.stringify({ roles: { people: ['user:write'] }, users: [] }));
+    writeFileSync(usersFile, JSON.stringify({
+      roles: { people: ['user:write'], talker: ['chat:send'], shouter: ['chat:write'] },
+      users: [],
+    }));
     const directory = fileUsers({ path: usersFile });
-    await directory.add('pat', ['people']);
+    await directory.add('pat', ['people', 'talker']);
     await directory.add('ada', ['admin']);
     const pat = await directory.mint('pat');
     const ada = await directory.mint('ada');
@@ -591,6 +594,15 @@ describe('a request signs in', () => {
     expect(readFileSync(usersFile, 'utf8')).not.toContain('eve');
 
     expect((await post(`${base}/user/add/eve`, pat, { role: ['people'] })).status).toBe(200);
+
+    // The bound is the operation, not the group: a caller holding one operation
+    // of a subject's write group may hand out that operation and is refused the
+    // group that contains it, and is refused it by name.
+    expect((await post(`${base}/user/add/mallory`, pat, { role: ['talker'] })).status).toBe(200);
+    const wider = await post(`${base}/user/add/nadia`, pat, { role: ['shouter'] });
+    expect(wider.status).toBe(403);
+    expect((await wider.json() as { message: string }).message).toBe('pat may not chat:write here');
+    expect(readFileSync(usersFile, 'utf8')).not.toContain('nadia');
 
     expect((await post(`${base}/user/token/ada`, pat, {})).status).toBe(403);
     expect((await get(`${base}/status`, ada)).status).toBe(200);

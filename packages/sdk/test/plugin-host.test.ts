@@ -381,7 +381,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
       description: 'Files a session keeps.',
       manifest: { type: 'object', properties: {} },
       root: 'notes://',
-      operations: ['read', 'list', 'write', 'delete'],
+      operations: ['get', 'list', 'put', 'delete'],
     },
   });
   // The same statement on the root snapshot, so a client that subscribes later
@@ -391,6 +391,37 @@ it('advertises every scheme it serves on the handshake and on the root state', a
 
   // The `vscode.*` flags the reference client reads are still there beside it.
   expect(ready._meta?.['vscode.removeSessionArtifact']).toBe(true);
+
+  // No entry anywhere advertises `read` or `write`: those are groups, and the
+  // gate asks for an operation - decision
+  // `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+  for (const [scheme, entry] of Object.entries(ready._meta?.['ahpd.resourceProviders'] as Record<string, { operations: string[] }>)) {
+    for (const word of ['read', 'write']) expect(entry.operations, scheme).not.toContain(word);
+  }
+});
+
+it('advertises only what a read-only provider implements', async () => {
+  /*
+   * A scheme that can be listed and read and nothing else, which is the case
+   * that shows the advertised word is the grant's and not the method's: the
+   * provider says `read` and `list`, and neither `put` nor `delete` appears.
+   */
+  const quiet = {
+    list: async () => [],
+    read: async () => ({ data: '', encoding: 'utf-8' as const }),
+    describe: () => ({ title: 'Quiet' }),
+  };
+  const { options } = foldHostOptions(base(), [{
+    by: 'fixture', agents: [], tools: [], sessionConfig: {}, sessionCompletions: {},
+    ports: {}, providers: { quiet }, events: {},
+  }]);
+  const client = createHost(options).accept(peer());
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { _meta?: { 'ahpd.resourceProviders'?: Record<string, { operations: string[] }> } };
+
+  expect(ready._meta?.['ahpd.resourceProviders']?.['quiet']?.operations).toEqual(['get', 'list']);
 });
 
 it('advertises usage as a scheme a host serves itself, beside file:', async () => {
@@ -415,7 +446,7 @@ it('advertises usage as a scheme a host serves itself, beside file:', async () =
     title: 'Usage',
     description: 'What this host has been charged, per pool.',
     root: 'usage://',
-    operations: ['read', 'list', 'resolve'],
+    operations: ['get', 'list', 'resolve'],
   });
 });
 
@@ -425,12 +456,15 @@ it('advertises nothing when it serves no scheme beside file:', async () => {
   const ready = await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
-  }) as { _meta?: Record<string, unknown>; snapshots: { state: { _meta?: unknown } }[] };
+  }) as { _meta?: Record<string, unknown>; snapshots: { state: { _meta?: Record<string, unknown> } }[] };
 
   // Absent rather than empty: presence is how a client knows the key means
-  // anything at all.
+  // anything at all. `ahpd.grants` is beside it and is not: it says what a role
+  // could hold, which is a question this host answers with or without a scheme
+  // registered.
   expect(ready._meta?.['ahpd.resourceProviders']).toBeUndefined();
-  expect(ready.snapshots[0]?.state._meta).toBeUndefined();
+  expect(ready.snapshots[0]?.state._meta?.['ahpd.resourceProviders']).toBeUndefined();
+  expect(ready._meta?.['ahpd.grants']).toBeDefined();
 });
 
 it('drops a clashing agent alone, and says which plugin lost the id', () => {

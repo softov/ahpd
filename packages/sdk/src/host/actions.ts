@@ -1,7 +1,7 @@
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../catalog.js';
-import { computerNeeds, dispatchNeeds, ACTION_HOMES, HOME_WORDS, PER_CONNECTION } from './gate.js';
+import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, PER_CONNECTION } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
@@ -99,11 +99,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
     if (options.users !== undefined && connection.root !== true) {
       /*
-       * What the channel is spelt as and what it resolves to, both,
-       * because the handler below acts on the resolved one, and what the
-       * action needs: the strictest of them is asked.
+       * What the action is, what the channel is spelt as and what it
+       * resolves to, both because the handler below acts on the resolved
+       * one, and what the channel itself needs: the strictest of them is
+       * asked.
+       *
+       * On the root the channel's own answer is the whole of it, because it
+       * is the only place that can read the action: a `root/configChanged`
+       * setting nothing but this connection's own shell needs no grant at
+       * all, which no operation can say on its own.
        */
-      const all = [...new Set([dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), family?.needs, computerNeeds(action)])]
+      const onRoot = isRootChannel(asked) || isRootChannel(channel);
+      const all = [...new Set([onRoot ? undefined : ACTION_NEEDS[type], dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), computerNeeds(action)])]
         .filter((one): one is Grant => one !== undefined);
       const needed = all.find((one) => connection.principal !== undefined && !connection.principal.can(one)) ?? all[0];
       const needs = needed === undefined ? '' : ` needs ${needed}`;
@@ -152,6 +159,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
     if (dispatchable[type] === false) {
       no(`${type} is this host's to say, not a client's`);
+      return;
+    }
+    /*
+     * A type the protocol says a client may send, and this host has not
+     * classified.
+     *
+     * `ACTION_NEEDS` is checked against `IS_CLIENT_DISPATCHABLE` by the
+     * staleness test, so a real one cannot reach here with the package
+     * installed and the test run - but a type read off the wire is a
+     * string, and one that names a client action from a newer protocol is
+     * not in that map either. Refused rather than served to anybody
+     * because the gate above has nothing to ask about it.
+     */
+    if (dispatchable[type] === true && ACTION_NEEDS[type] === undefined) {
+      no(`${type} is not one this host serves`);
       return;
     }
     /*

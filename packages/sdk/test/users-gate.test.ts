@@ -1,10 +1,11 @@
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHost, GATE, ROOT } from '../src/host.js';
 import { fileResources, uriOf } from '../src/resources.js';
-import { fileUsers } from '../src/users.js';
+import { fileUsers, GROUPS, OPERATIONS, groupOf, holds } from '../src/users.js';
 import { memorySessions } from '../src/sessions.js';
 import { memoryAutomations } from '../src/automations.js';
 import { shellTerminals } from '../src/terminals.js';
@@ -67,11 +68,20 @@ const until = async (p: ReturnType<typeof watching>, uri: string, text: string):
 };
 
 /** A directory whose tokens are decided by hand, so a role is one array. */
+/**
+ * A person holding these grants, answered the way the directory answers.
+ *
+ * The gate asks for operations and the roles here are written as groups, so a
+ * fixture that compared the strings would refuse most of what it is meant to
+ * allow - `holds` is what makes a group cover an operation.
+ */
+const can = (granted: readonly Grant[]) => (one: Grant) => holds(new Set(granted), one);
+
 const directory = (tokens: Record<string, Grant[]>): Users => ({
   resource: RECORD,
   verify: async (token) => {
     const held = tokens[token];
-    return held === undefined ? undefined : { id: token, roles: ['r'], can: (one: Grant) => held.includes(one) };
+    return held === undefined ? undefined : { id: token, roles: ['r'], can: can(held) };
   },
   list: async () => [],
   grantsOfRoles: async () => [],
@@ -178,6 +188,184 @@ it('classifies every handler the host serves', () => {
     .toEqual(['a_handler_nobody_classified']);
 });
 
+it('classifies every action a client is allowed to send', () => {
+  /*
+   * `IS_CLIENT_DISPATCHABLE` is the protocol's own exhaustive answer to "may a
+   * client originate this?", so it is what the gate has to cover: an action a
+   * client may send that nobody classified is a dispatch served with no
+   * question asked of anybody.
+   *
+   * It is widened to a record here for the same reason `actions.ts` widens it:
+   * `Object.entries` over a mapped type is fine, but the entries are read as
+   * `[string, boolean]` by a test that has to name a made-up type.
+   */
+  const dispatchable = IS_CLIENT_DISPATCHABLE as Record<string, boolean>;
+  const sendable = Object.entries(dispatchable).filter(([, may]) => may === true).map(([type]) => type);
+  expect(sendable.length).toBe(47);
+  expect(sendable.filter((one) => GATE.ACTION_NEEDS[one] === undefined)).toEqual([]);
+  // And the check would notice one, which is the line above with a type that
+  // is in the protocol's map and in nobody's table.
+  expect(['chat/turnStarted', 'chat/turnMadeUp'].filter((one) => GATE.ACTION_NEEDS[one] === undefined))
+    .toEqual(['chat/turnMadeUp']);
+});
+
+it('asks every method and action for an operation the table knows, or a group of one', () => {
+  /*
+   * A gate entry is either an operation its subject has or one of the two
+   * groups that name halves of a subject - never a verb that is neither, and
+   * never an operation a subject does not have, because a grant matching
+   * nothing looks on every later read like a permission this host has.
+   *
+   * `file` is the one subject the request's own URI replaces, so a scheme the
+   * table does not decide is answered with the same operation.
+   */
+  const named = [...Object.entries(GATE.NEEDS), ...Object.entries(GATE.ACTION_NEEDS)]
+    .filter(([, grant]) => !['file:write', 'config:read', 'config:write', 'computer:write'].includes(grant));
+  for (const [what, grant] of named) {
+    const at = grant.indexOf(':');
+    const subject = grant.slice(0, at);
+    const operation = grant.slice(at + 1);
+    expect(what.length, grant).toBeGreaterThan(0);
+    expect(GROUPS, `${grant} for ${what} is a group, not an operation`).not.toContain(operation);
+    if (subject === 'file' || !OPERATIONS[subject]) continue;
+    expect(groupOf(subject, operation), `${grant} for ${what} is not an operation ${subject} has`)
+      .toBeDefined();
+  }
+  // The four that are groups, said out loud: `invokeChangesetOperation` writes
+  // a session's files and cannot be narrowed to one operation, a root setting
+  // changes the host for everybody, `seesConfig` shows every key the daemon
+  // holds, and a session that names a source is held to the whole write of a
+  // computer.
+  expect(GATE.NEEDS.invokeChangesetOperation).toBe('session:changes');
+  expect(GATE.NEEDS['vscode/devContainers/connect']).toBe('container:connect');
+});
+
+it('answers every method and action for a role of whole groups as the verb it replaced', () => {
+  /*
+   * The matrix, over the three built-ins and the two roles `docs/USERS.md`
+   * spells out. What it asserts is not a recorded table of booleans but the
+   * property behind it: an operation is covered by exactly the role that held
+   * the group it sits in, so nothing an existing role could do stops working
+   * and nothing it could not do starts.
+   *
+   * Recomputing the old answer rather than writing it down is what keeps this
+   * honest as the gate moves - a recorded table only says what it said.
+   */
+  const ROLES: Record<string, Grant[]> = {
+    admin: ['*:*'],
+    member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'],
+    guest: ['session:read', 'automation:read'],
+    viewer: ['*:read'],
+    editor: ['file:read', 'file:write', 'session:read', 'session:write'],
+  };
+  /** What the gate asked for under the verb, as a grant naming the whole group. */
+  const under = (grant: Grant): Grant => {
+    const at = grant.indexOf(':');
+    const subject = grant.slice(0, at);
+    const operation = grant.slice(at + 1);
+    const group = (GROUPS as readonly string[]).includes(operation) ? operation : groupOf(subject, operation);
+    return `${subject}:${group ?? 'read'}` as Grant;
+  };
+  for (const [role, granted] of Object.entries(ROLES)) {
+    const held = new Set(granted);
+    for (const [what, grant] of [...Object.entries(GATE.NEEDS), ...Object.entries(GATE.ACTION_NEEDS)]) {
+      // A chat's groups are the session's, which is what they were before a
+      // chat had a subject, so `under` is asked about the session.
+      const group = under(grant);
+      const before = group === 'chat:read' || group === 'chat:write'
+        ? holds(held, group) || holds(held, `session:${group.slice('chat:'.length)}` as Grant)
+        : holds(held, group);
+      expect(holds(held, grant), `${role} and ${what}, which asks ${grant}`).toBe(before);
+    }
+  }
+  // And the shape of it, so a role that changed would say so here and not only
+  // in the table above: an admin reaches everything and a guest reaches the
+  // two reads it is built to and nothing that writes.
+  const need = (name: string): Grant => GATE.NEEDS[name] as Grant;
+  const admin = new Set(ROLES.admin as string[]);
+  expect(Object.values(GATE.NEEDS).every((one) => holds(admin, one))).toBe(true);
+  expect(Object.values(GATE.ACTION_NEEDS).every((one) => holds(admin, one))).toBe(true);
+  const guest = new Set(ROLES.guest as string[]);
+  expect(holds(guest, need('listSessions'))).toBe(true);
+  expect(holds(guest, need('createSession'))).toBe(false);
+  expect(holds(guest, need('resourceWrite'))).toBe(false);
+  expect(holds(guest, need('runAutomation'))).toBe(false);
+  expect(holds(guest, GATE.ACTION_NEEDS['chat/turnStarted'] as Grant)).toBe(false);
+  expect(holds(guest, need('listAutomationTriggerDefinitions'))).toBe(true);
+});
+
+/**
+ * A signed-in client holding exactly these grants, whose refusals are kept.
+ *
+ * `withRole` answers out of a directory, which is written in groups; this is
+ * for the roles that hold one operation of their own.
+ */
+const holding = async (made: ReturnType<typeof host>, id: string, granted: Grant[]) => {
+  const seen = watching();
+  const client = made.accept(seen, { id, roles: ['r'], can: can(granted) });
+  await hello(client, id);
+  const refused = () => seen.seen
+    .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+    .map((one) => `${String(one.params.channel)}: ${String(one.params.rejectionReason)}`);
+  const send = async (channel: string, action: Bag) => {
+    client.handle({ method: 'dispatchAction', params: { channel, action } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+  return { client, seen, refused, send };
+};
+
+it('asks one operation where the table gives one, and both where it gives both', async () => {
+  const made = host({
+    users: directory({}),
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
+    automations: memoryAutomations(),
+  });
+
+  /*
+   * A role of one act and one read: it may say something in a chat and it may
+   * not close the session the chat is in, which is the whole point of an
+   * operation over a verb - under `session:write` both came together.
+   */
+  const opener = await holding(made, 'o', ['session:read', 'session:create', 'chat:create']);
+  expect(await call(opener.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(opener.client, 'createChat', { channel: 'ahp-session:/one', chat: 'ahp-chat:/one' })).toHaveProperty('result');
+
+  const talker = await holding(made, 't', ['session:read', 'chat:send']);
+  await talker.send('ahp-session:/one', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  expect(talker.refused()).toEqual([]);
+  expect((await call(talker.client, 'disposeSession', { channel: 'ahp-session:/one' })) as { message: string })
+    .toMatchObject({ code: -32009, message: 't may not session:dispose here' });
+  // Forking is its own operation, so a role that may only start a chat may not
+  // fork one - and `session:write` is not a way round it either.
+  expect((await call(opener.client, 'createChat', {
+    channel: 'ahp-session:/one', chat: 'ahp-chat:/fork', source: { kind: 'fork', chat: 'ahp-chat:/one' },
+  })) as { message: string }).toMatchObject({ code: -32009, message: 'o may not chat:fork here' });
+
+  // The automations are the same shape: editing one is not running it.
+  const editor = await holding(made, 'e', ['automation:read', 'automation:update']);
+  expect((await call(editor.client, 'runAutomation', { channel: 'ahp-automations://', automation: 'x' })) as { message: string })
+    .toMatchObject({ code: -32009, message: 'e may not automation:run here' });
+});
+
+it('reads one record of a scheme without listing the scheme', async () => {
+  const provider: ResourceProvider = {
+    read: async () => ({ data: '{"id":"ana"}', encoding: 'utf-8' }),
+    list: async () => [{ name: 'ana', type: 'file' }],
+  };
+  const made = host({ users: directory({}), resourceProviders: { user: provider } });
+
+  const one = await holding(made, 'u', ['user:get']);
+  expect(await call(one.client, 'resourceRead', { channel: ROOT, uri: 'user://ana' })).toHaveProperty('result');
+  expect((await call(one.client, 'resourceList', { channel: ROOT, uri: 'user://' })) as { message: string })
+    .toMatchObject({ code: -32009, message: 'u may not user:list here' });
+
+  // The read group is both of them, which is what a role written before the
+  // split meant and still means.
+  const both = await holding(made, 'r', ['user:read']);
+  expect(await call(both.client, 'resourceRead', { channel: ROOT, uri: 'user://ana' })).toHaveProperty('result');
+  expect(await call(both.client, 'resourceList', { channel: ROOT, uri: 'user://' })).toHaveProperty('result');
+});
+
 it('refuses nothing at all with no user directory', async () => {
   const client = host().accept(peer());
   await hello(client);
@@ -230,7 +418,7 @@ it('serves a connection that arrived as somebody, with no authenticate', async (
   // `a-connection-token-may-carry-a-person`.
   const made = host({ users: directory({ m: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
   const granted: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'];
-  const client = made.accept(peer(), { id: 'm', roles: ['r'], can: (one: Grant) => granted.includes(one) });
+  const client = made.accept(peer(), { id: 'm', roles: ['r'], can: can(granted) });
   await hello(client);
   expect(await call(client, 'listSessions', {})).toMatchObject({ result: {} });
 
@@ -259,7 +447,7 @@ it('says who a connection arrived as, on the handshake and in the root snapshot'
 
   // A personal connection token: somebody before the first frame, so the
   // handshake is already the answer.
-  const person = made.accept(peer(), { id: 'ana', roles: ['r'], can: (one: Grant) => MEMBER.includes(one) });
+  const person = made.accept(peer(), { id: 'ana', roles: ['r'], can: can(MEMBER) });
   const shook = await hello(person, 'ana') as Bag;
   expect(shook._meta?.['ahpd.principal']).toBe('user:ana');
   // And the same statement in the snapshot, so a client that subscribes later
@@ -361,7 +549,7 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
   expect(await call(plain, 'resourceRead', { channel: ROOT, uri: uriOf(file) })).toMatchObject({ result: { data: 'on disk' } });
   const refused = await call(plain, 'resourceRead', { channel: ROOT, uri: 'computer://box/status' });
   expect(refused).toMatchObject({ code: -32009 });
-  expect((refused as { message: string }).message).toContain('computer:read');
+  expect((refused as { message: string }).message).toContain('computer:get');
 
   // Named, and it is then served there and not on the file it never named.
   const named = host({ users: directory({ q: ['computer:read'] }), resourceProviders: { computer: provider } }).accept(peer());
@@ -371,7 +559,7 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
     .toEqual({ result: { data: 'machine', encoding: 'utf-8' } });
   expect(await call(named, 'resourceRead', { channel: ROOT, uri: uriOf(file) })).toMatchObject({ code: -32009 });
 
-  // The write half is scoped the same way: making a machine is `computer:write`
+  // The write half is scoped the same way: making a machine is `computer:put`
   // and a person who may only save files cannot make one.
   const writer: ResourceProvider = {
     read: async () => ({ data: 'machine', encoding: 'utf-8' }),
@@ -384,7 +572,7 @@ it('scopes a capability to the URI scheme, so plain write is not a plugin\'s sch
     channel: ROOT, uri: 'computer://box', data: '{}', encoding: 'utf-8',
   });
   expect(refusedWrite).toMatchObject({ code: -32009 });
-  expect((refusedWrite as { message: string }).message).toContain('computer:write');
+  expect((refusedWrite as { message: string }).message).toContain('computer:put');
 
   const allowed = host({ users: directory({ x: ['computer:write'] }), resourceProviders: { computer: writer } }).accept(peer());
   await hello(allowed);
@@ -433,7 +621,7 @@ it('lets a person read their own usage pools, and refuses them another person\'s
     .toMatchObject({ result: { data: expect.stringContaining('"calls": 2') } });
   // Somebody else's is refused by the gate, with the host's own sentence.
   expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
-    .toMatchObject({ code: -32009, message: 'ana may not usage:read here' });
+    .toMatchObject({ code: -32009, message: 'ana may not usage:get here' });
 
   // A role naming `usage:read` reads every pool the store holds.
   const keeper = made.accept(peer());
@@ -572,7 +760,7 @@ it('refuses a dispatch into a channel the role does not cover', async () => {
   expect(String(rejected[0]?.params.rejectionReason)).toContain('may not terminal');
 });
 
-it('classifies a dispatch by its channel', async () => {
+it('classifies a dispatch by its action, with the channel beside it', async () => {
   const made = host({
     users: directory({ t: ['terminal:read', 'terminal:write'], n: [] }),
     terminals: shellTerminals(),
@@ -586,24 +774,28 @@ it('classifies a dispatch by its channel', async () => {
     await nobody.send(channel, action);
     return /may not (\S+) here/.exec(nobody.refused()[before] ?? '')?.[1];
   };
-  // A terminal is read off what the host holds, whatever its scheme.
-  expect(await needs('ahp-terminal:/x', { type: 'terminal/input', data: '' })).toBe('terminal:write');
-  expect(await needs('agenthost-terminal:/x', { type: 'terminal/input', data: '' })).toBe('terminal:write');
-  // A session's channel, under any scheme a session can have.
+  // The act is the action's, so the same channel asks for one thing of a
+  // terminal and another of a session, whatever scheme either is spelt as.
+  expect(await needs('ahp-terminal:/x', { type: 'terminal/input', data: '' })).toBe('terminal:input');
+  expect(await needs('agenthost-terminal:/x', { type: 'terminal/input', data: '' })).toBe('terminal:input');
+  expect(await needs('ahp-terminal:/x', { type: 'terminal/titleChanged', title: 'T' })).toBe('terminal:rename');
+  // A session's channel, under any scheme a session can have: marking one is
+  // the same act whichever of the five it arrives on.
   for (const channel of ['ahp-session:/x', 'ahp-chat:/x', 'claude:/x', 'claude:/x/annotations', 'claude:/x/changeset/main']) {
-    expect(await needs(channel)).toBe('session:write');
+    expect(await needs(channel)).toBe('session:mark');
   }
-  expect(await needs('ahp-automations://', { type: 'automation/removed', id: 'x' })).toBe('automation:write');
-  expect(await needs(ROOT, { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } })).toBe('config:write');
-  expect(await needs(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:write');
+  expect(await needs('ahp-automations://', { type: 'automation/removed', id: 'x' })).toBe('automation:remove');
+  expect(await needs('ahp-automations://', { type: 'automation/createRequested', automation: 'x' })).toBe('automation:create');
+  expect(await needs(ROOT, { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } })).toBe('config:change');
+  expect(await needs(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:change');
   // The root is read with its action: a person's own keys need only a sign-in.
   expect(await needs(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBeUndefined();
-  // A file, a watch and any other `ahp-` channel are the host's own names, and a file's grant
-  // for an action no family claims; an action of a family is refused on them for what they are.
+  // A file, a watch and any other `ahp-` channel are the host's own names, and
+  // watching one is the grant an action no family claims is held to.
   for (const channel of ['file:///x', 'ahp-resource-watch:/x', 'ahp-sessionx:/x']) {
-    expect(await needs(channel, { type: 'vendor/probe' })).toBe('file:read');
+    expect(await needs(channel, { type: 'vendor/probe' })).toBe('file:watch');
   }
-  expect(GATE.dispatchNeeds(ROOT, 'other', { type: 'root/configChanged', config: { defaultShell: '/bin/sh', somethingNew: 1 } })).toBe('config:write');
+  expect(GATE.dispatchNeeds(ROOT, 'other', { type: 'root/configChanged', config: { defaultShell: '/bin/sh', somethingNew: 1 } })).toBe('config:change');
 });
 
 it('dispatches freely with no user directory', async () => {
@@ -646,10 +838,17 @@ const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['acc
   return (snap.snapshot?.state?.terminals ?? []) as Bag[];
 };
 
-/** What the root snapshot tells this connection about itself. Absent bag where it says nothing. */
+/**
+ * What the root snapshot tells this connection about itself. Absent bag where it says nothing.
+ *
+ * `ahpd.grants` is left out: it is the same map to everybody and says what a
+ * role could hold, so it is not part of what one connection is told about
+ * itself. `users-host.test.ts` asserts that key's own shape.
+ */
 const rootMeta = async (client: ReturnType<ReturnType<typeof createHost>['accept']>): Promise<Bag> => {
   const snap = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as Bag;
-  return (snap.snapshot?.state?._meta ?? {}) as Bag;
+  const { 'ahpd.grants': _grants, ...rest } = (snap.snapshot?.state?._meta ?? {}) as Bag;
+  return rest;
 };
 
 it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {
@@ -723,7 +922,7 @@ it('lets anybody signed in set their own shell, and only config:write change the
   await configChanged(member, { defaultShell: '/bin/sh' });
   expect(refusals(memberSeen)).toEqual([]);
   await configChanged(member, { artifactToolsCompactPrompts: true });
-  expect(refusals(memberSeen)).toEqual(['m may not config:write here']);
+  expect(refusals(memberSeen)).toEqual(['m may not config:change here']);
   expect(await values(member)).not.toHaveProperty('artifactToolsCompactPrompts');
 
   // A guest may not open a shell, but the preference is still theirs to hold.
@@ -819,7 +1018,7 @@ it('reads a session held under its provider\'s scheme as a session, and a file a
   // A chat the client named itself, whose scheme says nothing about whose it is.
   expect(await call(admin, 'createChat', { channel: session, chat: 'peer:/two' })).toHaveProperty('result');
   expect(await call(member, 'subscribe', { channel: 'peer:/two' })).toHaveProperty('result');
-  expect(await call(guest, 'subscribe', { channel: 'peer:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest, 'subscribe', { channel: 'peer:/two' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
 });
 
 /** A signed-in client whose refusals are kept, for the dispatch half of the gate. */
@@ -837,7 +1036,7 @@ const withRole = async (made: ReturnType<typeof host>, token: string) => {
   return { client, seen, refused, send };
 };
 
-it('needs session:write to dispatch into a session held under its provider\'s scheme, under either name', async () => {
+it('needs a session\'s write group to drive one, and the act it is refused is the one it did', async () => {
   const made = host({
     users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write'], w: ['session:write'], g: ['file:read'] }),
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
@@ -854,15 +1053,16 @@ it('needs session:write to dispatch into a session held under its provider\'s sc
   expect(admin.seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')
     .map((one) => one.params.action.title)).toEqual(['Held', 'Given']);
 
-  // A guest who may read files is refused all three, the annotations included.
+  // A guest who may read files is refused all three, the annotations included,
+  // and told which act each one was.
   const guest = await withRole(made, 'g');
   await guest.send('claude:/one', { type: 'session/titleChanged', title: 'Mine' });
   await guest.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Mine' });
   await guest.send('claude:/one/annotations', { type: 'annotations/set', annotations: [] });
   expect(guest.refused()).toEqual([
-    'claude:/one: g may not session:write here',
-    'claude:/one: g may not session:write here',
-    'claude:/one/annotations: g may not session:write here',
+    'claude:/one: g may not session:rename here',
+    'claude:/one: g may not session:rename here',
+    'claude:/one/annotations: g may not session:review here',
   ]);
 });
 
@@ -882,12 +1082,12 @@ it('reads and drives a changeset of a session held under its provider\'s scheme 
   expect(member.refused().filter((one) => one.includes('may not'))).toEqual([]);
 
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'subscribe', { channel: changeset })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'subscribe', { channel: changeset })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send(changeset, { type: 'changeset/filesReviewChanged', files: ['a.txt'], reviewed: true });
-  expect(guest.refused()).toEqual([`${changeset}: g may not session:write here`]);
+  expect(guest.refused()).toEqual([`${changeset}: g may not session:review here`]);
 });
 
-it('needs session:write as well as file:write to run an operation on a session\'s changeset, under either name', async () => {
+it('needs session:changes as well as file:write to run an operation on a session\'s changeset, under either name', async () => {
   const invoked: string[] = [];
   const changes: ChangesetSource = {
     scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
@@ -907,7 +1107,7 @@ it('needs session:write as well as file:write to run an operation on a session\'
   const writer = await withRole(made, 'f');
   for (const channel of ['claude:/one/changeset/uncommitted', 'ahp-session:/one/changeset/uncommitted']) {
     expect(await call(writer.client, 'invokeChangesetOperation', { channel, operationId: 'commit' }))
-      .toMatchObject({ code: -32009, message: expect.stringContaining('session:write') });
+      .toMatchObject({ code: -32009, message: expect.stringContaining('session:changes') });
   }
   expect(invoked).toEqual([]);
 
@@ -952,17 +1152,17 @@ it('asks a session\'s grants for a row a backend keeps on disk, under its name o
   expect(await call(member.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ result: { snapshot: { resource: 'claude:/disk' } } });
   expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
   // Marking a row read is what a client does from the catalogue, and writes
-  // the session's flags: a session:write, whatever the row was called. The
+  // the session's flags: `session:mark`, whatever the row was called. The
   // refusal is said on the session it resolved to.
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('claude:/disk', { type: 'session/isReadChanged', isRead: true });
   await guest.send('elsewhere:/disk', { type: 'session/isReadChanged', isRead: true });
   await guest.send('never-listed:/other', { type: 'session/isReadChanged', isRead: true });
   expect(guest.refused()).toEqual([
-    'claude:/disk: g may not session:write here',
-    'claude:/disk: g may not session:write here',
-    'never-listed:/other: g may not session:write here',
+    'claude:/disk: g may not session:mark here',
+    'claude:/disk: g may not session:mark here',
+    'never-listed:/other: g may not session:mark here',
   ]);
 });
 
@@ -981,21 +1181,21 @@ it('reads a channel it cannot place as a session\'s, and a file as a file', asyn
   const writer = await withRole(made, 'w');
   const guest = await withRole(made, 'g');
 
-  // Nothing here is called `x:/1`: the gate asks for a session's grants, and
+  // Nothing here is called `x:/1`: the gate asks for a session's read, and
   // what is behind it says there is no such session.
   expect(await call(reader.client, 'subscribe', { channel: 'x:/1' })).not.toMatchObject({ code: -32009 });
-  expect(await call(guest.client, 'subscribe', { channel: 'x:/1' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'subscribe', { channel: 'x:/1' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await writer.send('x:/1', { type: 'session/isReadChanged', isRead: true });
   expect(writer.refused().filter((one) => one.includes('may not'))).toEqual([]);
   await guest.send('x:/1', { type: 'session/isReadChanged', isRead: true });
-  expect(guest.refused()).toEqual(['x:/1: g may not session:write here']);
+  expect(guest.refused()).toEqual(['x:/1: g may not session:mark here']);
 
   // A file is a file, to read and to dispatch into; a session's action on it
   // is refused for what the file is, before any grant is asked.
-  expect(await call(reader.client, 'subscribe', { channel: uriOf(file) })).toMatchObject({ code: -32009, message: expect.stringContaining('file:read') });
+  expect(await call(reader.client, 'subscribe', { channel: uriOf(file) })).toMatchObject({ code: -32009, message: expect.stringContaining('file:watch') });
   await writer.send(uriOf(file), { type: 'vendor/probe' });
   await writer.send(uriOf(file), { type: 'session/isReadChanged', isRead: true });
-  expect(writer.refused()).toEqual([`${uriOf(file)}: w may not file:read here`, `${uriOf(file)}: ${uriOf(file)} is not a session here`]);
+  expect(writer.refused()).toEqual([`${uriOf(file)}: w may not file:watch here`, `${uriOf(file)}: ${uriOf(file)} is not a session here`]);
 });
 
 it('still asks a session\'s grants for a session that was disposed', async () => {
@@ -1007,9 +1207,9 @@ it('still asks a session\'s grants for a session that was disposed', async () =>
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/gone', provider: 'claude' })).toHaveProperty('result');
   expect(await call(admin.client, 'disposeSession', { channel: 'claude:/gone' })).toHaveProperty('result');
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'subscribe', { channel: 'claude:/gone' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'subscribe', { channel: 'claude:/gone' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('claude:/gone', { type: 'session/isReadChanged', isRead: true });
-  expect(guest.refused()).toEqual(['claude:/gone: g may not session:write here']);
+  expect(guest.refused()).toEqual(['claude:/gone: g may not session:mark here']);
 });
 
 it('reads the catalogue once for a run of subscribes to sessions nobody has', async () => {
@@ -1075,7 +1275,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   const owner = made.accept(publishing('x:/one'));
   await hello(owner, 'plugin'); await signIn(owner, 'g');
   expect(await call(guest.client, 'createResourceWatch', { channel: ROOT, uri: 'virtual://plugin/src' })).toMatchObject({ code: -32003 });
-  expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
   const acted = admin.seen.seen.filter((one) => one.method === 'action'
@@ -1085,7 +1285,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     'file:///one: file:///one is not a session here',
     'file:///one: file:///one is not a session here',
     'file:///one/annotations: file:///one/annotations is not a session here',
-    'claude:/one: g may not session:write here',
+    'claude:/one: g may not session:rename here',
   ]);
 
   // The session and a watch under a name of its own both still work.
@@ -1123,9 +1323,9 @@ it('needs terminal grants for a terminal this host holds, whatever its scheme', 
   expect(await call(owner.client, 'subscribe', { channel: uri })).toHaveProperty('result');
 
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'subscribe', { channel: uri })).toMatchObject({ code: -32009, message: expect.stringContaining('terminal:read') });
+  expect(await call(guest.client, 'subscribe', { channel: uri })).toMatchObject({ code: -32009, message: expect.stringContaining('terminal:output') });
   await guest.send(uri, { type: 'terminal/input', data: 'echo GUEST-$((6*7))\n' });
-  expect(guest.refused()).toEqual([`${uri}: g may not terminal:write here`]);
+  expect(guest.refused()).toEqual([`${uri}: g may not terminal:input here`]);
 
   // The shell is live, so a negative is asserted against a positive.
   await owner.send(uri, { type: 'terminal/input', data: 'echo OWNER-$((1+1))\n' });
@@ -1276,7 +1476,7 @@ it('asks a session\'s grants for completions in a session', async () => {
   const asked = { channel: 'claude:/one', kind: 'userMessage', text: '/', offset: 1 };
   expect(await call(admin.client, 'completions', asked)).toHaveProperty('result');
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'completions', asked)).toMatchObject({ code: -32009, message: expect.stringContaining('session:read') });
+  expect(await call(guest.client, 'completions', asked)).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   expect(await call(guest.client, 'completions', { ...asked, channel: ROOT })).toHaveProperty('result');
 });
 
@@ -1369,7 +1569,7 @@ it('keeps every family of action to its own kind of channel', async () => {
   expect(JSON.stringify(store.get('ahp-automation:/n'))).toContain('review');
   expect(guest.refused()).toEqual([
     'file:///x: file:///x is not an automation channel here',
-    'ahp-automations://: g may not automation:write here',
+    'ahp-automations://: g may not automation:create here',
     'file:///x: file:///x is not an automation channel here',
     'ahp-otlp://logs: ahp-otlp://logs is not an automation channel here',
   ]);
