@@ -1,6 +1,6 @@
 ---
 title: A device registers for push by writing a resource the push plugin serves
-status: proposed
+status: accepted
 date: 2026-10-02
 refs:
   - "[code://packages/sdk/src/host.ts#L5555-L5572](../../packages/sdk/src/host.ts#L5555-L5572) - `advertisedSchemes`, which puts every registered provider in `_meta`, so a client can see `push` before it writes"
@@ -14,7 +14,7 @@ A host that pushes to a phone needs that phone's push token, and the protocol ha
 ## Decision
 
 `@ahpd/push` serves a `push:` scheme, and a client registers by writing `{ token, platform, lang }` to `push://devices/<install id>` with the protocol's own `resourceWrite`, and unregisters with `resourceDelete`.
-(defaulted: the writer chose it, since it needs no new protocol command and no new plugin kind; Softov may erase it.)
+Softov, 2026-10-04, asked "Decision 1 is proposed: a resource write, or a new protocol command?": a resource write.
 
 ## Consequences
 

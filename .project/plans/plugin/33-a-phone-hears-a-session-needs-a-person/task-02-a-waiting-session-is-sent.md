@@ -1,5 +1,5 @@
 ---
-title: A waiting session is sent to every device
+title: A waiting session is sent to the devices whose client created or opened it
 status: todo
 depends:
   - task-01-a-device-registers-under-push.md
@@ -13,25 +13,27 @@ refs:
 
 ## Objective
 
-Each new `input_needed_set` id sends one Expo push message to every registered device, and a device Expo no longer knows is removed.
+Each new `input_needed_set` id sends one Expo push message to each registered device whose client created or opened that session, and a device Expo no longer knows is removed.
 
 ## Files
 
-- `CREATE: packages/push/src/send.ts` - batches of up to 100 messages to `https://exp.host/--/api/v2/push/send`, then the receipts.
+- `CREATE: packages/push/src/send.ts` - batches of up to 100 messages to `https://exp.host/--/api/v2/push/send`, and the receipts of the tickets the previous send left.
 - `UPDATE: packages/push/src/plugin.ts` - subscribes to `input_needed_set` and `input_needed_removed`; options `title` (default the daemon's name) and `accessToken`, declared `{ type: 'string', writeOnly: true, secretAtUse: true }`.
 - `CREATE: packages/push/test/send.test.ts` - against a stubbed endpoint.
 
 ## Steps
 
-1. Keep the `(session, id)` pairs seen; a repeated pair sends nothing; a removal forgets it.
-2. A message is `{ to, title, body, data: { uri: <session>, kind } }`; the body is "A session is waiting for your answer" or, for `toolConfirmation`, "A session is waiting for your approval".
-3. Read `accessToken` at each send: a `{ "$secret": "<name>" }` through `host.secret(name)`, a plain string as written. A read that throws logs one line naming `accessToken` and sends nothing for that event.
-4. A POST that fails or answers an error, and a receipt read that fails, log one line and never throw.
-5. When the receipts are read waits on the plan's open question about receipts; devices reported `DeviceNotRegistered` are removed.
+1. Keep the `(session, id)` pairs seen; a repeated pair sends nothing; a removal forgets it and sends nothing, no clearing message.
+2. Send only to the devices whose client created or opened the session; a device whose client did neither is sent nothing.
+3. A message is `{ to, title, body, data: { uri: <session>, kind } }`; the body is "A session is waiting for your answer" or, for `toolConfirmation`, "A session is waiting for your approval".
+4. Read `accessToken` at each send: a `{ "$secret": "<name>" }` through `host.secret(name)`, a plain string as written. A read that throws logs one line naming `accessToken` and sends nothing for that event.
+5. A POST that fails or answers an error, and a receipt read that fails, log one line and never throw.
+6. Keep the tickets a send answers, and read their receipts at the next send, before its POST; no timer. Devices reported `DeviceNotRegistered` are removed.
 
 ## Validation
 
-- `send.test.ts`: one set to two devices is two messages in one request; the same `(session, id)` again sends nothing, and the same id from another session sends; `DeviceNotRegistered` removes the device.
+- `send.test.ts`: one set for a session both devices' clients opened is two messages in one request; a device whose client neither created nor opened the session gets no message; the same `(session, id)` again sends nothing, and the same id from another session sends; a removal sends nothing.
+- The same file: a send reads the receipts of the tickets the previous send left, and none before the first send; `DeviceNotRegistered` in those receipts removes the device.
 - The same file: with `accessToken` a `$secret` the vault does not hold, the send logs one line and makes no request, and the next event with the secret present sends.
 - The same file: an endpoint that answers 500, and one whose receipts fail, log a line and the next event still sends.
 - `pnpm test` clean.

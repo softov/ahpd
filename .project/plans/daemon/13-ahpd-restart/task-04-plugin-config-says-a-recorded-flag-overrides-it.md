@@ -25,7 +25,7 @@ A `plugin config <name> <key>` set or `--unset`, at the terminal or served, says
 1. Test first: a record whose `argv` has `--plugin-option @ahpd/agent-claude.workerStop=session`; `plugin config @ahpd/agent-claude workerStop turn` writes the file and says `--plugin-option @ahpd/agent-claude.workerStop=session`, recorded for this daemon, overrides it on `ahpd restart`; the same for `--unset`; a different key, a different plugin and no record say nothing more.
 2. Both spellings of the flag in argv count: `--plugin-option X` and `--plugin-option=X`.
 3. Served, the answer carries the same line in its words and an `overriddenBy` field naming the flag.
-4. Whether a restart keeps the flag at all is the open question in the plan; if it is answered that a restart drops one-run flags, this task is dropped.
+4. A restart keeps every one-run flag, so the recorded flag always wins over the file on `ahpd restart`.
 
 ## Validation
 

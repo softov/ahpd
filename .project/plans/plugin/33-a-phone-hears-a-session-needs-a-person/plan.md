@@ -24,7 +24,7 @@ refs:
 
 ## Goal
 
-A plugin, `@ahpd/push`, sends a push notification to every registered device when a session starts waiting on a person, so a phone hears it with its app closed.
+A plugin, `@ahpd/push`, sends a push notification to a registered device when a session that device's client created or opened starts waiting on a person, so a phone hears it with its app closed.
 A device registers by writing its push token to the plugin's `push:` scheme.
 
 ## Reconnaissance
@@ -47,16 +47,20 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 
 - Nothing on the host sends a notification anywhere.
 - `Not found: a push or notify plugin - searched packages/ and plugin/17's deferred items` - plugin/17 left the notify plugin for later.
+- `Not found: which client created or opened a session - searched packages/sdk/src/types/events.ts and packages/sdk/src/types/resources.ts` - `client_connect` names only the client, `session_start` names no client, and a provider's `write` is handed the writer's `owner`, not its client.
 
 ## Decisions locked in
 
 | # | Decision | Rationale / source |
 | --- | --- | --- |
-| 1 | [A device registers for push by writing a resource the push plugin serves](../../../decisions/a-device-registers-for-push-by-writing-a-resource.md) | proposed, defaulted 2026-10-02 |
+| 1 | [A device registers for push by writing a resource the push plugin serves](../../../decisions/a-device-registers-for-push-by-writing-a-resource.md) | Softov, 2026-10-04 |
 
 | What | Source | Task |
 | --- | --- | --- |
 | A host sends push itself through Expo's push service; no relay | Softov, 2026-10-02, asked "Push notifications: what should happen?": "Plan host-sent push" | 02 |
+| A device is sent only the sessions its client created or opened | Softov, 2026-10-04, asked "Every session on the host, or only sessions a device's client created or opened?": only the sessions that device's client created or opened | 02 |
+| `input_needed_removed` sends no second message to clear the first, until a client asks for one | Softov, 2026-10-04, asked "Should `input_needed_removed` send a second message that clears the first on the device?": no, until a client asks for one | 02 |
+| Receipts are read at the next send, for the tickets the previous send left; no timer | Softov, 2026-10-04, asked "When are the receipts read: on a timer after each send, or at the next send, for the tickets the previous one left?": at the next send | 02 |
 | One push per `input_needed_set` `(session, id)` pair; a repeated set of the same pair sends nothing | [`code://packages/sdk/src/types/events.ts#L100-L103`](../../../../packages/sdk/src/types/events.ts#L100-L103) "Dedupe by `id`", keyed with the session because an id is the backend's and two sessions may share one | 02 |
 | `accessToken` is declared `secretAtUse: true` and `writeOnly: true`, read with `host.secret` at each send; a secret that cannot be read fails that send with a log line and nothing else | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" | 02 |
 | A failed POST or receipt read is logged and never throws; the plugin and the next send carry on | Softov, 2026-10-03, "Only its item": a failure belongs to the item that failed | 02 |
@@ -68,8 +72,8 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 ## Proposed architecture
 
 - **Data flow** - `packages/push/src/provider.ts` serves `push://devices/<id>`: `write` stores `{ token, platform, lang }`, `read` returns it, `remove` deletes it, `list` lists ids; kept in `push-devices.json` under `host.configDir`.
-- **Event flow** - `plugin.ts` subscribes to `input_needed_set`; a `(session, id)` not seen before sends one message per device; `input_needed_removed` forgets the pair.
-- **Layer responsibilities** - provider: devices · sender: the Expo API, tickets, receipts · plugin: wiring and options (`title`, an Expo access token).
+- **Event flow** - `plugin.ts` subscribes to `input_needed_set`; a `(session, id)` not seen before sends one message to each device whose client created or opened that session; `input_needed_removed` forgets the pair and sends nothing.
+- **Layer responsibilities** - provider: devices · sender: the Expo API, tickets, and the previous send's receipts read at the next send · plugin: wiring and options (`title`, an Expo access token).
 - **Source-of-truth files** - [`code://packages/sdk/src/types/events.ts`](../../../../packages/sdk/src/types/events.ts), [`code://packages/computer/src/plugin.ts`](../../../../packages/computer/src/plugin.ts)
 
 ## Tasks
@@ -77,7 +81,7 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A device registers under push:](task-01-a-device-registers-under-push.md) | todo | - |
-| [02 - A waiting session is sent to every device](task-02-a-waiting-session-is-sent.md) | todo | 01, and the receipts open question in Resume state |
+| [02 - A waiting session is sent to the devices whose client created or opened it](task-02-a-waiting-session-is-sent.md) | todo | 01 |
 | [03 - The plugin is documented](task-03-docs.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -89,16 +93,12 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** [task-01-a-device-registers-under-push.md](task-01-a-device-registers-under-push.md).
-- **Open questions:** 1 to 3 are not answered and are asked before task 01 is built; the receipts question below is asked before task 02.
-  1. Decision 1 is proposed: a resource write, or a new protocol command? - proposed: the resource write.
-  2. Every session on the host, or only sessions a device's client created or opened? - proposed: every session first.
-  3. Should `input_needed_removed` send a second message that clears the first on the device? - proposed: no, until a client asks for it.
-- **Open question (ask before task 02):** when the receipts are read - (a) on a timer after each send, or (b) at the next send, for the tickets the previous one left.
+- **Next action:** ask the open question below, then [task-01-a-device-registers-under-push.md](task-01-a-device-registers-under-push.md).
+- **Open question (ask before task 01):** no event or provider call names the client that created or opened a session, so the plugin cannot yet tell which sessions a device's client created or opened; how does it learn that? - proposed: the host hands a provider's `write` the writing client's id, and the session events a plugin hears name the client that created or opened the session.
 - **Watch out for:** the events repeat for the same id (the protocol's upsert); dedupe on `(session, id)`, never count.
 
 ## Final verification checklist
 
 - [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` clean.
-- [ ] A fixture backend's `inputNeededSet` sends exactly one request to a stubbed Expo endpoint per registered device.
+- [ ] A fixture backend's `inputNeededSet` sends exactly one request to a stubbed Expo endpoint per registered device whose client created or opened the session, and none to a device whose client did neither.
 - [ ] `plans/index.md` updated.

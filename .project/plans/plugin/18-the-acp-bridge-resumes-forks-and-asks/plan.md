@@ -68,6 +68,7 @@ server elicitation/create -> [new] chat/inputRequested -> a client answers chat/
 | --- | --- | --- |
 | `session/resume` when the server advertises `session.resume` and `Start.seed` holds the conversation; `session/load` otherwise, because its replay is the only record for a session this process never watched | [`code://packages/agent-acp/src/transcript.ts#L1-L13`](../../../../packages/agent-acp/src/transcript.ts#L1-L13) | 01 |
 | A fork uses `unstable_forkSession`, only when the server advertises `session.fork` | Softov's brief of 2026-09-26 names `session/fork` | 02 |
+| The bridge declares `chats.fork: true` statically, and each session's `forkPoint` answers `undefined` where its server did not advertise `session.fork`; nothing spawns at load | Softov, 2026-10-04, asked "`chats.fork` is a static field of the agent and `probe` spawns nothing. Declare `chats.fork: true` statically and answer `forkPoint` per session, or spawn the server once at load to read its capabilities?": declare it statically | 02 |
 | `forkPoint` answers only for the last turn, because `session/fork` copies the whole session and has no cut | the SDK's `ForkSessionRequest`, which carries no message id | 02 |
 | `forkPoint` names the end of the chosen turn, its last entry, so the fork copies through the turn | Softov, 2026-09-26, in [host 19](../../host/19-a-fork-copies-through-the-turn/plan.md): "a fork copies history through the chosen turn" | 02 |
 | The bridge advertises `elicitation` and answers `elicitation/create` through `chat/inputRequested` and `chat/inputCompleted`; `elicitation/complete` closes a URL request | the AHP elicitation guide | 03 |
@@ -102,7 +103,6 @@ server elicitation/create -> [new] chat/inputRequested -> a client answers chat/
 
 - **Done so far:** nothing.
 - **Next action:** [task-01-a-resume-does-not-replay.md](task-01-a-resume-does-not-replay.md); task 03 does not depend on it.
-- **Open question (ask before task 02):** `chats.fork` is a static field of the agent and `probe` spawns nothing, so the bridge cannot learn `session.fork` before it reports it - (a) declare `chats.fork: true` statically and have each session's `forkPoint` answer `undefined` where its server did not advertise `session.fork`, or (b) spawn the server once at load to read its capabilities.
 - **Watch out for:** check that the host hands `Start.seed` on a resume before relying on it; if it does not, task 01 keeps `session/load` and says so in its Resume.
   ACP v2 drops `session/load`, `fs/*` and `terminal/*`; this plan stays on v1, and v2 waits in [deferred.md](deferred.md).
 
@@ -112,5 +112,6 @@ server elicitation/create -> [new] chat/inputRequested -> a client answers chat/
 - [ ] After that resume, the session's transcript holds the seeded turns and the new ones.
 - [ ] Against one that does not, `session/load` is sent as today.
 - [ ] A fork of the last turn creates a new ACP session; a fork of an earlier turn is not offered.
+- [ ] Against a server that does not advertise `session.fork`, the agent still declares `chats.fork` and no turn has a fork point.
 - [ ] An `elicitation/create` with a form appears as an input request, and the answer reaches the server.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `plans/index.md` updated.

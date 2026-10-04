@@ -19,13 +19,14 @@ A client is offered a fork of an ACP session's last turn when the server adverti
 ## Files
 
 - `UPDATE: packages/agent-acp/src/connection.ts` - `unstable_forkSession` on the connection.
-- `UPDATE: packages/agent-acp/src/session.ts` - `forkPoint` for the last turn only, and the fork in `open` when `Start.forkAt` is set.
+- `UPDATE: packages/agent-acp/src/session.ts` - `chats.fork: true` on the agent, `forkPoint` for the last turn only and only when the session's server advertised `session.fork`, and the fork in `open` when `Start.forkAt` is set.
 - `UPDATE: packages/agent-acp/src/session.ts:20-23` - the comment no longer lists a fork as unsupported.
 - `UPDATE: packages/agent-acp/test/agent-acp.test.ts` - the cases below.
 
 ## Steps
 
-1. How `chats.fork` is reported waits on the open question in the plan's Resume state; `chats.fork` is static (`agent.ts:357`) and the server's `session.fork` is known only once a session has spawned it.
+1. Declare `chats.fork: true` statically on the agent (`agent.ts:357`); nothing spawns at load.
+   Each session reads `session.fork` from its own server's handshake, and its `forkPoint` answers `undefined` for every turn when the server did not advertise it.
 2. `forkPoint(turnId)` answers the end of the chosen turn, its last entry, as host 19's contract says, and only for the last completed turn; every other turn answers `undefined`, because `session/fork` copies the whole session and cannot cut.
 3. Wait for host 19 task 01, which rewrites the `forkPoint` contract this step follows.
 4. In `open`, when `Start.resume` and `Start.forkAt` are set, call `unstable_forkSession` with the old session id and use the id it answers.
@@ -33,7 +34,7 @@ A client is offered a fork of an ACP session's last turn when the server adverti
 
 ## Validation
 
-- `packages/agent-acp/test/agent-acp.test.ts`: with `session.fork`, the last turn's fork point is its last entry and an earlier turn has none; forking sends `session/fork` and the new session prompts under the new id; without it, no fork point at all.
+- `packages/agent-acp/test/agent-acp.test.ts`: with `session.fork`, the last turn's fork point is its last entry and an earlier turn has none; forking sends `session/fork` and the new session prompts under the new id; without it, the agent still declares `chats.fork` and no turn has a fork point.
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume

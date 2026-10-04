@@ -1,7 +1,7 @@
 ---
 title: A plugin update moves all or the named plugins
 domain: daemon
-status: planned
+status: active
 priority: high
 created: 2026-09-29
 revalidated: 2026-09-29
@@ -60,6 +60,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | Any failed npm call ends at the terminal with what failed and not npm's text, which already streamed; over HTTP the error keeps npm's reason | Softov, 2026-09-29, asked "Any npm failure other than the peer refusal still prints npm's error twice at the terminal. Which copy goes?": "Terminal drops it" | 02 |
 | The JSON-RPC error path reads the code from an error named `RpcError` with a numeric `code` rather than `instanceof`; the computer plugin pins the container's server to `PluginContext.version` | [decision the-daemon-installs-its-own-sdk-beside-the-plugins](../../../decisions/the-daemon-installs-its-own-sdk-beside-the-plugins.md) | 06 |
 | `all` beside names is refused, saying the two forms | Softov, 2026-09-29, asked "The builder made `ahpd plugin update all <name>` (all beside names) a refusal. Keep it?": "Keep the refusal" | 01 |
+| `update all` keeps one npm call, and a failure fails the whole update with the `NpmFailure` line, which tells the person to rerun with `--force` to update only the plugins that can be updated; `--force` installs each package in its own npm call, so the others move and the failing one is named | Softov, 2026-10-04, asked "`update all` makes one npm call, so one package npm cannot install fails every move in it. Keep one call, or retry each package on its own?": keep one call, and the failure points at `--force`, which installs each package on its own | 01, 04 |
 | `ahpd plugin install` with no name says the name is needed, fixed in `@cofold/terminal` for every command | Softov, 2026-09-29, asked "How should ahpd upgrade plugins, so a 0.7 to 0.8 upgrade works?", chosen option: "`plugin install` stays as it is, apart from the two message fixes" | 03 |
 
 ## Proposed architecture
@@ -72,10 +73,10 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `ahpd plugin update`](task-01-plugin-update.md) | implemented | - |
+| [01 - `ahpd plugin update`](task-01-plugin-update.md) | todo | - |
 | [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | implemented | - |
 | [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | blocked | cofold commands/03 released |
-| [04 - Docs](task-04-docs.md) | implemented | 01, 02, 06, 08 |
+| [04 - Docs](task-04-docs.md) | todo | 01, 02, 06, 08 |
 | [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
 | [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | implemented | - |
 | [07 - Updating named plugins is refused while another is behind](task-07-update-one-refuses-a-plugin-behind.md) | dropped | 06 |
@@ -90,9 +91,8 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 ## Resume state
 
-- **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone.
-- **Next action:** Softov checks again; task 03 is blocked until cofold commands/03 is released (planned in cofold, `@cofold/terminal` still 0.2.0).
-- **Open question (ask before task 01 is reviewed):** `update all` makes one npm call, so one package npm cannot install fails every move in it - (a) keep one npm call and let the whole update fail with the `NpmFailure` line, or (b) on failure retry each package in its own call, so the others move and the failing one is named.
+- **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`.
+- **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, then [task-04-docs.md](task-04-docs.md) says it; task 03 is blocked until cofold commands/03 is released (planned in cofold, `@cofold/terminal` still 0.2.0).
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 
 ## Final verification checklist
@@ -100,4 +100,5 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 - [ ] A configuration directory with four 0.7.0 `@ahpd` plugins and a 0.8.0 daemon: `ahpd plugin update` makes one npm call naming all four at 0.8.0.
 - [ ] A failed install, update or remove says what failed once at the terminal, without npm's text again; the served error keeps npm's reason.
 - [ ] `ahpd plugin install` with no name says a name is needed.
+- [ ] An `update all` whose npm call fails names `--force` in its failure line; `update all --force` moves the packages npm can install and names the one it cannot.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.

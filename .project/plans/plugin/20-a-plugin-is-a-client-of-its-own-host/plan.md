@@ -21,7 +21,7 @@ refs:
   - "[code://packages/sdk/src/types/users.ts#L40-L101](../../../../packages/sdk/src/types/users.ts#L40-L101) - `Principal`, what the plugin's identity is, with `memberships` and `teams`"
   - "[code://packages/sdk/src/users.ts#L79](../../../../packages/sdk/src/users.ts#L79) - `holds`, the `*` matching a role's grants use"
   - "[code://packages/sdk/src/host/owners.ts#L47-L51](../../../../packages/sdk/src/host/owners.ts#L47-L51) - `ownerFor`, which makes any principal `user:<id>`"
-  - "[code://packages/sdk/src/types/usage.ts#L19](../../../../packages/sdk/src/types/usage.ts#L19) - `Owner`, which has no plugin form"
+  - "[code://packages/sdk/src/types/usage.ts#L19](../../../../packages/sdk/src/types/usage.ts#L19) - `Owner`, which gains the `plugin:<name>` form"
   - "[code://packages/server/src/commands/options.ts#L408-L416](../../../../packages/server/src/commands/options.ts#L408-L416) - `pluginEntry`, the config schema of one `plugins` entry"
   - "[code://packages/sdk/src/plugins.ts#L299](../../../../packages/sdk/src/plugins.ts#L299) - `pluginHost`, where each plugin's `PluginHost` is built"
   - "[code://packages/server/src/plugins.ts#L684](../../../../packages/server/src/plugins.ts#L684) - where the loader builds it with the spec in hand"
@@ -72,7 +72,8 @@ createHost -> listen -> a plugin calls its connection
 | The plugin gets the raw peer: `request`, `notify` and `onMessage`, and writes AHP with the SDK's existing protocol types; no typed client, no new layer | Softov, 2026-09-26: "Raw peer" | 01 |
 | The connection is available once the host is built; asked for earlier, it refuses with a sentence | `createHost` runs after every `apply` | 01 |
 | The connection's principal is `plugin:<name>`, with the grants written on the plugin's configuration entry as `grants`, and none by default | Softov, 2026-09-26: "for the other suggestion I'm ok" | 02 |
-| The plugin's principal has no `memberships`, `primary` or `teams`, so its work is charged to nothing; a policy matches it by its id | (defaulted: a plugin belongs to no team, and the id is what a policy can name) | 02 |
+| `Owner` gains a `plugin:<name>` form, and `ownerFor` answers it for a plugin's principal, so a plugin's sessions and usage are its own | Softov, 2026-10-04, asked "`ownerFor` makes any principal `user:<id>`, so a plugin owns its sessions as `user:plugin:<name>`. Add a `plugin:<name>` form to `Owner`, or own a plugin's work as `root:<host>`?": add a `plugin:<name>` form | 02 |
+| The plugin's principal has no `memberships`, `primary` or `teams`, so its work is charged to no team; a policy matches it by its id | (defaulted: a plugin belongs to no team, and the id is what a policy can name) | 02 |
 | A malformed grant is dropped and reported in the loader's `problems`, naming `plugins.<name>.grants` | (defaulted: a load problem is reported where every other one is) | 02 |
 | On a host with no user directory there is no gate, so the grants are not consulted | [`code://.project/decisions/the-door-is-a-door.md`](../../../decisions/the-door-is-a-door.md) | 02 |
 | Acting as a person comes later, as a grant the plugin must hold | Softov, 2026-09-26 | - |
@@ -91,7 +92,7 @@ createHost -> listen -> a plugin calls its connection
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A plugin opens an in-memory connection to its host](task-01-a-plugin-opens-a-connection.md) | todo | - |
-| [02 - The connection is plugin:<name>, with the grants its entry names](task-02-the-connection-is-the-plugins-principal.md) | todo | 01, and the open question in Resume state |
+| [02 - The connection is plugin:<name>, with the grants its entry names](task-02-the-connection-is-the-plugins-principal.md) | todo | 01 |
 | [03 - Docs](task-03-docs.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -103,7 +104,6 @@ createHost -> listen -> a plugin calls its connection
 
 - **Done so far:** nothing.
 - **Next action:** [task-01-a-plugin-opens-a-connection.md](task-01-a-plugin-opens-a-connection.md).
-- **Open question (ask before task 02):** `ownerFor` (`host.ts:4507-4511`) makes any principal `user:<id>`, so a principal `plugin:<name>` owns its sessions as `user:plugin:<name>`, and `Owner` has no plugin form - (a) add a `plugin:<name>` form to `Owner` and have `ownerFor` answer it for a plugin's principal, or (b) own a plugin's work as `root:<host>`.
 - **Watch out for:** the plugin's end must introduce itself with `initialize` like any client; the host refuses anything before it.
 
 ## Final verification checklist
@@ -111,4 +111,5 @@ createHost -> listen -> a plugin calls its connection
 - [ ] A fixture plugin creates a session and sends a turn through its connection, and a watching client sees the turn.
 - [ ] With a user directory, a plugin with no `grants` is refused `-32009`, and one with `session:write` is not.
 - [ ] Asking for a connection during `apply` refuses with a sentence.
+- [ ] A session a plugin creates is owned by `plugin:<name>`, and its usage is recorded under that owner.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `plans/index.md` updated.

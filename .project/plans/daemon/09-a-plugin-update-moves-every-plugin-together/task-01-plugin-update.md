@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin update` moves every installed plugin together"
-status: implemented
+status: todo
 depends: []
 layer: "server"
 refs:
@@ -11,6 +11,8 @@ refs:
 ## Objective
 
 `ahpd plugin update all` moves every registry dependency in the configuration directory's `package.json`; `ahpd plugin update <name>...` moves only those, each of which must be installed there. An `@ahpd/*` package goes to the daemon's version, any other registry package to `latest`, and one from a path, link, git or URL is left as installed and said so. `ahpd plugin update` with neither refuses, showing both forms. HTTP takes the same choice in its body. It says each package it moved and from which version, and says to restart when a daemon is running.
+`update` makes one npm call for everything it moves, and when that call fails the whole update fails with the `NpmFailure` line, which tells the person to rerun with `--force` to update only the plugins that can be updated.
+`update --force` installs each package in its own npm call, so the others move and the failing one is named.
 
 ## Files
 
@@ -22,10 +24,13 @@ refs:
 
 1. Tests first with a faked runner: four 0.7.0 `@ahpd` packages and one third-party package give one npm call with the four at the daemon's version and the other at `latest`; an empty `package.json` makes no call; a failed npm call fails the command with its reason once.
 2. Implement, mirroring `plugin install`'s surfaces, scope, `deploymentTokenOnly` and restart line.
+3. Tests first with a faked runner whose npm call fails for one package: `update all` makes one call, moves nothing, and its failure line names `--force`; `update all --force` makes one call per package, moves the others, and names the failing one.
+4. Add `--force` to the CLI and `force` to the HTTP body, through the same `updatePlugins`.
 
 ## Validation
 
 - The new cases fail first and pass after.
+- The one-call failure and the `--force` path each have a case in `test/plugin-install.test.ts`.
 - `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
 
 ## Resume
@@ -38,3 +43,4 @@ Failing first: `leaves a package installed from outside the registry as it is, a
 Reopened for `all` or names, and implemented again 2026-09-29: `updatePlugins(names, options)` takes `'all'` or the names, refuses a name not in `package.json` before npm runs (`<name> is not installed in <dir>.`), and moves only what it was given; a name with a version is passed as written. The `plugin.update` action takes `:name...` (`name` in the HTTP body), reads a lone `all` as every package, and refuses `all` beside other names with `Say which plugins to update: ahpd plugin update all, or ahpd plugin update <name>...`.
 Failing first: `updates only the packages it is named` and `refuses to update a name that is not installed, before npm runs` in `test/plugin-install.test.ts` failed on the old signature, and the HTTP case saw 200 for an empty body. All pass after.
 Open: plain `ahpd plugin update` cannot show both forms yet. `@cofold/commands` 0.2.2 rejects the optional variadic slot `:name?...` in `commandFor` (`the pattern names :name?, which is not an input field`), so the slot is the required `:name...`, and a bare `update` gets cofold's own refusal (CLI `unknown command "plugin update"`, exit 2; HTTP `name is required`, 400). This is the same cofold gap as task 03.
+Reopened 2026-10-04 for `--force`: the one-call failure names `--force`, and `--force` installs each package in its own call.

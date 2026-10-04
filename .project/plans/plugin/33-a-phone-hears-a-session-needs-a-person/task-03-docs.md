@@ -14,7 +14,7 @@ A person can install `@ahpd/push`, and a client author knows how to register a d
 
 ## Files
 
-- `CREATE: packages/push/README.md` - install, options, what a notification says, where devices are kept.
+- `CREATE: packages/push/README.md` - install, options, what a notification says, that a device hears only the sessions its client created or opened, where devices are kept.
 - `UPDATE: docs/PLUGINS.md` - one line under Events naming `@ahpd/push` as a consumer of `input_needed_set`, and the `push:` scheme beside `computer:`.
 
 ## Steps

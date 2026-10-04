@@ -1,6 +1,6 @@
 ---
 title: Docs say how to upgrade the plugins
-status: implemented
+status: todo
 depends: [task-01-plugin-update.md, task-02-a-refused-install-names-the-blocker.md, task-06-the-plugin-keeps-npms-sdk.md, task-08-the-daemon-pins-the-sdk.md]
 layer: "docs"
 refs:
@@ -10,6 +10,7 @@ refs:
 ## Objective
 
 `docs/DAEMON.md` lists `ahpd plugin update` with the other plugin commands, and says an upgrade is `npm i -g @ahpd/server` then `ahpd plugin update` then a restart. The server README says the same in one line.
+`docs/DAEMON.md` says a failed `update` fails as a whole and that `update --force` installs each package on its own, so the others move and the failing one is named.
 
 ## Files
 
@@ -29,3 +30,4 @@ Reopened 2026-09-29 for task 06: the sentence that a plugin imports the daemon's
 Implemented again 2026-09-29 for task 06: `docs/DAEMON.md` says every `@ahpd/*` plugin takes `@ahpd/sdk` as a peer at its own minor and npm installs it beside the plugins, keeps the `update all` / `update <name>...` text, and says again that a refused install names the blocking plugin and its version and says to run `ahpd plugin update all`. `packages/server/README.md` needed no change. No em dash; the file's wrapping kept.
 Reopened 2026-09-29 for task 08: the docs say ahpd installs the daemon's `@ahpd/sdk` beside the plugins and one plugin never blocks another; the refused-install sentence goes; a plugin for another minor is refused at load.
 Implemented again 2026-09-29 for tasks 08 and 09: `docs/DAEMON.md` says every plugin takes `@ahpd/sdk` as a peer and states the oldest it needs, such as `>=0.8`; ahpd installs the daemon's own `@ahpd/sdk` with every install and update and npm checks no peer, so one plugin never blocks another; a plugin whose range leaves out the daemon's sdk, such as one for an older minor saying `^0.7`, is refused at load and the others load; `install` and `update` refuse `@ahpd/sdk` by name. The refused-install sentence is gone. `docs/PLUGINS.md`'s manifest example says `">=0.8"` and its table says the range states the oldest sdk. `packages/server/README.md` says the same in one sentence after the upgrade line. No em dash; each file's wrapping kept.
+Reopened 2026-10-04 for task 01's `--force`.
