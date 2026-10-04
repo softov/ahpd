@@ -287,7 +287,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/10-a-prompt-carries-what-the-agent-accepts/implemented.md)) | - | - |
 | [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/11-the-agent-gets-mcp-servers/implemented.md)) | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | built 2026-10-02 ([implemented.md](acp/12-the-bridge-is-on-the-current-sdk/implemented.md)) | acp 01 | - |
-| [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-06 todo | host 52 | - |
+| [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](acp/13-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | host 52 | - |
 
 Next free number in `acp`: `13`.
 
