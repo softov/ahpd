@@ -1,7 +1,7 @@
 ---
 title: A plugin serves an HTTP route on the daemon's listener
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -99,15 +99,14 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 
 ## Resume state
 
-- **Done so far:** all three tasks implemented 2026-10-04, and uncommitted for Softov's review.
-- **Next action:** Softov's review. The close-out (`implemented.md`, `status: built`) waits on it, and `plans/index.md` was left alone.
-- **Open questions:** none. Softov's three answers of 2026-10-04 are settled in the code: built before plan 20; the Host check takes `apiOrigins`' names plus the tunnel's host, built whether `http` is on or off; and the tunnel's host is learnt from the listener's announcements by `announcedNames` in `run.ts`, which reads each `scheme://` URL a plugin says and adds its `host` and `hostname`.
-- **Departures from the plan, all small and all in the task files:** the route's `Host` list is built from `boundPort`, the daemon's own port, rather than from `apiOrigins`' `apiBoundPort`, because `http.port` moves the API to a listener of its own and must not move the route's names with it; a path under `/plugins/` that no loaded plugin registered is 404 rather than the 426 the rest of the listener gives; the fixture needed a `package.json` naming `./index.ts`, because a directory spec with no entry is skipped by the loader; and the whole `/plugins/` space is answered by every daemon, including one with no plugin that registered a route.
-- **Watch out for:** the plugin's `name` can hold `@` and `/`, and the prefix encodes each segment rather than refusing a name - a throw there costs the plugin its whole contribution, so nothing about a name throws. The task 02 case for `Host: fixture-tunnel.example.com:443` is a 403 by design: what an announcement named is what answers, and that URL named no port.
+- **Done so far:** built 2026-10-04 in `22e5c2e`; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Open questions:** none; Softov's answers of 2026-10-04 are in the table above.
+- **Watch out for:** a route is reachable through devtunnel only once that plugin announces its URL.
 
 ## Final verification checklist
 
-- [ ] A fixture plugin's route answers `POST /plugins/<name>/hook` with `http` off and with it on.
-- [ ] The Host rule the open question settles holds; a request with no `Origin` and a non-JSON body reaches the route.
-- [ ] `/api` is unchanged.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `00-plugin.md`, `plans/index.md` updated.
+- [x] A fixture plugin's route answers `POST /plugins/<name>/hook` with `http` off and with it on.
+- [x] The Host rule the open question settles holds; a request with no `Origin` and a non-JSON body reaches the route.
+- [x] `/api` is unchanged.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `00-plugin.md`, `plans/index.md` updated.

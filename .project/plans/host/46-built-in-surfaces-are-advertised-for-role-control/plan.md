@@ -1,7 +1,7 @@
 ---
 title: The host's own surfaces are advertised with their operations, and a role grants an operation
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -112,13 +112,10 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 
 ## Resume state
 
-- **Done so far:** all four tasks, implemented and uncommitted. `OPERATIONS` in `users.ts` is the one table, `holds` answers an operation from a group or a wildcard, `NEEDS` and the new `ACTION_NEEDS` name one operation each, `_meta['ahpd.grants']` advertises the eight subjects on both blocks, and `docs/USERS.md` lists every subject's operations and groups with a test that reads the page. `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` (2764 tests) all pass.
-- **Next action:** review, then commit. Nothing is staged.
-- **Open questions:** three, all for Softov rather than for the work.
-  1. The plan's matrix validation names "the `operators` role in `docs/USERS.md`", which that document does not define; the test asserts the invariant instead (for every built-in role, holding the group answer and the operation answer the same), over `admin`, `member`, `guest`, `viewer` and `editor`.
-  2. A subject the table does not decide (a plugin's scheme, and the people schemes) now takes any operation word, so `team:edit` is stored where it used to be refused. That follows the decision's own rule; it is a widening of what `role://` accepts, not of what it grants.
-  3. `seesConfig` still asks `config:read`, the one gate entry that names a group, because task 03's step names it explicitly. `config:settings` would be the operation.
-- **Watch out for:** `subscribe` and `completions` still ask for two grants (the channel as spelt and as resolved), each now an operation; `invokeChangesetOperation` still asks for `file:write` beside `session:changes`. ahpapp must read `put` where it read `write` in `ahpd.resourceProviders` (softov-c6) before the client-visible rename is relied on.
+- **Done so far:** built 2026-10-04 in `6795e9b`; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Open questions:** none; Softov's answers of 2026-10-04 are in the table above.
+- **Watch out for:** ahpapp must read `put` where it read `write` in `ahpd.resourceProviders` before the client-visible rename is relied on.
 
 ## Final verification checklist
 
@@ -127,4 +124,4 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 - [x] `initialize` and root state carry `ahpd.grants` with every built-in subject.
 - [x] No subject in `OPERATIONS` has an operation named `read` or `write`, and `ahpd.resourceProviders` lists `get` and `put` where it listed `read` and `write`.
 - [x] `pnpm exec tsc --noEmit` and `pnpm test` pass.
-- [ ] `plans/index.md` updated (left alone on purpose; the plan owner does it).
+- [x] `plans/index.md` updated.
