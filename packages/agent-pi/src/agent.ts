@@ -18,7 +18,7 @@
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
-import { catalogue, stateFile, watchedSession } from './catalog.js';
+import { catalogue, forgetSession, stateFile, watchedSession } from './catalog.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import { piSession } from './session.js';
@@ -150,6 +150,13 @@ export function piAgent(
      * the nothing a backend without a record has to answer.
      */
     stateFile: (id, directory) => stateFile(options, id, directory),
+
+    /*
+     * pi has no delete of its own, so the file `stateFile` names goes - and
+     * this process's record of the session with it, or the next listing
+     * offers the row again.
+     */
+    delete: (id, directory) => forgetSession(options, provider, id, directory),
 
     create: (start) => piSession(options, start),
   };

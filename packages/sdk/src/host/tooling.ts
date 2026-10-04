@@ -307,7 +307,20 @@ export function createTooling(ctx: HostContext): Tooling {
       return { chat: chatUri };
     },
     rename: (session, chat, title) => { renameChat(heldAs(session), chat, title); },
-    remove: async (session) => { removeSession(heldAs(session)); },
+    /*
+     * A session deleted from inside another one, by whoever owns this session.
+     *
+     * The tool acts for the session it is running in, so that session's owner
+     * is the person asking - not the model, and not the connection that started
+     * whichever session the name names. A session with no owner on this host
+     * has no person behind it either, which is the same "nobody to name" the
+     * owner's own reference has and the same answer: nobody is refused. An
+     * owner whose principal this process has not met yet goes as the owner.
+     */
+    remove: async (session) => {
+      const by = forWhom(kept.owner(idOf(uri)));
+      await removeSession(heldAs(session), by?.principal ?? by?.owner);
+    },
     setWorkspace: (directory, isolation) => {
       moving.set(uri, { chat: chatUri, directory: directory.replace(/^file:\/\//, ''), isolation });
     },

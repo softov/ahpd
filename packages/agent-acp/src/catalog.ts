@@ -44,6 +44,15 @@ const placeOf = new Map<string, string>();
 
 const keyOf = (provider: string, id: string): string => `${provider}\n${id}`;
 
+/**
+ * The JSON-RPC code the protocol's own `RequestError.resourceNotFound` carries.
+ *
+ * Which is how a server says a session is not there. Spelled here rather than
+ * taken off the class because the bridge talks to a server over the wire and
+ * only ever sees a code, and this one is the protocol's to mean that by.
+ */
+const NOT_FOUND = -32002;
+
 /** The listing connection a provider holds, by the options that opened it. */
 const listings = new WeakMap<AcpOptions, Listing>();
 
@@ -96,6 +105,27 @@ const listedFrom = (info: SessionInfo, now: string): Listed => {
 /** Whether the handshake advertised the server's own catalogue. */
 const listsSessions = (agentCapabilities: AgentCapabilities | undefined): boolean =>
   agentCapabilities?.sessionCapabilities?.list !== undefined && agentCapabilities.sessionCapabilities.list !== null;
+
+/**
+ * Whether the handshake advertised `session/delete`, by the options that read it.
+ *
+ * ACP owns the conversation, so whether there is a delete to send is the
+ * server's own answer and only its handshake carries it. The agent's `delete`
+ * reads this, which is why it is a getter rather than a property set once: an
+ * agent built before the first listing has nothing to say yet, and a property
+ * decided then would be a permanent `undefined` on a server that does support it.
+ *
+ * A dispose before the first `list()` therefore finds nothing and takes the
+ * route a server without the capability takes, which the host logs.
+ */
+const deletesSessions = new WeakMap<AcpOptions, boolean>();
+
+/** Whether the last handshake for these options advertised `session/delete`. */
+export const deletes = (options: AcpOptions): boolean => deletesSessions.get(options) === true;
+
+/** Whether these capabilities said the server supports `session/delete`. */
+const deletesOf = (agentCapabilities: AgentCapabilities | undefined): boolean =>
+  agentCapabilities?.sessionCapabilities?.delete !== undefined && agentCapabilities.sessionCapabilities.delete !== null;
 
 /** The rows the watched sessions answer with, in the order they were opened. */
 export const watchedRows = (provider: string): Listed[] =>
@@ -153,6 +183,46 @@ function prepend(session: WatchedSession, replay: SessionUpdate[], at: string): 
 /** One watched session, or nothing when this process never opened it. */
 export function watchedSession(provider: string, id: string): WatchedSession | undefined {
   return watched.get(keyOf(provider, id));
+}
+
+/**
+ * Ask the server to delete a session, and drop what this process knew of it.
+ *
+ * Only a server whose handshake advertised `sessionCapabilities.delete` can be
+ * asked, and a server that has not been asked has no delete to send - which is
+ * what `deletes` answers, and why the agent's `delete` is absent until the
+ * handshake has been read.
+ *
+ * Both kinds of row go the same way. A session this process watched is the
+ * bridge's own, but one the server listed is the server's, and the server is
+ * what holds the conversation in either case; a bridge that only deleted what
+ * it had opened would leave every listed row behind to be listed again.
+ *
+ * The record goes with the request, and so does the folder the listing
+ * remembered. `catalogue` falls back to this record whenever the server lists
+ * nothing, so a delete that removed the conversation but kept the row would
+ * leave a catalogue offering a session no server can load - and a later read of
+ * the same id would ask a server to load a session that is not there.
+ *
+ * A session the server says it does not have is deleted: the request refuses
+ * with `resourceNotFound`, which is the protocol's own way of saying the thing
+ * is not there, and a session deleted twice has to be one the bridge carries
+ * out. Anything else is raised, because a conversation that would not go is a
+ * delete that did not happen.
+ */
+export async function forgetSession(options: AcpOptions, provider: string, id: string): Promise<void> {
+  const held = listingFor(options);
+  try {
+    await held.connection.deleteSession(id);
+  }
+  catch (error) {
+    if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
+  }
+  finally {
+    watched.delete(keyOf(provider, id));
+    placeOf.delete(keyOf(provider, id));
+    idleClose(options, held);
+  }
 }
 
 /**
@@ -270,6 +340,12 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   const held = listingFor(options);
   try {
     const handshake = await held.connection.initialize();
+    /*
+     * What the server said it can do, kept for the agent's `delete` rather than
+     * for this read: the handshake is the only place `session/delete` is ever
+     * advertised, and this is the one call that reads it every time.
+     */
+    deletesSessions.set(options, deletesOf(handshake.agentCapabilities));
     if (!listsSessions(handshake.agentCapabilities)) return watchedRows(provider);
     const sessions: SessionInfo[] = [];
     let cursor: string | undefined;

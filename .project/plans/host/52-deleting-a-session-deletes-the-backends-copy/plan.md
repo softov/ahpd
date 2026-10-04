@@ -1,7 +1,7 @@
 ---
 title: Deleting a session deletes the backend's copy, and a listed row can be deleted
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -63,12 +63,15 @@ disposeSession(channel) -> heldAs -> removeSession(uri) [held: teardown] -> agen
 | --- | --- | --- |
 | A listed row is deleted through `disposeSession` too, by its owner in `owners`, under the same `session:write` grant | Softov, 2026-10-04, asked "How should deleting a session work?": "Backend deletes, listed too" | 01 |
 | `Agent.delete?(id, directory)` is optional; the host calls it after a running session's teardown, so the backend's process has stopped before its store is touched | (defaulted: a transcript deleted under a running CLI is written again by it) | 01 |
+| `Agent.delete?(id: string, directory: string \| undefined)` takes the directory as `dirOf` answered it, `undefined` included | Softov, 2026-10-04, asked how a listed row with no working directory is deleted (cofold's `list` emits `workingDirectories: []`): "Widen to `directory: string \| undefined` and pass `dirOf(uri)` through" | 01, 02, 03 |
 | A store that says the session is not there counts as deleted | (defaulted: the SDK throws when neither file exists, and a session deleted twice is deleted) | 01, 02, 03 |
 | Any other delete failure is answered to the client as the request's error, after the teardown, and logged; the row may then be listed again | (defaulted: a delete that silently failed is the bug this plan fixes) | 01 |
 | An agent with no `delete` keeps today's behaviour, and the host logs once per such agent that its deleted sessions can return | (defaulted: refusing the delete would leave a running session nobody can close) | 01 |
 | pi's session is deleted by removing the file `stateFile` names | (defaulted: pi 0.87.1's `SessionManager` has no delete, and pi writes one file per session) | 03 |
 | An ACP agent sends `session/delete` only when the server advertises `sessionCapabilities.delete`; otherwise it has no delete | (defaulted: the method is capability-gated in the ACP schema) | 03 |
+| The ACP capability is read from the handshake `catalogueOf` already makes and `delete` is a getter over it, so the property is absent until the server has advertised `session/delete`; a dispose before the first listing takes the old path and is logged | Softov, 2026-10-04, asked how a conditionally absent `delete` is spelled on a plain `Agent` object: "present only when the server supports session/delete, through a getter over the capability cached from the handshake; a dispose before the first `list()` takes the old path and logs it" | 03 |
 | A deleted session's worktree is still kept when dirty, as `removeSession` does today | (defaulted: unchanged behaviour, see `docs/AHP.md`) | 01 |
+| A caller who is neither the session's owner nor a holder of `session:*` is refused, not given a host-only dispose | (defaulted: refusing is the safe choice; Softov may change it) | 05 |
 
 ## Proposed architecture
 
@@ -79,10 +82,11 @@ disposeSession(channel) -> heldAs -> removeSession(uri) [held: teardown] -> agen
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host deletes through the agent, held or listed](task-01-the-host-deletes-through-the-agent.md) | todo | - |
-| [02 - Claude deletes its transcript](task-02-claude-deletes-its-transcript.md) | todo | 01 |
-| [03 - pi, cofold and ACP delete theirs](task-03-pi-cofold-and-acp-delete-theirs.md) | todo | 01 |
-| [04 - The docs say a delete is permanent](task-04-docs.md) | todo | 02, 03 |
+| [01 - The host deletes through the agent, held or listed](task-01-the-host-deletes-through-the-agent.md) | implemented | - |
+| [02 - Claude deletes its transcript](task-02-claude-deletes-its-transcript.md) | implemented | 01 |
+| [03 - pi, cofold and ACP delete theirs](task-03-pi-cofold-and-acp-delete-theirs.md) | implemented | 01 |
+| [04 - The docs say a delete is permanent](task-04-docs.md) | implemented | 02, 03 |
+| [05 - Only the owner, or a session:* holder, may delete a session](task-05-only-the-owner-may-delete-a-session.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -92,7 +96,7 @@ disposeSession(channel) -> heldAs -> removeSession(uri) [held: teardown] -> agen
 
 ## Resume state
 
-- **Next:** task 01.
+- **Next:** none. All five tasks are implemented, including 05, which Softov added after a review found that a member holding `session:write` could have deleted anyone's session; `pnpm exec tsc --noEmit` and `pnpm boundary` are clean and `pnpm test` passes except `packages/agent-pi/test/agent-pi-lazy.test.ts`, which measures a module import against a 2000 ms budget and takes ~2026 ms on this loaded machine (it passed alone at 1941 ms earlier in the same build, and the entry graph now imports nothing `HEAD` did not). Softov was told it is left as it is.
 
 ## Final verification checklist
 

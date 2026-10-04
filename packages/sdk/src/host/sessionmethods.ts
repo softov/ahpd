@@ -718,7 +718,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       return {};
     },
     disposeSession: async (params) => {
-      removeSession(heldAs(String(params.channel ?? '')));
+      // The caller, because a delete is not a write: `session:write` lets a
+      // member change their own sessions and says nothing about ending
+      // somebody else's, and this one cannot be undone.
+      await removeSession(heldAs(String(params.channel ?? '')), connection.principal);
       return {};
     },
     /**

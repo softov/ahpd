@@ -639,6 +639,30 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
       return listed;
     },
     /*
+     * The store's own delete: a session with its messages, runs, events,
+     * steps and requests, which is every trace of it the store keeps.
+     *
+     * A session the store does not have is deleted - the store says so with
+     * `not_found`, and a second delete of the same row has to be one the host
+     * carries out rather than one it refuses, because the row is gone either
+     * way. `writer_busy` is not that: a run is still writing, so the record is
+     * there and would not go, and that is raised.
+     *
+     * The directory is not part of it. The store keys a session by its own id
+     * and the row carries its own workspace, so there is nothing for it to
+     * narrow - and a row listed with no workspace at all is deleted like any
+     * other.
+     */
+    delete: async (id) => {
+      try {
+        await store.sessions.delete({ sessionId: id });
+      }
+      catch (error) {
+        if ((error as { code?: unknown }).code === 'not_found') return;
+        throw error;
+      }
+    },
+    /*
      * One past conversation, read without starting anything.
      *
      * `undefined` is for a session the store does not know, which is what the

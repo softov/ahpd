@@ -200,6 +200,15 @@ export interface AcpConnection {
    */
   closeSession(sessionId: string): Promise<void>;
   /**
+   * Ask the server to delete a session and everything it holds of it.
+   *
+   * Only a server whose handshake advertised `sessionCapabilities.delete` can be
+   * asked; the catalogue decides that, not the connection. It is a different
+   * request from `closeSession`, which frees what the server has in memory and
+   * leaves the conversation on disk.
+   */
+  deleteSession(sessionId: string): Promise<void>;
+  /**
    * Settles with why the server process is gone: it never started, or it exited.
    *
    * Every call made on a connection whose server is gone rejects with the same

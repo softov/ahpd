@@ -2,9 +2,9 @@ import { probe } from './probe.js';
 import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
 import { turnsOf, subagentsOf } from './transcript.js';
-import { catalogue } from './catalog.js';
+import { catalogue, forgetSession, transcriptOf } from './catalog.js';
 import { offeredModels, ownModels, type ModelEntry, type OfferedModel } from './models.js';
-import { existsSync, readdirSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { machineAsked, refuseComputer } from '@ahpd/sdk';
@@ -411,29 +411,13 @@ export function claude(options: ClaudeOptions): Agent {
     list: async () => (await Promise.all(dirs.map((served) => catalogue(served)))).flat(),
 
     /*
-     * The transcript on disk, which is the CLI's own record of a session.
-     *
-     * `~/.claude/projects/<directory>/<id>.jsonl`, with the directory spelled
-     * the way the CLI spells it - every character that is not a letter or a
-     * digit made a dash - and `CLAUDE_CONFIG_DIR` in place of `~/.claude`
-     * where it is set. A session resumed elsewhere may have been written
-     * under the directory it started in, so the other projects are looked
-     * through before answering that there is none.
+     * The transcript on disk, which is the CLI's own record of a session, and
+     * the way out of it. Both spell the store out in `catalog.ts`, because
+     * asking the SDK where a session is and deleting it have to agree about
+     * where that is.
      */
-    stateFile: (id, directory) => {
-      if (!/^[A-Za-z0-9-]+$/.test(id)) return undefined;
-      const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects');
-      const own = join(projects, directory.replace(/[^A-Za-z0-9]/g, '-'), `${id}.jsonl`);
-      if (existsSync(own)) return own;
-      let names: string[];
-      try { names = readdirSync(projects); }
-      catch { return undefined; }
-      for (const name of names) {
-        const file = join(projects, name, `${id}.jsonl`);
-        if (existsSync(file)) return file;
-      }
-      return undefined;
-    },
+    stateFile: (id, directory) => transcriptOf(id, directory),
+    delete: (id, directory) => forgetSession(id, directory),
 
     // What to probe when the network is in question: the API, which answers
     // an unauthenticated request with 401 - reached, and refusing - and the

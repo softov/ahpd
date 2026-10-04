@@ -13,7 +13,7 @@
  */
 
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
-import { catalogueOf, loadedSession, stateFile } from './catalog.js';
+import { catalogueOf, deletes, forgetSession, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { AcpOptions } from './types.js';
@@ -109,6 +109,19 @@ export function acpAgent(options: AcpOptions): Agent {
     // The bridge writes no per-session file, so undefined is the real answer
     // rather than a path to something that does not exist.
     stateFile,
+
+    /**
+     * Whether the server can delete a session, and asking it to.
+     *
+     * A getter over the capability the handshake carried, so the property is
+     * absent until the server has been asked and has said yes. A server without
+     * `session/delete` is not refused here - it has no delete to send, so the
+     * host takes its own route and logs that the server kept its copy.
+     */
+    get delete() {
+      return deletes(options) ? (id: string) => forgetSession(options, provider, id) : undefined;
+    },
+
     create: (start) => acpSession(options, start),
   };
 }

@@ -333,6 +333,8 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
       heard(() => connection.agent.notify(methods.agent.session.cancel, { sessionId })),
     closeSession: (sessionId: string): Promise<void> =>
       heard(() => connection.agent.request(methods.agent.session.close, { sessionId })).then(() => {}),
+    deleteSession: (sessionId: string): Promise<void> =>
+      heard(() => connection.agent.request(methods.agent.session.delete, { sessionId })).then(() => {}),
     ended,
     stderrTail,
     close: async (): Promise<void> => {

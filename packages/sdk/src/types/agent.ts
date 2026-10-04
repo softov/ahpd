@@ -474,6 +474,44 @@ export interface Agent {
   list?(): Promise<Listed[]>;
 
   /**
+   * Remove this backend's own copy of a session, and nothing else.
+   *
+   * What makes a delete a delete: without it the host forgets a session and
+   * the next listing offers it again, so a client is told a thing is gone and
+   * finds it in the same list a moment later. `id` is this backend's id for
+   * the session and `directory` the one it ran in, the pair `list` answered the
+   * row with.
+   *
+   * Called after a running session's backend has stopped, never while one
+   * still writes the transcript it keeps, and for a row the daemon only lists
+   * as well as one it is holding.
+   *
+   * `directory` is what `list` answered that row with, and `undefined` is a
+   * real answer: cofold's `list` carries no workspace for a session that ran
+   * nowhere. A backend that needs the folder answers with every project
+   * directory rather than the daemon's own cwd - which is what the Claude SDK
+   * does when `dir` is left out, the same scope its `list` reads.
+   *
+   * Resolving means the copy is gone or was never there: a session deleted
+   * twice is deleted, and a store that has nothing for the id is not a
+   * failure. Anything else rejects, and the client is told - a delete that
+   * silently failed is the bug this exists for.
+   *
+   * Left out is a backend whose store cannot delete, which the host says once
+   * per provider rather than refusing the delete over: refusing would leave a
+   * running session nobody can close.
+   *
+   * Spelled as it may also be `undefined` because a backend whose ability to
+   * delete is the server's answer rather than its own spells it as a getter
+   * over that answer: ACP's server advertises `session/delete` in its
+   * handshake, which nothing has read when the agent is built. A getter is the
+   * only shape that can be absent now and present after the first listing, and
+   * the host reads this property once per delete, so what it finds is the
+   * answer as of then.
+   */
+  delete?: ((id: string, directory: string | undefined) => Promise<void>) | undefined;
+
+  /**
    * Where this backend keeps its own record of a session, if it keeps one.
    *
    * What the window's "open session state file" opens and what a "collect

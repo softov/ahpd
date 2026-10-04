@@ -81,6 +81,12 @@
  * advertising `loadSession`, which is a server that cannot reopen a
  * conversation, and `--no-close` stops it advertising `session/close`.
  *
+ * `--no-delete` stops the handshake advertising `sessionCapabilities.delete`,
+ * which is a server that keeps every conversation it has been given, and
+ * `--delete-fails` keeps the capability but answers every `session/delete` with
+ * an error of its own, which is a server that admits to the request and cannot
+ * carry it out.
+ *
  * `--prompt-caps` advertises `promptCapabilities.image` and `embeddedContext`,
  * the two a client must ask for before it may send an image or an embedded
  * file in a prompt, and `--extra-dirs` advertises
@@ -843,6 +849,7 @@ const onLine = (line) => {
             list: {},
             resume: {},
             ...(process.argv.includes('--no-close') ? {} : { close: {} }),
+            ...(process.argv.includes('--no-delete') ? {} : { delete: {} }),
             ...(process.argv.includes('--extra-dirs') ? { additionalDirectories: {} } : {}),
           },
         },
@@ -939,6 +946,29 @@ const onLine = (line) => {
     case 'session/close':
       respond(message.id, {});
       return;
+
+    case 'session/delete': {
+      // A server that cannot delete, for a client that has to tell that apart
+      // from one that has already forgotten.
+      if (process.argv.includes('--delete-fails')) {
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32603, message: 'The store is read only' } });
+        return;
+      }
+      // Which sessions this server holds, so a delete is a real removal rather
+      // than an acknowledgement: a second delete of the same id is refused the
+      // way a server refuses one it has no such session for.
+      const gone = String(message.params?.sessionId ?? '');
+      const at = LISTED.findIndex((one) => one.sessionId === gone);
+      if (at < 0) {
+        // The protocol's own `RequestError.resourceNotFound` code, which is how
+        // a server says the thing is not there.
+        write({ jsonrpc: '2.0', id: message.id, error: { code: -32002, message: `Resource not found: ${gone}` } });
+        return;
+      }
+      LISTED.splice(at, 1);
+      respond(message.id, {});
+      return;
+    }
 
     case 'session/cancel':
       if (pending !== undefined) {

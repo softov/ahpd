@@ -9,6 +9,8 @@ import type { Bag } from '../types/common.js';
 import type { Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { Owner } from '../types/usage.js';
 import type { Principal } from '../types/users.js';
+import type { Agent } from '../types/agent.js';
+import type { Held } from './state.js';
 import type { HostContext } from './context.js';
 
 /**
@@ -19,8 +21,8 @@ import type { HostContext } from './context.js';
  * `!` command it may turn out to be, and the model and origin it carries.
  */
 export interface Lifecycle {
-  /** A session gone, with everything it held. */
-  removeSession(uri: string): void;
+  /** A session gone, with everything it held, and the backend's own copy of it. */
+  removeSession(uri: string, acting?: Principal | Owner): Promise<void>;
   /** Start a session again, in the directory its config now names. */
   restart(
     uri: string,
@@ -85,17 +87,15 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   } = ctx;
 
   /**
-   * A session gone, with everything it held.
+   * Everything a session this daemon is holding took with it.
    *
-   * What `disposeSession` does, and what the `delete_session` tool does from
-   * inside another session: the chats closed, the terminals they claimed
-   * killed, the worktree removed if clean, the run that started it unlinked,
-   * and every client told.
+   * The part of a delete that is the host's own: the chats closed, the
+   * terminals they claimed killed, the worktree removed if clean, the run that
+   * started it unlinked, and everything this host kept *about* the session
+   * let go. What the backend keeps is the backend's, and `removeSession` asks
+   * for it once this is done.
    */
-  const removeSession = (uri: string): void => {
-    const held = sessions.get(uri);
-    if (!held)
-      throw new RpcError(-32001, `No agent for session ${uri}`);
+  const teardown = (held: Held, uri: string): void => {
     for (const [chatUri, chat] of held.chats) {
       chat.close();
       byChat.delete(chatUri);
@@ -231,6 +231,136 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (changesetOf(channel, uri)) ctx.shown.delete(channel);
     }
     activeSessionsMoved();
+  };
+
+  /*
+   * The providers this host has already said cannot delete.
+   *
+   * Once each, because the second session disposed under an agent that cannot
+   * delete says nothing new, and a log that repeats itself on every disposal
+   * is a log nobody reads.
+   */
+  const cannotDelete = new Set<string>();
+
+  /**
+   * The backend's own copy of a session, gone.
+   *
+   * Asked of the agent that owns the row, after whatever this host was holding
+   * has been torn down - a transcript written again by a backend still running
+   * is a session that comes back on the next listing, which is the gap this
+   * closes.
+   *
+   * A store that says the session is not there counts as deleted: a session
+   * deleted twice is deleted, and a refusal over a row that is already gone
+   * would be the host failing a request it had in fact carried out.
+   *
+   * Anything else is returned rather than thrown, so the caller can finish what
+   * the host owes the client - the broadcast, and the answer that the session
+   * is gone - before the failure is reported. A delete that failed silently is
+   * the bug this exists for, so it is never swallowed: the error goes back to
+   * the request that asked, and the row may be listed again.
+   */
+  const deleted = async (
+    uri: string,
+    agent: Agent,
+    directory: string | undefined,
+  ): Promise<unknown> => {
+    if (agent.delete === undefined) {
+      if (!cannotDelete.has(agent.provider)) {
+        cannotDelete.add(agent.provider);
+        log(`${agent.provider} keeps its own copy of a deleted session, so it may be listed again`);
+      }
+      return undefined;
+    }
+    try {
+      await agent.delete(idOf(uri), directory);
+      return undefined;
+    }
+    catch (error) {
+      log(`could not delete ${uri} from ${agent.provider}: ${error instanceof Error ? error.message : String(error)}`);
+      return error;
+    }
+  };
+
+  /**
+   * Whether this caller is allowed to delete this session.
+   *
+   * `session:write` says a caller may change sessions; it does not say whose.
+   * A delete cannot be undone and the backend's own copy goes with it, so
+   * without this a member of a shared host could end somebody else's
+   * conversation - which is a different thing from writing in it.
+   *
+   * Two callers are let through: the session's owner, and anybody holding
+   * `session:*`, which is the wildcard an administrator's role resolves to.
+   * The owner's own reference is `user:<id>`, the same spelling `ownerFor`
+   * writes, so a person signed in on two connections is one owner and either
+   * connection may delete.
+   *
+   * No principal is no decision: a host with no users directory has nobody to
+   * name, and so has every connection to it - including the root one. Nothing
+   * is refused that was not refused before, which is what makes this safe to
+   * add to a host that never had people in it.
+   *
+   * An owner without a principal is a person this process has not met since it
+   * started, so their roles are unknown: they may delete their own sessions and
+   * nobody else's. The host's own `root:` owner is not a person and is refused
+   * nothing.
+   */
+  const mayDispose = (acting: Principal | Owner | undefined, uri: string): void => {
+    if (acting === undefined) return;
+    if (typeof acting === 'string') {
+      if (acting.startsWith('root:') || kept.owner(idOf(uri)) === acting) return;
+      log(`${acting} tried to delete ${uri}, which is not theirs`);
+      throw new RpcError(-32009, "Only the session's owner can delete it.");
+    }
+    if (kept.owner(idOf(uri)) === `user:${acting.id}`) return;
+    if (acting.can('session:*')) return;
+    log(`${acting.id} tried to delete ${uri}, which is not theirs`);
+    throw new RpcError(-32009, "Only the session's owner can delete it.");
+  };
+
+  /**
+   * A session gone, from every client and from the backend's own catalogue.
+   *
+   * What `disposeSession` does, and what the `delete_session` tool does from
+   * inside another session. A session the daemon is running is torn down first
+   * and its backend asked for its own copy afterwards; a row the daemon only
+   * lists has nothing to tear down, and goes straight to the same delete.
+   *
+   * Neither half is the other half's job, which is the whole of it: a host
+   * that forgets a session and leaves the store alone tells every client the
+   * thing is gone and offers it again in the next list.
+   *
+   * `acting` is the person asking, and nobody for a connection that is not
+   * somebody - see `mayDispose`. The check is first, before the teardown,
+   * because a refusal must leave the session exactly as it was: a half-disposed
+   * session would be worse than either answer.
+   *
+   * A name in neither map is not a session this host has ever heard of, and
+   * says so rather than deleting nothing successfully.
+   */
+  const removeSession = async (uri: string, acting?: Principal | Owner): Promise<void> => {
+    mayDispose(acting, uri);
+    const held = sessions.get(uri);
+    const owner = owners.get(uri);
+    if (!held && !owner)
+      throw new RpcError(-32001, `No agent for session ${uri}`);
+    const agent = held?.agent ?? (owner as Agent);
+    /*
+     * Read before either is let go of, and before the row's directory goes
+     * with it: `dirOf` answers out of `sessions` or `wheres`, and this is the
+     * only moment at which both still say where the session ran.
+     */
+    const directory = dirOf(uri);
+    if (held !== undefined) teardown(held, uri);
+    const failure = await deleted(uri, agent, directory);
+    if (held === undefined) {
+      // Nothing was held, so nothing was torn down and what this host kept
+      // about the row is still here: the backend has it, and the host does
+      // not need to.
+      kept.forget(idOf(uri));
+      owners.delete(uri);
+    }
     // Every other client is told, because the session was theirs too.
     // `session`, which is the name the protocol gives it. Under
     // `resource` a client reads `undefined` and takes nothing out, so a
@@ -238,6 +368,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // made that client re-read the list.
     broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
+    if (failure !== undefined) throw failure;
   };
 
   const restart = async (
