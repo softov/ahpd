@@ -58,6 +58,7 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 | What | Source | Task |
 | --- | --- | --- |
 | A host sends push itself through Expo's push service; no relay | Softov, 2026-10-02, asked "Push notifications: what should happen?": "Plan host-sent push" | 02 |
+| The host names the client: `session_start` carries the creating client's id, a `session_opened` event names a client that subscribes, and a provider's `write` is handed the writing client's id | Softov, 2026-10-04, asked "How does the push plugin learn which client created or opened a session?": the host names the client | 04 |
 | A device is sent only the sessions its client created or opened | Softov, 2026-10-04, asked "Every session on the host, or only sessions a device's client created or opened?": only the sessions that device's client created or opened | 02 |
 | `input_needed_removed` sends no second message to clear the first, until a client asks for one | Softov, 2026-10-04, asked "Should `input_needed_removed` send a second message that clears the first on the device?": no, until a client asks for one | 02 |
 | Receipts are read at the next send, for the tickets the previous send left; no timer | Softov, 2026-10-04, asked "When are the receipts read: on a timer after each send, or at the next send, for the tickets the previous one left?": at the next send | 02 |
@@ -80,9 +81,10 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A device registers under push:](task-01-a-device-registers-under-push.md) | todo | - |
+| [01 - A device registers under push:](task-01-a-device-registers-under-push.md) | todo | 04 |
 | [02 - A waiting session is sent to the devices whose client created or opened it](task-02-a-waiting-session-is-sent.md) | todo | 01 |
 | [03 - The plugin is documented](task-03-docs.md) | todo | 02 |
+| [04 - The host names the client that wrote, created or opened](task-04-the-host-names-the-client.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -93,8 +95,7 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** ask the open question below, then [task-01-a-device-registers-under-push.md](task-01-a-device-registers-under-push.md).
-- **Open question (ask before task 01):** no event or provider call names the client that created or opened a session, so the plugin cannot yet tell which sessions a device's client created or opened; how does it learn that? - proposed: the host hands a provider's `write` the writing client's id, and the session events a plugin hears name the client that created or opened the session.
+- **Next action:** [task-04-the-host-names-the-client.md](task-04-the-host-names-the-client.md), then [task-01-a-device-registers-under-push.md](task-01-a-device-registers-under-push.md).
 - **Watch out for:** the events repeat for the same id (the protocol's upsert); dedupe on `(session, id)`, never count.
 
 ## Final verification checklist

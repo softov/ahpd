@@ -1,7 +1,7 @@
 ---
 title: A device registers under push
 status: todo
-depends: []
+depends: [task-04-the-host-names-the-client.md]
 layer: "push"
 refs:
   - "[code://packages/computer/src/plugin.ts#L582](../../../../packages/computer/src/plugin.ts#L582) - how a package registers its provider"
