@@ -122,7 +122,7 @@ Reference: [00-host.md](host/00-host.md)
 | [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | built 2026-10-03 ([implemented.md](host/51-a-user-put-clears-issuer-and-roles-from/implemented.md)) | host 36 | - |
 | [52 - Deleting a session deletes the backend's copy, and a listed row can be deleted](host/52-deleting-a-session-deletes-the-backends-copy/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | - | - |
 
-Next free number in `host`: `52`.
+Next free number in `host`: `53`.
 
 ## claude
 
@@ -150,7 +150,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [16 - A Claude preset that cannot be resolved skips only itself](claude/16-a-preset-that-fails-skips-only-itself/plan.md) | high | built 2026-10-03 ([implemented.md](claude/16-a-preset-that-fails-skips-only-itself/implemented.md)) | claude 15 | - |
 | [17 - A Claude subagent chat opens with its task's description as title and its prompt as the first message](claude/17-a-subagent-chat-opens-with-its-task/plan.md) | high | planned 2026-10-04; tasks 01-02 todo | - | - |
 
-Next free number in `claude`: `14`.
+Next free number in `claude`: `18`.
 
 ## documentation
 
@@ -159,8 +159,9 @@ Reference: [00-documentation.md](documentation/00-documentation.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - The stale prose matches the code again](documentation/01-correct-the-stale-prose/plan.md) | low | built 2026-09-20 ([implemented.md](documentation/01-correct-the-stale-prose/implemented.md)) | - | - |
+| [02 - Captures are taken and read with ahpc, and ahpd keeps no proxy or capture check](documentation/02-captures-are-taken-and-read-with-ahpc/plan.md) | medium | planned 2026-10-04; task 01 todo | host 43 p1; ahpc cli/02 | - |
 
-Next free number in `documentation`: `02`.
+Next free number in `documentation`: `03`.
 
 ## plugin
 
