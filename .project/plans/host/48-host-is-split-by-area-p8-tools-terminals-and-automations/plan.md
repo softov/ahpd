@@ -1,7 +1,7 @@
 ---
 title: Session tools, terminals and automations are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -48,19 +48,16 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The tools and titles a session is offered are one file](task-01-tooling.md) | todo | - |
-| [02 - The host's terminals are one file](task-02-terminals.md) | todo | - |
-| [03 - The automation runtime is one file](task-03-automations.md) | todo | - |
+| [01 - The tools and titles a session is offered are one file](task-01-tooling.md) | done | - |
+| [02 - The host's terminals are one file](task-02-terminals.md) | done | - |
+| [03 - The automation runtime is one file](task-03-automations.md) | done | - |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-tooling.md](task-01-tooling.md).
-- **Open questions:** none of its own.
-- **Watch out for:** `toolContext` builds the `ToolCall` every host tool is handed; its object literal moves unchanged.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/sessiontools.test.ts`, `test/artifacttools.test.ts`, `test/toolserver.test.ts`, `test/toolauth.test.ts`, `test/toolpolicy.test.ts`, `test/pty.test.ts`, `test/automations.test.ts` and `test/scheduled.test.ts` cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 730 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/sessiontools.test.ts`, `test/artifacttools.test.ts`, `test/toolserver.test.ts`, `test/toolauth.test.ts`, `test/toolpolicy.test.ts`, `test/pty.test.ts`, `test/automations.test.ts` and `test/scheduled.test.ts` cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 730 lines fewer than before.
+- [x] `plans/index.md` updated.

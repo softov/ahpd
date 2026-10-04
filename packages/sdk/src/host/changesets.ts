@@ -22,7 +22,7 @@ export interface Changesets {
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
-  const { options, connections, sessions, heldAs, leadOf, wheres, statusOf, worktrees, githubFacts, lent, dispatch } = ctx;
+  const { options, connections, sessions, heldAs, leadOf, wheres, worktrees, githubFacts, lent, dispatch } = ctx;
 
   /**
    * The directory a session works in, as a path.
@@ -140,7 +140,7 @@ export function createChangesets(ctx: HostContext): Changesets {
   const operationsOf = (channel: string): Bag[] => {
     const at = changesetAt(channel);
     if (!at) return [];
-    const busy = (statusOf(at.owner) & Status.InProgress) !== 0;
+    const busy = (ctx.statusOf(at.owner) & Status.InProgress) !== 0;
     return (options.changes?.operations?.(at.dir, at.owner, at.scope, operationContext(at.owner, at.dir)) ?? []).map((operation) => {
       const key = opKey(channel, operation.id);
       const failure = lastError.get(key);

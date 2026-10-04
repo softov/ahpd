@@ -23,7 +23,7 @@ export interface Facts {
 export function createFacts(ctx: HostContext): Facts {
   const {
     options, sessions, owners, connections, worktrees, githubFacts, kept, log, lent, dispatch,
-    dirOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, heldAs, summaryMoved,
+    dirOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, heldAs,
   } = ctx;
 
   /**
@@ -138,7 +138,7 @@ export function createFacts(ctx: HostContext): Facts {
     kept.setArtifacts(idOf(uri), list);
     const meta = metaOf(uri);
     dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-    summaryMoved(uri);
+    ctx.summaryMoved(uri);
   };
   /**
    * What is true of a session because of where it is.
@@ -191,7 +191,7 @@ export function createFacts(ctx: HostContext): Facts {
     for (const uri of inThere(dir)) {
       const meta = metaOf(uri);
       dispatch(uri, { type: 'session/metaChanged', ...(meta ? { _meta: meta } : {}) });
-      summaryMoved(uri);
+      ctx.summaryMoved(uri);
       // And the verbs, since a branch that gained a pull request offers
       // different ones from a branch that lacks it.
       operationsMoved(uri);
@@ -294,7 +294,7 @@ export function createFacts(ctx: HostContext): Facts {
           try {
             for (const uri of toldIn(dir)) {
               dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
-              summaryMoved(uri);
+              ctx.summaryMoved(uri);
               await contentMoved(uri);
             }
           }
@@ -466,7 +466,7 @@ export function createFacts(ctx: HostContext): Facts {
       for (const uri of inThere(dir)) {
         // Asked per session, because two of the scopes are the session's own.
         dispatch(uri, { type: 'session/changesetsChanged', changesets: catalogueOf(uri, dir) });
-        summaryMoved(uri);
+        ctx.summaryMoved(uri);
       }
       return true;
     }).catch(() => false);

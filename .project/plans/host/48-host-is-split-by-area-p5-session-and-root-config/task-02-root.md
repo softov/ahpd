@@ -1,6 +1,6 @@
 ---
 title: Root state and root config are one file
-status: todo
+status: done
 depends: [task-01-session-config.md]
 layer: "sdk"
 refs:

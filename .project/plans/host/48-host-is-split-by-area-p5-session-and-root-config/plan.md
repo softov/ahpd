@@ -1,7 +1,7 @@
 ---
 title: Session config and root config are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -43,18 +43,15 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session's config and schema are one file](task-01-session-config.md) | todo | - |
-| [02 - Root state and root config are one file](task-02-root.md) | todo | 01 |
+| [01 - A session's config and schema are one file](task-01-session-config.md) | done | - |
+| [02 - Root state and root config are one file](task-02-root.md) | done | 01 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-session-config.md](task-01-session-config.md).
-- **Open questions:** none of its own.
-- **Watch out for:** host/45 rewrites `ROOT_CONFIG_SCHEMA` and `rootConfig` right after this plan; keep the comment above `ROOT_CONFIG_SCHEMA` whole, since host/45 cites it.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/root-config.test.ts`, `test/session-fixed-key.test.ts`, `test/configvalues.test.ts` and `test/wire.test.ts` cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 730 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/root-config.test.ts`, `test/session-fixed-key.test.ts`, `test/configvalues.test.ts` and `test/wire.test.ts` cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 730 lines fewer than before.
+- [x] `plans/index.md` updated.

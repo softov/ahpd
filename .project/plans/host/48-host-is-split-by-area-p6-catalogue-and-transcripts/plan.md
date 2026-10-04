@@ -1,7 +1,7 @@
 ---
 title: The catalogue, past sessions and snapshots are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -47,18 +47,15 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The catalogue and its rows are one file](task-01-catalogue.md) | todo | - |
-| [02 - Past sessions and snapshots are their own files](task-02-history-and-snapshots.md) | todo | 01 |
+| [01 - The catalogue and its rows are one file](task-01-catalogue.md) | done | - |
+| [02 - Past sessions and snapshots are their own files](task-02-history-and-snapshots.md) | done | 01 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-catalogue.md](task-01-catalogue.md).
-- **Open questions:** none of its own.
-- **Watch out for:** host/44 p3 changes `chatSummary`, `summaryOf` and the session state's `chats` right after this plan; keep them where the parent's table says.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/sessions.test.ts`, `test/subscribe.test.ts`, `test/subagent-chat.test.ts`, `test/session-provider.test.ts`, `test/presence.test.ts` and `test/conformance.test.ts` cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 1,070 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/sessions.test.ts`, `test/subscribe.test.ts`, `test/subagent-chat.test.ts`, `test/session-provider.test.ts`, `test/presence.test.ts` and `test/conformance.test.ts` cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 1,070 lines fewer than before.
+- [x] `plans/index.md` updated.

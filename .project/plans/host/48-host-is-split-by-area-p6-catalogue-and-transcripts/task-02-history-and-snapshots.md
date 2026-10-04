@@ -1,6 +1,6 @@
 ---
 title: Past sessions and snapshots are their own files
-status: todo
+status: done
 depends: [task-01-catalogue.md]
 layer: "sdk"
 refs:

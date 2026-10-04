@@ -1,6 +1,6 @@
 ---
 title: The host's terminals are one file
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -28,3 +28,21 @@ export const CLOSING = 'This host is closing, so nothing new starts on it';
  * somebody typing an exclamation mark, and it goes to the agent.
  */
 export const BANG = '!';
+
+/**
+ * The config properties this host owns, rather than the backend.
+ *
+ * The protocol's schema is deliberately generic - a backend advertises
+ * whatever names it likes - and these seven are the conventional ones the
+ * *host* answers, named in the reference client's `sessionConfigKeys.ts` as
+ * host-owned and "not passed to agents". So they are merged over what the
+ * backend said and stripped back out before it is handed anything.
+ *
+ * `scope` is an eighth of the same kind, and is offered whenever there is a
+ * person rather than only under a `worktrees` port.
+ */
+export const HOSTS_OWN = [
+  'isolation', 'branch', 'worktreeIncludeFiles', 'worktreeSymlinkFolders',
+  'worktreeBranchPrefix', 'worktreeCreateNewBranch', 'worktreeBranchTrack',
+  'scope',
+];

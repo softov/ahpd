@@ -1,6 +1,6 @@
 ---
 title: The catalogue and its rows are one file
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

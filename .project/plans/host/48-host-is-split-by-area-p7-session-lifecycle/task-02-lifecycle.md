@@ -1,6 +1,6 @@
 ---
 title: Opening, moving, restarting and removing a session is one file
-status: todo
+status: done
 depends: [task-01-spawn.md]
 layer: "sdk"
 refs:

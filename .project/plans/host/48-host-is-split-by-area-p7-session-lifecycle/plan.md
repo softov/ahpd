@@ -1,7 +1,7 @@
 ---
 title: Starting, restarting and removing a session are files of their own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -47,18 +47,15 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Starting a backend's session and its workers is one file](task-01-spawn.md) | todo | - |
-| [02 - Opening, moving, restarting and removing a session is one file](task-02-lifecycle.md) | todo | 01 |
+| [01 - Starting a backend's session and its workers is one file](task-01-spawn.md) | done | - |
+| [02 - Opening, moving, restarting and removing a session is one file](task-02-lifecycle.md) | done | 01 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-spawn.md](task-01-spawn.md).
-- **Open questions:** none of its own.
-- **Watch out for:** `spawn` writes `names`, `births`, `served`, `moving` and `drafts`, which `listing`, `toolsServersGone`, `toolContext` and `removeSession` also write; every one stays a shared map on the context.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/host.test.ts`, `test/sessions.test.ts`, `test/subagent-chat.test.ts`, `test/nested-*.test.ts`, `test/turning.test.ts`, `test/worktrees.test.ts` and the backend packages' tests cover this area.
-- [ ] `wc -l packages/sdk/src/host.ts` recorded in `implemented.md`, about 1,350 lines fewer than before.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass; `test/host.test.ts`, `test/sessions.test.ts`, `test/subagent-chat.test.ts`, `test/nested-*.test.ts`, `test/turning.test.ts`, `test/worktrees.test.ts` and the backend packages' tests cover this area.
+- [x] `wc -l packages/sdk/src/host.ts` recorded in each task's Resume, 1,364 lines fewer than before.
+- [x] `plans/index.md` updated.
