@@ -88,6 +88,7 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 
 | What | Source | Task |
 | --- | --- | --- |
+| Each `listSessions` starts one background refresh of the held catalogue when none runs, and nothing else starts one | Softov, 2026-10-04, asked "What starts a refresh of the held catalogue?": each listSessions | 03 |
 | A `root/sessionSummaryChanged` whose `changes` equal the last one sent for that session is not sent; the last sent is kept per session and forgotten when the session is removed | Softov's report, 2026-10-04 | 01 |
 | A session's last sent is also forgotten on `root/sessionAdded`, so the first move after it always goes out | (defaulted: the added row is a whole row, and the next partial has nothing to equal) | 01 |
 | `summaryMoved` keeps sending every mutable field when anything changed, as [`code://packages/sdk/src/host/catalogue.ts#L205-L210`](../../../../packages/sdk/src/host/catalogue.ts#L205-L210) says | (defaulted: unchanged wire shape, and clients already apply it) | 01 |
@@ -133,9 +134,8 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 ## Resume state
 
 - **Done so far:** nothing.
-- **Next action:** [task-01-a-summary-that-did-not-change-is-not-sent.md](task-01-a-summary-that-did-not-change-is-not-sent.md), then [task-02-agents-are-listed-at-once-and-once-per-store.md](task-02-agents-are-listed-at-once-and-once-per-store.md); ask question 1 before task 03.
-- **Open questions:**
-  1. What starts a refresh of the held catalogue? The `Agent` type has no change signal, so it is one of: each `listSessions` starts one in the background when none runs; a timer; or host events (a session created, disposed, or a turn ended) - proposed: each `listSessions` starts one when none runs, and nothing else, because a client that connects is the one that wants the list current, the single flight bounds the cost to one listing at a time, and a session this host creates already goes out as `root/sessionAdded` without one.
+- **Next action:** [task-01-a-summary-that-did-not-change-is-not-sent.md](task-01-a-summary-that-did-not-change-is-not-sent.md), then [task-02-agents-are-listed-at-once-and-once-per-store.md](task-02-agents-are-listed-at-once-and-once-per-store.md), then task 03.
+- **Open questions:** none.
 - **Watch out for:** `listing` has side effects (`names`, `owners`, `wheres`, `births`, `moves`, the prune), so a refresh is a call to it and not a copy of it; `summaryMoved` is called for listed rows too, which have no `Held` and send `status` and `changes` only.
 
 ## Final verification checklist

@@ -20,14 +20,14 @@ refs:
 
 - `UPDATE: packages/sdk/src/host/catalogue.ts:266-425` - `listing` returns the backend rows only, and a new `liveRows()` returns the rows of the sessions this host runs, the code at 367-389 moved into it; `rowsMoved(before, after)` broadcasts the difference.
 - `UPDATE: packages/sdk/src/host/history.ts:123-144` - `rows` and `refreshing` replace `listed` and `pastAt`; `refresh()` and `held()` replace `listNow` and `catalogue`.
-- `UPDATE: packages/sdk/src/host/sessionmethods.ts:402-403` - `listSessions` answers `liveRows()` followed by `await held()`, and starts a refresh as question 1 is answered.
+- `UPDATE: packages/sdk/src/host/sessionmethods.ts:402-403` - `listSessions` answers `liveRows()` followed by `await held()` and starts one background refresh when none runs.
 - `UPDATE: packages/sdk/src/host/catalogue.ts:454-470` - `readStored` takes its rows from the first `refresh()` rather than a listing of its own.
 - `UPDATE: packages/sdk/test/host-catalogue.test.ts` and the other tests that write a row into the fake SDK and list it - they wait for the refresh.
 - `CREATE: packages/sdk/test/host-catalogue-held.test.ts`.
 
 ## Steps
 
-1. Ask Softov question 1 of the plan's Resume state, and write his answer as a row in the plan's second table before going on.
+1. A refresh starts only from `listSessions`, one at a time, as the plan's second table records.
 2. `refresh()` in `history.ts`: when `refreshing` is set, return it; otherwise start `listing()`, and when it resolves, call `rowsMoved(rows, found)`, set `rows = found`, clear `refreshing`; when it rejects, keep `rows` and clear `refreshing`.
 3. `held()`: `rows` when there are any, and otherwise `refresh()`, so the first `listSessions` after start waits for the first listing and no later one does.
 4. `rowsMoved` in `catalogue.ts`, by resource: a row in `after` and not in `before` goes out as `root/sessionAdded` with the row; a row in `before` and not in `after` as `root/sessionRemoved` with `forgetSent`; a row in both whose `title`, `modifiedAt`, `status`, `workingDirectories` or `changes` differ as `root/sessionSummaryChanged` through the last-sent check from task 01; a row whose resource is in `sessions` is skipped, since `summaryMoved` speaks for it. Nothing is sent on the first fill, when `before` is empty.

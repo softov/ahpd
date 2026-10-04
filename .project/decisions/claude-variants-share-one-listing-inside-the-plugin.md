@@ -1,6 +1,6 @@
 ---
 title: Claude variants share one listing inside the plugin
-status: proposed
+status: accepted
 date: 2026-10-04
 refs:
   - "[code://packages/agent-claude/src/plugin.ts#L189-L211](../../packages/agent-claude/src/plugin.ts#L189-L211) - every variant of one load shares `paths`, and each is registered as an agent of its own"
@@ -20,7 +20,7 @@ The host does need every variant's row for an id, because host 37 picks the row 
 
 The Claude plugin builds one listing per load and hands it to every variant it registers, and calls that arrive while it runs share it; the host still calls each variant's `list` and gets each one's rows.
 
-Source: (defaulted: the smallest change that reads the store once and keeps host 37's choice of provider; Softov may prefer the host-level key).
+Source: Softov, 2026-10-04, asked "The host can't tell which agents share a store, so the Claude plugin lists its transcripts once and hands that listing to every variant. Keep it inside the plugin?": inside the plugin.
 
 ## Consequences
 
