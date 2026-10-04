@@ -1,6 +1,6 @@
 ---
 title: A replayed answered question carries its answers
-status: todo
+status: done
 depends: [task-01-a-live-answered-question-carries-its-answers.md]
 layer: "agent-claude"
 refs:

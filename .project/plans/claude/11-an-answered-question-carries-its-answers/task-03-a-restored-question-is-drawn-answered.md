@@ -1,6 +1,6 @@
 ---
 title: A restored question is drawn as the answered question
-status: todo
+status: done
 depends: [task-02-a-replayed-answered-question-carries-its-answers.md]
 layer: "agent-claude"
 refs:
@@ -35,5 +35,3 @@ A question with no answers, denied or cancelled, gets no part.
 - By hand in VS Code: the test.md session of 2026-09-28 shows the answered question after a daemon restart.
 
 ## Resume
-
-Not started.

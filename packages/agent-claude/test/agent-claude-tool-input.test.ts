@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { Bag, Session } from '@ahpd/sdk';
 
 /*
@@ -503,4 +504,150 @@ it('never writes a bare timing key on a tool call', async () => {
     expect(Object.keys(meta), action.type as string).not.toContain('endedAt');
     expect(Object.keys(meta), action.type as string).not.toContain('durationMs');
   }
+});
+
+/*
+ * An answered question, live.
+ *
+ * A client draws the questions and what was picked from the call itself, so a
+ * completed AskUserQuestion carries the input the tool ran with: its questions
+ * plus the answers, keyed by each question's own text and a multi-select as an
+ * array. A question nobody answered carries no answers and keeps its input as
+ * sent.
+ */
+
+const asked = {
+  questions: [
+    { question: 'Which colour?', header: 'Colour', multiSelect: false, options: [{ label: 'Red' }, { label: 'Blue' }] },
+    { question: 'Which sizes?', header: 'Size', multiSelect: true, options: [{ label: 'S' }, { label: 'L' }] },
+  ],
+};
+const picked = { 'Which colour?': 'Red', 'Which sizes?': ['S', 'L'] };
+/** What a client settles a question with, which carries the answers two levels in. */
+const said = {
+  q1: { state: 'submitted', value: { kind: 'selected', value: 'Red' } },
+  q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+};
+
+/** The question asked and then answered, or not, and the result the CLI sent. */
+async function asking(accepted: boolean): Promise<{ sent: Bag[]; session: Session; held: Map<string, Bag>; part: Bag | undefined }> {
+  let woken: (() => void) | undefined;
+  sdk.hold = new Promise<void>((resolve) => { woken = resolve; });
+  const { sent, session, held } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+  ], () => {
+    void sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+  });
+  session.answer('toolu_ask', accepted, said);
+  await settle();
+  /*
+   * The part the live turn ends with, put through the protocol's own reducer:
+   * a client draws the answered question from it, because it hides the
+   * completed AskUserQuestion row and draws this instead.
+   */
+  let part: Bag | undefined;
+  if (accepted) {
+    let chat = session.chatState();
+    for (const action of [
+      sent.find((one) => one.type === 'chat/inputRequested'),
+      { type: 'chat/inputCompleted', requestId: 'toolu_ask', response: 'accept', answers: said },
+    ]) {
+      chat = chatReducer(chat as never, action as never) as unknown as Bag;
+    }
+    part = (((chat.activeTurn as Bag | undefined)?.responseParts ?? []) as Bag[]).find((one) => one.kind === 'inputRequest');
+  }
+  sdk.pushed.push(result('toolu_ask', 'u2'));
+  woken?.();
+  await settle();
+  sdk.hold = Promise.resolve();
+  return { sent, session, held, part };
+}
+
+it('carries the questions and the answers of a live answered question', async () => {
+  const { sent, held } = await asking(true);
+  const answered = { questions: asked.questions, answers: picked };
+  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).toMatchObject({ structuredContent: answered });
+  expect(held.get('toolu_ask')?.structuredContent).toEqual(answered);
+  // The input stays what the model sent, which has no answers in it.
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+});
+
+it('carries no answers for a live question nobody answered', async () => {
+  const { sent, held } = await asking(false);
+  expect(actionOf(sent, 'chat/toolCallComplete', 'toolu_ask')?.result).not.toHaveProperty('structuredContent');
+  expect(held.get('toolu_ask')).not.toHaveProperty('structuredContent');
+  expect(held.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+});
+
+/*
+ * An answered question, read back.
+ *
+ * After a restart the transcript is the only record, and the SDK writes what
+ * the tool ran with on the result as `toolUseResult`. A result carrying no
+ * `toolUseResult` was never answered, and its call keeps its input as sent.
+ */
+
+const ask = { type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked };
+const answerWith = (toolUseResult?: Bag): Record<string, unknown> => ({
+  type: 'user', parent_tool_use_id: null, uuid: 'u2', timestamp: '2020-01-01T00:00:00.000Z',
+  message: {
+    role: 'user',
+    content: [{ type: 'tool_result', tool_use_id: 'toolu_ask', content: 'ok', ...(toolUseResult === undefined ? {} : { toolUseResult }) }],
+  },
+});
+
+it('carries the questions and the answers of a replayed answered question', async () => {
+  const back = await restored([ask], [answerWith({ questions: asked.questions, answers: picked })]);
+  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
+  // The input stays what the model sent, which has no answers in it.
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+});
+
+it('carries the same object live and replayed when the input holds more than its questions', async () => {
+  const wider = { ...ask, input: { ...asked, metadata: { source: 'plan' } } };
+  const back = await restored([wider], [answerWith({ questions: asked.questions, answers: picked })]);
+  expect(back.get('toolu_ask')?.structuredContent).toEqual({ questions: asked.questions, answers: picked });
+});
+
+it('carries no answers for a replayed question that was never answered', async () => {
+  const back = await restored([ask], [answerWith()]);
+  expect(back.get('toolu_ask')).not.toHaveProperty('structuredContent');
+  expect(back.get('toolu_ask')?.toolInput).toBe(JSON.stringify(asked));
+});
+
+/*
+ * The answered question, restored.
+ *
+ * A client hides a completed AskUserQuestion row and draws the turn's
+ * `inputRequest` part instead. A live turn has that part because the protocol's
+ * reducer records the ask and the completion, so it is what a session reads as
+ * it ran; rebuilt from the transcript it is built here, by the same code, so it
+ * is what the same session reads as it comes back.
+ */
+
+/** The parts of a restored turn of a `tool_use`, by kind. */
+const partsOf = async (after: Record<string, unknown>[]): Promise<Bag[]> => {
+  sdk.frames = [
+    { type: 'user', uuid: 'u1', timestamp: '2020-01-01T00:00:00.000Z', message: { role: 'user', content: 'go' } },
+    { type: 'assistant', uuid: 'a1', timestamp: '2020-01-01T00:00:00.000Z', message: { id: 'msg_1', role: 'assistant', content: [ask] } },
+    ...after,
+  ];
+  const turns = await turnsOf('session', '/tmp/project') as unknown as Bag[];
+  return (turns[0]?.responseParts ?? []) as Bag[];
+};
+
+it('draws a restored answered question as the live one draws it', async () => {
+  const { part: live } = await asking(true);
+  const parts = await partsOf([answerWith({ questions: asked.questions, answers: picked })]);
+  const at = parts.findIndex((one) => one.kind === 'inputRequest');
+  expect(at).toBe(parts.findIndex((one) => one.kind === 'toolCall') + 1);
+  expect(parts[at]).toEqual(live);
+  // Both questions, and the multi-select among them, filled in as they were sent.
+  expect(((live?.request as Bag).answers as Bag)).toEqual(said);
+});
+
+it('draws no question for a restored one that was never answered', async () => {
+  await asking(false);
+  const parts = await partsOf([answerWith()]);
+  expect(parts.filter((one) => one.kind === 'inputRequest')).toEqual([]);
 });

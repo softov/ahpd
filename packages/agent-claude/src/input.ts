@@ -1,5 +1,5 @@
-import type { Bag } from '@ahpd/sdk';
-import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
+import type { Bag, OnWire } from '@ahpd/sdk';
+import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMarkdown } from '@microsoft/agent-host-protocol';
 
 /**
  * What a tool call says about its input, live and read back from a transcript.
@@ -9,6 +9,8 @@ import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
  */
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
+const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
+const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 /**
  * What a tool call is *about*, in one line.
@@ -44,6 +46,80 @@ export function summarize(name: string, input: Bag): string | undefined {
 export function toolInputOf(name: string, input: Bag): string | undefined {
   if (name === 'Bash') return str(input.command);
   return Object.keys(input).length > 0 ? JSON.stringify(input) : undefined;
+}
+
+/**
+ * The carousel an `AskUserQuestion` asks for, and the map its answers are read
+ * back through.
+ *
+ * The questions keyed `q1`..`qN` in the order they were asked, each an option
+ * list keyed by the label the SDK wants the answer valued by. The map is from
+ * each question's key to the question's own text, which is what an answer is
+ * keyed by.
+ *
+ * One builder for the question a person answers now and the one a transcript
+ * draws after a restart, so the two are the same thing rather than two that
+ * have to be kept alike.
+ */
+export function questionRequest(input: Bag, id: string): { request: OnWire<ChatInputRequest>; asked: Map<string, string> } {
+  const asked = new Map<string, string>();
+  const questions: OnWire<ChatInputQuestion>[] = list(input.questions).map((entry, index) => {
+    const question = bag(entry);
+    const key = `q${index + 1}`;
+    asked.set(key, str(question.question) ?? '');
+    const carousel = {
+      id: key,
+      message: str(question.question) ?? '',
+      required: true,
+      // The label is the id, because the label is what the SDK wants back:
+      // answers are valued by the option's own label, not by an id.
+      options: list(question.options).map((option) => {
+        const held = bag(option);
+        const label = str(held.label) ?? '';
+        const description = str(held.description);
+        return {
+          id: label,
+          label,
+          // Carried through because a choice with a name and no explanation is
+          // a choice somebody has to guess at, and the agent wrote one for
+          // every option it offered.
+          ...(description === undefined ? {} : { description }),
+        };
+      }),
+      allowFreeformInput: true,
+    };
+    return question.multiSelect === true
+      ? { ...carousel, kind: 'multi-select' } satisfies OnWire<ChatInputQuestion>
+      : { ...carousel, kind: 'single-select' } satisfies OnWire<ChatInputQuestion>;
+  });
+  return { request: { id, message: str(input.header) ?? 'The agent has a question', questions }, asked };
+}
+
+/**
+ * What a question was answered, in the shape a client draws it.
+ *
+ * The SDK keys an answer by the question's own text and a multi-select by the
+ * labels picked, which is what a transcript records; a question restored from
+ * one is drawn from that, and a client keys the answers on a part by the
+ * question's id. So this reads the transcript's key and says it under the id
+ * the carousel gave the question, which is what a live completion carries.
+ */
+export function questionAnswers(request: OnWire<ChatInputRequest>, answers: Bag): Record<string, OnWire<ChatInputAnswer>> {
+  const keyed = new Map((request.questions ?? []).map((question) => [question.message, question.id]));
+  const out: Record<string, OnWire<ChatInputAnswer>> = {};
+  for (const [asked, value] of Object.entries(answers)) {
+    const id = keyed.get(asked);
+    if (id === undefined) continue;
+    out[id] = {
+      state: 'submitted',
+      value: Array.isArray(value)
+        ? { kind: 'selected-many', value: value.map((one) => String(one)) }
+        : typeof value === 'string'
+          ? { kind: 'selected', value }
+          : { kind: 'text', value: String(value) },
+    };
+  }
+  return out;
 }
 
 /** A string field that is present and not empty. */

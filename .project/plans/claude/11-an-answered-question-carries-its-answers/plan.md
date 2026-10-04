@@ -1,7 +1,7 @@
 ---
 title: An answered AskUserQuestion call carries its answers, live and after a restart
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-09-30
 revalidated: 2026-09-30
@@ -53,9 +53,9 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A live answered question carries its answers](task-01-a-live-answered-question-carries-its-answers.md) | todo | claude/08 |
-| [02 - A replayed answered question carries its answers](task-02-a-replayed-answered-question-carries-its-answers.md) | todo | 01 |
-| [03 - A restored question is drawn as the answered question](task-03-a-restored-question-is-drawn-answered.md) | todo | 02 |
+| [01 - A live answered question carries its answers](task-01-a-live-answered-question-carries-its-answers.md) | done | claude/08 |
+| [02 - A replayed answered question carries its answers](task-02-a-replayed-answered-question-carries-its-answers.md) | done | 01 |
+| [03 - A restored question is drawn as the answered question](task-03-a-restored-question-is-drawn-answered.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -63,13 +63,10 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-live-answered-question-carries-its-answers.md](task-01-a-live-answered-question-carries-its-answers.md); claude/08 is committed (fd3295b).
-- **Open questions:** none.
-- **Watch out for:** VS Code hides a completed AskUserQuestion row and draws only the `inputRequest` part, so tasks 01 and 02 alone change nothing in VS Code. ahpapp's chat/01 draws from this; keep the answer values as the SDK has them, strings and arrays of strings.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A live and a replayed answered AskUserQuestion carry the same answers in `result.structuredContent`, and the same answered `inputRequest` part.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] A live and a replayed answered AskUserQuestion carry the same answers in `result.structuredContent`, and the same answered `inputRequest` part.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

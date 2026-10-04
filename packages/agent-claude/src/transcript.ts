@@ -5,7 +5,7 @@ import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { lineOf, pastLineOf, toolInputOf } from './input.js';
+import { lineOf, pastLineOf, questionAnswers, questionRequest, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 
 /**
@@ -206,6 +206,13 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
   /*
+   * Each call's input as it was sent, which its `tool_input` on the call is the
+   * string of. Kept as the object because a question's result says what it was
+   * answered *with*, and that is the input it ran with, not a line drawn from
+   * it.
+   */
+  const inputs = new Map<string, Bag>();
+  /*
    * Each turn's usage by API message. The CLI writes one message as a frame
    * per content block, each repeating that message's usage, so a message is
    * counted once however many frames carry it.
@@ -228,13 +235,17 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         ? message.content
         : list(message.content).map((b) => str(bag(b).text)).filter(Boolean).join('\n');
 
+      // The turn the results below belong to, which is the one the prompt
+      // before them opened.
+      const open = built[built.length - 1];
       // A user frame carrying only tool results is the SDK reporting calls
       // finishing, not somebody saying something. Turning it into a turn puts
       // the agent's own tool output in the person's voice.
       for (const raw of list(message.content)) {
         const block = bag(raw);
         if (str(block.type) !== 'tool_result') continue;
-        const call = calls.get(str(block.tool_use_id) ?? '');
+        const callId = str(block.tool_use_id) ?? '';
+        const call = calls.get(callId);
         if (!call) continue;
         /*
          * A tool that failed is `completed`, and says so in its result.
@@ -257,12 +268,47 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         if (text !== undefined)
           call.content = [{ type: 'text', text }] satisfies OnWire<ToolResultContent>[];
         if (!ok) call.error = { message: text ?? 'The tool failed' };
+        /*
+         * What an answered question ran with, for a result that says so.
+         *
+         * The SDK records the `updatedInput` it was handed as the result's
+         * `toolUseResult`, so a question anybody answered carries its input and
+         * the answers keyed by each question's own text. The live call of the
+         * same question carries them the same way, and a result with no
+         * `toolUseResult` was never answered, so it keeps its input as sent.
+         */
+        const ran = inputs.get(callId);
+        const answers = bag(bag(block.toolUseResult).answers);
+        if (ran !== undefined && Object.keys(answers).length > 0) {
+          // The same object the live call carries: what the SDK was handed back.
+          call.structuredContent = { questions: Array.isArray(ran.questions) ? ran.questions : [], answers };
+          /*
+           * The question as it was answered, after the call it was asked in.
+           *
+           * A client hides a completed AskUserQuestion row and draws the turn's
+           * `inputRequest` part instead, which a live turn has because the
+           * protocol's reducer records the ask and the completion. Rebuilt from
+           * the transcript it had nothing, so a session lost its questions and
+           * answers the moment the daemon restarted; built here, by the same
+           * code the live question is, it reads after a restart as it read
+           * before one. A question with no answers was never asked by anybody,
+           * denied or cancelled, and gets no part.
+           */
+          if (open !== undefined) {
+            const request = questionRequest(ran, callId).request;
+            const part: Bag = {
+              kind: 'inputRequest',
+              request: { ...request, answers: questionAnswers(request, answers) },
+              response: 'accept',
+            };
+            open.responseParts = [...(open.responseParts as Bag[]), part];
+          }
+        }
         // When it ended, on the frame that carries its result.
         call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? at, at));
       }
       // A frame of tool results is part of the turn the prompt opened, so the
       // turn ends when the last of them was written.
-      const open = built[built.length - 1];
       if (open !== undefined) lastAt.set(open, Date.parse(at));
       if (!said) continue;
       // Written by the CLI rather than said by anybody: it neither shows as a
@@ -322,7 +368,8 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         parts.push({ id, kind: 'reasoning', content: str(block.thinking) ?? '' } satisfies OnWire<ResponsePart>);
       } else if (kind === 'tool_use') {
         const name = str(block.name) ?? 'tool';
-        const input = toolInputOf(name, bag(block.input));
+        const given = bag(block.input);
+        const input = toolInputOf(name, given);
         const meta = withCallTimes(toolMetaOf(name), callTimes(at));
         /*
          * Checked against the state it claims to be in, at the moment it is
@@ -358,12 +405,13 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
            * recorded is one that finished with nothing to report, not one
            * that failed.
            */
-          invocationMessage: lineOf(name, bag(block.input)),
+          invocationMessage: lineOf(name, given),
           confirmed: 'not-needed',
           success: true,
-          pastTenseMessage: pastLineOf(name, bag(block.input)),
+          pastTenseMessage: pastLineOf(name, given),
         } satisfies OnWire<ToolCallCompletedState>;
         calls.set(id, call);
+        inputs.set(id, given);
         // The part is not re-checked: `call` is a `Bag` from here on, because
         // a tool result arriving later mutates it. The literal above is what
         // the protocol changes under, and the literal is what is checked.

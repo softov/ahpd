@@ -6,7 +6,7 @@ import { createSdkMcpServer, query } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { protectedResource, urlOf } from './mcp.js';
-import { lineOf, pastLineOf, summarize, toolInputOf } from './input.js';
+import { lineOf, pastLineOf, questionRequest, summarize, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 import { flagSettingsOf, optionDefaults, queryOptionsOf } from './options.js';
 import type { ActiveTurn, McpServerState, StringOrMarkdown, ToolCallCompletedState, ToolCallRunningState, ToolResultContent, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
@@ -2019,6 +2019,10 @@ export function createSession(options: ClaudeSessionOptions): Session {
        */
       const said = (id === undefined ? undefined : pastLines.get(id)) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
       if (id !== undefined) pastLines.delete(id);
+      // The input a question ran with, for a call that was answered. A denied or
+      // cancelled one was never answered and settles with no input recorded.
+      const answered = id === undefined ? undefined : answeredInputs.get(id);
+      if (id !== undefined) answeredInputs.delete(id);
       /*
        * The link survives the result.
        *
@@ -2039,6 +2043,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
           ? { content: [...(workerContent !== undefined ? [workerContent] : []), ...(text !== undefined ? [{ type: 'text', text }] : [])] as OnWire<ToolResultContent>[] }
           : {}),
         ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
+        ...(answered !== undefined ? { structuredContent: answered } : {}),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;
       /*
        * Onto the call *and* into the action, from one object.
@@ -2178,35 +2183,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
       const where = scope.chat?.uri ?? chatUri;
 
       if (toolName === 'AskUserQuestion') {
-        const asked = new Map<string, string>();
-        const questions = list(raw.questions).map((entry, index) => {
-          const question = bag(entry);
-          const key = `q${index + 1}`;
-          asked.set(key, str(question.question) ?? '');
-          return {
-            id: key,
-            kind: question.multiSelect === true ? 'multi-select' : 'single-select',
-            message: str(question.question) ?? '',
-            required: true,
-            // The label is the id, because the label is what the SDK wants
-            // back: answers are valued by the option's own label, not by an id.
-            options: list(question.options).map((option) => {
-              const held = bag(option);
-              const label = str(held.label) ?? '';
-              const description = str(held.description);
-              return {
-                id: label,
-                label,
-                // Carried through because a choice with a name and no
-                // explanation is a choice somebody has to guess at, and the
-                // agent wrote one for every option it offered.
-                ...(description === null ? {} : { description }),
-              };
-            }),
-            allowFreeformInput: true,
-          };
-        });
-        const request = { id, message: str(raw.header) ?? 'The agent has a question', questions };
+        // The same builder a restored question is drawn from, so the two are
+        // one thing rather than two that have to be kept alike.
+        const { request, asked } = questionRequest(raw, id);
         // `chat` is required on every input request and was never sent.
         const entry: Bag = { id, chat: where, kind: 'chatInput', request };
         pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle });
@@ -2874,6 +2853,16 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   const pastLines = new Map<string, StringOrMarkdown>();
+
+  /**
+   * The input an answered question ran with, by its call id.
+   *
+   * The protocol's complete action carries no `toolInput` of its own, so the
+   * answers the tool was given travel in its `result.structuredContent` - the
+   * protocol's own structured result - where a client draws them from the call
+   * instead of parsing the result's sentence.
+   */
+  const answeredInputs = new Map<string, Bag>();
 
   /** The server name behind an `mcp:` customization id, if it is one. */
   const serverNamed = (id: string): string | undefined =>
@@ -4040,7 +4029,14 @@ export function createSession(options: ClaudeSessionOptions): Session {
         const inner = bag(answer.value);
         said[question] = inner.value ?? answer.value ?? value;
       }
-      held.settle({ behavior: 'allow', updatedInput: { questions: held.questions ?? [], answers: said } });
+      /*
+       * The input the tool ran with: its questions as sent plus what was
+       * answered, which is what the SDK records and what a client draws the
+       * answered question from once the call is complete.
+       */
+      const updated = { questions: held.questions ?? [], answers: said };
+      answeredInputs.set(held.id, updated);
+      held.settle({ behavior: 'allow', updatedInput: updated });
       touch();
     },
 
@@ -4048,6 +4044,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       closed = true;
       ended.clear();
       pastLines.clear();
+      answeredInputs.clear();
       spawning.clear();
       background.clear();
       wake?.();
