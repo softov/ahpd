@@ -148,6 +148,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [14 - A model the CLI rejects fails the turn that asked for it](claude/14-a-rejected-model-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](claude/14-a-rejected-model-fails-the-turn/implemented.md)) | claude 13 | - |
 | [15 - A Claude plugin is loaded once, and each preset is a variant with its own name and models](claude/15-one-load-and-each-preset-is-a-variant/plan.md) | high | built 2026-10-02 ([implemented.md](claude/15-one-load-and-each-preset-is-a-variant/implemented.md)) | claude 10, 12, 13 | the ACP presets plan |
 | [16 - A Claude preset that cannot be resolved skips only itself](claude/16-a-preset-that-fails-skips-only-itself/plan.md) | high | built 2026-10-03 ([implemented.md](claude/16-a-preset-that-fails-skips-only-itself/implemented.md)) | claude 15 | - |
+| [17 - A Claude subagent chat opens with its task's description as title and its prompt as the first message](claude/17-a-subagent-chat-opens-with-its-task/plan.md) | high | planned 2026-10-04; tasks 01-02 todo | - | - |
 
 Next free number in `claude`: `14`.
 
