@@ -214,7 +214,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 
 | [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
-| [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-05 todo | - | - |
+| [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](plugin/34-cofold-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 
 Next free number in `plugin`: `34`.
 
