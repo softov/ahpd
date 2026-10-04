@@ -125,8 +125,9 @@ Reference: [00-host.md](host/00-host.md)
 | [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/54-host-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | planned 2026-10-04; tasks 01-03 todo | - | - |
 | [56 - The catalogue answers at once, and a summary is sent only when it changes](host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md) | high | active 2026-10-04; tasks 01-04 implemented, awaiting review; 05 by hand | - | - |
+| [57 - pi, cofold and ACP find a session by id, and the listing throttle goes](host/57-pi-cofold-and-acp-find-a-session-by-id/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | host 56 | - |
 
-Next free number in `host`: `57`.
+Next free number in `host`: `58`.
 
 ## claude
 
