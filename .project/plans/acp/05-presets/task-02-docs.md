@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: done
 depends: [task-01-the-preset-table.md]
 layer: "docs"
 refs:

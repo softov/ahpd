@@ -1,7 +1,7 @@
 ---
 title: One ACP load, and each preset is an agent of its own
 domain: acp
-status: planned
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -87,8 +87,8 @@ config plugins[] -> server loadPlugins (one per name) -> agent-acp apply -> opti
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - One load, a presets map, and the shipped table](task-01-the-preset-table.md) | todo | - |
-| [02 - Docs](task-02-docs.md) | todo | 01 |
+| [01 - One load, a presets map, and the shipped table](task-01-the-preset-table.md) | done | - |
+| [02 - Docs](task-02-docs.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -98,14 +98,12 @@ config plugins[] -> server loadPlugins (one per name) -> agent-acp apply -> opti
 
 ## Resume state
 
-- **Done so far:** nothing; the plan was rewritten on 2026-10-03 to the one-load presets shape.
-- **Next action:** [task-01-the-preset-table.md](task-01-the-preset-table.md).
-- **Watch out for:** container 05 p2 adds `machine` to a preset's options and p5 a `machine` block per shipped row (part, config dir, secrets, seeds); keep a row's shape open to that block.
+- **Done so far:** built 2026-10-04, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `presets: { "copilot": {} }` alone starts a Copilot session.
-- [ ] `presets: { "codex": {}, "gemini": {} }` shows two picker entries from one load.
-- [ ] An unknown key with no `command` is skipped with one line, and the other presets register.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `presets: { "copilot": {} }` alone starts a Copilot session.
+- [x] `presets: { "codex": {}, "gemini": {} }` shows two picker entries from one load.
+- [x] An unknown key with no `command` is skipped with one line, and the other presets register.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

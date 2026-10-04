@@ -69,20 +69,8 @@
     "entry": "./dist/index.js",
     "title": "ACP",
     "options": {
-      "command": {
+      "presets": {
         "required": true
-      },
-      "args": {
-        "required": false
-      },
-      "env": {
-        "required": false
-      },
-      "cwd": {
-        "required": false
-      },
-      "provider": {
-        "required": false
       },
       "hostTools": {
         "required": false

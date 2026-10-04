@@ -761,7 +761,8 @@ ahpd --plugin @ahpd/agent-acp
 ```
 
 The command is an option rather than a flag, because a plugin is named on the
-command line and configured in the file:
+command line and configured in the file. One entry serves every ACP server,
+through a `presets` map whose each key registers an agent of its own:
 
 ```json
 {
@@ -769,10 +770,10 @@ command line and configured in the file:
     {
       "name": "@ahpd/agent-acp",
       "options": {
-        "provider": "copilot",
-        "displayName": "Copilot",
-        "command": "copilot",
-        "args": ["--acp"]
+        "presets": {
+          "copilot": {},
+          "codex": {}
+        }
       }
     }
   ]
@@ -781,21 +782,38 @@ command line and configured in the file:
 
 | Option | |
 | --- | --- |
-| `command` | The program to spawn. **Required**: a spec with nothing to run is reported at load and skipped |
-| `args` | Its arguments |
-| `env` | Environment variables merged over the daemon's own |
+| `presets` | **Required**: the agents this one load registers, by the id clients name. A key that names a shipped preset takes it, and a key that names none writes a `command` of its own |
+| `hostTools` | Offer the host's own tools to each session as an MCP server, on by default. A preset may set its own |
+
+Under `presets.<id>`:
+
+| Option | |
+| --- | --- |
+| `base` | The shipped preset this one takes, for a key that is not itself one |
+| `name` | What a client draws. The preset's own name, else the key |
+| `command` | The program to spawn. **Required** for a key that names no shipped preset and no `base` |
+| `args` | Its arguments, replacing the preset's own |
+| `env` | Environment variables merged over the daemon's own, by variable name. A value written `{ "$secret": "host:<name>" }` is read from the vault when the daemon loads |
 | `cwd` | The directory it starts in, when a session names none |
-| `provider` | The AHP provider id, `acp` when absent. Two specs with two commands are two backends |
-| `displayName` | What a client draws, `ACP` when absent |
-| `description` | One line about the backend |
+| `description` | One line about the agent |
 | `model` | The model id a session that names none runs on |
 | `authenticate` | The sign-in to send after the handshake, as `{"methodId": "api-key"}` for Codex with a key |
-| `hostTools` | Offer the host's own tools to each session as an MCP server, on by default |
+| `hostTools` | Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
 
-One spec is one server, so `copilot --acp`, `codex-acp`,
-`gemini --experimental-acp` and `@deepseek-ai/dsh-acp` are four configuration
-lines and not four packages. The command is the only thing that tells them
-apart, which is why it is the one option with no default.
+Each key is an agent of its own, so `copilot` and `codex` are two entries in the
+picker out of one package rather than two specs of one name. A per-agent option
+written at the top level fails the load and says where it goes now. A preset
+that cannot be resolved - a `base` naming no shipped preset, no `command` where
+one is needed, an `authenticate` with no `methodId`, or a `$secret` the vault
+does not hold - is skipped with one line naming it, and the rest register.
+
+The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`,
+`goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`, so `gemini --acp`,
+`codex-acp` and `@deepseek-ai/dsh-acp` are three keys and not three packages.
+Only a key that is written registers: an ACP agent's binary may not be installed
+on this host, and no shipped row is a backend anybody did not ask for. A row
+that names a key in `fromEnv` sends that sign-in only when the daemon's
+environment or the preset's `env` has the variable.
 
 The `codex` CLI has no ACP mode of its own; `codex-acp` is Codex behind an
 adapter, installed with `npm i -g @agentclientprotocol/codex-acp`. The

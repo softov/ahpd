@@ -15,9 +15,9 @@ import type { Peer } from '../../sdk/src/types/rpc.js';
  *
  * Every case goes through the real loader and the real host, and the server is
  * the scripted subprocess the other ACP tests use. What is under test is that
- * the manifest resolves the module, that `apply` contributes a provider from
- * its own options, that two specs with two commands are two backends, and that
- * a spec with nothing to spawn is reported rather than started.
+ * the manifest resolves the module, that `apply` contributes one provider per
+ * preset from a single load, and that a preset with nothing to spawn is skipped
+ * and said rather than started.
  *
  * The source file is named rather than the package directory on purpose:
  * `pnpm test` does not build, and the loader applies a manifest's `ahpd.entry`
@@ -73,10 +73,14 @@ const base = (): HostOptions => ({
 const load = (specs: PluginSpec[], over: Partial<HostOptions> = {}) =>
   loadPlugins(specs, { base: { ...base(), ...over }, configDir: REPO, cwd: REPO, log: () => {} });
 
-/** The spec for the scripted server, under whatever provider the case wants. */
-const spec = (provider: string, over: Record<string, unknown> = {}): PluginSpec => ({
+/** The spec for the scripted server, under whatever presets the case wants. */
+const spec = (presets: Record<string, Record<string, unknown>>): PluginSpec => ({
   name: SOURCE,
-  options: { command: process.execPath, args: [FIXTURE], provider, ...over },
+  options: {
+    presets: Object.fromEntries(Object.entries(presets).map(([id, over]) => [id, {
+      command: process.execPath, args: [FIXTURE], ...over,
+    }])),
+  },
 });
 
 const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => await client.handle({
@@ -109,7 +113,7 @@ const begin = (
 };
 
 it('loads the package from its source file and serves a turn through the server it names', async () => {
-  const { options, loaded, problems } = await load([spec('acp')]);
+  const { options, loaded, problems } = await load([spec({ acp: {} })]);
 
   expect(problems).toEqual([]);
   expect(loaded).toHaveLength(1);
@@ -163,15 +167,15 @@ it('lists a manifest, and its title, without importing the entry', async () => {
   expect(row.path).toBe(join(dir, 'entry.js'));
 });
 
-it('contributes one backend, and refuses a second spec of the same name', async () => {
+it('contributes one backend per preset, from one load', async () => {
   const { options, loaded, problems } = await load([
-    spec('copilot', { displayName: 'Copilot' }),
-    spec('codex', { displayName: 'Codex' }),
+    spec({ copilot: { name: 'Copilot' }, codex: { name: 'Codex' } }),
   ]);
 
-  // A plugin is loaded once and its options are what make its variants, which
-  // ACP takes in a later plan. Until then a second spec of one name is refused.
-  expect(problems).toEqual([`plugin ${SOURCE} is named 2 times; write it once and use its options for variants`]);
+  // A plugin is loaded once and its `presets` are what make its agents, so
+  // Copilot and Codex are two backends out of one entry rather than two specs
+  // of one name.
+  expect(problems).toEqual([]);
   expect(loaded).toHaveLength(1);
   expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-acp']);
 
@@ -179,28 +183,41 @@ it('contributes one backend, and refuses a second spec of the same name', async 
   const p = peer();
   const client = host.accept(p);
   const ready = await initialize(client);
-  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'copilot']);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'copilot', 'codex']);
 
   const first = await open(client, 'copilot', 'one');
   begin(client, first.chatUri, 't1', 'hi');
   await until(() => types(p, first.chatUri).includes('chat/turnComplete'));
   expect(types(p, first.chatUri).at(-1)).toBe('chat/turnComplete');
+
+  const second = await open(client, 'codex', 'two');
+  begin(client, second.chatUri, 't1', 'hi again');
+  await until(() => types(p, second.chatUri).includes('chat/turnComplete'));
+  expect(types(p, second.chatUri).at(-1)).toBe('chat/turnComplete');
 });
 
-it('reports a spec with nothing to spawn, and loads nothing for it', async () => {
-  const { loaded, problems } = await load([{ name: SOURCE, options: { provider: 'acp' } }]);
+it('skips a preset with nothing to spawn, and loads the others', async () => {
+  const { options, loaded, problems } = await load([{
+    name: SOURCE,
+    options: { presets: { acp: { command: process.execPath, args: [FIXTURE] }, nope: {} } },
+  }]);
 
-  // `command` is the one option this package cannot default, and a backend with
+  // `command` is the one thing this package cannot default, and a preset with
   // nothing to run is worth a line at load rather than a failure on the first
   // turn.
-  expect(loaded).toEqual([]);
+  expect(loaded.map((one) => one.name)).toEqual(['@ahpd/agent-acp']);
   expect(problems).toHaveLength(1);
-  expect(problems[0]).toContain('command');
+  expect(problems[0]).toContain('options.presets.nope');
+
+  const host = createHost(options);
+  const client = host.accept(peer());
+  const ready = await initialize(client);
+  expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['base', 'acp']);
 });
 
-it('lists a spec with no command as unconfigured, naming what it needs', async () => {
+it('lists a spec with no presets as unconfigured, naming what it needs', async () => {
   /*
-   * The manifest declares `command` required, so a listing says what is wrong
+   * The manifest declares `presets` required, so a listing says what is wrong
    * before anything is imported or spawned. Without the declaration the same
    * spec lists as `ready` and the problem only appears when a turn is asked
    * for, which is the failure this is here to prevent.
@@ -226,10 +243,10 @@ it('lists a spec with no command as unconfigured, naming what it needs', async (
 
   const missing = await describePlugin(dir, { configDir: REPO, cwd: REPO });
   expect(missing.state).toBe('unconfigured');
-  expect(missing.problem).toContain('command');
+  expect(missing.problem).toContain('presets');
 
   const given = await describePlugin(
-    { name: dir, options: { command: 'copilot', args: ['--acp'] } },
+    { name: dir, options: { presets: { copilot: {} } } },
     { configDir: REPO, cwd: REPO },
   );
   expect(given.state).toBe('ready');

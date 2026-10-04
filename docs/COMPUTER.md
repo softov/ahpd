@@ -411,7 +411,7 @@ cat > /tmp/ahpd-computer.json <<'JSON'
   "paths": ["/github/ahpd"],
   "plugins": [
     { "name": "./packages/computer/src/index.ts", "options": { "image": "node:22", "bodyMounts": true } },
-    { "name": "./packages/agent-acp/src/index.ts", "options": { "command": "node", "args": ["/srv/acp.mjs"], "provider": "acp" } }
+    { "name": "./packages/agent-acp/src/index.ts", "options": { "presets": { "acp": { "command": "node", "args": ["/srv/acp.mjs"] } } } }
   ]
 }
 JSON

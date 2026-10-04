@@ -8,7 +8,7 @@
 
 An [Agent Client Protocol](https://agentclientprotocol.com) backend for [`@ahpd/sdk`](https://www.npmjs.com/package/@ahpd/sdk), and a plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server) daemon.
 
-Any program that speaks ACP over its stdio is one configured command, not a package of its own, so `copilot --acp`, `codex-acp`, `gemini --experimental-acp` and `@deepseek-ai/dsh-acp` all run through this one package.
+Any program that speaks ACP over its stdio is one configured command, not a package of its own, so `copilot --acp`, `codex-acp`, `gemini --acp` and `@deepseek-ai/dsh-acp` all run through this one package.
 
 Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agent-acp`](https://github.com/softov/ahpd/tree/main/packages/agent-acp).
 
@@ -18,24 +18,22 @@ Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agen
 ahpd plugin install @ahpd/agent-acp
 ```
 
-Then add one entry per ACP server to `plugins` in the daemon's `config.json`:
+Then add one entry to `plugins` in the daemon's `config.json`, and one key per ACP server under its `presets`:
 
 ```json
 {
   "plugins": [
     {
       "name": "@ahpd/agent-acp",
-      "options": { "provider": "copilot", "displayName": "Copilot", "command": "copilot", "args": ["--acp"] }
-    },
-    {
-      "name": "@ahpd/agent-acp",
-      "options": { "provider": "codex", "displayName": "Codex", "command": "codex-acp" }
+      "options": { "presets": { "copilot": {}, "codex": {} } }
     }
   ]
 }
 ```
 
-The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. A command that is missing fails that provider's turns with a message and leaves the daemon running.
+Each key registers an agent of its own, under that key as the provider id, so `copilot` and `codex` are two entries in the picker out of one load.
+
+The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`. A key that names none of them writes a `command` of its own, and a key that names one takes its command, its arguments and its environment. The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. A command that is missing fails that provider's turns with a message and leaves the daemon running.
 
 ## In your own host
 
@@ -63,16 +61,25 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 | option | | |
 | --- | --- | --- |
-| `command` | required | the program to spawn as the ACP server |
-| `args` | | the arguments to give it |
-| `env` | | environment variables merged over `process.env` for the child |
+| `presets` | required | the agents this one load registers, by the id clients name. A key that names a shipped preset takes it; a key that names none writes a `command` of its own |
+| `hostTools` | | offer the host's own tools to each session as an MCP server, on by default. A preset may set its own |
+
+Under `presets.<id>`:
+
+| option | | |
+| --- | --- | --- |
+| `base` | | the shipped preset this one takes, for a key that is not itself one |
+| `name` | | what a client reads instead of the id, which is this key. The preset's own name when it has one |
+| `command` | | the program to spawn as the ACP server. Required for a key that names no shipped preset and no `base` |
+| `args` | | the arguments to give it, replacing the preset's own |
+| `env` | | environment variables merged over `process.env` for the child, by variable name. A value written `{ "$secret": "host:<name>" }` is read from the vault when the daemon loads |
 | `cwd` | | the directory the server runs in; the session's working directory when absent |
-| `provider` | | the AHP provider id, default `acp` |
-| `displayName` | | what a client reads instead of the id, default `ACP` |
-| `description` | | one line about what this backend is |
+| `description` | | one line about what this agent is |
 | `model` | | the model a session that names none runs on |
 | `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
-| `hostTools` | | offer the host's own tools to each session as an MCP server, on by default |
+| `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+
+A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved - a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, or a `$secret` the vault does not hold - is skipped with one line naming it, and the rest register. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable.
 
 ## What it does
 

@@ -321,13 +321,13 @@ The same list goes in the configuration, where an entry can carry options:
     "@ahpd/agent-claude",
     {
       "name": "@ahpd/agent-acp",
-      "options": { "provider": "copilot", "command": "copilot", "args": ["--acp"] }
+      "options": { "presets": { "copilot": {} } }
     }
   ]
 }
 ```
 
-What each one is and the options it takes live with the package. `@ahpd/agent-acp` is one provider per configured command, so `copilot --acp`, `codex-acp` and `gemini --experimental-acp` are three entries rather than three packages.
+What each one is and the options it takes live with the package. `@ahpd/agent-acp` registers one agent per key of its `presets` map, so `copilot --acp`, `codex-acp` and `gemini --acp` are three keys rather than three packages.
 
 A custom agent implements the same `Agent` interface and is named the same way as the four above. A client speaks only AHP and depends on no agent SDK.
 

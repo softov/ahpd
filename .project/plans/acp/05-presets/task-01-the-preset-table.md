@@ -1,6 +1,6 @@
 ---
 title: One load, a presets map, and the shipped table
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
