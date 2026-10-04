@@ -1,7 +1,7 @@
 ---
 title: Open plans cite the new files
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -44,11 +44,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** task 01 implemented. 32 open folders rewritten, plus plugin/20 and plugin/33; the search re-run, so host/47's children, 49, 50 and 51 were found built since the plan was written and dropped. The two checklist checks below pass.
-- **Next action:** review, then the parent's own checklist.
+- **Done so far:** built 2026-10-04 in `ca6adcb`; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
 - **Open questions:** none.
-- **Watch out for:** other agents edit open plans concurrently; rewrite one plan folder per edit and re-read each file just before editing it.
-- **Watch out for:** `.project/plans/daemon/00-daemon.md` is a research note, not a plan, cites `host.ts`, and is deliberately left.
 
 ## Final verification checklist
 

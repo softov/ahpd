@@ -1,7 +1,7 @@
 ---
 title: The method table is split by family
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -60,10 +60,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** all five tasks. `host.ts` is 2,768 lines, from 5,077. The `handlers` literal in `accept` is six spreads and nothing else: `...handshake, ...methods, ...sessionMethods, ...terminalMethods, ...automationMethods, ...vscode`, in the method order the literal had before.
-- **Next action:** none. The plan is finished; p10 takes `applyDispatch` out of `accept`.
-- **Open questions:** none of its own.
-- **Watch out for:** `packages/computer/test/computer-disposable.test.ts` fails its own `afterEach` with `ENOTEMPTY` on `rmSync` of a scratch directory now and then, on a machine with other work running. It is not caused by this plan; re-run the file alone before believing it.
+- **Done so far:** built 2026-10-04 in `ca6adcb`; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Open questions:** none.
 
 ## Final verification checklist
 

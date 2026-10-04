@@ -1,7 +1,7 @@
 ---
 title: Action dispatch is split by family
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -47,10 +47,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** both tasks. `host/actions.ts` holds `dispatchable` and the whole of `applyDispatch`, and `host/chatactions.ts` holds the part from the worker check to the end of the switch, called at one seam. `host.ts` is 1,141 lines, unchanged by this plan, as neither task touches it.
-- **Next action:** none of its own. The parent plan's row for this child can go to `implemented`.
-- **Open questions:** none of its own.
-- **Watch out for:** `chatAction` takes `params` as well as the five the task listed. The wait around `restarting.get(...)` re-enters the queue with `conn.applyNow(params, origin)`, and the dispatch envelope is not derivable from `action`. Recorded in task-02's Resume.
+- **Done so far:** built 2026-10-04 in `ca6adcb`; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Open questions:** none.
 
 ## Final verification checklist
 

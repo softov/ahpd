@@ -143,9 +143,9 @@ Estimated at 1,500 to 2,000 lines.
 
 ## Resume state
 
-- **Done so far:** p1-p8 built 2026-10-03/04 (`host.ts` 11,658 -> 5,077 lines), in `f1b3bd1`. p9, p10 and p11 built 2026-10-04 in this worktree: `host.ts` 5,077 -> 1,141 lines, `packages/sdk/src/host/` holding 30 files, and 32 open plan folders rewritten to cite them.
+- **Done so far:** p1 to p11 built and merged (p1 to p4 in `c78dbeb`, p5 to p8 in `f1b3bd1`, p9 to p11 in `ca6adcb`); `host.ts` is 1,141 lines, from 11,658, with `packages/sdk/src/host/` holding 30 files.
 - **p3's dead copies are gone.** The reviewer removed `git.ts`, `github.ts` and `worktrees.ts` from `packages/sdk/src/` when p1-p4 landed; only `packages/sdk/src/repo/` holds them now.
-- **Next action:** review, then merge this worktree.
+- **Next action:** Softov's review of p9 to p11, which moves them to `done`; this plan is then built.
 - **Requires:** plugin/29, which is in the tree (commit `804a549`).
 - **Blocks:** host/43, host/44 p2, host/44 p3, host/45, host/46 and host/47, which all edit `host.ts` and run after this plan, against the new files.
 - **Open questions:** none.
