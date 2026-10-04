@@ -15,6 +15,7 @@ gVisor is not part of this: it is a docker profile option, [plugin 19](../plans/
 
 - Podman, a local runtime with an exec command and bind mounts; nearly docker's own CLI, so cheap.
 - A hosted sandbox service; it would bring a vendor SDK, which is a dependency and Softov's call.
+- A microVM, by Kata under Docker or by microsandbox as a maker of its own: [a-computer-can-be-a-microvm.md](a-computer-can-be-a-microvm.md).
 - Incus, FreeBSD jails and bhyve, each judged on whether it has a command whose stdio is a process inside the machine, which is what `ComputerPort.how()` needs.
 
 ## Working without a mount
