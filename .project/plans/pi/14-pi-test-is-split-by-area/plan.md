@@ -1,7 +1,7 @@
 ---
 title: agent-pi.test.ts is split into one test file per area
 domain: pi
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -90,10 +90,10 @@ The moved lines are copied as they are; the only new lines are imports, `export`
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The fake pi is a module the suites share](task-01-the-fake-pi-is-a-shared-module.md) | todo | - |
-| [02 - The tool and asking cases are files of their own](task-02-tools-and-asking-are-files.md) | todo | 01 |
-| [03 - The mapping and disk cases are files of their own](task-03-mapping-and-disk-are-files.md) | todo | 01 |
-| [04 - agent-pi.test.ts holds the session cases, and the domain names every file](task-04-the-session-file-and-the-domain.md) | todo | 02, 03 |
+| [01 - The fake pi is a module the suites share](task-01-the-fake-pi-is-a-shared-module.md) | implemented | - |
+| [02 - The tool and asking cases are files of their own](task-02-tools-and-asking-are-files.md) | implemented | 01 |
+| [03 - The mapping and disk cases are files of their own](task-03-mapping-and-disk-are-files.md) | implemented | 01 |
+| [04 - agent-pi.test.ts holds the session cases, and the domain names every file](task-04-the-session-file-and-the-domain.md) | implemented | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -105,15 +105,15 @@ The moved lines are copied as they are; the only new lines are imports, `export`
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-fake-pi-is-a-shared-module.md](task-01-the-fake-pi-is-a-shared-module.md).
+- **Done so far:** all four tasks implemented and uncommitted, awaiting review. `agent-pi.test.ts` is 669 lines and holds the session, models, schema, agent and plugin cases; the tools, asking, mapping and disk areas are files of their own; `test/fake-pi.ts` is the fake they share; `00-pi.md` names them.
+- **Next action:** Softov's review. Nothing is committed, and `plans/index.md` is untouched by request, so the plan's last checklist box is still open.
 - **Open questions:** none.
-- **Watch out for:** line numbers are at `b4f1a4b`; find each area by its `// <Area> ---` header and each case by its name. Take the name list before task 01 and keep it outside the repository. Never `export` a reassigned copy of `root`; the `let` itself is exported.
+- **Watch out for:** the test name list is an md5, `fdec06ddb7fc9d771105d88551246ba7`, because this shell refuses to write a file from a command; the count is 157, not the plan's 151, since `agent-pi-delete.test.ts` arrived after `b4f1a4b`. `root` is `export let root`, never a reassigned copy.
 
 ## Final verification checklist
 
-- [ ] `wc -l packages/agent-pi/test/*.ts` shows no file over 800 lines and `agent-pi.test.ts` under 700.
-- [ ] `pnpm exec vitest list packages/agent-pi | sed 's/^[^>]*> //' | sort` matches the list taken at `b4f1a4b`, 151 lines.
-- [ ] `git diff --stat` touches only `packages/agent-pi/test/` and `.project/plans/pi/00-pi.md`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-pi` pass.
-- [ ] `plans/index.md` updated.
+- [x] `wc -l packages/agent-pi/test/*.ts` shows no file over 800 lines and `agent-pi.test.ts` under 700. The largest is `agent-pi.test.ts` at 669.
+- [x] `pnpm exec vitest list packages/agent-pi | sed 's/^[^>]*> //' | sort` matches the list taken at `b4f1a4b`, 151 lines. It is 157 today, since `agent-pi-delete.test.ts` added six after `b4f1a4b`, and the md5 of the sorted list is unchanged from before the first edit.
+- [x] `git diff --stat` touches only `packages/agent-pi/test/` and `.project/plans/pi/00-pi.md`, plus this plan's own task files.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/agent-pi` pass. The full `pnpm test` is 190 files and 2,839 tests, all passing.
+- [ ] `plans/index.md` updated. Left alone by the request of 2026-10-04.

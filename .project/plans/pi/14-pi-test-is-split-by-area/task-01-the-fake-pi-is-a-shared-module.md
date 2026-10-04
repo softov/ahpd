@@ -1,6 +1,6 @@
 ---
 title: The fake pi is a module the suites share
-status: todo
+status: implemented
 depends: []
 layer: "agent-pi tests"
 refs:
@@ -36,3 +36,10 @@ refs:
 - The test count is equal before and after: `pnpm exec vitest list packages/agent-pi | sed 's/^[^>]*> //' | sort` has 151 lines and `diff` against the list taken at `b4f1a4b` prints nothing.
 
 ## Resume
+
+- `packages/agent-pi/test/fake-pi.ts` is 196 lines and holds the `beforeAll` that loads pi, `export let root: string;` with its `beforeEach` and `afterEach`, `turn`, `streamed`, `fakePi`, `opened`, `settled`, `driveCall` and `answer`. Its top comment says what it holds, that it is not a test file, and that the hooks register per importing file because vitest isolates each one.
+- `agent-pi.test.ts` is 1,993 lines and imports the nine moved names from `./fake-pi.js`; `callStatuses` stayed in it until task 02, as the plan says.
+- Imports dropped from `agent-pi.test.ts` because nothing left uses them: `afterEach`, `beforeAll` and `beforeEach`, `forget`, `PiModel`, `PiBackend`, `PiOptions` and `PiTurn`. `modelFor` stays, because the Models area calls it too; `BackendOptions` stays for the two cases that build their own `OpenPi`.
+- Gates: `pnpm exec tsc --noEmit` and `pnpm boundary` pass; `pnpm exec vitest run packages/agent-pi` is 135 tests in `agent-pi.test.ts` and 157 over the folder, with only `agent-pi-lazy.test.ts`'s 2,000 ms import budget failing, which fails on `b4f1a4b` too.
+- The name list check is an md5 of `pnpm exec vitest list packages/agent-pi | sed 's/^[^>]*> //' | sort`, because this shell denies writing a file from a command: `fdec06ddb7fc9d771105d88551246ba7` before the first edit and after this one. The plan's 151 is the count at `b4f1a4b`; `agent-pi-delete.test.ts` has since added six.
+- Not known to the plan: that the folder now holds six sibling files rather than five, and that 157 tests, not 151, is the number to keep.

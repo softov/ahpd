@@ -18,7 +18,7 @@ import type { OpenPi } from '../src/session.js';
 /*
  * A fork asked for by a client, through the host.
  *
- * The session-level cases in `agent-pi.test.ts` hand `forkAt` over directly;
+ * The session-level cases in `agent-pi-disk.test.ts` hand `forkAt` over directly;
  * this drives the host that decides which point to hand over - `forkPoint` on
  * a `createChat` with `source.kind: 'fork'` - and checks that the session the
  * host opens for the new chat is asked to branch at it. It is the same shape as

@@ -1,6 +1,6 @@
 ---
 title: The mapping and disk cases are files of their own
-status: todo
+status: implemented
 depends:
   - task-01-the-fake-pi-is-a-shared-module.md
 layer: "agent-pi tests"
@@ -41,3 +41,9 @@ The event mapping and call timing cases run from `agent-pi-mapping.test.ts`, the
 - `pnpm exec vitest list packages/agent-pi/test/agent-pi-mapping.test.ts` lists 18 tests and `agent-pi-disk.test.ts` 13.
 
 ## Resume
+
+- `agent-pi-mapping.test.ts` is 334 lines: `// Mapping ---` (12 cases) then `// When a call ran ---` with its block comment, `metaOf`, `timed` and the six timing cases, 18 in all.
+- `agent-pi-disk.test.ts` is 272 lines: `// A session from disk ---` with `sessionOnDisk` and the four cases, then `// The id a session is saved under ---` with `CLIENT_ID` and the nine, 13 in all. `answer` came from `./fake-pi.js` as task 01 left it.
+- `agent-pi-fork.test.ts:21` now names `agent-pi-disk.test.ts`; the comments in `agent-pi-usage.test.ts` and `agent-pi-truncate.test.ts` were left as they are, because the cases they point at stayed in `agent-pi.test.ts`.
+- `agent-pi.test.ts` is 669 lines. Its imports are now `join`, `expect`, `it`, `Status`, `Bag`, `Start`, `piAgent`, `idOf`, `modelFor`, `offered`, `THINKING_KEY`, `optionsOf`, `piSession`, `OpenPi` and six names from `./fake-pi.js`; `readFileSync`, `basename`, `vi`, `AgentSessionEvent`, `activityOf`, `mapEvent`, `resultText`, `loadPi`, `resumeOrCreate`, `BackendOptions`, `toPiTool`, `answer` and `turn` went with the areas that used them.
+- Gates: `pnpm exec tsc --noEmit` and `pnpm boundary` pass; `vitest list` gives 18 and 13 for the two new files and the md5 of the whole list is still `fdec06ddb7fc9d771105d88551246ba7`; `vitest run packages/agent-pi` is 157 tests with only the `agent-pi-lazy.test.ts` budget failing.

@@ -1,6 +1,6 @@
 ---
 title: The tool and asking cases are files of their own
-status: todo
+status: implemented
 depends:
   - task-01-the-fake-pi-is-a-shared-module.md
 layer: "agent-pi tests"
@@ -39,3 +39,9 @@ The host tool and backend cases run from `agent-pi-tools.test.ts`, the ask and p
 - `pnpm exec vitest list packages/agent-pi/test/agent-pi-tools.test.ts` lists 21 tests and `agent-pi-asking.test.ts` 28.
 
 ## Resume
+
+- `agent-pi-tools.test.ts` is 345 lines: the `// Host tools ---` area with `noClient` and `callTool`, then `// Tools and the backend ---`, 21 cases, and it imports `root`, `turn`, `fakePi`, `opened`, `settled` and `driveCall` from `./fake-pi.js`.
+- `agent-pi-asking.test.ts` is 400 lines: `callStatuses` and its comment, the ask cases including the `it.each` of ten rows, then `// Permission modes ---` with `verdict`, 28 cases, importing `root`, `opened`, `settled` and `driveCall`.
+- Both were written with the imports the moved code uses and nothing else; `mkdtempSync`, `symlinkSync`, `tmpdir`, `rmSync` and `BoundTool` left `agent-pi.test.ts` with them, and `callStatuses` left it too.
+- `agent-pi.test.ts` is 1,263 lines and 55 cases less.
+- Gates: `pnpm exec tsc --noEmit` and `pnpm boundary` pass; `vitest list` gives 21 and 28 for the two new files and the md5 of the whole list is still `fdec06ddb7fc9d771105d88551246ba7`; `vitest run packages/agent-pi` is 157 tests with only the `agent-pi-lazy.test.ts` budget failing.
