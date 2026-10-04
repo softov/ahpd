@@ -42,6 +42,7 @@ This is the list decision [plugin-registration-kinds](../../decisions/plugin-reg
 | customization | `registerCustomization(customization)` | append | a new `HostOptions.customizations`, merged into every session and into an agent's `probe()`, which is where skills, prompts, rules and hook data live | not planned yet |
 | MCP server | `registerMcpServer(server)` | append | a customization of type `mcpServer`, and `Start.mcpServers`, which `SessionOptions` already carries | not planned yet |
 | event | `on(event, handler)` | listen | a new `HostOptions.events`, called at the moments the host already knows | built 2026-09-20 |
+| HTTP route | `registerRoute(handler)` | register, open key | a handler the daemon's own listener serves under `/plugins/<name>/`, beside the HTTP API and beside a session's tools servers; it lands in the fold's `routes`, keyed by plugin name, rather than in `HostOptions` | built 2026-10-04, [plan 21](21-a-plugin-serves-an-http-route/plan.md) |
 | configuration key | `registerConfig(key, schema, default)` | register, open key | a new `HostOptions.rootConfig`, beside the session keys an agent already declares | not planned yet |
 | host method | `registerMethod(name, handler)` | register, open key | an extension table beside the request handlers, and a channel beside the declared ones | not planned yet, and its protocol half is [a proposal](../../proposals/agent-host-protocol-extension-methods.md) |
 
@@ -57,11 +58,10 @@ Methods group by **operation**, not by kind, and the operation is what gives the
 A key belongs to exactly one operation, and the internal `PortKey` union is the closed set of `set` keys: it excludes `agents`, `tools` and every appended kind, so there is no second way to reach one.
 If a kind ever changes operation, which is what `tools` becoming one store rather than a list would be, the old method is removed rather than left beside a second spelling of the same thing.
 
-Four things are deliberately not kinds, so that a plugin does not look for a method that should not exist.
+Three things are deliberately not kinds, so that a plugin does not look for a method that should not exist.
 Models are not, because each agent reports its own through `probe()`.
 Slash commands are not separate from customizations, because `Offered.commands` is already one projection of them.
 UI is not, because a client owns its own screen and the host serves it resources.
-HTTP routes are not yet: [plan 21](21-a-plugin-serves-an-http-route/plan.md) adds them beside daemon plan 05's HTTP API.
 
 ## Runtime path
 

@@ -15,13 +15,13 @@ import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
-import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf } from './types/plugin.js';
+import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf, Route } from './types/plugin.js';
 import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
 import type { Vault } from './types/vault.js';
 import { idOf, schemeOf } from './catalog.js';
 import { readSecret } from './vault.js';
-import { checkAgent, checkPort, checkResourceProvider, checkScheme, checkTool, miss } from './validate.js';
+import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkTool, miss } from './validate.js';
 
 /**
  * Every key a `set` registration may name.
@@ -62,6 +62,60 @@ export const reservedScheme = (scheme: string): boolean => {
   return lower === 'file' || lower.startsWith('ahp-');
 };
 
+/**
+ * Where every plugin's route is served, on the host's own listener.
+ *
+ * A segment of its own rather than a part of a plugin's name, so the space a
+ * route may occupy is one string and a listener can tell a path of ours nobody
+ * serves from one it never looks at.
+ */
+export const ROUTE_ROOT = '/plugins';
+
+/**
+ * The path prefix one plugin's route is served under.
+ *
+ * `ROUTE_ROOT`, then the plugin's own `name`, with each `/`-separated segment
+ * percent-encoded: `@ahpd/x` is `/plugins/%40ahpd/x/`, and `x` keeps the `/`
+ * before it as the boundary a longer name is not matched inside.
+ *
+ * No name is refused for its shape. `@` and `/` are both ordinary in a plugin's
+ * name - a scoped package, or a spec that is a path - and a throw here would
+ * cost the plugin everything else it registered, the ports it set and the
+ * backend it brought, over a route that would have served. So the name is
+ * encoded rather than checked, and {@link routeOf} builds the prefix the same
+ * way, which is what keeps the two halves of the pair from drifting apart.
+ */
+export const routePrefix = (name: string): string =>
+  `${ROUTE_ROOT}/${name.split('/').map((segment) => encodeURIComponent(segment)).join('/')}/`;
+
+/** One plugin's route and the name it is served under. */
+export interface ServedRoute {
+  /** The plugin's `name`, which is both the key and the prefix. */
+  readonly by: string;
+  /** What answers a request below that prefix. */
+  readonly handler: Route;
+}
+
+/**
+ * Which plugin's route a path reaches, or nothing.
+ *
+ * Whole segments only, which the prefix's trailing `/` makes exact:
+ * `/plugins/x/hook` reaches `x`, and `/plugins/xy` reaches nothing rather than
+ * being the beginning of some other plugin's name. A path outside
+ * {@link ROUTE_ROOT} is nobody's, so the caller answers it as it always did.
+ */
+export function routeOf(routes: Readonly<Record<string, Route>>, path: string): ServedRoute | undefined {
+  if (path !== ROUTE_ROOT && !path.startsWith(`${ROUTE_ROOT}/`)) return undefined;
+  for (const [by, handler] of Object.entries(routes)) {
+    const prefix = routePrefix(by);
+    // The prefix as it is written, with its `/`, and without it: both reach the
+    // plugin, because a client that was handed the root of its route should not
+    // have to append a slash to be answered.
+    if (path === prefix || path === prefix.slice(0, -1) || path.startsWith(prefix)) return { by, handler };
+  }
+  return undefined;
+}
+
 /** What `foldHostOptions` answers: the composed options, and everything that could not be composed. */
 export interface FoldedOptions {
   /** The base, copied, with every contribution that was accepted folded in. */
@@ -76,6 +130,16 @@ export interface FoldedOptions {
    * a port or a scheme without reading prose.
    */
   problems: string[];
+  /**
+   * Every plugin that registered a route, by plugin name.
+   *
+   * Not a `HostOptions` key: a route is not an option the host is built over
+   * but a handler something else mounts, so it is answered beside the options
+   * rather than among them. Empty when no plugin registered one, and keyed by
+   * the plugin's own name, which is the prefix {@link routePrefix} serves it
+   * under - so there is one name and it cannot be the two things at once.
+   */
+  routes: Record<string, Route>;
 }
 
 /**
@@ -95,6 +159,9 @@ export interface FoldedOptions {
  *   takes it over silently.
  * - A port the base does not have is set by the first plugin that offers one,
  *   with no `'replace'` needed.
+ * - A route is kept under the plugin's own name and is never moved: one handler
+ *   per plugin, under that plugin's own prefix, so there is nothing for two of
+ *   them to collide on.
  */
 export function foldHostOptions(base: HostOptions, contributions: Contribution[]): FoldedOptions {
   const problems: string[] = [];
@@ -254,7 +321,20 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
 
   if (Object.keys(resourceProviders).length > 0) options.resourceProviders = resourceProviders;
 
-  return { options, problems };
+  /*
+   * The routes, by plugin name.
+   *
+   * Taken as they are rather than composed: a route is one handler per plugin
+   * under that plugin's own prefix, so no two of them can land on one path and
+   * there is nothing to collide. The name is the key because it is the prefix,
+   * which is what makes a route and the path that reaches it the same string.
+   */
+  const routes: Record<string, Route> = {};
+  for (const contribution of contributions) {
+    if (contribution.routes !== undefined) routes[contribution.by] = contribution.routes;
+  }
+
+  return { options, problems, routes };
 }
 
 /** What one `apply` is handed, and what it recorded. */
@@ -475,6 +555,18 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     registerUsage: (usage, when) => { setPort('usage', 'registerUsage', usage, when); },
     registerPolicies: (policies, when) => { setPort('policies', 'registerPolicies', policies, when); },
     registerVault: (vault, when) => { setPort('vault', 'registerVault', vault, when); },
+    registerRoute(handler) {
+      checkRoute(handler, by);
+      // A second one is refused here rather than in the fold, because only one
+      // plugin is in this call and the prefix is its own: there is no collision
+      // for the fold to see, there is one plugin registering two answers to the
+      // same path. The message is the ports' second-registration one, because it
+      // is the same mistake.
+      if (contribution.routes !== undefined) {
+        throw new Error(miss(by, 'registerRoute', 'handler', 'registered only once'));
+      }
+      contribution.routes = handler;
+    },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the
       // same read-only one `apply` was handed, and the host does not otherwise

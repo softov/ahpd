@@ -56,6 +56,18 @@ export type PortKey =
 export type PortOf<K extends PortKey> = NonNullable<HostOptions[K]>;
 
 /**
+ * One plugin's HTTP route, as the host's own listener serves it.
+ *
+ * A `Request` in and a `Response` out: the shape `Bun.serve` and `Deno.serve`
+ * take and the one `toNodeListener` wraps for Node, so a route is the same
+ * handler on every runtime - decision
+ * `cofold-serve-is-fetch-style-with-a-node-adapter`. The request reaches it
+ * whole, so a plugin reads `new URL(request.url).pathname` and finds its own
+ * prefix on the path rather than being handed a remainder it has to trust.
+ */
+export type Route = (request: globalThis.Request) => Promise<globalThis.Response>;
+
+/**
  * One plugin, as configuration or the command line names it.
  *
  * A bare string is the module specifier and carries no options. The object form
@@ -313,6 +325,26 @@ export interface PluginHost extends PluginContext {
    */
   registerVault(vault: PortOf<'vault'>, when?: 'replace'): void;
   /**
+   * Serve one HTTP route, on this host's own listener, under this plugin's name.
+   *
+   * A webhook, a platform callback or a facade a client reaches: `/plugins/<name>/`
+   * and whatever path is below it reaches `handler` as a `Request`, and its
+   * `Response` goes back as it is. On the host's own port rather than one of its
+   * own, so a tunnel forwards it like everything else here and no second port is
+   * opened for it.
+   *
+   * One per plugin. The prefix is the plugin's name, so a route cannot answer at
+   * another's path, and a second one would be two handlers with one answer.
+   *
+   * There is no credential in front of this. The request's `Host` is checked
+   * against the names this host answers to, and the route authenticates its own
+   * caller - a signature, a token in the path or a header it checks itself. What
+   * it does on the host goes through its plugin's connection, so the grants its
+   * operator wrote for it are the gate; see plan
+   * `plugin/20-a-plugin-is-a-client-of-its-own-host`.
+   */
+  registerRoute(handler: Route): void;
+  /**
    * Subscribe to one of the host's own moments.
    *
    * The one method not named `register*`, because it contributes nothing to
@@ -406,6 +438,16 @@ export interface Contribution {
    * order.
    */
   events: HostHandlers;
+  /**
+   * The one route this plugin registered, when it registered one.
+   *
+   * Absent rather than a handler that answers nothing, because "no route" and
+   * "a route that answers 404" are different things: the first is a plugin that
+   * serves nothing, and the second is one that would answer a path wrongly. The
+   * key in the fold is the plugin's own name, which is the prefix it is served
+   * under, so a route and the path that reaches it cannot drift apart.
+   */
+  routes?: Route;
 }
 
 /** One plugin that was resolved and imported, before or after it was applied. */

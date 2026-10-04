@@ -219,3 +219,18 @@ export const checkResourceProvider = (scheme: string, value: unknown, by: string
     if (!right(object[member], expected)) throw new Error(miss(by, 'registerResourceProvider', member, expected));
   }
 };
+
+/**
+ * Check one `registerRoute` value against `Route`.
+ *
+ * The whole contract is one function taking a `Request` and answering a
+ * `Response`, and what it answers cannot be checked here - the daemon hands it
+ * to the listener rather than calling it. So the check is the one thing that
+ * can be: it is callable. A JavaScript plugin that registered an object is
+ * refused at the call site rather than when somebody's webhook arrives.
+ */
+export const checkRoute = (value: unknown, by: string): void => {
+  if (typeof value !== 'function') {
+    throw new Error(miss(by, 'registerRoute', 'handler', 'a function taking a Request and answering a Response'));
+  }
+};

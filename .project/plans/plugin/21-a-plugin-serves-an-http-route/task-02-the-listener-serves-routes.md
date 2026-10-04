@@ -1,6 +1,6 @@
 ---
 title: The listener serves a plugin's route under /plugins/<name>/
-status: todo
+status: implemented
 depends: [task-01-register-route-is-a-kind.md]
 layer: "sdk listen, server"
 refs:
@@ -36,4 +36,18 @@ A plain request under `/plugins/<name>/` reaches that plugin's handler as a `Req
 - `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
 
 ## Resume
+
+- The mount is `pluginRoutes(options)` in `packages/server/src/http.ts`, beside `apiHandler` and `withoutApi`, and it goes through the **existing** `guarded` wrapper rather than a second copy: `pathOf` and the per-segment `decodeURIComponent` are the same code the API uses, so a path that is not a valid percent-encoding is a 400 here as well.
+- `guarded` is unchanged. `hostRefusal(request, authorities, subject)` is the new shared half of `foreign`: it takes the sentence the caller wants, and `foreign` passes `'This API'` so every API message is byte-for-byte what it was. A route passes `'This route'` and takes that check alone - no `Origin`, no JSON-only, which is why `foreign` itself still does the `Origin`.
+- `PluginRoutesOptions` is four reads: `routes()` and `authorities()` are functions because the mount is built before the fold exists, `otherwise(request)` is what answers a path that is nobody's route (the API, or the 426), and `onProblem` is a log line. `routeOf` from the SDK decides whose route it is; a path under `/plugins/` that no loaded plugin registered is `404 No plugin route at <path>` rather than the 426, so an author whose route did not load is told there is nothing there.
+- A handler that throws is caught inside `pluginRoutes`, answered `500` with a message naming the plugin and not the reason, and reported through `onProblem` as `plugin <name> failed at <path>: <reason>` - the wording `raise` already uses for an event handler that throws, which is the sentence a log reader is looking for.
+- In `run.ts`, `daemonRequest` is now `(await toolsServers.request(request)) ?? pluginRequests(request)`. `pluginRequests` is a `let` initialised to `below`, because the chain is built before `loadPlugins` runs; it is assigned the mount on the line after `loadPlugins` returns, which is before the socket is bound, so `below` never answers a route on a running daemon.
+- `loadPlugins` gained `routes: folded.routes` and the `LoadedPlugins.routes` field, so `run.ts` destructures `routes: registered` beside `folded` and `problems`.
+- The `Host` list is `apiOrigins(apiHost, options.resource, boundPort).authorities` - the same function the API's check uses, built whether `http` is on or off, because `apiOrigins` needs nothing but names and a port - plus `announcedNames(said)`. **`boundPort` rather than `apiBoundPort`**: a route is served on the daemon's own listener, so it is reached by the names of *this* port, and `http.port` moving the API to a listener of its own must not move the route's names with it. The `http: { port: 0 }` case pins this.
+- `announcedNames(lines)` is exported from `run.ts` beside `apiOrigins`, and scans each plugin `say` line for `[a-zA-Z][\w+.-]*:\/\/[^\s,;()]+`, adding `at.host` and `at.hostname` for each URL a parser reads. The trailing character class stops at a space, comma, semicolon or bracket so the `, port 443` after a tunnel's address is not part of the host. A URL a parser refuses is skipped, not fatal to the line.
+- `@ahpd/tunnel-devtunnel` announcing its URL stays a follow-up, as the plan says. Today it says `tunnel <id> (<label>), port <port>`, and a label is not a URL; the fixture is what makes the rule testable until that lands.
+- The fixture is `packages/server/test/fixtures/plugin-route` - scoped name `@ahpd/plugin-route` on purpose, so the whole suite exercises the encoded prefix - with a `package.json` naming `./index.ts`, because a directory spec needs an entry (a fixture without one is skipped with `has no plugin entry`). It announces `tunnel fixture-tunnel (https://fixture-tunnel.example.com/), port 443` and answers every request with the path, method, host, origin, content-type and body it saw; a path ending `/boom` throws.
+- Tests, `packages/server/test/plugin-route.test.ts`: a form body with no `Origin` and the whole path reaching the handler (`http` off and on); the prefix with and without its trailing slash; a foreign `Host` refused 403; a request naming no `Host` refused 403; the announced tunnel host served and `host:443` refused, because the announced URL named no port - what was announced is what answers; three near-miss paths answering 404 without disturbing the route; an unloaded plugin's name answering `No plugin route at`; a throwing handler answering 500, naming the plugin, keeping the reason in stderr and still serving the next request; `/api` still 404 with `http` off and the 426 elsewhere; a cross-site `Origin` served by the route while the API still refuses its own guards; the route served on the daemon's port with `http.port` naming one of its own; and `announcedNames` on prose.
+- `Host` and `Origin` are written over a socket, because a client library owns both headers and cannot be asked to send either.
+- Not known to the plan: a route is mounted by every daemon, including one with no plugin that registered one, so `/plugins/` is answered 404 rather than 426 on a daemon nobody extended. That is a one-line change if a reader would rather see the 426.
 

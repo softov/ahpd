@@ -1,7 +1,7 @@
 ---
 title: A plugin serves an HTTP route on the daemon's listener
 domain: plugin
-status: planned
+status: active
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -88,9 +88,9 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - registerRoute is a registration kind](task-01-register-route-is-a-kind.md) | todo | - |
-| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | todo | 01, and the open question in Resume state |
-| [03 - Docs](task-03-docs.md) | todo | 02 |
+| [01 - registerRoute is a registration kind](task-01-register-route-is-a-kind.md) | implemented | - |
+| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | implemented | 01, and the open question in Resume state |
+| [03 - Docs](task-03-docs.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -99,10 +99,11 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-register-route-is-a-kind.md](task-01-register-route-is-a-kind.md); daemon 05 tasks 15 and 16 are done.
-- **Open questions:** none.
-- **Watch out for:** the plugin's `name` can hold `@` and `/`; the prefix encodes each segment rather than refusing a name.
+- **Done so far:** all three tasks implemented 2026-10-04, and uncommitted for Softov's review.
+- **Next action:** Softov's review. The close-out (`implemented.md`, `status: built`) waits on it, and `plans/index.md` was left alone.
+- **Open questions:** none. Softov's three answers of 2026-10-04 are settled in the code: built before plan 20; the Host check takes `apiOrigins`' names plus the tunnel's host, built whether `http` is on or off; and the tunnel's host is learnt from the listener's announcements by `announcedNames` in `run.ts`, which reads each `scheme://` URL a plugin says and adds its `host` and `hostname`.
+- **Departures from the plan, all small and all in the task files:** the route's `Host` list is built from `boundPort`, the daemon's own port, rather than from `apiOrigins`' `apiBoundPort`, because `http.port` moves the API to a listener of its own and must not move the route's names with it; a path under `/plugins/` that no loaded plugin registered is 404 rather than the 426 the rest of the listener gives; the fixture needed a `package.json` naming `./index.ts`, because a directory spec with no entry is skipped by the loader; and the whole `/plugins/` space is answered by every daemon, including one with no plugin that registered a route.
+- **Watch out for:** the plugin's `name` can hold `@` and `/`, and the prefix encodes each segment rather than refusing a name - a throw there costs the plugin its whole contribution, so nothing about a name throws. The task 02 case for `Host: fixture-tunnel.example.com:443` is a 403 by design: what an announcement named is what answers, and that URL named no port.
 
 ## Final verification checklist
 

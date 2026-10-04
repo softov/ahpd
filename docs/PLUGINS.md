@@ -137,6 +137,31 @@ against its contract before it is recorded.
 | `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
+| `registerRoute(handler)` | register, open key | one HTTP route served on this host's own listener, under `/plugins/<name>/` |
+
+### A route authenticates its own caller
+
+`registerRoute(handler)` takes one handler, a `Request` in and a `Response` out, and serves it on the daemon's own listener under `/plugins/<your plugin's name>/`:
+
+```ts
+export const apply: Plugin['apply'] = (host) => {
+  host.registerRoute(async (request) => {
+    const { pathname } = new URL(request.url);
+    if (pathname !== '/plugins/%40acme/webhooks/github/hook') return new Response('No such path', { status: 404 });
+    return new Response(JSON.stringify(await request.json()), { headers: { 'content-type': 'application/json' } });
+  });
+};
+```
+
+**Nothing stands between this and the public internet.** The request's `Host` is checked against the names this host answers to, and that is the only guard in front of your handler: there is no bearer token, and no `Origin` check, because a webhook is not a browser. **Authenticate the caller yourself** - check the signature, or a token in the path or a header - and refuse with 401 before you read the body. What your route does on the host goes through your plugin's connection, so the grants your operator wrote for your plugin are the gate on what it may do.
+
+One route per plugin, and the prefix is your plugin's name with each `/`-separated segment percent-encoded: `@acme/webhooks` is served under `/plugins/%40acme/webhooks/`. Nothing is refused for the shape of its name, because a throw there would cost the plugin everything else it registered.
+
+The path reaches your handler whole, prefix and all, so `new URL(request.url).pathname` is the path you wrote the webhook for. The prefix is matched by whole segments: `/plugins/%40acme/webhooksy/hook` reaches nothing, rather than being the start of yours.
+
+A route is served whether `http` is on or off, and on the daemon's own port rather than one of its own, so a tunnel forwards it like everything else here and no second port is opened for you. `/api` is unaffected.
+
+A handler that throws is answered 500 with the shape of the failure, its reason goes to the daemon's log against your plugin's name, and the daemon keeps serving.
 
 ### What a backend needs from a machine
 
@@ -376,7 +401,6 @@ So you do not go looking for a method that should not exist:
   is already one projection of them.
 - **UI** is not, because a client owns its screen and the host serves it
   resources.
-- **HTTP routes** are not, because there is no HTTP server.
 
 Customizations, MCP servers, a configuration key and host methods are named in
 the domain reference and not built yet; the whole list is in

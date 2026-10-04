@@ -9,11 +9,15 @@
  * Off, the daemon's listener still answers plain requests, so `/api` is a 404
  * rather than the 426 it would otherwise be; everything that is not the API
  * keeps the answer it always had.
+ *
+ * A plugin's own route is mounted here too, under `/plugins/<name>/`, because
+ * it is the same listener, the same `Request` and the same path handling as
+ * the API - decision `plugin-registration-kinds`, whose route row is this.
  */
 
 import { serve, toNodeListener, type RequestHandler } from '@cofold/remote';
 import type { Runner } from '@cofold/commands';
-import { serveRequests, type NodeRequestListener, type Users } from '@ahpd/sdk';
+import { routeOf, ROUTE_ROOT, serveRequests, type NodeRequestListener, type Route, type Users } from '@ahpd/sdk';
 import { authorizeOverHttp } from './commands/authorize.js';
 
 /** The path the API is served under, on whichever listener carries it. */
@@ -58,19 +62,37 @@ export interface ApiOptions {
 }
 
 /**
- * Why a request is not one this API answers, or nothing.
+ * Why a request's `Host` is not one this answers, or nothing.
  *
  * A `Host` that is not one of the daemon's names is the DNS-rebinding shape: a
  * page on another site points its own name at loopback and reads the answers as
- * same-origin. An `Origin` is the cross-site shape, and a browser sends it
- * without being asked. A request with no `Host` at all names nothing this API
- * could be, so it is refused with the same sentence. Neither is a credential
- * question, so all three are refused before a route or a grant is looked at.
+ * same-origin. A request with no `Host` at all names nothing this could be, so
+ * it is refused with the same sentence.
+ *
+ * One helper for the API and for a plugin's route, because the two guards are
+ * the same one: a name this host does not answer to is a name this host does
+ * not answer to, whatever asked. What differs is the sentence, which is what
+ * the caller passes, and the `Origin` below, which is the API's alone.
+ */
+function hostRefusal(request: Request, authorities: readonly string[], subject: string): string | undefined {
+  const host = request.headers.get('host');
+  if (host === null) return `${subject} does not answer to a request with no Host`;
+  if (!authorities.includes(host)) return `${subject} does not answer to ${host}`;
+  return undefined;
+}
+
+/**
+ * Why a request is not one this API answers, or nothing.
+ *
+ * The `Host` above, and then an `Origin` that is not one of the daemon's: the
+ * cross-site shape, which a browser sends without being asked. A route takes
+ * only the `Host`, because a webhook and a platform callback send no `Origin`
+ * and authenticate their own caller instead. Neither is a credential question,
+ * so both are refused before a command or a grant is looked at.
  */
 function foreign(request: Request, allowed: ApiOrigins): string | undefined {
-  const host = request.headers.get('host');
-  if (host === null) return 'This API does not answer to a request with no Host';
-  if (!allowed.authorities.includes(host)) return `This API does not answer to ${host}`;
+  const refused = hostRefusal(request, allowed.authorities, 'This API');
+  if (refused !== undefined) return refused;
   const origin = request.headers.get('origin');
   if (origin !== null && !allowed.origins.includes(origin)) return `This API does not answer to ${origin}`;
   return undefined;
@@ -114,6 +136,73 @@ export function withoutApi(): RequestHandler {
       return Promise.resolve(json(404, { message: `No API at ${path}` }));
     }
     return Promise.resolve(new Response(SPEAKS_AHP, { status: 426, headers: { 'content-type': 'text/plain' } }));
+  });
+}
+
+/** What a plugin's routes are served from, read when a request asks. */
+export interface PluginRoutesOptions {
+  /**
+   * Every route the loaded plugins registered, by plugin name.
+   *
+   * A function rather than a value, because this mount is built before any
+   * plugin has applied: the listener is handed the plain-request handler
+   * before `loadPlugins` folds what the plugins registered.
+   */
+  routes(): Readonly<Record<string, Route>>;
+  /**
+   * Every `Host` a route answers to, read per request.
+   *
+   * The daemon's own names plus whatever a tunnel announced, so a webhook that
+   * arrives through a tunnel names a host this has never been configured with.
+   */
+  authorities(): readonly string[];
+  /** What answers a path that is not a plugin's route: the API, or the 426. */
+  otherwise(request: Request): Promise<Response>;
+  /** One line to the daemon's log, for a handler that failed. */
+  onProblem?(line: string): void;
+}
+
+/**
+ * A plugin's routes, mounted on the daemon's own listener.
+ *
+ * The same `guarded` wrapper the API goes through, so a path that is not a
+ * valid percent-encoding is answered 400 here rather than throwing out of a
+ * handler, and every segment is decoded before a prefix looks at one.
+ *
+ * `Host` is checked and `Origin` is not, and no body is held to JSON. A route
+ * is called by something outside a browser - a webhook, a platform callback, a
+ * tunnel - and it authenticates its own caller: a signature, or a token in its
+ * own path or headers. What it does on the host goes through its plugin's
+ * connection, so the grants its operator wrote are the gate.
+ *
+ * A path under `/plugins/` that no loaded plugin registered is 404 rather than
+ * the 426 the rest of this listener gives, so an author whose route did not
+ * load is told there is nothing there instead of being told they spoke the
+ * wrong protocol.
+ */
+export function pluginRoutes(options: PluginRoutesOptions): RequestHandler {
+  return guarded(async (request, path) => {
+    const found = routeOf(options.routes(), path);
+    if (found === undefined) {
+      return path === ROUTE_ROOT || path.startsWith(`${ROUTE_ROOT}/`)
+        ? json(404, { message: `No plugin route at ${path}` })
+        : options.otherwise(request);
+    }
+    const refusal = hostRefusal(request, options.authorities(), 'This route');
+    if (refusal !== undefined) return json(403, { message: refusal });
+    /*
+     * A handler that throws is one plugin's failed request, not a failed
+     * listener: the daemon keeps serving, the log names the plugin whose route
+     * it was, and the caller is told the shape of the failure rather than the
+     * reason, which is that plugin's own.
+     */
+    try {
+      return await found.handler(request);
+    }
+    catch (error) {
+      options.onProblem?.(`plugin ${found.by} failed at ${path}: ${error instanceof Error ? error.message : String(error)}`);
+      return json(500, { message: `The route plugin ${found.by} registered failed; its reason is in the daemon log` });
+    }
   });
 }
 

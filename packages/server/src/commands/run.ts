@@ -12,7 +12,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import type { HostOptions, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
+import type { HostOptions, RequestHandler, Route, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
   createHost,
   fileResources,
@@ -44,7 +44,7 @@ import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.j
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
 import { automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
-import { API_PREFIX, apiHandler, listenApi, plainRequests, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { API_PREFIX, apiHandler, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { loadPlugins } from '../plugins.js';
 import { fileVault } from '../vault.js';
@@ -81,6 +81,35 @@ export function apiOrigins(host: string, resource: string | undefined, port: num
     origins.push(at.origin);
   }
   return { authorities, origins };
+}
+
+/**
+ * The names a plugin's own announcements add to what this daemon answers to.
+ *
+ * A plugin that made the daemon reachable somewhere else - a tunnel, a name on
+ * a network - says so through `say`, and a webhook that arrives through it
+ * sends the `Host` of that address rather than a loopback name. So every
+ * `scheme://` URL a line holds contributes both its `host` and its `hostname`:
+ * the first for a caller that sends the port the tunnel is reached on, the
+ * second for one that sends none.
+ *
+ * Read out of the announcement rather than configured, because a tunnel's host
+ * is a fresh name on every run and the plugin that made it is the only thing
+ * that knows it. A word a line holds that a URL parser refuses is prose around
+ * the URL, and is left to the reader rather than failing the whole line.
+ */
+export function announcedNames(lines: readonly string[]): string[] {
+  const names: string[] = [];
+  for (const line of lines) {
+    for (const found of line.matchAll(/[a-zA-Z][\w+.-]*:\/\/[^\s,;()]+/gu)) {
+      if (found[0] === undefined) continue;
+      let at: URL;
+      try { at = new URL(found[0]); }
+      catch { continue; }
+      names.push(at.host, at.hostname);
+    }
+  }
+  return names;
 }
 
 /**
@@ -343,11 +372,23 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     name: 'ahpd',
     version: version(),
   });
-  // On the daemon's own port: a session's tools endpoint where it is, then the
-  // API where it is, and the 404 that says it is not where `http.port` moved it.
+  // On the daemon's own port: a session's tools endpoint where it is, then a
+  // plugin's route where it is, then the API where it is, and the 404 that says
+  // it is not where `http.port` moved it.
   const below = ownPort === undefined ? (api ?? withoutApi()) : withoutApi();
+  /*
+   * A plugin's own route, on this listener.
+   *
+   * A variable and not a value, because this chain is built before any plugin
+   * has applied: the listener is handed `daemonRequest` below, and the plugins
+   * are loaded further down still. `below` is what answers until the mount
+   * exists, which is what this daemon answered for a route before a route could
+   * be registered - and it is never what answers one after, because
+   * `loadPlugins` assigns the mount before the socket is bound.
+   */
+  let pluginRequests: RequestHandler = below;
   const daemonRequest = async (request: globalThis.Request): Promise<Response> =>
-    (await toolsServers.request(request)) ?? below(request);
+    (await toolsServers.request(request)) ?? pluginRequests(request);
   const apiListener: ApiListener | undefined = api === undefined || ownPort === undefined
     ? undefined
     : await listenApi(api, { port: ownPort, host: apiHost });
@@ -616,7 +657,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * as well as stamped, which is how the person who ran `ahpd start` is told
    * what their daemon is missing before it says it started.
    */
-  const { options: folded, problems, loaded } = await loadPlugins(options.plugins, {
+  const { options: folded, problems, loaded, routes: registered } = await loadPlugins(options.plugins, {
     base,
     paths: options.paths,
     configDir: configDir(),
@@ -633,6 +674,31 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     },
   });
   for (const problem of problems) stamp(problem);
+
+  /*
+   * The routes the plugins registered, served on this listener.
+   *
+   * Assembled here rather than at `daemonRequest`, which is the first thing
+   * that asked for it, because two of its four answers are only known now: the
+   * routes the fold holds, and the names the plugins just announced.
+   *
+   * The names a route answers to are the daemon's own first - the same
+   * `apiOrigins` answers the API's `Host` check with, built whether `http` is
+   * on or off, because a route is served on this listener and so is reached by
+   * the names of this port rather than of a listener of the API's own. Then
+   * whatever a plugin announced, which is how the host a tunnel handed out
+   * becomes a name this answers to without anybody configuring it.
+   *
+   * A daemon with no plugin that registered a route mounts this anyway, so a
+   * path under `/plugins/` is told there is nothing there rather than being
+   * answered as a request this listener does not speak.
+   */
+  pluginRequests = pluginRoutes({
+    routes: () => registered,
+    authorities: () => [...apiOrigins(apiHost, options.resource, boundPort).authorities, ...announcedNames(said)],
+    onProblem: stamp,
+    otherwise: below,
+  });
 
   /*
    * A daemon with no backend, said in the words of the thing that fixes it.

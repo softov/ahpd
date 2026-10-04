@@ -28,7 +28,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { foldHostOptions, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, SessionStore, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -832,6 +832,14 @@ export interface LoadedPlugins {
   problems: string[];
   /** The plugins that loaded and applied, in load order. */
   loaded: Loaded[];
+  /**
+   * Every plugin's route, by plugin name, for the listener to serve.
+   *
+   * Answered beside the options rather than among them: a route is not
+   * something `createHost` is built over but a handler the daemon's own
+   * listener mounts, under `/plugins/<name>/`.
+   */
+  routes: Record<string, Route>;
 }
 
 /**
@@ -950,7 +958,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
   problems.push(...folded.problems);
   reached = folded.options;
   settled(folded.options);
-  return { options: folded.options, contributions, problems, loaded };
+  return { options: folded.options, contributions, problems, loaded, routes: folded.routes };
 }
 
 /**

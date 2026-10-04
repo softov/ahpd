@@ -1,6 +1,6 @@
 ---
 title: registerRoute is a registration kind
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -34,4 +34,13 @@ A plugin may call `registerRoute(handler)` once, the handler is checked to be a 
 - `pnpm test`, `pnpm typecheck` green.
 
 ## Resume
+
+- `Route` is a new type in `types/plugin.ts`: `(request: globalThis.Request) => Promise<globalThis.Response>`, written with `globalThis.` the way `types/listen.ts` writes its own `RequestHandler`, because `types/` imports no runtime value.
+- `PluginHost.registerRoute(handler)` is documented at the end of the port methods and before `on`, and `Contribution.routes?: Route` is optional - a plugin that registered none has no route, which is different from one that answers 404.
+- The recording, the check and the fold are in `plugins.ts`: `checkRoute` (new, in `validate.ts`) refuses anything that is not callable with `miss(by, 'registerRoute', 'handler', ...)`; a second `registerRoute` from one plugin throws the ports' `registered only once` message; and `foldHostOptions` returns `routes: Record<string, Route>` keyed by `contribution.by`. It is beside `options` and `problems`, not inside `options`, because a route is not something `createHost` is built over.
+- The prefix lives beside `reservedScheme` in `plugins.ts`, exported: `ROUTE_ROOT` is `/plugins`, `routePrefix(name)` is `/plugins/` plus the name with each `/`-separated segment percent-encoded, and `routeOf(routes, path)` is the matcher - whole segments only, matching the prefix with or without its trailing `/`. `routeOf` builds the prefix through `routePrefix`, so the two halves cannot drift.
+- No name is refused, and nothing about the name throws: `@` and `/` are ordinary in a plugin's name and a throw would cost the plugin its whole contribution, which is the watch-out the plan named.
+- Tests: `plugin-validate.test.ts` "accepts a route handler and folds it under the plugin's own name" (the recorded handler is the one given, not a copy), "records no route for a plugin that registered none", "refuses a handler that is not a function, naming the plugin and the method" (`{}` and `'nope'`) and "refuses one plugin registering two routes, and leaves two plugins to the fold"; `plugin-fold.test.ts` has a `the routes a fold carries` group - an empty record when none registered, the scoped name under `/plugins/%40ahpd/x/` with its agents and tools kept, whole-segment matching (`/plugins/alpha` and `/plugins/alpha/` both answer, `/plugins/alphabet` and `/plugins/%40ahpad/xy` do not), and `ROUTE_ROOT` owning the whole space.
+- `packages/sdk/src/index.ts` exports `routeOf`, `routePrefix`, `ROUTE_ROOT` and the `ServedRoute` type; `types/index.ts` adds `Route`. `FoldedOptions.routes` is required, which is a compile error at any caller that destructures it - there are none that construct it, and the server's `loadPlugins` was the one that dropped it.
+- Not known to the plan: where a route's *ordering* sits. `/plugins/` was chosen over a per-plugin path root because `ROUTE_ROOT` is one string a listener can test; nothing in the plan named the alternative.
 

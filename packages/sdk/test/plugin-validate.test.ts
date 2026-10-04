@@ -188,4 +188,45 @@ describe('pluginHost', () => {
     expect(problems).toHaveLength(1);
     expect(problems[0]).toContain('same');
   });
+
+  it('accepts a route handler and folds it under the plugin\'s own name', async () => {
+    const { host, contribution } = pluginHost('alpha', context());
+    const handler = async (): Promise<Response> => new Response('alpha');
+    host.registerRoute(handler);
+
+    // The recorded handler is the one given, not a copy: a route holds whatever
+    // its plugin's closure holds.
+    expect(contribution.routes).toBe(handler);
+    const { routes, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(routes['alpha']).toBe(handler);
+    expect(await routes['alpha']?.(new Request('http://h/plugins/alpha/hook'))).toBeInstanceOf(Response);
+  });
+
+  it('records no route for a plugin that registered none', () => {
+    const { contribution } = pluginHost('alpha', context());
+    expect(contribution.routes).toBeUndefined();
+    expect(foldHostOptions(base(), [contribution]).routes).toEqual({});
+  });
+
+  it('refuses a handler that is not a function, naming the plugin and the method', () => {
+    const { host } = pluginHost('alpha', context());
+    // A JavaScript plugin has no type to stop it registering an object, and
+    // the object is only found out when a webhook arrives, which is late.
+    expect(() => host.registerRoute({} as never)).toThrow(/alpha.*registerRoute.*handler/);
+    expect(() => host.registerRoute('nope' as never)).toThrow(/alpha.*registerRoute.*handler/);
+  });
+
+  it('refuses one plugin registering two routes, and leaves two plugins to the fold', () => {
+    const one = pluginHost('alpha', context());
+    one.host.registerRoute(async () => new Response('first'));
+    expect(() => one.host.registerRoute(async () => new Response('second')))
+      .toThrow(/alpha.*registerRoute.*handler.*only once/);
+
+    const other = pluginHost('beta', context());
+    other.host.registerRoute(async () => new Response('beta'));
+    const { routes, problems } = foldHostOptions(base(), [one.contribution, other.contribution]);
+    expect(problems).toEqual([]);
+    expect(Object.keys(routes)).toEqual(['alpha', 'beta']);
+  });
 });

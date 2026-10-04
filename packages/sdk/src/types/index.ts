@@ -18,7 +18,7 @@ export type { Request, Wire, Peer, Handler } from './rpc.js';
 export type { Summary } from './catalog.js';
 export type { Emit, SessionOptions, Session, Ran, Chosen, MessageFrom, MessageAttachment, SubagentChat, SubagentRequest } from './session.js';
 export type { HostOptions, Connection, Credential, Host, Diagnostics, HostTool, ToolCall, RootConfigPort, RootConfigAnswer } from './host.js';
-export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, Contribution, PortContribution, PortKey, PortOf } from './plugin.js';
+export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, Contribution, PortContribution, PortKey, PortOf, Route } from './plugin.js';
 export type {
   AuthenticatedEvent, AutomationFireEvent, ClientConnectEvent, ClientDisconnectEvent, EventHandler, EventListener,
   EventName, HostEvent, HostEventOf, HostHandlers, InputNeededRemovedEvent, InputNeededSetEvent, ListeningEvent,

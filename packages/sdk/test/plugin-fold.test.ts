@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { foldHostOptions } from '../src/plugins.js';
+import { foldHostOptions, routeOf, routePrefix, ROUTE_ROOT } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../src/types/agent.js';
@@ -11,7 +11,7 @@ import type { AutomationStore } from '../src/types/automations.js';
 import type { Usage } from '../src/types/usage.js';
 import type { Policies } from '../src/types/policies.js';
 import type { Vault } from '../src/types/vault.js';
-import type { Contribution, PortContribution, PortKey } from '../src/types/plugin.js';
+import type { Contribution, PortContribution, PortKey, Route } from '../src/types/plugin.js';
 
 /*
  * The fold, on its own.
@@ -47,6 +47,7 @@ const contribution = (
     providers?: Record<string, unknown>;
     sessionConfig?: Record<string, Record<string, unknown>>;
     sessionCompletions?: Contribution['sessionCompletions'];
+    routes?: Route;
   } = {},
 ): Contribution => ({
   by,
@@ -57,7 +58,11 @@ const contribution = (
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   events: {},
+  ...(parts.routes === undefined ? {} : { routes: parts.routes }),
 });
+
+/** A handler like a webhook's: the path it was called on, as JSON. */
+const route = (answer: string): Route => async () => new Response(answer);
 
 const port = (value: unknown, replace = false): PortContribution => ({ value, replace });
 
@@ -292,4 +297,59 @@ it('refuses a session setting a backend already declares', () => {
   const folded = foldHostOptions(base(), [contribution('one', { sessionConfig: { voice: { type: 'string' } } })]);
   expect(folded.options.sessionConfig?.voice).toBeUndefined();
   expect(folded.problems[0]).toContain("a backend's own schema already declares");
+});
+
+describe('the routes a fold carries', () => {
+  it('keeps each plugin\'s route under its own name, and an empty record when none registered one', async () => {
+    const none = foldHostOptions(base(), [contribution('alpha', { agents: [agent('alpha')] })]);
+    expect(none.routes).toEqual({});
+
+    const { routes, problems } = foldHostOptions(base(), [
+      contribution('alpha', { routes: route('alpha') }),
+      contribution('@ahpd/x', { routes: route('scoped') }),
+    ]);
+    // Nothing to collide on, so nothing to report: the prefix is the name.
+    expect(problems).toEqual([]);
+    expect(Object.keys(routes)).toEqual(['alpha', '@ahpd/x']);
+    expect(await routes['@ahpd/x']?.(new Request('http://h/'))).toBeInstanceOf(Response);
+  });
+
+  it('serves a scoped name under its encoded prefix, and keeps the plugin\'s other registrations', async () => {
+    const folded = foldHostOptions(base(), [
+      contribution('@ahpd/x', { routes: route('scoped'), agents: [agent('scoped')], tools: [tool('scoped')] }),
+    ]);
+
+    expect(routePrefix('@ahpd/x')).toBe('/plugins/%40ahpd/x/');
+    expect(folded.options.agents.map((one) => one.provider)).toEqual(['echo', 'scoped']);
+    expect(folded.options.tools?.map((one) => one.definition.name)).toEqual(['scoped']);
+    // A name holding `@` and `/` is served rather than refused: the encoding is
+    // the prefix, not a rule the plugin has to satisfy.
+    const found = routeOf(folded.routes, '/plugins/%40ahpd/x/hook');
+    expect(found?.by).toBe('@ahpd/x');
+    expect(await found?.handler(new Request('http://h/plugins/%40ahpd/x/hook'))).toBeInstanceOf(Response);
+  });
+
+  it('matches a route by whole segments, and nobody else\'s', () => {
+    const routes: Record<string, Route> = { '@ahpd/x': route('scoped'), alpha: route('alpha') };
+
+    expect(routeOf(routes, '/plugins/alpha/hook')?.by).toBe('alpha');
+    // The prefix as it is written and without its trailing `/`: both are the
+    // root of the route rather than a path under nothing.
+    expect(routeOf(routes, '/plugins/alpha/')?.by).toBe('alpha');
+    expect(routeOf(routes, '/plugins/alpha')?.by).toBe('alpha');
+    // A longer name is not reachable by the start of a shorter one, which is
+    // what the `/` before each segment is for.
+    expect(routeOf(routes, '/plugins/alphabet')).toBeUndefined();
+    expect(routeOf(routes, '/plugins/%40ahpd/xy')).toBeUndefined();
+    // Somebody else's prefix, and a path that is not ours at all.
+    expect(routeOf(routes, '/plugins/%40ahpd/y/hook')).toBeUndefined();
+    expect(routeOf(routes, '/api/status')).toBeUndefined();
+    expect(routeOf(routes, '/plugins')).toBeUndefined();
+  });
+
+  it('owns the whole /plugins space, so a path nobody serves is told there is nothing', () => {
+    expect(ROUTE_ROOT).toBe('/plugins');
+    expect(routeOf({}, '/plugins/alpha/hook')).toBeUndefined();
+    expect(routeOf({}, '/api/status')).toBeUndefined();
+  });
 });
