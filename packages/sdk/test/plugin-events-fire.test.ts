@@ -80,7 +80,7 @@ function watched(extra: Partial<HostOptions> = {}, breaks?: EventName) {
 
 const hello = (client: ReturnType<ReturnType<typeof createHost>['accept']>) => client.handle({
   method: 'initialize',
-  params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: [ROOT] },
+  params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },
 });
 
 const of = (seen: HostEvent[], type: EventName): HostEvent[] => seen.filter((event) => event.type === type);

@@ -13,6 +13,7 @@ export interface Defect {
 }
 
 export declare const SCHEMA: URL;
+export declare function stale(at?: URL | string): boolean;
 export declare function stateFor(resource: unknown): string | undefined;
 export declare function checker(schema?: unknown): {
   declarations: number;

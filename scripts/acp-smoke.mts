@@ -57,7 +57,7 @@ const host = createHost({
 const client = host.accept(peer);
 const ready = await client.handle({
   method: 'initialize',
-  params: { clientId: 'smoke', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  params: { clientId: 'smoke', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
 }) as { snapshots: { state: { agents: { provider: string }[] } }[] };
 console.log('providers:', JSON.stringify(ready.snapshots[0]?.state.agents.map((one) => one.provider)));
 

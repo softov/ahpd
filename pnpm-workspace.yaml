@@ -15,6 +15,7 @@ allowBuilds:
   protobufjs: false
 
 minimumReleaseAgeExclude:
+  - '@microsoft/agent-host-protocol@1.0.0'
   - '@cofold/agents@0.1.2'
   - '@cofold/commands@0.2.2'
   - '@cofold/model-openai-compat@0.1.1'

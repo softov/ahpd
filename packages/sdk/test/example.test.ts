@@ -38,7 +38,7 @@ async function talking() {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
@@ -58,7 +58,7 @@ it('advertises the backend it was given, and no other', async () => {
   const client = host.accept(peer());
   const result = await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   }) as { snapshots: { state: { agents: { provider: string }[] } }[] };
   expect(result.snapshots[0]?.state.agents.map((a) => a.provider)).toEqual(['echo']);
 });
@@ -66,7 +66,7 @@ it('advertises the backend it was given, and no other', async () => {
 it('refuses a provider nobody registered', async () => {
   const host = createHost({ path: '/tmp/echo', agents: [echo({ path: '/tmp/echo' })] });
   const client = host.accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
   await expect(client.handle({
     method: 'createSession',
     params: { channel: 'ahp-session:/x', provider: 'claude' },
@@ -76,7 +76,7 @@ it('refuses a provider nobody registered', async () => {
 it('offers the backend\'s own settings, and not another\'s', async () => {
   const host = createHost({ path: '/tmp/echo', agents: [echo({ path: '/tmp/echo' })] });
   const client = host.accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
   const config = await client.handle({
     method: 'resolveSessionConfig',
     params: { channel: 'ahp-root://', provider: 'echo' },
@@ -115,7 +115,7 @@ it('carries a turn from the client to the backend and back', async () => {
 it('says it back in the voice the session was created with', async () => {
   const host = createHost({ path: '/tmp/echo', agents: [echo({ path: '/tmp/echo', pace: 0 })] });
   const client = host.accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'p', protocolVersions: ['0.9.0'] } });
   await client.handle({
     method: 'createSession',
     params: { channel: 'ahp-session:/two', provider: 'echo', config: { voice: 'shouty' } },

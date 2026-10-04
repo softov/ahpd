@@ -1,6 +1,6 @@
 ---
 title: The tests offer a version both packages speak
-status: todo
+status: done
 depends: []
 layer: "sdk, agent-acp, agent-cofold, agent-pi, server, scripts"
 refs:

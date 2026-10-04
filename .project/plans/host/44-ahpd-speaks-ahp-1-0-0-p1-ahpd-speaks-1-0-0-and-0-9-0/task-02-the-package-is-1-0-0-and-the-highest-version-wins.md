@@ -1,6 +1,6 @@
 ---
 title: The package is 1.0.0, and the highest compatible version wins
-status: todo
+status: done
 depends: [task-01-the-tests-offer-a-version-both-packages-speak.md]
 layer: "root, sdk, server, agent-claude"
 refs:

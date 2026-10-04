@@ -10,6 +10,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checker } from '../../../tools/wire.mjs';
+import { PROTOCOL_VERSION } from '@microsoft/agent-host-protocol';
 
 /**
  * This checkout, as an absolute path.
@@ -181,7 +182,7 @@ function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: stri
 
 const open = () => serving('/home/softov').accept(peer());
 
-const hello = (versions: string[], extra: Record<string, unknown> = {}) => ({
+const hello = (versions: unknown[], extra: Record<string, unknown> = {}) => ({
   method: 'initialize',
   params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: versions, ...extra },
 });
@@ -208,34 +209,37 @@ beforeEach(() => {
 });
 
 describe('the handshake', () => {
-  it('answers with a version the client actually offered', async () => {
-    const client = open();
-    // The newest either side knows is 1.0.0 to this client and 0.8.0 here.
-    // Answering 1.0.0 would be answering with something it cannot read.
-    const result = await client.handle(hello(['1.0.0', '0.8.0'])) as { protocolVersion: string };
-    expect(result.protocolVersion).toBe('0.8.0');
-  });
-
-  it('takes the client\'s order of preference, not its own', async () => {
-    const client = open();
-    const result = await client.handle(hello(['0.7.0', '0.8.0'])) as { protocolVersion: string };
-    expect(result.protocolVersion).toBe('0.7.0');
+  it('answers the highest version offered that it speaks, in whatever order they came', async () => {
+    for (const offered of [['1.0.0'], ['0.9.0'], ['0.9.0', '1.0.0'], ['1.0.0', '0.9.0']]) {
+      const result = await open().handle(hello(offered)) as { protocolVersion: string };
+      expect(result.protocolVersion).toBe(offered.includes('1.0.0') ? '1.0.0' : '0.9.0');
+    }
   });
 
   it('refuses with the versions it can speak, so the client can say why', async () => {
-    const client = open();
-    await expect(client.handle(hello(['99.0.0']))).rejects.toMatchObject({
-      code: -32005,
-      // `supportedVersions`, which is the name the protocol gives it. Under
-      // any other one the client has read `undefined` and has no version to
-      // retry with, which is the whole point of the field.
-      data: { supportedVersions: expect.arrayContaining(['0.8.0']) },
-    });
+    for (const offered of [['0.8.0'], ['99.0.0']]) {
+      await expect(open().handle(hello(offered))).rejects.toMatchObject({
+        code: -32005,
+        // `supportedVersions`, which is the name the protocol gives it. Under
+        // any other one the client has read `undefined` and has no version to
+        // retry with, which is the whole point of the field.
+        data: { supportedVersions: ['1.0.0', '0.9.0'] },
+      });
+    }
+  });
+
+  it('refuses an entry that is not a version, naming it, rather than reading past it', async () => {
+    // Not "unsupported" and not "skipped": a `MAJOR.MINOR.PATCH` that is not
+    // one is a client that is wrong about what it speaks, and telling it so
+    // is the only thing that can fix it.
+    for (const offered of [['1.0'], [7]]) {
+      await expect(open().handle(hello(offered))).rejects.toMatchObject({ code: -32602 });
+    }
   });
 
   it('hands back the snapshots the client asked to start with', async () => {
     const client = open();
-    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const result = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { resource: string; state: { agents: unknown[] }; fromSeq: number }[];
     };
     expect(result.snapshots).toHaveLength(1);
@@ -248,7 +252,7 @@ describe('the handshake', () => {
     // A handshake that fails because one requested session has no agent is a
     // client that cannot connect at all.
     const result = await client.handle(
-      hello(['0.8.0'], { initialSubscriptions: ['ahp-root://', 'ahp-session:/vanished'] }),
+      hello(['0.9.0'], { initialSubscriptions: ['ahp-root://', 'ahp-session:/vanished'] }),
     ) as { snapshots: unknown[] };
     expect(result.snapshots).toHaveLength(1);
   });
@@ -276,17 +280,17 @@ describe('the handshake', () => {
     expect(await client.handle({ method: 'unsubscribe', params: { channel: 'ahp-root://' } }))
       .toBeUndefined();
     // And the connection is still usable afterwards.
-    const result = await client.handle(hello(['0.8.0'])) as { protocolVersion: string };
-    expect(result.protocolVersion).toBe('0.8.0');
+    const result = await client.handle(hello([PROTOCOL_VERSION])) as { protocolVersion: string };
+    expect(result.protocolVersion).toBe(PROTOCOL_VERSION);
   });
 
   it('refuses a second introduction on the same connection', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // Re-agreeing the version would re-key every subscription this connection
     // is holding, so the reference host does not serve `initialize` twice
     // either.
-    await expect(client.handle(hello(['0.8.0']))).rejects.toMatchObject({ code: -32601 });
+    await expect(client.handle(hello(['0.9.0']))).rejects.toMatchObject({ code: -32601 });
   });
 });
 
@@ -297,7 +301,7 @@ describe('the catalogue', () => {
       { sessionId: 'new', summary: 'Newer', lastModified: 1_800_000_000_000, cwd: '/home/softov' },
     );
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { title: string; status: number; resource: string }[];
     };
@@ -322,7 +326,7 @@ describe('the catalogue', () => {
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
     sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
     const client = open();
-    const first = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const first = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { activeSessions: number } }[];
     };
     expect(first.snapshots[0]?.state.activeSessions).toBe(0);
@@ -342,7 +346,7 @@ describe('the catalogue', () => {
 
   it('refuses a session channel it has no agent for', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/nope' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
@@ -351,7 +355,7 @@ describe('the catalogue', () => {
     for (let i = 0; i < 120; i++)
       sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // `limit` omitted is the protocol's "let the server choose", and neither
     // client that connects to this host reads `nextCursor` - so a default
     // page would be a catalogue silently cut down to it.
@@ -366,7 +370,7 @@ describe('the catalogue', () => {
     for (let i = 0; i < 1_002; i++)
       sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: unknown[]; nextCursor?: string;
     };
@@ -387,7 +391,7 @@ describe('the catalogue', () => {
     for (let i = 0; i < 120; i++)
       sdk.sessions.push({ sessionId: `s${i}`, lastModified: i, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const seen: string[] = [];
     let cursor: string | undefined;
     let pages = 0;
@@ -411,7 +415,7 @@ describe('the catalogue', () => {
   it('refuses a cursor it did not issue rather than starting over', async () => {
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // Resuming from the top would answer a question about the rest of the
     // catalogue with the beginning of it, and the client would page for ever.
     await expect(client.handle({
@@ -424,7 +428,7 @@ describe('the catalogue', () => {
 describe('what it will not pretend', () => {
   it('says a method it does not serve rather than answering an empty success', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // An empty success leaves the client waiting for state that is never
     // coming, which reads as a hang rather than as a missing feature.
     // `otlp` is telemetry export, which this daemon has no opinion about and
@@ -435,7 +439,7 @@ describe('what it will not pretend', () => {
 
   it('refuses a provider it does not have', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await expect(client.handle({
       method: 'createSession',
       params: { channel: 'ahp-session:/x', provider: 'copilot' },
@@ -502,7 +506,7 @@ describe('what it will not pretend', () => {
 
   it('answers nothing at all to a notification', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // `unsubscribe` and `dispatchAction` carry no id, and replying to one is a
     // protocol error rather than a harmless extra message.
     expect(await client.handle({ method: 'unsubscribe', params: { channel: 'ahp-root://' } }))
@@ -515,8 +519,8 @@ describe('what it will not pretend', () => {
     const host = serving('/home/softov');
     const a = host.accept(peer());
     const b = host.accept(peer());
-    await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
-    await b.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     expect(host.connections()).toBe(2);
 
     // Channel-wide would kill the stream the other one is reading.
@@ -535,7 +539,7 @@ async function running() {
   // Root included: a catalogue notification goes to the connections watching
   // the root channel and to no others, so a client that never subscribed to
   // it hears nothing - correctly.
-  await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+  await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
   const uri = 'ahp-session:/live';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   // Read, not assumed. What a session calls its chat is the host's to say and
@@ -1336,7 +1340,7 @@ describe('driving a turn', () => {
     const { host, client, peer: p, uri } = await running();
     const other = peer();
     const b = host.accept(other);
-    await b.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
 
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
     // The session was theirs too.
@@ -1670,7 +1674,7 @@ describe('what the harness offers', () => {
 
   it('tells the client that a slash is worth asking about', async () => {
     const client = open();
-    const result = await client.handle(hello(['0.8.0'])) as { completionTriggerCharacters: string[] };
+    const result = await client.handle(hello(['0.9.0'])) as { completionTriggerCharacters: string[] };
     // Without this the client has no reason to believe a slash means anything
     // here, and types it into the chat as text.
     expect(result.completionTriggerCharacters).toEqual(['/', '@']);
@@ -1721,7 +1725,7 @@ describe('a session that already happened', () => {
       { type: 'assistant', uuid: 'a1', message: { content: [{ type: 'text', text: 'Two files.' }] } },
     );
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
 
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
       snapshot: { state: { lifecycle: string; defaultChat: string } };
@@ -1772,7 +1776,7 @@ describe('a session that already happened', () => {
       message: { role: 'user', content: '<ide_opened_file>/some/path</ide_opened_file> fix the parser' },
     });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const listed = await client.handle({ method: 'listSessions', params: {} }) as { items: { title: string }[] };
     const opened = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } }) as {
       snapshot: { state: { title: string } };
@@ -1799,7 +1803,7 @@ describe('a session that already happened', () => {
     sdk.sessions.push(older);
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/older' } });
 
     client.handle({
@@ -1827,7 +1831,7 @@ describe('a session that already happened', () => {
 
   it('refuses a session that is neither running nor in the catalogue', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/ghost' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
@@ -1836,7 +1840,7 @@ describe('a session that already happened', () => {
 describe('choosing a model', () => {
   it('puts the schema where a client reads it', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await settle(6);
     const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
       schema: { type?: string; properties: Record<string, { enum?: string[]; sessionMutable?: boolean }> };
@@ -1861,7 +1865,7 @@ describe('choosing a model', () => {
 
   it('says which controls survive a running session and which do not', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
       schema: { properties: Record<string, { sessionMutable?: boolean }> };
     };
@@ -1871,7 +1875,7 @@ describe('choosing a model', () => {
 
   it('answers back with what has already been chosen', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const cfg = await client.handle({
       method: 'resolveSessionConfig',
       params: { config: { permissionMode: 'plan' } },
@@ -1920,7 +1924,7 @@ describe('choosing a model', () => {
       ...machine(),
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const made = async (channel: string, provider: string) => {
       await client.handle({ method: 'createSession', params: { channel, provider, config: {} } });
       await settle();
@@ -1973,7 +1977,7 @@ describe('choosing a model', () => {
 
   it('hands the allow and deny lists to the harness when the session starts', async () => {
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({
       method: 'createSession',
       params: {
@@ -2171,7 +2175,7 @@ describe('paging a long history', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/long' } }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
@@ -2381,7 +2385,7 @@ describe('the flags a client sets', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const uri = 'ahp-session:/old';
     await client.handle({ method: 'subscribe', params: { channel: uri } });
 
@@ -2400,7 +2404,7 @@ describe('the flags a client sets', () => {
   it('needs no agent to record one', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // Marking a row read is what somebody does from a catalogue. Starting an
     // agent to record a bit would start one per row scrolled past.
     client.handle({
@@ -2468,7 +2472,7 @@ describe('a session read from its transcript', () => {
   it('is configurable before it is resumed', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }) as {
       snapshot: { state: { config: { schema: { properties: Record<string, unknown> } }; values?: unknown } };
     };
@@ -2481,7 +2485,7 @@ describe('a session read from its transcript', () => {
   it('lists its chat the way a live session does', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1000, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/old' } }) as {
       snapshot: { state: { chats: { resource: string; status: number; modifiedAt: string }[] } };
@@ -2499,7 +2503,7 @@ describe('a session read from its transcript', () => {
   it('starts on what was chosen for it while it was only a row', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     client.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-session:/old', action: { type: 'session/configChanged', config: { permissionMode: 'plan' } } },
@@ -2521,7 +2525,7 @@ describe('a session read from its transcript', () => {
   it('reads a session again when the first read answered nothing', async () => {
     sdk.sessions.push({ sessionId: 'late', summary: 'Late', lastModified: 1, cwd: '/home/softov' });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
 
     // Nothing in the transcript yet, which is the answer a read that failed
     // and a session nobody has written both give.
@@ -2553,7 +2557,7 @@ describe('a session read from its transcript', () => {
     sdk.throwOnce = 1;
 
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/flaky' } }) as {
       snapshot: { state: { turns: { message: { text: string } }[] } };
     };
@@ -2580,7 +2584,7 @@ describe('a session\'s config across a restart', () => {
       path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     return client;
   };
 
@@ -2741,7 +2745,7 @@ describe('a session\'s config across a restart', () => {
       onEvent: (message) => said.push(message),
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     return { client, said };
   };
 
@@ -2944,7 +2948,7 @@ describe('what goes after a slash', () => {
     };
     const host = serving('/home/softov');
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     // The boot probe is what learns them, and it answers on its own clock.
     await settle(8);
     return client;
@@ -2982,7 +2986,7 @@ describe('where the agent works', () => {
   const opened = async (also: string[] = []) => {
     const host = serving('/home/softov', also);
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     return client;
   };
 
@@ -3289,7 +3293,7 @@ describe('what it says it is doing', () => {
       });
       const pa = peer();
       const a = first.accept(pa);
-      await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
       await a.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
       await a.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
       await a.handle({ method: 'subscribe', params: { channel: uri } });
@@ -3306,7 +3310,7 @@ describe('what it says it is doing', () => {
         path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: fileSessions({ dir }),
       });
       const b = second.accept(peer());
-      await b.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await b.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
       await b.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
       // The same chat, created again, which is where the stored title is
       // applied before the chat is announced.
@@ -3488,7 +3492,7 @@ describe('turning a customization on and off', () => {
     });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
     await settle(8);
@@ -3605,7 +3609,7 @@ describe('a client that dropped, coming back', () => {
     const host = serving('/home/softov');
     const first = peer();
     const a = host.accept(first);
-    await a.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     await a.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
 
@@ -3622,7 +3626,7 @@ describe('a client that dropped, coming back', () => {
     await settle();
 
     const back = host.accept(peer());
-    await back.handle(hello(['0.8.0']));
+    await back.handle(hello(['0.9.0']));
     const result = await back.handle({
       method: 'reconnect',
       params: {
@@ -3643,7 +3647,7 @@ describe('a client that dropped, coming back', () => {
   it('names the channels it cannot resume rather than failing the whole thing', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const result = await client.handle({
       method: 'reconnect',
       params: {
@@ -3662,12 +3666,12 @@ describe('a client that dropped, coming back', () => {
   it('watches again, so what happens next arrives without a fresh subscribe', async () => {
     const host = serving('/home/softov');
     const setup = host.accept(peer());
-    await setup.handle(hello(['0.8.0']));
+    await setup.handle(hello(['0.9.0']));
     await setup.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
 
     const p = peer();
     const back = host.accept(p);
-    await back.handle(hello(['0.8.0']));
+    await back.handle(hello(['0.9.0']));
     await back.handle({
       method: 'reconnect',
       params: {
@@ -3688,7 +3692,7 @@ describe('a client that dropped, coming back', () => {
   it('hands back snapshots when the gap is longer than the buffer', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     // A thousand and one actions later, the first is gone. Rather than
     // replaying a hole, the protocol has a second answer.
@@ -3722,7 +3726,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
 
   const opened = async (base = REPO) => {
     const client = at(base);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     return client;
   };
 
@@ -3850,7 +3854,7 @@ describe('the host\'s filesystem, as far as a client may see it', () => {
       resources: { list, read, resolve, complete },
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     for (const method of ['resourceWrite', 'resourceDelete', 'resourceMkdir', 'resourceMove', 'resourceCopy']) {
       await expect(client.handle({
         method,
@@ -3871,7 +3875,7 @@ describe('completing an at-sign', () => {
   it('offers paths under the session\'s own directory', async () => {
     const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     const found = await client.handle({
       method: 'completions',
@@ -3889,7 +3893,7 @@ describe('completing an at-sign', () => {
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {
     const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const found = await client.handle({
       method: 'completions',
       params: { channel: 'ahp-root://', kind: 'userMessage', text: '@pack', offset: 5 },
@@ -3900,7 +3904,7 @@ describe('completing an at-sign', () => {
   it('leaves a slash command alone, because the two cannot both match', async () => {
     const host = createHost({ path: REPO, agents: [claude({ paths: [REPO] })], ...machine() });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const found = await client.handle({
       method: 'completions',
       params: { channel: 'ahp-root://', kind: 'userMessage', text: 'mail me@example.com', offset: 19 },
@@ -3918,7 +3922,7 @@ describe('two people on one chat', () => {
     const two = peer();
     const b = host.accept(two);
     for (const client of [a, b]) {
-      await client.handle(hello(['0.8.0']));
+      await client.handle(hello(['0.9.0']));
     }
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     for (const client of [a, b]) {
@@ -3941,7 +3945,7 @@ describe('two people on one chat', () => {
 
     // And somebody arriving later gets it from the snapshot.
     const three = host.accept(peer());
-    await three.handle(hello(['0.8.0']));
+    await three.handle(hello(['0.9.0']));
     const opened = await three.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
       snapshot: { state: { draft?: { text?: string } } };
     };
@@ -3989,7 +3993,7 @@ describe('a command typed into the conversation', () => {
     const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     const uri = 'ahp-session:/banged';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: ['file:///tmp'] } });
     const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -4010,17 +4014,17 @@ describe('a command typed into the conversation', () => {
 
   it('says it recognises the marker, and says nothing when there is no shell', async () => {
     const withShell = await shelled();
-    const first = await withShell.client.handle(hello(['0.8.0'])).catch(() => undefined);
+    const first = await withShell.client.handle(hello(['0.9.0'])).catch(() => undefined);
     expect(first).toBeUndefined(); // already introduced
 
     const bare = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })] }).accept(peer());
-    const said = await bare.handle(hello(['0.8.0'])) as { terminalCommandPrefix?: string };
+    const said = await bare.handle(hello(['0.9.0'])) as { terminalCommandPrefix?: string };
     // Absence is the protocol's own way of saying the shorthand is
     // unsupported, and a host with no shell cannot support it.
     expect(said.terminalCommandPrefix).toBeUndefined();
 
     const able = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() }).accept(peer());
-    const also = await able.handle(hello(['0.8.0'])) as { terminalCommandPrefix?: string };
+    const also = await able.handle(hello(['0.9.0'])) as { terminalCommandPrefix?: string };
     expect(also.terminalCommandPrefix).toBe('!');
   });
 
@@ -4143,7 +4147,7 @@ describe('a command typed into the conversation', () => {
     const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     const chatUri = `ahp-chat://default/${Buffer.from('claude:/on-disk', 'utf8').toString('base64url')}`;
     await client.handle({ method: 'subscribe', params: { channel: chatUri } });
@@ -4212,7 +4216,7 @@ describe('a command typed into the conversation', () => {
     const host = createHost({ path: '/tmp', agents: [echo({ path: '/tmp', pace: 0 })], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/no-command';
     await client.handle({
       method: 'createSession',
@@ -4244,7 +4248,7 @@ describe('a shell on this machine', () => {
     const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     return { host, client, peer: p };
   };
 
@@ -4479,7 +4483,7 @@ describe('a terminal a backend opens', () => {
     const host = createHost({ path: '/tmp', agents: [opening(held)], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shells', provider: 'claude' } });
 
     const listed = () => (actions(p, 'ahp-root://')
@@ -4788,7 +4792,7 @@ describe('running a failed turn again', () => {
 describe('more than one directory', () => {
   it('advertises that it can, and which slot is fixed', async () => {
     const client = open();
-    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const result = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { agents: { capabilities?: { multipleWorkingDirectories?: unknown } }[] } }[];
     };
     /*
@@ -4806,7 +4810,7 @@ describe('more than one directory', () => {
   it('hands every directory the client named to the harness', async () => {
     const host = serving('/home/softov');
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({
       method: 'createSession',
       params: {
@@ -4854,7 +4858,7 @@ describe('more than one directory', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/rooted';
     await client.handle({
       method: 'createSession',
@@ -4887,7 +4891,7 @@ describe('more than one directory', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/split';
     await client.handle({
       method: 'createSession',
@@ -4970,7 +4974,7 @@ describe('tools the host contributes', () => {
     });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/served';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
     // The name the session is held and listed by, which is the one a tool
@@ -4997,7 +5001,7 @@ describe('tools the host contributes', () => {
     const { client: bare, uri: other } = await (async () => {
       const host = serving('/home/softov');
       const client_ = host.accept(peer());
-      await client_.handle(hello(['0.8.0']));
+      await client_.handle(hello(['0.9.0']));
       await client_.handle({ method: 'createSession', params: { channel: 'ahp-session:/bare', provider: 'claude' } });
       return { client: client_, uri: 'ahp-session:/bare' };
     })();
@@ -5020,7 +5024,7 @@ describe('tools the host contributes', () => {
         advancedTools,
       });
       const client = host.accept(peer());
-      await client.handle(hello(['0.8.0']));
+      await client.handle(hello(['0.9.0']));
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/marked', provider: 'claude' } });
       const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/marked' } }) as {
         snapshot: { state: { serverTools?: { name: string }[] } };
@@ -5196,7 +5200,7 @@ describe('tools the host contributes', () => {
       });
       const p = peer();
       const client = host.accept(p);
-      await client.handle(hello(['0.8.0']));
+      await client.handle(hello(['0.9.0']));
       client.handle({
         method: 'dispatchAction',
         params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { deferredTitleGeneration: true } } },
@@ -5271,7 +5275,7 @@ describe('tools the host contributes', () => {
         });
         const p_ = peer();
         const client_ = host.accept(p_);
-        await client_.handle(hello(['0.8.0']));
+        await client_.handle(hello(['0.9.0']));
         const uri_ = 'ahp-session:/mover';
         await client_.handle({ method: 'createSession', params: { channel: uri_, provider: 'claude' } });
         const chat = (await client_.handle({ method: 'subscribe', params: { channel: uri_ } }) as {
@@ -5342,10 +5346,10 @@ describe('tools the host contributes', () => {
     const publisher = peer();
     publisher.request = async () => ({ data: 'ZG9uZQ==', encoding: 'base64' });
     const other = served.accept(publisher);
-    await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.8.0'] } });
+    await other.handle({ method: 'initialize', params: { clientId: 'plugin', protocolVersions: ['0.9.0'] } });
 
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/reads', provider: 'claude' } });
     const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: {
       name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }>;
@@ -5402,7 +5406,7 @@ describe('the MCP servers a session is offered', () => {
       ...(mcpServers === undefined ? {} : { mcpServers }),
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/served', provider: 'echo' } });
     return seen.at(0)?.mcpServers;
   };
@@ -5441,7 +5445,7 @@ describe('the MCP servers a session is offered', () => {
       get mcpServers() { return held; },
     });
     const client = host.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
     held = api;
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } });
@@ -6142,7 +6146,7 @@ describe('more than one chat in a session', () => {
 
   it('advertises that it can, so a client knows it may ask', async () => {
     const client = open();
-    const result = await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] })) as {
+    const result = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
       snapshots: { state: { agents: { capabilities?: { multipleChats?: unknown } }[] } }[];
     };
     /*
@@ -6301,7 +6305,7 @@ describe('interrupting a terminal', () => {
     const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], ...machine() });
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const uri = 'ahp-terminal:/int';
     await client.handle({
       method: 'createTerminal',
@@ -6385,7 +6389,7 @@ describe('the fields a client reads by name', () => {
     const host = serving('/home/softov');
     const seen = peer();
     const watching = host.accept(seen);
-    await watching.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await watching.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     // Reading the catalogue is what teaches this host the row exists.
     await watching.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
 
@@ -6413,7 +6417,7 @@ describe('the fields a client reads by name', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     const chat = 'ahp-chat://default/Y2xhdWRlOi90eXBlZA';
     await client.handle({ method: 'subscribe', params: { channel: chat } });
@@ -6451,7 +6455,7 @@ describe('the fields a client reads by name', () => {
     const host = serving('/home/softov');
     const p = peer();
     const client = host.accept(p);
-    await client.handle(hello(['0.8.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     const chat = 'ahp-chat://default/Y2xhdWRlOi9jYXJyaWVk';
     await client.handle({ method: 'subscribe', params: { channel: chat } });
@@ -7164,7 +7168,7 @@ describe('a session\'s annotations', () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     sdk.reads = 0;
 
     /*
@@ -7187,7 +7191,7 @@ describe('a session\'s annotations', () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     const client = open();
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
 
     // Deliberately without listing first. A client sends the three
     // subscriptions that open a session in one breath, and its `listSessions`
@@ -7228,7 +7232,7 @@ describe('a session\'s annotations', () => {
     // A second client, arriving after. The whole point of the channel is that
     // the mark is the session's rather than the marker's.
     const other = host.accept(peer());
-    await other.handle(hello(['0.8.0']));
+    await other.handle(hello(['0.9.0']));
     const seen = await other.handle({ method: 'subscribe', params: { channel: marks } }) as {
       snapshot: { state: { annotations: { id: string; entries: { text: string }[] }[] } };
     };
@@ -7402,7 +7406,7 @@ describe('what GitHub knows about the branch', () => {
     const { port } = lookup(() => []);
     const served = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), github: port });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { agents: { protectedResources?: { resource: string; required?: boolean }[] }[] } };
     }).snapshot.state;
@@ -7422,7 +7426,7 @@ describe('what GitHub knows about the branch', () => {
     });
     const p = peer();
     const client = served.accept(p);
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'authenticate', params: { resource: REPOS, token: 'gho_x' } });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/pr', provider: 'claude' } });
     await settle();
@@ -7507,7 +7511,7 @@ describe('what GitHub knows about the branch', () => {
       directories: facts(onBranch('main')), github: port,
     });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'claude' } });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
@@ -7529,7 +7533,7 @@ describe('what GitHub knows about the branch', () => {
       directories: facts(onBranch('main')), github: port,
     });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'claude' } });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/none' } }) as {
@@ -7560,7 +7564,7 @@ describe('what GitHub knows about the branch', () => {
       directories: facts(onBranch('main')), github: port, sessions: store,
     });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     await settle();
 
@@ -7577,7 +7581,7 @@ describe('what GitHub knows about the branch', () => {
       directories: facts(onBranch('main')),
     });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/quiet', provider: 'claude' } });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/quiet' } }) as {
@@ -7598,7 +7602,7 @@ describe('what GitHub knows about the branch', () => {
       directories: facts(undefined),
     });
     const client = served.accept(peer());
-    await client.handle(hello(['0.8.0']));
+    await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/silent', provider: 'claude' } });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/silent' } }) as {

@@ -17,7 +17,7 @@
  */
 
 import { createRequire } from 'node:module';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +30,20 @@ const ts = require('typescript');
 // the module it answers with.
 const entry = fileURLToPath(import.meta.resolve('@microsoft/agent-host-protocol'))
   .replace(/\.js$/, '.d.ts');
+
+/*
+ * The protocol package's own version, as installed, which is what the output
+ * names so `wire.mjs` can tell a schema built from what is installed from one
+ * left over a bump ago. The manifest is walked to the same way `wire.mjs`
+ * walks to it, since `exports` names no subpath for it.
+ */
+const installed = (() => {
+  for (let dir = path.dirname(fileURLToPath(import.meta.url)); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const at = path.join(dir, 'node_modules', '@microsoft', 'agent-host-protocol', 'package.json');
+    if (existsSync(at)) return require(at).version;
+  }
+  return undefined;
+})();
 
 const program = ts.createProgram([entry], {
   target: ts.ScriptTarget.ES2022,
@@ -276,6 +290,9 @@ for (const [name, schema] of defs) {
 const out = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
   $id: 'ahp-strict',
+  // The package version these declarations were read out of, so a reader can
+  // tell a schema built from what is installed from one left over a bump ago.
+  ahpVersion: installed,
   $defs: Object.fromEntries([...defs].sort(([a], [b]) => a.localeCompare(b))),
 };
 

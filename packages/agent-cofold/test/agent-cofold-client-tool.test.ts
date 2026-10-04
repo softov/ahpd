@@ -108,7 +108,7 @@ async function offering(model: ModelAdapter) {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
@@ -147,7 +147,7 @@ async function outsider(host: ReturnType<typeof createHost>) {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'other', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   return { client, peer: p };
 }

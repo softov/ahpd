@@ -42,7 +42,7 @@ async function ready(uri: string) {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'] },
   });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
   return { client, peer: p, chatUri: uri.replace('ahp-session:/', 'ahp-chat:/') };

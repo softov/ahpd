@@ -10,7 +10,8 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { checker, collapse, framesIn } from './wire.mjs';
+import { fileURLToPath } from 'node:url';
+import { checker, collapse, framesIn, SCHEMA, stale } from './wire.mjs';
 
 const [file] = process.argv.slice(2).filter((one) => !one.startsWith('--'));
 if (!file) {
@@ -21,6 +22,17 @@ const verbose = process.argv.includes('--verbose');
 const limit = process.argv.includes('--limit')
   ? Number(process.argv[process.argv.indexOf('--limit') + 1])
   : Infinity;
+
+/*
+ * Said rather than fixed. This command reads a capture somebody took, and a
+ * finding drawn against a schema built from a package that is not the one
+ * installed describes a protocol this host no longer speaks; regenerating it
+ * under the reader would quietly replace the question being asked.
+ */
+if (stale()) {
+  process.stderr.write(`${fileURLToPath(SCHEMA)} was built from another @microsoft/agent-host-protocol; run \`node tools/schema.mjs\` first\n`);
+  process.exit(2);
+}
 
 const wire = checker();
 const defects = [];

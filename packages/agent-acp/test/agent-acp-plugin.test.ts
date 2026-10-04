@@ -81,7 +81,7 @@ const spec = (provider: string, over: Record<string, unknown> = {}): PluginSpec 
 
 const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => await client.handle({
   method: 'initialize',
-  params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
 }) as { snapshots: { state: { agents: { provider: string }[] } }[] };
 
 /** Open one session on a provider and watch both of its channels. */

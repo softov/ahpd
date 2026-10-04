@@ -106,7 +106,7 @@ async function talking(model: ModelAdapter, tools: HostTool[], policy: Partial<P
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   return { host, client, peer: p };
 }

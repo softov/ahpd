@@ -25,7 +25,7 @@ import { spawn as startProcess } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { AhpClient } from '@microsoft/agent-host-protocol/client';
 import type { AhpTransport, Subscription, TransportFrame } from '@microsoft/agent-host-protocol/client';
-import { chatReducer, PROTOCOL_VERSION, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import { chatReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, SessionAction, SessionState, StateAction } from '@microsoft/agent-host-protocol';
 import { ANSWER_TIMEOUT } from './rpc.js';
 import { computerId } from './computers.js';
@@ -370,8 +370,8 @@ const nestedSession = (
     client = held;
     held.connect();
     const hello = await held.initialize({ clientId: `ahpd-nested-${id}`, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
-    if (hello.protocolVersion !== PROTOCOL_VERSION) {
-      throw new Error(`the host inside computer://${id} speaks ${hello.protocolVersion}, and this host speaks ${PROTOCOL_VERSION}`);
+    if (!SUPPORTED_PROTOCOL_VERSIONS.includes(hello.protocolVersion)) {
+      throw new Error(`the host inside computer://${id} speaks ${hello.protocolVersion}, and this host offered ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`);
     }
     await held.request('createSession', {
       channel: innerSession,

@@ -100,7 +100,7 @@ it('serves a backend a plugin contributed, beside the daemon\'s own', async () =
   const client = host.accept(peer());
   const ready = await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   }) as { snapshots: { state: { agents: { provider: string; displayName: string }[] } }[] };
 
   expect(ready.snapshots[0]?.state.agents.map((one) => one.provider)).toEqual(['echo', 'contributed']);
@@ -159,7 +159,7 @@ it('publishes a session setting a plugin contributed, with its value on the sess
 
   const host = createHost(options);
   const client = host.accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   const shown = async (channel: string) => {
     const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
       snapshot: { state: { config?: { schema?: { properties?: Record<string, unknown> }; values?: Record<string, unknown> } } };
@@ -210,7 +210,7 @@ it('routes a completions request to whoever registered the key', async () => {
   }]);
   const host = createHost(options);
   const client = host.accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
 
   const said = await client.handle({
     method: 'sessionConfigCompletions',
@@ -259,7 +259,7 @@ it('seeds a contributed key from its own answerer when a config is resolved', as
     events: {},
   }]);
   const client = createHost(options).accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
 
   const resolved = await client.handle({
     method: 'resolveSessionConfig',
@@ -303,7 +303,7 @@ it('answers the rest of the form when a seed fails', async () => {
     events: {},
   }]);
   const client = createHost(options).accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
 
   const resolved = await client.handle({
     method: 'resolveSessionConfig',
@@ -338,7 +338,7 @@ it('answers with nothing when the answerer fails', async () => {
     events: {},
   }]);
   const client = createHost(options).accept(peer());
-  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.8.0'] } });
+  await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   expect(await client.handle({
     method: 'sessionConfigCompletions',
     params: { channel: 'ahp-root://', property: 'computer', query: '' },
@@ -368,7 +368,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
   const client = host.accept(peer());
   const ready = await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   }) as {
     _meta?: Record<string, unknown>;
     snapshots: { resource: string; state: { _meta?: Record<string, unknown> } }[];
@@ -408,7 +408,7 @@ it('advertises usage as a scheme a host serves itself, beside file:', async () =
   const client = host.accept(peer());
   const ready = await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   }) as { _meta?: Record<string, Record<string, unknown>> };
 
   expect(ready._meta?.['ahpd.resourceProviders']?.['usage']).toEqual({
@@ -424,7 +424,7 @@ it('advertises nothing when it serves no scheme beside file:', async () => {
   const client = host.accept(peer());
   const ready = await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   }) as { _meta?: Record<string, unknown>; snapshots: { state: { _meta?: unknown } }[] };
 
   // Absent rather than empty: presence is how a client knows the key means

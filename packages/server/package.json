@@ -48,7 +48,7 @@
     "@cofold/config": "^0.3.0",
     "@cofold/remote": "^0.4.0",
     "@cofold/terminal": "^0.2.0",
-    "@microsoft/agent-host-protocol": "^0.9.0"
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "optionalDependencies": {
     "node-pty": "^1.1.0-beta40"

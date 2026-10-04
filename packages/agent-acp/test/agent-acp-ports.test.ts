@@ -140,7 +140,7 @@ async function talking(options: { files?: boolean; shells?: boolean; changes?: C
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/ports';
   const chatUri = 'ahp-chat:/ports';

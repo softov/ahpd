@@ -18,7 +18,9 @@
  */
 
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const Ajv = require('ajv/dist/2020.js').default ?? require('ajv/dist/2020.js');
@@ -26,6 +28,41 @@ const addFormats = require('ajv-formats').default ?? require('ajv-formats');
 
 /** Where `schema.mjs` writes, which is where this reads. */
 export const SCHEMA = new URL('./ahp.strict.schema.json', import.meta.url);
+
+/*
+ * The protocol package's own version, as installed. The manifest is found by
+ * walking up out of `tools/` rather than through the package's `exports`, which
+ * names no subpath for it, and `import.meta.resolve`, which is not there at all
+ * when this module is run by the test bundler rather than by node.
+ */
+const installed = (() => {
+  for (let dir = path.dirname(fileURLToPath(import.meta.url)); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const at = path.join(dir, 'node_modules', '@microsoft', 'agent-host-protocol', 'package.json');
+    if (existsSync(at)) return require(at).version;
+  }
+  return undefined;
+})();
+
+/**
+ * Whether the schema on disk was built from a package other than the one
+ * installed, or is not there at all.
+ *
+ * `schema.mjs` stamps the version it read its declarations out of, and this
+ * is what reads it back. A bare `vitest run` used to rebuild the file only
+ * when it was missing, so after a package bump it went on checking frames
+ * against the protocol of the version before, and said nothing: it had no
+ * way to know, and a check made against the wrong protocol is a check that
+ * passes for the wrong reason.
+ */
+export function stale(at = SCHEMA) {
+  let written;
+  try {
+    written = JSON.parse(readFileSync(at, 'utf8')).ahpVersion;
+  } catch {
+    return true;
+  }
+  return written !== installed;
+}
 
 /**
  * Which declaration a channel's state is.

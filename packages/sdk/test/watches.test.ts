@@ -29,7 +29,7 @@ async function connected(store = fileResources()) {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'w', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'w', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   return { host, client, peer: p };
 }
@@ -152,13 +152,13 @@ it('lets the watcher go when the last subscriber leaves, and when the client doe
   // A watch created and never subscribed to is not one everybody has finished
   // with - it goes when its own client does.
   const second = host.accept(peer());
-  await second.handle({ method: 'initialize', params: { clientId: 'b', protocolVersions: ['0.8.0'] } });
+  await second.handle({ method: 'initialize', params: { clientId: 'b', protocolVersions: ['0.9.0'] } });
   const orphan = await second.handle({
     method: 'createResourceWatch', params: { channel: 'ahp-root://', uri: `file://${root}` },
   }) as { channel: string };
   second.close();
   const third = host.accept(peer());
-  await third.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.8.0'] } });
+  await third.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
   await expect(third.handle({ method: 'subscribe', params: { channel: orphan.channel } })).rejects.toThrow();
 });
 

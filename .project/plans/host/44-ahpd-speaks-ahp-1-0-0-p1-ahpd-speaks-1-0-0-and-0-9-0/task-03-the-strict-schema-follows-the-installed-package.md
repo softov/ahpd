@@ -1,6 +1,6 @@
 ---
 title: The strict schema follows the installed package
-status: todo
+status: done
 depends: [task-02-the-package-is-1-0-0-and-the-highest-version-wins.md]
 layer: "tools, sdk"
 refs:

@@ -85,7 +85,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
   const client = host.accept(peer);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';

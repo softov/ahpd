@@ -299,7 +299,7 @@ it('a host that exits before initialize is a sentence with its stderr', async ()
   session.close();
 });
 
-it('a host that speaks another protocol version is refused at initialize', async () => {
+it('a host that answers a version nobody offered is refused at initialize', async () => {
   const host = scripted((message) => ({
     jsonrpc: '2.0',
     id: message.id,
@@ -311,14 +311,14 @@ it('a host that speaks another protocol version is refused at initialize', async
   await until(() => seen.some(({ action }) => action.type === 'session/creationFailed'));
   const failure = seen.find(({ action }) => action.type === 'session/creationFailed')?.action;
   expect(failure?.error?.message).toMatch(/speaks 0\.8\.0/);
-  expect(failure?.error?.message).toMatch(/this host speaks 0\.9\.0/);
+  expect(failure?.error?.message).toMatch(/this host offered 1\.0\.0, 0\.9\.0/);
   session.close();
 });
 
-it('a host that cannot create the inner session is a sentence with its stderr', async () => {
+it.each([['0.9.0'], ['1.0.0']])('a host that answers %s, which it was offered, is carried on to createSession', async (version) => {
   const host = scripted((message) => {
     if (message.method === 'initialize') {
-      return { jsonrpc: '2.0', id: message.id, result: { protocolVersion: '0.9.0', serverSeq: 0, serverInfo: { name: 'ahpd', version: '0' }, snapshots: [] } };
+      return { jsonrpc: '2.0', id: message.id, result: { protocolVersion: version, serverSeq: 0, serverInfo: { name: 'ahpd', version: '0' }, snapshots: [] } };
     }
     if (message.method === 'createSession') {
       return { jsonrpc: '2.0', id: message.id, error: { code: -32002, message: 'No provider called cofold' } };

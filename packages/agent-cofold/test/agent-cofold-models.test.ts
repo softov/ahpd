@@ -218,7 +218,7 @@ it('advertises the whole catalogue on the root channel, which is what a picker r
   const client = host.accept(peer);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
 
   /** The root agent list as a client subscribing right now would see it. */

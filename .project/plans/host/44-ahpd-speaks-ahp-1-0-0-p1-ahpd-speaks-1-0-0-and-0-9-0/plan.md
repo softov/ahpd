@@ -1,7 +1,7 @@
 ---
 title: ahpd speaks 1.0.0 and 0.9.0
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -73,10 +73,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The tests offer a version both packages speak](task-01-the-tests-offer-a-version-both-packages-speak.md) | todo | - |
-| [02 - The package is 1.0.0, and the highest compatible version wins](task-02-the-package-is-1-0-0-and-the-highest-version-wins.md) | todo | 01 |
-| [03 - The strict schema follows the installed package](task-03-the-strict-schema-follows-the-installed-package.md) | todo | 02 |
-| [04 - The documents say 1.0.0 and 0.9.0](task-04-the-documents-say-1-0-0-and-0-9-0.md) | todo | 02 |
+| [01 - The tests offer a version both packages speak](task-01-the-tests-offer-a-version-both-packages-speak.md) | done | - |
+| [02 - The package is 1.0.0, and the highest compatible version wins](task-02-the-package-is-1-0-0-and-the-highest-version-wins.md) | done | 01 |
+| [03 - The strict schema follows the installed package](task-03-the-strict-schema-follows-the-installed-package.md) | done | 02 |
+| [04 - The documents say 1.0.0 and 0.9.0](task-04-the-documents-say-1-0-0-and-0-9-0.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -85,13 +85,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-tests-offer-a-version-both-packages-speak.md](task-01-the-tests-offer-a-version-both-packages-speak.md).
-- **Open questions:** none.
-- **Watch out for:** the third handshake test (`refuses with the versions it can speak`) asserts `0.8.0` in `supportedVersions` and fails on 1.0.0 too, though the trial's log shows only two; rewrite all three.
+- **Done so far:** built 2026-10-03, see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `rg -n "protocolVersions: \['0\.8\.0'\]|hello\(\['0\.8\.0'\]" packages examples scripts` finds nothing.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `rg -n "protocolVersions: \['0\.8\.0'\]|hello\(\['0\.8\.0'\]" packages examples scripts` finds nothing.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

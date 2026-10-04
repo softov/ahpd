@@ -26,7 +26,7 @@ async function client() {
   const held = host.accept(peer());
   await held.handle({
     method: 'initialize',
-    params: { clientId: 'w', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'w', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   return held;
 }

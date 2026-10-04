@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { checker, collapse, framesIn, SCHEMA } from '../../../tools/wire.mjs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { checker, collapse, framesIn, stale } from '../../../tools/wire.mjs';
 import { lineFor } from '../../server/src/wire.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Principal, Users } from '../src/types/users.js';
@@ -340,9 +341,12 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * Generated rather than committed, so it cannot drift from the package.
    *
    * `npm test` runs `tools/schema.mjs` first; this is for a bare `vitest run`,
-   * which is how the suite is usually driven while working.
+   * which is how the suite is usually driven while working. `stale()` is what
+   * makes the second run honest: the file left on disk by the last package
+   * bump still validates frames, just against the protocol before, and a
+   * check that passes for the wrong reason is not a check.
    */
-  if (!existsSync(fileURLToPath(SCHEMA))) execFileSync(process.execPath, ['tools/schema.mjs'], { stdio: 'inherit' });
+  if (stale()) execFileSync(process.execPath, ['tools/schema.mjs'], { stdio: 'inherit' });
   const check = checker();
   const defects = wire.flatMap((frame) => check.frame(frame));
   const found = collapse(defects).map(([key, entry]) => `x${String(entry.count)}  ${key} (${entry.sample})`);
@@ -363,6 +367,32 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
  * reader has to keep up - `pnpm wire` takes both shapes, because a capture
  * taken before the change is still a capture somebody has to check.
  */
+describe('the strict schema', () => {
+  it('is stale the moment the package it was built from is not the one installed', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahp-strict-'));
+    const at = join(dir, 'schema.json');
+    // Built from the package that is installed, so this is the one file that
+    // is not stale.
+    execFileSync(process.execPath, ['tools/schema.mjs', '--out', at], { stdio: 'inherit' });
+    expect(stale(at)).toBe(false);
+
+    // A file nobody wrote: there is nothing to check frames against.
+    expect(stale(join(dir, 'never-written.json'))).toBe(true);
+
+    // One left over a package bump. It still validates every frame, which is
+    // what the old missing-only guard let through - a check against the
+    // protocol before, passing for reasons that have nothing to do with drift.
+    const built = JSON.parse(readFileSync(at, 'utf8'));
+    built.ahpVersion = '0.0.1';
+    writeFileSync(at, JSON.stringify(built));
+    expect(stale(at)).toBe(true);
+
+    // And one that is not a schema at all rather than an old one.
+    writeFileSync(at, 'not json');
+    expect(stale(at)).toBe(true);
+  });
+});
+
 describe('a capture line', () => {
   /** The meta a line carries, with the two fields that move left steady. */
   const meta = { dir: 'c2s' as const, connectionId: '3', transport: 'websocket', byteLength: 0 };

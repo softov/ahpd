@@ -1,6 +1,6 @@
 ---
 title: The documents say 1.0.0 and 0.9.0
-status: todo
+status: done
 depends: [task-02-the-package-is-1-0-0-and-the-highest-version-wins.md]
 layer: "docs"
 refs:

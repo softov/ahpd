@@ -1,16 +1,14 @@
 # AHP compatibility
 
 Counted against [`@microsoft/agent-host-protocol`](https://microsoft.github.io/agent-host-protocol/)
-**0.9.0**, which is what this repository builds against and the newest
+**1.0.0**, which is what this repository builds against and the newest
 published.
 
 The versions negotiated are the package's own `SUPPORTED_PROTOCOL_VERSIONS` -
-`0.9.0`, `0.8.0`, `0.7.0`, `0.6.0`, `0.5.2`, `0.5.1` - taken in the *client's*
-order of preference rather than this host's. VS Code advertises `1.0.0`, which
-is not published: its copy is vendored from the protocol repository and runs
-ahead of npm. So it offers `1.0.0, 0.8.0, …` and this host answers `0.8.0`,
-which is the newest both know, and an editor newer than this daemon connects
-rather than refusing.
+`1.0.0` and `0.9.0` - and this host answers the highest of them the client
+offered, as the specification asks. VS Code 1.140 offers `0.9.0` and is
+answered `0.9.0`, and an editor newer than this daemon connects rather than
+refusing.
 
 Everything below was read off the source and the type declarations, not off the
 specification: nothing here is listed because AHP defines it.
@@ -65,7 +63,7 @@ is.
 
 | command | ahpd | Notes |
 | --- | :---: | --- |
-| `initialize` | ✅ | Answers with a version the client actually offered, in the client's order of preference; a refusal carries `supportedVersions` to retry with. `initialSubscriptions` come back as snapshots in the same response, and a channel is on the watch list only once its snapshot has been taken - one that could not be is not subscribed, and the client is told if it asks. That order is why the reference host's reconnect fix of September 2026 has nothing to fix here: it registers a channel at `initialize` before any snapshot exists, so a client coming back across a host restart could replay deltas onto the state it held before, and draw a finished turn as one still running; it now keeps a per-client "baseline debt" and forces snapshots. A channel here has a baseline or is not a channel. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port, and a `!command` on a session whose backend implements no `ran` is refused with the reason rather than sent to the model as a question. |
+| `initialize` | ✅ | Answers with the highest version the client offered that it speaks; a refusal carries `supportedVersions` to retry with, and an entry that is not a `MAJOR.MINOR.PATCH` version is `-32602` naming it. `initialSubscriptions` come back as snapshots in the same response, and a channel is on the watch list only once its snapshot has been taken - one that could not be is not subscribed, and the client is told if it asks. That order is why the reference host's reconnect fix of September 2026 has nothing to fix here: it registers a channel at `initialize` before any snapshot exists, so a client coming back across a host restart could replay deltas onto the state it held before, and draw a finished turn as one still running; it now keeps a per-client "baseline debt" and forces snapshots. A channel here has a baseline or is not a channel. `automations` is advertised only when this host was given a store, because presence is what *permits* a client to use the channel, and `terminalCommandPrefix` is `"!"` only when it was given a `terminals` port, and a `!command` on a session whose backend implements no `ran` is refused with the reason rather than sent to the model as a question. |
 | `ping` | ✅ | A round trip, and the one method the specification says works before the handshake - a liveness check that needed one first could not tell a half-open socket from a busy one. |
 | `subscribe` | ✅ | The snapshot is taken *at* a `serverSeq`, and anything dispatched while it was being taken is replayed on top of it. Subscribing twice to one channel is answered twice, including while the first snapshot is still in flight; the reference host cancels the earlier subscribe and answers it `-32001`, so a client written against that one may never send the second. |
 | `unsubscribe` | ✅ | A notification, so it carries no id and gets no reply. Per connection: one client unsubscribing does not stop another's stream. |

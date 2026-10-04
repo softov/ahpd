@@ -5,7 +5,7 @@
 [![@ahpd/sdk](https://img.shields.io/npm/v/%40ahpd%2Fsdk?label=%40ahpd%2Fsdk)](https://www.npmjs.com/package/@ahpd/sdk)
 ![license MIT](https://img.shields.io/badge/license-MIT-blue)
 ![node >=22](https://img.shields.io/badge/node-%3E%3D22-5fa04e)
-![Agent Host Protocol 0.9.0](https://img.shields.io/badge/AHP-0.9.0-0b7285)
+![Agent Host Protocol 1.0.0](https://img.shields.io/badge/AHP-1.0.0-0b7285)
 ![runs on Node, Bun, Deno](https://img.shields.io/badge/runs%20on-Node%20%7C%20Bun%20%7C%20Deno-495057)
 
 [![@ahpd/agent-claude](https://img.shields.io/npm/v/%40ahpd%2Fagent-claude?label=%40ahpd%2Fagent-claude)](https://www.npmjs.com/package/@ahpd/agent-claude)
@@ -378,7 +378,7 @@ flowchart LR
 
 # AHP compatibility
 
-`ahpd` targets `@microsoft/agent-host-protocol` **0.9.0**.
+`ahpd` targets `@microsoft/agent-host-protocol` **1.0.0**.
 
 Summarised by area rather than by method, one row per area:
 

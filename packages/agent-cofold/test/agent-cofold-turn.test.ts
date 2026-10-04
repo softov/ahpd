@@ -71,7 +71,7 @@ async function talking(
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
@@ -404,7 +404,7 @@ it('runs a !command in a shell rather than asking a model', async () => {
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
   const chatUri = 'ahp-chat:/bang';
@@ -450,7 +450,7 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     const client = host.accept(p);
     await client.handle({
       method: 'initialize',
-      params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+      params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
     });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/none', provider: 'cofold' } });
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/none' } });
@@ -552,7 +552,7 @@ it('announces the session idle with the turnComplete that ends a !command', asyn
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/bang';
   const chatUri = 'ahp-chat:/bang';

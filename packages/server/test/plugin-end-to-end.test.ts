@@ -45,7 +45,7 @@ const load = (specs: PluginSpec[]) => loadPlugins(specs, { base: base(), configD
 
 const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => await client.handle({
   method: 'initialize',
-  params: { clientId: 'probe', protocolVersions: ['0.8.0'], initialSubscriptions: ['ahp-root://'] },
+  params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
 }) as { snapshots: { state: { agents: { provider: string }[] } }[] };
 
 it('serves a backend that arrived as a plugin, through a whole turn', async () => {

@@ -17,7 +17,7 @@
  *   the host reporting what it did.
  */
 
-import { annotationsReducer, chatReducer, IS_CLIENT_DISPATCHABLE, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
+import { annotationsReducer, chatReducer, IS_CLIENT_DISPATCHABLE, negotiateProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction, AnnotationsState, ChangesetFile, ChatAction, ChatState, SessionInputRequestKind, TerminalInfo, ToolDefinition, Turn } from '@microsoft/agent-host-protocol';
 import type { OnWire, WireTurn } from './types/wire.js';
 import { RpcError, INTERNAL_ERROR, METHOD_NOT_FOUND } from './rpc.js';
@@ -7763,16 +7763,25 @@ export function createHost(options: HostOptions): Host {
         /**
          * The handshake.
          *
-         * Version negotiation is a *choice from what the client offered*, in
-         * the client's own order of preference - not the newest either side
-         * knows. A host that answers with a version the client did not offer
+         * Version negotiation is the highest version the client offered that
+         * is compatible with one of `SUPPORTED_PROTOCOL_VERSIONS`, which is
+         * what the specification asks for and what `negotiateProtocolVersion`
+         * is for. A host that answers with a version the client did not offer
          * has answered with a version the client cannot read.
          */
         initialize: async (params) => {
           const offered = Array.isArray(params.protocolVersions)
-            ? params.protocolVersions.filter((v) => typeof v === 'string')
+            ? params.protocolVersions as string[]
             : [];
-          const agreed = offered.find((version) => SUPPORTED_PROTOCOL_VERSIONS.includes(version));
+          let agreed: string | undefined;
+          try {
+            agreed = negotiateProtocolVersion(offered);
+          } catch (problem) {
+            // An entry that is not a `MAJOR.MINOR.PATCH` string is malformed
+            // rather than merely incompatible, and the package throws on one.
+            // An uncaught throw is not a JSON-RPC error a client can read.
+            throw new RpcError(-32602, problem instanceof Error ? problem.message : String(problem));
+          }
           if (!agreed) {
             // `supportedVersions`, which is the name the protocol gives this
             // field and the only reason the error is recoverable: it is what a

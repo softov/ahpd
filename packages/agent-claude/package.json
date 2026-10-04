@@ -61,11 +61,11 @@
   },
   "peerDependencies": {
     "@ahpd/sdk": ">=0.8",
-    "@microsoft/agent-host-protocol": "^0.9.0"
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {
     "@ahpd/sdk": "workspace:*",
-    "@microsoft/agent-host-protocol": "^0.9.0"
+    "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",
