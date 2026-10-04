@@ -121,6 +121,7 @@ Reference: [00-host.md](host/00-host.md)
 | [50 - A peer chat is its own conversation, and survives a restart](host/50-a-peer-chat-is-its-own-conversation/plan.md) | high | planned 2026-10-03; tasks 01-03 todo | - | host 47 p1 |
 | [51 - A user put clears its issuer and roles-from when it says null](host/51-a-user-put-clears-issuer-and-roles-from/plan.md) | medium | built 2026-10-03 ([implemented.md](host/51-a-user-put-clears-issuer-and-roles-from/implemented.md)) | host 36 | - |
 | [52 - Deleting a session deletes the backend's copy, and a listed row can be deleted](host/52-deleting-a-session-deletes-the-backends-copy/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | - | - |
+| [53 - ahpd.grants lists every subject a role can name, the schemes included](host/53-ahpd-grants-lists-every-scheme/plan.md) | high | planned 2026-10-04; tasks 01-02 todo | host 46 | ahpapp people/01's role editor |
 
 Next free number in `host`: `53`.
 
