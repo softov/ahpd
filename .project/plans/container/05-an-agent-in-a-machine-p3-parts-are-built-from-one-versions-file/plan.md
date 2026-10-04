@@ -86,12 +86,12 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The versions file and its reader](task-01-the-versions-file.md) | todo | - |
-| [02 - A part image per kind](task-02-a-part-image-per-kind.md) | todo | 01 |
-| [03 - A part is built the first time it is asked for](task-03-built-on-first-use.md) | todo | 02 |
-| [04 - The joined image](task-04-the-joined-image.md) | todo | 02 |
-| [05 - A scheduled job proposes a bump](task-05-a-bump-job.md) | todo | 01 |
-| [06 - A person can build ahead, and the docs say how](task-06-build-ahead-and-docs.md) | todo | 03, 04 |
+| [01 - The versions file and its reader](task-01-the-versions-file.md) | implemented | - |
+| [02 - A part image per kind](task-02-a-part-image-per-kind.md) | implemented | 01 |
+| [03 - A part is built the first time it is asked for](task-03-built-on-first-use.md) | implemented | 02 |
+| [04 - The joined image](task-04-the-joined-image.md) | implemented | 02 |
+| [05 - A scheduled job proposes a bump](task-05-a-bump-job.md) | implemented | 01 |
+| [06 - A person can build ahead, and the docs say how](task-06-build-ahead-and-docs.md) | implemented | 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -101,20 +101,34 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part
 
 ## Resume state
 
-- **Done so far:** nothing; revalidated against main 2026-10-02.
-- **Next action:** [task-01-the-versions-file.md](task-01-the-versions-file.md).
+- **Done so far:** all six tasks. Every part kind builds against real Docker on
+  a checkout with a daemon, and the three Dockerfile bugs a fake docker can
+  never show are fixed (task 06's Resume has them).
+- **Next action:** the next plan. Nothing here is half done.
 - **Open questions:** none.
 - **Watch out for:**
-  - `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build.
+  - `pnpm test` is network-free, so every build test drives the fake Docker and asserts the Dockerfile text, never a real build. A build with real Docker has caught four defects the text assertions cannot see, so a change to `dockerfileOf` is worth a real build before it is trusted.
+  - This worktree does have Docker and network, which task 04's Resume claimed
+    it did not. That note is wrong and has been corrected where it stood.
+  - An archive part is unpacked unstripped and its launcher is written only
+    where nothing executable is already. Both are because of what publishers
+    actually ship: opencode and amp hold the executable at the archive root,
+    and devin holds it at `bin/devin`, which is where its launcher goes.
   - From a checkout the ahpd part's tag covers the packed tarballs, not only the versions entry, or a code change would reuse a stale image.
   - If task 04 changes the image a machine with none named is made from, every computer test that asserts `debian:bookworm-slim` as the default has to name its image or expect the joined tag.
   - container/05 p5 tasks 03 and 06 run the ahpd part's plugins, so they wait for task 02's `AHPD_PLUGIN_ROOT`.
 
 ## Final verification checklist
 
-- [ ] `ensure('codex')` on a host without the image builds it once; a second call does nothing.
-- [ ] Two sessions asking for one missing part start one build.
-- [ ] From a checkout, the ahpd part holds the workspace's own code, and a change to it builds a new part.
+- [x] `ensure('codex')` on a host without the image builds it once; a second call does nothing.
+- [x] Two sessions asking for one missing part start one build.
+- [x] From a checkout, the ahpd part holds the workspace's own code, and a change to it builds a new part.
 - [ ] `ahpd-agents:<hash>` runs `/opt/ahpd/codex/bin/codex-acp --help` on a real Docker.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/COMPUTER.md`, `plans/index.md` updated.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `docs/COMPUTER.md` updated. `plans/index.md` was left alone.
+
+The joined image was not built by hand - the box that ran this had under 5 GB
+free and fifteen parts plus the joined image do not fit beside what its daemon
+already holds. So that line is open on `ensureJoined`'s own tests against the
+fake docker and on `codex` itself building and answering for real mounted, not
+on one real joined image.

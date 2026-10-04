@@ -1,6 +1,6 @@
 ---
 title: The joined image
-status: todo
+status: implemented
 depends: [task-02-a-part-image-per-kind.md]
 layer: "computer"
 refs:
@@ -33,3 +33,38 @@ refs:
 - A machine with no image named is made from `debian:bookworm-slim` with its parts mounted, and no joined build runs; a fake runtime that refuses `--mount type=image` is made from the joined image.
 
 ## Resume
+
+Done 2026-10-04, for the image. The machine-facing half is not implementable in
+p3 and is written down here rather than designed around.
+
+- `joinedDockerfile(parts, tags)` takes the tags rather than spelling them,
+  because the ahpd part's tag carries the hash of its own source and only the
+  build knows it. It is a single stage on `debian:bookworm-slim` - unlike a
+  part, the joined image *is* a Debian, so a session's shell, git and ripgrep
+  work in it without another base.
+- `ensureJoined` ensures every part first and catches a failure rather than
+  letting it out: the image is built without that part, `LABEL ahpd.parts` says
+  what it does hold, and the answer carries `missing` so a machine whose agent
+  needs the part can be refused by name. Refusing the whole image over one CLI
+  would take thirteen working agents down with a fourteenth that will not
+  download.
+- `hashOf` grew a second argument, the parts to hash beside the file. It reads
+  the file that ships either way, so a version move still moves the tag; the
+  argument is what lets a caller that read its own file be hashed beside its own
+  ahpd tag instead of the shipped one.
+- The joined build is held by the same `once` as a part's, under its own tag, so
+  two callers get one build of the fifteen-part image rather than two.
+
+**Not done, and why.** Steps 3 and 4's machine-facing half - refusing a machine
+that needs a part the joined image does not hold, and choosing the joined image
+for a runtime that cannot mount image parts - cannot be written in p3. The SDK
+has no `part` need kind (`NeedKind` is `directory | file | env | copy`), so
+nothing names a part for a machine yet, and `--mount type=image` is written by
+container/05 p4's tasks 01-03. What is here is the other half of step 3: the
+image is built without a failed part and labelled with the parts it holds. The
+refusal that reads `missing`, and `defaults.image` staying
+`debian:bookworm-slim` (which it already is, unchanged, as the plan row asks),
+are p4's to wire.
+
+**Not run by hand:** `docker run --rm ahpd-agents:<hash> /opt/ahpd/codex/bin/codex-acp --help`
+on a real Docker. There is no Docker and no network in this worktree.

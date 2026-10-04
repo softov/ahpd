@@ -19,12 +19,18 @@ import type { Fetch } from '../src/update.js';
 let root: string;
 let configDir: string;
 let configFile: string;
+let hadRoot: string | undefined;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'ahpd-install-'));
   configDir = join(root, 'ahpd');
   configFile = join(configDir, 'config.json');
+  hadRoot = process.env.AHPD_PLUGIN_ROOT;
+  delete process.env.AHPD_PLUGIN_ROOT;
 });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(() => {
+  if (hadRoot === undefined) delete process.env.AHPD_PLUGIN_ROOT; else process.env.AHPD_PLUGIN_ROOT = hadRoot;
+  rmSync(root, { recursive: true, force: true });
+});
 
 /**
  * A runner that records every call and lets a verb fail. `lands` is what an
@@ -98,6 +104,9 @@ it('recognises the specs it can install and refuses the rest', () => {
 });
 
 it('installs into the configuration directory and names the packages there', async () => {
+  // Nothing sets the root outside the ahpd part, so this is the one place a
+  // plugin lands when the variable is absent.
+  expect(process.env.AHPD_PLUGIN_ROOT).toBeUndefined();
   const { runner, calls } = fake();
   await installPlugins(['@ahpd/agent-claude', 'left-pad@1'], {
     configDir, configFile, version: '9.9.9', enable: true, run: runner, fetch: aPlugin, say,
@@ -116,6 +125,26 @@ it('installs into the configuration directory and names the packages there', asy
   // version or tag belongs to the install and would read back as missing.
   expect(read().plugins).toEqual(['@ahpd/agent-claude', 'left-pad']);
   expect(said.join('\n')).toContain(configDir);
+});
+
+it('installs into the plugin root when the variable is set, and still configures the daemon', async () => {
+  // Inside the ahpd part the config dir is not writable and every plugin has to
+  // be somewhere the part's launcher will point `ahpd plugin install` at.
+  const pluginRoot = join(root, 'part', 'ahpd', 'plugins');
+  process.env.AHPD_PLUGIN_ROOT = pluginRoot;
+  const { runner, calls } = fake();
+  await installPlugins(['@ahpd/agent-cofold'], {
+    configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch: aPlugin, say,
+  });
+
+  expect(calls.find((one) => one.argv[0] === 'install')?.argv)
+    .toEqual(['install', '--prefix', pluginRoot, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-cofold@0.8.0']);
+  expect(existsSync(pluginRoot)).toBe(true);
+  expect(said.join('\n')).toContain(pluginRoot);
+  // The root moves where the packages land and nothing else: the configuration
+  // file is still the daemon's own, in its own directory.
+  expect(read().plugins).toEqual(['@ahpd/agent-cofold']);
+  expect(configFile.startsWith(configDir)).toBe(true);
 });
 
 it('names a scoped package without the version it was installed at', async () => {

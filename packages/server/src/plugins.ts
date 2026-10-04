@@ -159,6 +159,20 @@ export const entryOf = (dir: string): string => {
 };
 
 /**
+ * The roots a bare name is resolved from, in the order they are looked in.
+ *
+ * `AHPD_PLUGIN_ROOT` is the root the ahpd part installs its own nested backends
+ * into, and it comes after the configuration directory rather than before it:
+ * inside that image the config dir is not writable, so a plugin installed there
+ * has nowhere else to be, and outside it the variable is not set at all.
+ */
+function rootsOf(configDir: string): string[] {
+  const root = process.env.AHPD_PLUGIN_ROOT;
+  if (root === undefined || root === '') return [configDir];
+  return [configDir, join(root, 'node_modules')];
+}
+
+/**
  * Resolve one spec to something importable, without importing it.
  *
  * A scheme of the spec's own is passed through untouched, a path is tried
@@ -190,13 +204,20 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
 
   if (runtime() === 'deno') throw new Error(denoMessage(name, configDir));
 
-  const require = createRequire(join(configDir, 'package.json'));
-  let file: string;
-  try {
-    file = require.resolve(name);
+  const roots = rootsOf(configDir);
+  let file: string | undefined;
+  for (const root of roots) {
+    try {
+      file = createRequire(join(root, 'package.json')).resolve(name);
+      break;
+    }
+    catch {
+      // The next root is the next place it may be, and only the last one is a
+      // refusal.
+    }
   }
-  catch {
-    throw new Error(`Plugin ${name} is not installed in ${configDir}; run npm install there, or name a path.`);
+  if (file === undefined) {
+    throw new Error(`Plugin ${name} is not installed in ${roots.join(' or ')}; run npm install there, or name a path.`);
   }
   const packageDir = enclosingPackage(file);
   return {

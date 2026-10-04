@@ -16,6 +16,7 @@
  *   node scripts/computer.mjs stop
  *   node scripts/computer.mjs rm
  *   node scripts/computer.mjs list
+ *   node scripts/computer.mjs parts [<id>... | --all | --joined]
  *
  * Options:
  *   --name <n>        Container name. Default ahpd-computer
@@ -25,6 +26,11 @@
  *   --mount <spec>    A value passed to docker's `--mount`, repeatable
  *   --kvm             Pass /dev/kvm through, for a hypervisor inside
  *   --label <k=v>     Another label, repeatable; ahpd.computer=1 is always set
+ *
+ * The `parts` verb runs the plugin's own source, so it needs the resolver that
+ * strips types:
+ *
+ *   node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
  *
  * Exit status is docker's where docker ran, and 2 for a refusal this script
  * makes itself.
@@ -41,6 +47,12 @@ const USAGE = `A disposable computer, on Docker.
   node scripts/computer.mjs stop              stop it, keeping it
   node scripts/computer.mjs rm                remove it for good
   node scripts/computer.mjs list              every computer this script made
+  node scripts/computer.mjs parts <id>...     build the parts a machine needs
+  node scripts/computer.mjs parts --all       build every part, ahead of a session
+  node scripts/computer.mjs parts --joined    build the joined image as well
+
+The parts verb reads the plugin's own source and needs the type-stripping
+resolver: node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
 
 Options: --name <n>  --image <ref>  --cpus <n>  --memory <size>
          --mount <spec>  --kvm  --label <k=v>`;
@@ -66,6 +78,10 @@ const options = {
   kvm: false,
   mounts: [],
   labels: [],
+  // The parts verb's own.
+  ids: [],
+  all: false,
+  joined: false,
 };
 let command = [];
 
@@ -84,6 +100,10 @@ for (let i = 0; i < rest.length; i++) {
   else if (one === '--mount') options.mounts.push(value());
   else if (one === '--label') options.labels.push(value());
   else if (one === '--kvm') options.kvm = true;
+  // Bare words are part ids, and only for the verb that has any.
+  else if (verb === 'parts' && !one.startsWith('-')) options.ids.push(one);
+  else if (one === '--all') options.all = true;
+  else if (one === '--joined') options.joined = true;
   else refuse(`Unknown option ${one}.`);
 }
 
@@ -202,8 +222,74 @@ const verbs = {
     if (!running()) refuse(`${options.name} is stopped. Start it with: node scripts/computer.mjs start`);
     return run(['exec', '-i', options.name, ...command]);
   },
+  /**
+   * Builds the part images ahead of the first session that would otherwise wait
+   * for one. A part's tag is its version, so running this twice builds once.
+   */
+  async parts() {
+    if (!options.all && !options.joined && options.ids.length === 0) {
+      refuse('parts needs a part id, --all or --joined.');
+    }
+
+    // The plugin's own source, which node reads as TypeScript and needs the
+    // resolver this repository ships for exactly that.
+    let source;
+    let runtime;
+    try {
+      source = await import('../packages/computer/src/parts.ts');
+      runtime = await import('../packages/computer/src/runtime.ts');
+    } catch (error) {
+      refuse(`The parts verb runs @ahpd/computer's own source, which this Node cannot read: ${error.message}\n`
+        + 'Run it as: node --import ./scripts/dev.mjs scripts/computer.mjs parts --all');
+    }
+    const { dockerRuntime } = runtime;
+    const { ahpdSourceOf, ensureJoined, ensurePart, readParts, tagOf, versionsPath } = source;
+    const docker = dockerRuntime({ command: 'docker', label: 'ahpd.computer=1' });
+
+    if (options.joined) {
+      const joined = await ensureJoined({ runtime: docker });
+      process.stdout.write(`${joined.tag}\n`);
+      process.stdout.write(`${joined.parts.length} parts: ${joined.parts.map((one) => one.id).join(', ')}\n`);
+      if (joined.missing.length > 0) {
+        process.stdout.write(`Not in it, and not built: ${joined.missing.join(', ')}\n`);
+      }
+      return 0;
+    }
+
+    const all = readParts();
+    const wanted = options.all
+      ? all
+      : options.ids.map((id) => {
+        const one = all.find((named) => named.id === id);
+        if (one === undefined) refuse(`${versionsPath()} names no ${id} part.`);
+        return one;
+      });
+
+    // The ahpd part's tag carries a hash of its own source, so from a checkout
+    // the question has to be answered before it is asked.
+    const tagFor = async (part) =>
+      tagOf(part, part.kind === 'ahpd' ? (await ahpdSourceOf()).hash : undefined);
+
+    let refused = false;
+    for (const part of wanted) {
+      try {
+        // Asked before, not after: what the daemon had is the answer, and after
+        // a build it always has.
+        const had = await docker.hasImage(await tagFor(part));
+        const tag = await ensurePart(part.id, { runtime: docker });
+        process.stdout.write(`${tag} ${had ? 'was already there' : 'built'}\n`);
+      } catch (error) {
+        // One part that will not build is one part, and the rest of the file is
+        // still worth warming.
+        process.stdout.write(`${part.id} not built: ${error.message}\n`);
+        refused = true;
+      }
+    }
+    return refused ? 1 : 0;
+  },
 };
 
 const held = verbs[verb];
 if (held === undefined) refuse(`No command called ${verb}.`);
-process.exit(held());
+const answer = held();
+process.exit(answer instanceof Promise ? await answer : answer);

@@ -1,6 +1,6 @@
 ---
 title: The versions file and its reader
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -33,3 +33,24 @@ refs:
 - `tagOf` for the `ahpd` part changes when the source hash changes and the version does not, and `hashOf` changes with it.
 
 ## Resume
+
+Done 2026-10-04.
+
+- `images/versions.json` ships all fifteen parts. The npm versions came from
+  `pnpm view` and agree with the registry entries they mirror (`claude-acp`
+  0.85.1, `codex-acp` 2.1.1, `gemini` 0.62.0, `github-copilot-cli` 1.0.91,
+  `kilo` 7.8.3, `pi-acp` 0.0.34, `qwen-code` 0.24.7); `dsh` is not in the
+  registry and is pinned to `@deepseek-ai/dsh@0.2.0-rc.2`.
+- The archive checksums are real: `goose`, `opencode` and `amp` carry the
+  registry's own; `devin` and `cursor` carry none, so each was downloaded and
+  hashed here, which is what task 05's step 2 does. `node` is v24.21.0 (the
+  current LTS, Krypton) with the checksums from its own `SHASUMS256.txt`.
+- `amp` is the registry's `amp-acp` archive rather than `@sourcegraph/amp` from
+  npm: it is what the acp/05 preset runs, and the registry entry carries a
+  checksum where the npm package would not.
+- `tagOf` takes the source hash as its second argument rather than calling
+  `ahpdSourceOf` itself, so the tag is a pure function of a part and a hash and
+  a test can drive both. Task 02's `ensurePart` answers the hash and hands it
+  over.
+- `hashOf` reads the shipped file, so a test that writes a fixture cannot move
+  the joined image's tag; the refusals are driven through `readParts(path)`.

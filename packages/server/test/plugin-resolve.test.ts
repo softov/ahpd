@@ -18,25 +18,43 @@ import { denoMessage, entryOf, resolvePlugin } from '../src/plugins.js';
 
 let home: string;
 let had: string | undefined;
+let hadRoot: string | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'ahpd-resolve-'));
   had = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = home;
+  hadRoot = process.env.AHPD_PLUGIN_ROOT;
+  delete process.env.AHPD_PLUGIN_ROOT;
   put('package.json', '{}');
 });
 
 afterEach(() => {
   if (had === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = had;
+  if (hadRoot === undefined) delete process.env.AHPD_PLUGIN_ROOT; else process.env.AHPD_PLUGIN_ROOT = hadRoot;
   rmSync(home, { recursive: true, force: true });
 });
 
 /** A path under the configuration directory this test owns. */
 const at = (...parts: string[]): string => join(home, 'ahpd', ...parts);
 
-/** Write a file under it, making the directories on the way. */
+/** A path under a plugin root this test owns, and the variable that points at it. */
+const rooted = (...parts: string[]): string => {
+  const root = join(home, 'part', 'plugins');
+  process.env.AHPD_PLUGIN_ROOT = root;
+  return join(root, ...parts);
+};
+
+/** Write a file under the configuration directory, making the directories on the way. */
 const put = (where: string, text: string): void => {
   const path = at(where);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text);
+};
+
+/** Write a file under the plugin root, making the directories on the way. */
+const putInRoot = (where: string, text: string): void => {
+  const path = rooted(where);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
 };
@@ -63,6 +81,50 @@ describe('resolvePlugin', () => {
     expect(resolved.url).toContain('node_modules/fixture-plugin/index.js');
     expect(resolved.path).toBe(at('node_modules/fixture-plugin/index.js'));
     expect(resolved.packageDir).toBe(at('node_modules/fixture-plugin'));
+  });
+
+  it('resolves a bare name from the plugin root when the variable is set and the config dir holds nothing', () => {
+    putInRoot('node_modules/fixture-plugin/package.json', JSON.stringify({ name: 'fixture-plugin', version: '1.0.0', main: './index.js' }));
+    putInRoot('node_modules/fixture-plugin/index.js', 'export const name = "fixture";\n');
+
+    const resolved = resolvePlugin('fixture-plugin', { configDir: configDir(), cwd: process.cwd() });
+
+    expect(resolved.path).toBe(rooted('node_modules/fixture-plugin/index.js'));
+    expect(resolved.packageDir).toBe(rooted('node_modules/fixture-plugin'));
+  });
+
+  it('takes the configuration directory first, and the plugin root only after it', () => {
+    // Two installs of one name: the config dir wins, because inside the ahpd
+    // part it is still where a person's own plugins land.
+    put('node_modules/fixture-plugin/package.json', JSON.stringify({ name: 'fixture-plugin', version: '1.0.0', main: './index.js' }));
+    put('node_modules/fixture-plugin/index.js', '');
+    putInRoot('node_modules/fixture-plugin/package.json', JSON.stringify({ name: 'fixture-plugin', version: '2.0.0', main: './index.js' }));
+    putInRoot('node_modules/fixture-plugin/index.js', '');
+
+    expect(resolvePlugin('fixture-plugin', { configDir: configDir(), cwd: process.cwd() }).path)
+      .toBe(at('node_modules/fixture-plugin/index.js'));
+  });
+
+  it('names both places in the refusal when neither holds the plugin', () => {
+    putInRoot('package.json', '{}');
+
+    expect(() => resolvePlugin('fixture-plugin', { configDir: configDir(), cwd: process.cwd() }))
+      .toThrow(new RegExp(`${configDir()} or ${rooted('node_modules')}`));
+  });
+
+  it('looks in the configuration directory alone when the variable is not set', () => {
+    // Nothing is set here, and nothing may be left set by another case: a root
+    // that outlives its test would resolve names nobody installed.
+    expect(process.env.AHPD_PLUGIN_ROOT).toBeUndefined();
+
+    put('node_modules/fixture-plugin/package.json', JSON.stringify({ name: 'fixture-plugin', version: '1.0.0', main: './index.js' }));
+    put('node_modules/fixture-plugin/index.js', '');
+
+    expect(resolvePlugin('fixture-plugin', { configDir: configDir(), cwd: process.cwd() }).path)
+      .toBe(at('node_modules/fixture-plugin/index.js'));
+    // And one place is all the refusal names when there is one.
+    expect(() => resolvePlugin('absent-plugin', { configDir: configDir(), cwd: process.cwd() }))
+      .toThrow(new RegExp(`is not installed in ${configDir()};`));
   });
 
   it('refuses a relative path that is in neither the working directory nor the configuration directory', () => {

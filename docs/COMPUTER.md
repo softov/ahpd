@@ -360,6 +360,56 @@ An image starting with `-` is always refused, because Docker would read it as a 
 
 **What a machine is not.** The container separates processes and the filesystem, not the network, and a bind mount is the host's files. Nothing in a machine survives `resourceDelete`.
 
+## Parts
+
+Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all.
+
+The versions file is `packages/computer/images/versions.json`, and it is the only place a version is written down. Each entry names an `id`, a `version` that is one version rather than a range, and a `kind`:
+
+| Kind | Is | Holds |
+| --- | --- | --- |
+| `node` | The Node every npm part needs | One download per platform |
+| `npm` | A CLI published to npm | `packages`, installed onto the node part |
+| `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform |
+| `ahpd` | ahpd itself | From npm, or from a checkout's own tarballs |
+
+A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A part whose build fails is refused by name and every other part still builds.
+
+### The joined image
+
+`ahpd-agents:<hash>` is every part copied into one image, which is what ahpd publishes and what a runtime that cannot mount image parts runs. Its hash folds in the versions file and the ahpd part's own source, so a version that moved is a different image. Build it with:
+
+```sh
+node --import ./scripts/dev.mjs scripts/computer.mjs parts --joined
+```
+
+A machine made from a profile that names no image runs `debian:bookworm-slim` with its parts mounted, so a fifteen-part build never precedes the first default machine.
+
+### Adding a part
+
+Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a range, an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout.
+
+The kinds it will not build are named in the error a missing or unknown `kind` gives, rather than guessed at. A CLI that is neither npm nor a tarball needs a kind of its own before the file will accept it.
+
+### Bumps
+
+Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and on demand, compares the file with the ACP registry and with npm, computes each archive's new sha256, and opens one pull request carrying every newer version. A part no feed carries is skipped and named in the log, so it is bumped by hand:
+
+```sh
+node scripts/parts-bump.mjs --dry-run
+```
+
+### Building ahead
+
+The verb above is `parts`, and it warms every part image before the first session that would otherwise wait for one:
+
+```sh
+node --import ./scripts/dev.mjs scripts/computer.mjs parts --all
+node --import ./scripts/dev.mjs scripts/computer.mjs parts codex goose
+```
+
+It needs the resolver because it runs the plugin's own source. Each line is the tag and whether it was `built` or `was already there`, so running it twice builds nothing.
+
 ## The three tools
 
 `request_disposable_computer`, `release_computer` and `computer_exec` let a model ask for a scratch machine during a session. They are separate from the machine a session runs in, and they follow the same image rules.
@@ -391,6 +441,7 @@ node scripts/computer.mjs rm
 | `stop` | Stop it and keep it |
 | `rm` | Remove it |
 | `list` | Every computer the script made |
+| `parts` | Build the parts ahead of a session (see [Parts](#parts)) |
 
 Options: `--name` (default `ahpd-computer`), `--image` (default `debian:bookworm-slim`), `--cpus`, `--memory`, `--mount`, `--kvm`, `--label`. `--kvm` fails up front if `/dev/kvm` is not readable. `--mount` is passed to Docker as written:
 

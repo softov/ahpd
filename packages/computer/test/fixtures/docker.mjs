@@ -4,9 +4,10 @@
  *
  * It answers `ps`, `inspect`, `run`, `stop`, `rm` and `exec` from one JSON file
  * named by `DOCKER_FAKE_STATE`, and appends every call to the same file, so a
- * test can ask what the provider ran and what it left behind. Nothing here
- * talks to a daemon and nothing sleeps: the provider is what is under test, not
- * Docker.
+ * test can ask what the provider ran and what it left behind. `image inspect`
+ * and `build` are there too, so a part image can be built without a daemon.
+ * Nothing here talks to a daemon and nothing sleeps: the provider is what is
+ * under test, not Docker.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
@@ -67,6 +68,87 @@ const keep = () => {
 };
 
 const verb = args[0];
+
+/** All of stdin, as one buffer, for a verb whose context arrives through a pipe. */
+const readStdin = async () => {
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  return Buffer.concat(chunks);
+};
+
+if (verb === 'image') {
+  /*
+   * `docker image inspect`, which is about an image rather than a machine.
+   *
+   * A tag that is in `images` answers with a record and exits zero; a tag that
+   * is not there is a non-zero exit, which is what the provider reads as "not
+   * here, build it" - so an unknown tag must not answer zero and must not print
+   * anything that looks like a record.
+   */
+  const tag = args[args.length - 1];
+  const images = held.images ?? [];
+  if (args[1] === 'inspect' && images.includes(tag)) {
+    process.stdout.write(`${JSON.stringify({ Id: `sha256:${tag}` })}\n`);
+    keep();
+    process.exit(0);
+  }
+  keep();
+  process.stderr.write(`Error response from daemon: No such image: ${tag}\n`);
+  process.exit(1);
+}
+
+if (verb === 'build') {
+  /*
+   * A build whose context is piped, which is the whole build context: a tar
+   * holding a `Dockerfile` and whatever else the Dockerfile copies.
+   *
+   * What is recorded is the Dockerfile and the names beside it, so a test can
+   * assert on the text without a real build - `pnpm test` runs nowhere near a
+   * daemon, and the point of the provider is the Dockerfile, not Docker.
+   */
+  const piped = await readStdin();
+  const named = args.indexOf('-t');
+  const tag = named === -1 ? undefined : args[named + 1];
+  // A tar is a ustar header: `ustar` at 257. Anything else is the Dockerfile on
+  // its own, which is what a part with no files beside it is built from.
+  const isTar = piped.length > 262 && piped.subarray(257, 262).toString('latin1') === 'ustar';
+  // Every entry of a tar, by name, in the order the archive holds them.
+  const entries = isTar ? (() => {
+    const found = [];
+    for (let at = 0; at + 512 <= piped.length;) {
+      const header = piped.subarray(at, at + 512);
+      if (header.every((byte) => byte === 0)) break;
+      const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
+      found.push({ name: header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''), bytes: piped.subarray(at + 512, at + 512 + size) });
+      at += 512 + ((size + 511) & ~511);
+    }
+    return found;
+  })() : [{ name: 'Dockerfile', bytes: piped }];
+  const dockerfile = entries.find((one) => one.name === 'Dockerfile');
+  if (dockerfile === undefined) {
+    keep();
+    process.stderr.write('failed to read dockerfile: the context holds none\n');
+    process.exit(1);
+  }
+  held.builds ??= [];
+  held.images ??= [];
+  held.builds.push({
+    tag,
+    dockerfile: dockerfile.bytes.toString('utf8'),
+    files: entries.map((one) => one.name),
+  });
+  // A build a test wants to fail, on purpose, and by name so one part may fail
+  // while the rest of the file is healthy.
+  if (held.failBuild === true || (Array.isArray(held.failBuild) && held.failBuild.includes(tag))) {
+    keep();
+    process.stderr.write('ERROR: failed to solve: process "/bin/sh -c curl --fail" did not complete: exit 1\n');
+    process.exit(1);
+  }
+  held.images.push(tag);
+  keep();
+  process.stdout.write(`Successfully tagged ${tag}\n`);
+  process.exit(0);
+}
 
 if (verb === 'ps') {
   /*

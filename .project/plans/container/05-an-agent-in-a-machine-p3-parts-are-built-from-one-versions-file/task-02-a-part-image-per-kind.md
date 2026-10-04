@@ -1,6 +1,6 @@
 ---
 title: A part image per kind
-status: todo
+status: implemented
 depends: [task-01-the-versions-file.md]
 layer: "computer"
 refs:
@@ -41,3 +41,52 @@ refs:
 - By hand, once: a real build of `codex` and `node`, and `docker run --mount type=image` of both into `debian:bookworm-slim` answers `codex-acp --help`.
 
 ## Resume
+
+Done 2026-10-04.
+
+- `dockerfileOf` is four builds and one shape: a `debian:bookworm-slim AS fetch`
+  stage and a `FROM scratch` stage that copies `/opt/ahpd/<id>` and nothing
+  else. `ARG TARGETARCH` is in every Dockerfile, so one file builds both
+  images and a build for any other architecture says which one it was rather
+  than downloading the wrong tarball. `tar` is told its compression per
+  architecture (`how=` in the same `case`), because a publisher may not
+  compress its two the same way.
+- **No `--ignore-scripts`**, against step 3. Several of these packages fetch
+  their binary in a `postinstall` - `@agentclientprotocol/codex-acp` wraps
+  `@openai/codex`, which does - and a part with no binary in it is a part that
+  answers `--help` with nothing.
+- **A checkout installs its plugins with `npm install --prefix
+  /opt/ahpd/ahpd/plugins`, not `ahpd plugin install`**, against step 5. The
+  installer refuses a path: `isPackageName` (`install.ts:103`) is what
+  `installPlugins` checks every argument against, and `./agent-cofold.tgz` is a
+  path. `ahpd plugin install --no-enable` still installs the plugins of an
+  installed package, which is the case decision
+  `a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install` is
+  about. Both land in the same root, so nothing downstream can tell them apart.
+- `pnpm pack` runs `prepack`, which is `tsc -p .`, so a checkout has to be
+  built before its ahpd part can be packed - the same order `release.yml` uses
+  (`pnpm build`, then `pnpm pack`). A failed pack says so rather than passing a
+  wall of tsc on. `ahpdSourceOf` is the one function here with no unit test,
+  because it packs for real; task 06's verb exercises it.
+- An archive is unpacked **unstripped**, because it does not have to hold one
+  wrapping directory and three of the five do not: opencode and amp ship the
+  executable at the root, where `--strip-components=1` leaves nothing at all.
+  Nothing here needs the depth, because the launcher finds the executable by
+  name rather than naming a path.
+- An archive part's launcher is written from the path the build finds, because
+  what is inside the tarball is the publisher's own layout - a binary at the
+  root, one under `bin`, one under `dist-package`. The `find` takes a symlink
+  as well as a file, because `npm` and `npx` are symlinks in a Node tarball.
+  It is written only where nothing executable is already: devin ships
+  `bin/devin`, which is where its launcher goes, and a launcher written over
+  it would exec itself. The `node` part gets no launcher at all - its tarball
+  already lays out `bin/node`, `bin/npm` and `bin/npx`.
+- `resolvePlugin` tries the config dir and then
+  `$AHPD_PLUGIN_ROOT/node_modules`, and names both in the refusal. The config
+  dir is not created by `installPlugins` any more on the plugin-root path, so
+  it is still made: `--enable` writes the daemon's own configuration there
+  whatever root the packages went to.
+- The last validation, a real build of `codex` and `node` mounted into
+  `debian:bookworm-slim` answering `codex-acp --help`, was done in task 06 and
+  is recorded there. An earlier note in this file said the worktree had no
+  Docker and no network; that was wrong.

@@ -243,6 +243,10 @@ export interface ComputerRuntime {
   /** What one machine is using right now, or nothing when it is not running. */
   stats(id: string): Promise<MachineStats | undefined>;
   capabilities(): RuntimeCapabilities;
+  /** Whether one image is already here, which is the answer that skips a build. */
+  hasImage(tag: string): Promise<boolean>;
+  /** Build one image from a build context piped on stdin. */
+  buildImage(tag: string, context: Uint8Array): Promise<void>;
 }
 
 /**
@@ -398,9 +402,9 @@ interface Ran {
 }
 
 /** Run the program once and collect what it said. */
-const ran = (options: CommandOptions, args: string[]): Promise<Ran> => new Promise((resolve, reject) => {
+const ran = (options: CommandOptions, args: string[], input?: Buffer): Promise<Ran> => new Promise((resolve, reject) => {
   const child = spawn(options.command, [...(options.args ?? []), ...args], {
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     env: { ...process.env, ...(options.env ?? {}) },
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
@@ -410,6 +414,9 @@ const ran = (options: CommandOptions, args: string[]): Promise<Ran> => new Promi
   child.stderr?.setEncoding('utf8');
   child.stdout?.on('data', (chunk: string) => { stdout += chunk; });
   child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
+  // A program that reads its input is given it and closed, rather than left
+  // waiting on a pipe nothing will write to.
+  if (input !== undefined) child.stdin?.end(input);
   // A program that is not installed is an error rather than an exit code, and
   // it is the one failure a caller most needs to read.
   child.on('error', reject);
@@ -1123,5 +1130,27 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
       resources: ['status', 'capabilities', 'stats', 'state'],
     }),
+
+    /*
+     * Two verbs about images rather than machines, and they are the ones a part
+     * is built with.
+     *
+     * `image inspect` rather than `inspect`, because the latter is machines and
+     * its not-found answer is a container error. The context is piped rather
+     * than left in a directory, so nothing is written into the package at run
+     * time and an installed package may sit on a read-only filesystem.
+     */
+    hasImage: async (tag) => (await ran(options, ['image', 'inspect', tag])).code === 0,
+
+    buildImage: async (tag, context) => {
+      const held = await ran(options, ['build', '-t', tag, '-'], Buffer.from(context));
+      if (held.code !== 0) {
+        // Docker's own last lines, which is where a failed build says what it
+        // was: a download that 404'd, a checksum that did not match, a
+        // Dockerfile that names a stage that is not there.
+        const said = held.stderr.trim() || held.stdout.trim() || 'no output';
+        throw new Error(`${options.command} build -t ${tag} exited ${held.code}: ${said.split('\n').slice(-8).join('\n')}`);
+      }
+    },
   };
 }

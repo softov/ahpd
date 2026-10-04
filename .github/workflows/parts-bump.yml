@@ -1,0 +1,72 @@
+name: Parts bump
+
+# A part is pinned to an exact version, so something has to notice that the
+# versions have moved - decision `an-agent-cli-is-pinned-in-one-versions-file`.
+# It proposes; it never lands one on its own.
+on:
+  schedule:
+    # Weekly, off the hour nobody waits on.
+    - cron: '17 5 * * 1'
+  # For asking the same question on a day that suits.
+  workflow_dispatch:
+
+# One run at a time. Two of these pushing the same branch would race over the
+# commit, and the loser would fail on a non-fast-forward push.
+concurrency:
+  group: parts-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    # The npm questions, and for an archive the registry ships no sum for, the
+    # downloads. Ten minutes is generous for both.
+    timeout-minutes: 10
+    permissions:
+      # A branch and a pull request, which is the whole output.
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      # The npm bundled with Node is asked about an npm part the registry does
+      # not carry, which is the only reason this job needs Node at all - the
+      # script reads one file and asks two questions, so there is nothing here
+      # to install.
+      - name: What moved
+        run: |
+          set -o pipefail
+          node scripts/parts-bump.mjs | tee moved.txt
+
+      # Nothing moved: no branch, no commit, no pull request. A pull request
+      # every Monday with an empty diff in it is a pull request people learn to
+      # close unread, and one that is closed unread is one that later hides a
+      # real move.
+      - name: Open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if git diff --quiet -- packages/computer/images/versions.json; then
+            echo "Nothing moved."
+            exit 0
+          fi
+          branch=parts-bump-$(date -u +%Y%m%d)
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add packages/computer/images/versions.json
+          git commit -m 'parts: bump to the versions the feeds now carry'
+          git push --set-upstream origin "$branch"
+          {
+            echo 'The registry and npm now carry these.'
+            echo
+            grep '^bumped ' moved.txt
+            echo
+            echo 'Each part that did not move, and why, is in the run log.'
+          } > body.md
+          gh pr create --title 'parts: a bump is available' --body-file body.md

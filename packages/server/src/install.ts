@@ -425,12 +425,20 @@ export async function installPlugins(names: readonly string[], options: InstallO
   }
   await refuseNonPlugins(names, options);
   const wanted = names.map((name) => pinned(name, options.version));
+  // `AHPD_PLUGIN_ROOT` is set by the launcher of the ahpd part, where the config
+  // dir is not writable and a plugin installed there would go nowhere a run of
+  // the daemon would look for it. Everywhere else it is not set and the config
+  // dir is the root, as it has always been.
+  const root = process.env.AHPD_PLUGIN_ROOT ?? options.configDir;
+  // The config dir is made either way: the packages may go elsewhere, but
+  // `--enable` still writes the daemon's own configuration there.
   mkdirSync(options.configDir, { recursive: true });
-  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...daemonsSdk(options.version), ...wanted]);
+  mkdirSync(root, { recursive: true });
+  const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...wanted]);
   if (done.code !== 0) {
     throw npmFailed(`npm could not install ${names.join(', ')}`, done);
   }
-  options.say(`Installed ${wanted.join(', ')} into ${options.configDir}.`);
+  options.say(`Installed ${wanted.join(', ')} into ${root}.`);
   if (!options.enable) {
     options.say('--no-enable, so the configuration was not changed.');
     return;

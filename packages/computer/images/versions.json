@@ -1,0 +1,188 @@
+[
+  {
+    "id": "node",
+    "name": "Node",
+    "kind": "node",
+    "version": "24.21.0",
+    "archives": {
+      "linux-x64": {
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+        "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+      },
+      "linux-arm64": {
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz",
+        "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2"
+      }
+    },
+    "bin": ["node", "npm", "npx"]
+  },
+  {
+    "id": "ahpd",
+    "name": "ahpd",
+    "kind": "ahpd",
+    "version": "0.8.0",
+    "requires": ["node"],
+    "plugins": ["@ahpd/agent-cofold", "@ahpd/agent-pi"],
+    "bin": ["ahpd"]
+  },
+  {
+    "id": "claude",
+    "name": "Claude",
+    "kind": "npm",
+    "version": "0.85.1",
+    "requires": ["node"],
+    "packages": ["@agentclientprotocol/claude-agent-acp"],
+    "bin": ["claude-agent-acp"]
+  },
+  {
+    "id": "codex",
+    "name": "Codex",
+    "kind": "npm",
+    "version": "2.1.1",
+    "requires": ["node"],
+    "packages": ["@agentclientprotocol/codex-acp"],
+    "bin": ["codex-acp"]
+  },
+  {
+    "id": "gemini",
+    "name": "Gemini",
+    "kind": "npm",
+    "version": "0.62.0",
+    "requires": ["node"],
+    "packages": ["@google/gemini-cli"],
+    "bin": ["gemini"]
+  },
+  {
+    "id": "copilot",
+    "name": "Copilot",
+    "kind": "npm",
+    "version": "1.0.91",
+    "requires": ["node"],
+    "packages": ["@github/copilot"],
+    "updates": { "COPILOT_AUTO_UPDATE": "false" },
+    "bin": ["copilot"]
+  },
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "kind": "archive",
+    "version": "1.18.34",
+    "archives": {
+      "linux-x64": {
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-x64.tar.gz",
+        "sha256": "0f22479647226d1d2dd99595d20082ee7bda3870b62dc6a90b41efc1a71d7e9a"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-arm64.tar.gz",
+        "sha256": "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f"
+      }
+    },
+    "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
+    "bin": ["opencode"]
+  },
+  {
+    "id": "kilo",
+    "name": "Kilo",
+    "kind": "npm",
+    "version": "7.8.3",
+    "requires": ["node"],
+    "packages": ["@kilocode/cli"],
+    "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
+    "bin": ["kilo"]
+  },
+  {
+    "id": "goose",
+    "name": "Goose",
+    "kind": "archive",
+    "version": "1.53.0",
+    "archives": {
+      "linux-x64": {
+        "url": "https://github.com/block/goose/releases/download/v1.53.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
+        "sha256": "2d010c66dfd4348bb437b3a94001882468a5db1aa556858920481522f57752d7"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/block/goose/releases/download/v1.53.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
+        "sha256": "e156799760a174bfbc5d14443aacef064ce7592f9099dc9ce04c3db74e72224b"
+      }
+    },
+    "bin": ["goose"]
+  },
+  {
+    "id": "pi",
+    "name": "Pi",
+    "kind": "npm",
+    "version": "0.0.34",
+    "requires": ["node"],
+    "packages": ["pi-acp"],
+    "bin": ["pi-acp"]
+  },
+  {
+    "id": "dsh",
+    "name": "dsh",
+    "kind": "npm",
+    "version": "0.2.0-rc.2",
+    "requires": ["node"],
+    "packages": ["@deepseek-ai/dsh"],
+    "bin": ["dsh"]
+  },
+  {
+    "id": "devin",
+    "name": "Devin",
+    "kind": "archive",
+    "version": "3000.11.3",
+    "archives": {
+      "linux-x64": {
+        "url": "https://static.devin.ai/cli/3000.11.3/devin-3000.11.3-x86_64-unknown-linux.tar.gz",
+        "sha256": "83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e"
+      },
+      "linux-arm64": {
+        "url": "https://static.devin.ai/cli/3000.11.3/devin-3000.11.3-aarch64-unknown-linux.tar.gz",
+        "sha256": "21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b67f15"
+      }
+    },
+    "bin": ["devin"]
+  },
+  {
+    "id": "cursor",
+    "name": "Cursor",
+    "kind": "archive",
+    "version": "2026.10.01",
+    "archives": {
+      "linux-x64": {
+        "url": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/x64/agent-cli-package.tar.gz",
+        "sha256": "ba9a855f8f813c91b9f2707127572d2dc9ae5a62818e1c36719625d0fb8bd452"
+      },
+      "linux-arm64": {
+        "url": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "c31ef0ba6b827fdf8053919de57abae4a7bd71afefdf2cab061e276faac42b3a"
+      }
+    },
+    "bin": ["cursor-agent"]
+  },
+  {
+    "id": "amp",
+    "name": "Amp",
+    "kind": "archive",
+    "version": "0.9.0",
+    "archives": {
+      "linux-x64": {
+        "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.9.0/amp-acp-linux-x86_64.tar.gz",
+        "sha256": "afaa50a152eb86a8ff21e354ded63fe2d21b730859692e3a60b2c4c9ef23df31"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.9.0/amp-acp-linux-aarch64.tar.gz",
+        "sha256": "b9e365221838b1a6e177c2fcd8f25a30086c3630e0330f1f6f74b25d2d4126c2"
+      }
+    },
+    "bin": ["amp-acp"]
+  },
+  {
+    "id": "qwen",
+    "name": "Qwen Code",
+    "kind": "npm",
+    "version": "0.24.7",
+    "requires": ["node"],
+    "packages": ["@qwen-code/qwen-code"],
+    "bin": ["qwen"]
+  }
+]
