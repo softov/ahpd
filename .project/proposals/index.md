@@ -12,3 +12,4 @@ Every file here is a draft: nothing has been filed, and the `Filed` column is th
 | [The shipped JSON Schemas close no object, so an invented key validates clean](agent-host-protocol-open-schemas.md) | `microsoft/agent-host-protocol` | no |
 | [Extension methods have no convention a host that is not VS Code can follow](agent-host-protocol-extension-methods.md) | `microsoft/agent-host-protocol` | no |
 | [The standalone host prints its connection token on stdout while keeping it out of its log file](vscode-token-on-stdout.md) | `microsoft/vscode` | no |
+| [A session named the way the spec shows it is listed under a provider called `ahp-session`](vscode-session-provider-read-from-scheme.md) (read at VS Code `7516b04bc94` and reproduced on `code agent host` 1.132.1) | `microsoft/vscode` | no |
