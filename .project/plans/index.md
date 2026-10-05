@@ -313,8 +313,9 @@ Reference: [00-policy.md](policy/00-policy.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - A policy says who may use which agent, model and computer](policy/01-a-policy-says-who-may-use-what/plan.md) | high | built 2026-10-02 ([implemented.md](policy/01-a-policy-says-who-may-use-what/implemented.md)) | host 36 | policy 02, proxy 02 |
+| [04 - The policy form reads its choices from the manifest](policy/04-the-policy-form-reads-its-choices-from-the-manifest/plan.md) | medium | planned 2026-10-04; tasks 01-02 todo | policy 01 | ahpapp policy/01 |
 
-Next free number in `policy`: `02`.
+Next free number in `policy`: `05` (`02` and `03` are held for limit enforcement).
 
 ## proxy
 
