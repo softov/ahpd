@@ -111,7 +111,7 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 | [03 - An action reaches an aliased subscriber in its own spelling](task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md) | implemented | 01 |
 | [04 - A chat title survives the session's new name](task-04-a-chat-title-survives-the-new-name.md) | implemented | 01 |
 | [05 - VS Code opens a session another client created](task-05-vs-code-opens-a-session-another-client-created.md) | doing | 02, 03, 04 |
-| [06 - The mismatch is reported upstream](task-06-the-mismatch-is-reported-upstream.md) | todo | - |
+| [06 - The mismatch is reported upstream](task-06-the-mismatch-is-reported-upstream.md) | doing | - |
 | [07 - A session under its provider's scheme needs session:read](task-07-a-provider-scheme-session-needs-session-read.md) | implemented | 01 |
 | [08 - A dispatch into a session needs session:write, whatever its scheme](task-08-a-dispatch-into-a-session-needs-session-write.md) | implemented | 07 |
 | [09 - A terminal needs terminal grants whatever its scheme](task-09-a-terminal-needs-terminal-grants-whatever-its-scheme.md) | implemented | 08 |
@@ -128,16 +128,18 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04 and 07 to 10 implemented, a `reconnect` replay included in 03, and the findings of seven passes of the 2026-09-30 review fixed in 01, 03, 08 and 09, among them one registry of names (`claims`) that the gate and every creation read, client ids bound to people, and each family of action kept to its kind of channel; task 05's automated case passes and its checks by hand are left for Softov; task 06 is the planner's; task 10, from the final review, is implemented, and a watch or terminal named like a session's marks stays what it is (task 08).
-- **Next action:** the by-hand checks in [task-05-vs-code-opens-a-session-another-client-created.md](task-05-vs-code-opens-a-session-another-client-created.md), then review.
-- **Open questions:** none.
+- **Done so far:** tasks 01 to 04 and 07 to 10 implemented, a `reconnect` replay included in 03, and the findings of seven passes of the 2026-09-30 review fixed in 01, 03, 08 and 09, among them one registry of names (`claims`) that the gate and every creation read, client ids bound to people, and each family of action kept to its kind of channel; task 10, from the final review, is implemented, and a watch or terminal named like a session's marks stays what it is (task 08).
+- **This build (2026-10-04):** no code changed. Every implemented task was re-read against the tree by symbol rather than by the refs' line numbers, and each test its Resume names was found and run: task 05's `opens for a second client the way VS Code opens it`, the aliasing cases in `a session asked for by the name its creator used`, task 04's `keeps a title written under the session's old name`, task 01's two `-32003` refusals, the gate cases in `users-gate.test.ts` for tasks 07 to 10, and task 03's `says the session's URIs inside an action in the spelling each client uses`. `pnpm exec tsc --noEmit`, `pnpm boundary` and the full `pnpm test` (180 files, 2786 tests, `conformance.test.ts` among them) all pass. Task 06's issue is drafted in its Resume with both citations read from source on this day, and is waiting on Softov's word before it is posted.
+- **Still open:** task 05's checks by hand, which need a daemon with `--wire`, ahpapp, the VS Code Agents Window and then ahpc; and task 06's posting.
+- **Next action:** Softov's by-hand checks in [task-05-vs-code-opens-a-session-another-client-created.md](task-05-vs-code-opens-a-session-another-client-created.md), then a decision on the draft in [task-06-the-mismatch-is-reported-upstream.md](task-06-the-mismatch-is-reported-upstream.md), then review.
+- **Open questions:** none in the plan. One for Softov: task 10's Resume names `session:write` where the code and its test now say `session:changes`, the operation host/46's grant model replaced it with; the Resumes of 07 to 10 use the pre-host/46 names throughout, and the behaviour they describe is what the code does.
 - **Watch out for:** `idOf` is exported and used by `agent-claude` and `agent-pi` as the backend session id, so the id must never change, only the scheme; the resume path (`host/chatactions.ts` 140-204) already re-keys under `nameOf(id)` and must end up with the same name as a newly created session.
 
 ## Final verification checklist
 
-- [ ] A session created as `ahp-session:/<uuid>` with `provider: "claude"` is listed, added and removed as `claude:/<uuid>`.
-- [ ] The creating client subscribes, dispatches, forks and disposes under `ahp-session:/<uuid>` and is answered in that spelling.
-- [ ] The same session reads the same before and after a restart, when its provider loads again; a provider that does not load leaves it listed under its name and not openable, per [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md).
-- [ ] `pnpm test` passes in `packages/sdk`, including `conformance.test.ts`.
-- [ ] The Agents Window opens a session ahpapp created, with its history and its pending approval.
-- [ ] `plans/index.md` updated.
+- [x] A session created as `ahp-session:/<uuid>` with `provider: "claude"` is listed, added and removed as `claude:/<uuid>` (`host.test.ts`, `a session a client names` and `a session asked for by the name its creator used`).
+- [x] The creating client subscribes, dispatches, forks and disposes under `ahp-session:/<uuid>` and is answered in that spelling (the same describe, and `subagent-chat.test.ts` for the URIs inside an action).
+- [x] The same session reads the same before and after a restart, when its provider loads again; a provider that does not load leaves it listed under its name and not openable, per [host/41 task 02](../41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) (`session-provider.test.ts`).
+- [x] `pnpm test` passes in `packages/sdk`, including `conformance.test.ts`.
+- [ ] The Agents Window opens a session ahpapp created, with its history and its pending approval. (task 05, by hand)
+- [ ] `plans/index.md` updated. (left to the reviewer; this build was told not to edit it)
