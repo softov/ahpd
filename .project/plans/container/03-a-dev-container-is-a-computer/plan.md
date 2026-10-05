@@ -1,7 +1,7 @@
 ---
 title: A dev container is a computer, listed and reachable without the connection that made it
 domain: container
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -72,7 +72,7 @@ vscode/devContainers/connect  -> find the computer for F or make it -> [new] pro
 - `existing` ignores whether the container is running.
 - `reach` drops a caller's `cwd` for a dev container, and the picker strips `file://` instead of decoding the URI ([`code://packages/computer/src/plugin.ts#L942`](../../../../packages/computer/src/plugin.ts#L942)).
 - policy/01's `computer:` rows gate `devcontainer://F` before placement ([`code://packages/sdk/src/host/machines.ts#L150-L153`](../../../../packages/sdk/src/host/machines.ts#L150-L153)), but not the form create or the relay's `connect`.
-- `computer:write` is not in the SDK yet; plugin/16 task 09 adds it.
+- `computer:write` is not in the SDK yet; plugin/16 task 09 adds it (since landed).
 
 ## Decisions locked in
 
@@ -102,6 +102,7 @@ vscode/devContainers/connect  -> find the computer for F or make it -> [new] pro
 | For now the name a create gives (`ahpd.name`) and the `ahpd.agents` list are `--label` entries in the override config's `runArgs`, which the CLI does not use to find the container; this is how the name decision's "label on the container" is kept, and one function writes the override's labels so the record can move later | Softov, 2026-10-03, asked "where do the name and the `ahpd.agents` list live, since an extra `--id-label` gives a folder a second container?": "`--label` entries in the override config's `runArgs`" | 10, 11 |
 | For now the probed environment is kept in the machine's `computers.json` entry, keyed by machine id, and rewritten when `up` answers a new container id; one pair of functions reads and writes it, so the store can change | Softov, 2026-10-03, asked "where is the probed environment kept between commands and across a restart?": "the `computers.json` entry, keyed by machine id" | 13, 18 |
 | For now a need's environment reaches every command as `containerEnv` in the override config, in place of `up --remote-env`; the override is written 0600 and a need named from the vault is not written there in clear (`container/05-p1` task 02) | Softov, 2026-10-03, asked "how does a need's environment reach every command?": "`containerEnv` in the override config" | 09 |
+| The probe kept in `computers.json` holds only the variables whose value differs from the container's `Config.Env`, the same rule each `docker exec` follows, so no need value is written to disk by this plan | Softov, 2026-10-05, asked "the stored probe keeps every `containerEnv` value, vault ones included, until the machine is removed: strip those keys in container/03, or leave it to container/05 p1?": strip in container/03 | 18 |
 
 ## Tasks
 
@@ -109,22 +110,22 @@ vscode/devContainers/connect  -> find the computer for F or make it -> [new] pro
 | --- | --- | --- |
 | [01 - A computer can be made from a folder's devcontainer.json](task-01-made-from-a-folder.md) | implemented | - |
 | [02 - A session reaches it through devcontainer exec](task-02-reached-through-devcontainer-exec.md) | implemented; replaced by 18 | 01 |
-| [03 - The computer form offers a folder as a flat source choice](task-03-the-form-offers-a-folder.md) | todo | 01 |
+| [03 - The computer form offers a folder as a flat source choice](task-03-the-form-offers-a-folder.md) | implemented | 01 |
 | [04 - The picker offers the session folder's dev container](task-04-the-picker-offers-the-folder.md) | implemented | 02 |
 | [05 - VS Code's connect finds or makes the same computer](task-05-connect-uses-the-computer.md) | implemented | 02 |
-| [06 - Docs and the domain text](task-06-docs.md) | todo | 03, 08, 18 |
-| [07 - The fakes behave like the real CLI and Docker](task-07-the-fake-cli-behaves-like-the-real-one.md) | todo | 18 |
-| [08 - Only allowed folders, and an off switch for every route](task-08-only-allowed-folders-and-an-off-switch-for-every-route.md) | todo | - |
-| [09 - Read-only needs through an override config](task-09-read-only-needs-through-an-override-config.md) | todo | 07 |
-| [10 - The name given is kept for the container](task-10-the-name-given-is-a-label.md) | todo | 07, 09 |
-| [11 - The agents and the body's limits reach the container](task-11-agents-label-and-body-limits.md) | todo | 09 |
-| [12 - A dev container made at session start counts](task-12-a-session-time-dev-container-counts.md) | todo | plugin/16 task 09 |
-| [13 - A stopped container is started first](task-13-a-stopped-container-is-started-first.md) | todo | 07 |
-| [14 - The picker decodes the folder, and a dev container keeps the working directory](task-14-the-picker-decodes-and-exec-keeps-cwd.md) | todo | 18 |
-| [15 - A container from an older connect is adopted](task-15-a-container-from-an-older-connect-is-adopted.md) | todo | 10 |
-| [16 - Comments document](task-16-comments-document.md) | todo | 18 |
-| [17 - docker exec matches devcontainer exec against the real CLI](task-17-docker-exec-matches-devcontainer-exec.md) | todo | - |
-| [18 - Every command reaches a dev container by docker exec](task-18-every-command-reaches-it-by-docker-exec.md) | todo | 17 |
+| [06 - Docs and the domain text](task-06-docs.md) | implemented | 03, 08, 18 |
+| [07 - The fakes behave like the real CLI and Docker](task-07-the-fake-cli-behaves-like-the-real-one.md) | implemented | 18 |
+| [08 - Only allowed folders, and an off switch for every route](task-08-only-allowed-folders-and-an-off-switch-for-every-route.md) | implemented | - |
+| [09 - Read-only needs through an override config](task-09-read-only-needs-through-an-override-config.md) | implemented | 07 |
+| [10 - The name given is kept for the container](task-10-the-name-given-is-a-label.md) | implemented | 07, 09 |
+| [11 - The agents and the body's limits reach the container](task-11-agents-label-and-body-limits.md) | implemented | 09 |
+| [12 - A dev container made at session start needs computer:write](task-12-a-session-time-dev-container-counts.md) | implemented | - |
+| [13 - A stopped container is started first](task-13-a-stopped-container-is-started-first.md) | implemented | 07 |
+| [14 - The picker decodes the folder, and a dev container keeps the working directory](task-14-the-picker-decodes-and-exec-keeps-cwd.md) | implemented | 18 |
+| [15 - A container from an older connect is adopted](task-15-a-container-from-an-older-connect-is-adopted.md) | implemented | 10 |
+| [16 - Comments document](task-16-comments-document.md) | implemented | 18 |
+| [17 - docker exec matches devcontainer exec against the real CLI](task-17-docker-exec-matches-devcontainer-exec.md) | implemented | - |
+| [18 - Every command reaches a dev container by docker exec](task-18-every-command-reaches-it-by-docker-exec.md) | implemented | 17 |
 
 ## Risks and tradeoffs
 
@@ -134,22 +135,25 @@ vscode/devContainers/connect  -> find the computer for F or make it -> [new] pro
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02, 04 and 05 implemented on 2026-09-26 and reviewed the same day; task 02's `devcontainer exec` route is replaced by task 18.
-- **Next action:** [task-17-docker-exec-matches-devcontainer-exec.md](task-17-docker-exec-matches-devcontainer-exec.md); then 18, 07, 09, 08 and 03.
-- **Open questions:** none.
-- **Watch out for:** the override config now holds environment values on disk, so it is written 0600 and removed after `up`, and a need whose value is named from the vault (`container/05-p1` task 02) is not written there in clear; the probed environment in `computers.json` is kept under the same 0600 file the owners are; a label in `runArgs` is set only when the container is made, so a second create for a folder whose container exists reads the label back rather than writing it; removing a dev container computer removes the container, not the folder or its `devcontainer.json`; an id label beyond the two gives a folder a second container; the real CLI 0.89.0 is at `/usr/local/bin/devcontainer`, but task 17 installs its own copy with npm so the result does not depend on the workstation.
+- **Done so far:** tasks 01, 02, 04 and 05 implemented on 2026-09-26 and reviewed the same day; task 02's `devcontainer exec` route is replaced by task 18. Tasks 03, 08, 18, 07, 09, 10, 11, 13, 14, 15, 16 and 06 implemented on 2026-10-03, and task 17 run that day against `@devcontainers/cli` 0.89.0 and Docker 29.6.2. The build was then driven against that real CLI and Docker; what it found (a read-only need mounted writable, adoption making a second container on the next connect, three probe entries for one container) is fixed in the turn of 2026-10-05, which also cut task 12 to the grant test and implemented it. Every task is in.
+- **Next action:** Softov's review; see [implemented.md](implemented.md). The by-hand checks left in the checklist below are the ones the real-CLI run of 2026-10-03 did not cover.
+- **Open questions:** none. An adopted container is a computer by its record in `computers.json`: the connect that adopts it writes `{ adopted: true }` under its container id, with the owner when the connect carried one, and from then on it is listed, inspected, found again by its folder on every later connect and after a restart, metered, and forgotten when removed.
+- **Ran on 2026-10-03:** task 17 with `@devcontainers/cli` 0.89.0 and Docker 29.6.2; its Resume has the result. The build's own `docker exec` matched `devcontainer exec ... env` for all three of task 17's definitions.
+- **Watch out for:** the override config holds environment values on disk while `up` runs, a vault value included until `container/05-p1` task 02 keeps it out, so it is written 0600 in a fresh directory and removed after `up`; the probe kept in `computers.json` holds only what the container's `Config.Env` does not already hold, so no `containerEnv` value is written there; a label in `runArgs` is set only when the container is made, so a second create for a folder whose container exists reads the label back rather than writing it; removing a dev container computer removes the container, not the folder or its `devcontainer.json`; an id label beyond the two gives a folder a second container, and with `--id-label` the real CLI writes no `devcontainer.local_folder` label, so a plain `devcontainer exec --workspace-folder F` does not find a container ahpd made; the real CLI 0.89.0 is at `/usr/local/bin/devcontainer`, but task 17 installs its own copy with npm so the result does not depend on the workstation.
 
 ## Final verification checklist
 
-- [ ] Task 17's comparison is recorded for all three definitions, with the exact `docker exec` argv the CLI builds.
-- [ ] No `devcontainer exec` is left in `packages/computer/src`, and `devcontainer` runs only for `up` and `--version`.
+Every unticked line here needs a real Docker daemon and the full daemon, and is not checked yet. What the fake CLI and the fake Docker cover is each task's own Validation, and those are green: 211 test files, 2904 tests, on 2026-10-05.
+
+- [x] Task 17's comparison is recorded for all three definitions, with the exact `docker exec` argv the CLI builds.
+- [x] No `devcontainer exec` is left in `packages/computer/src`, and `devcontainer` runs only for `up` and `--version`.
 - [ ] A dev container made from ahpapp's form shows in the computer list and the picker, and survives an ahpapp reload.
 - [ ] Picking `devcontainer://<folder>` makes it at session start, and the next session sees it as `computer://<id>`.
-- [ ] A Claude session in it runs as the config's `remoteUser`, with the `PATH` its login shell sets.
+- [ ] A Claude session in it runs as the config's `remoteUser`, with the `PATH` `devcontainer exec` gives.
 - [ ] VS Code's "Use Dev Container" on the same folder reuses it.
 - [ ] End to end against the real CLI: a Claude session through `devcontainer://F` starts, with its read-only needs mounted read-only.
 - [ ] `devcontainer: false` refuses every route, and a folder outside the allowlist is refused on each.
 - [ ] A container made by container/01's connect is reused, not duplicated.
-- [ ] A need's variable is seen by a `computer_exec` run after the create, the override config is 0600 while it exists, and no vault-named value is in it.
+- [ ] A need's variable is seen by a `computer_exec` run after the create, and the override config is 0600 while it exists; keeping a vault-named value out of it is `container/05-p1` task 02.
 - [ ] A dev container carries `ahpd.name` and `ahpd.agents` as plain labels and exactly the two id labels.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/CONTAINERS.md`, `docs/COMPUTER.md`, `00-container.md`, `plans/index.md` updated.

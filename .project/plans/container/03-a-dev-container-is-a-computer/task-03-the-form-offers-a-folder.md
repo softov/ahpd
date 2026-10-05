@@ -1,6 +1,6 @@
 ---
 title: The computer form offers a folder as a flat source choice
-status: todo
+status: implemented
 depends: [task-01-made-from-a-folder.md]
 layer: "computer"
 refs:
@@ -34,3 +34,23 @@ This applies [The computer form offers a folder as a flat source choice](../../.
 ## Resume
 
 Blocked on 2026-09-26 because ahpapp cannot draw a `oneOf`; Softov chose the flat source choice instead, so no ahpapp change is needed.
+
+Implemented on 2026-10-03.
+
+Files changed:
+
+- `packages/computer/src/manifest.ts` - `MANIFEST_SCHEMA` publishes `source` (an `enum` of `image` and `devcontainer` with `x-choices`, default `image`) right after `runtime`, and a flat `devcontainer` string field right after `image`. The key is not `folder`, which stays the host path mounted inside the machine and stays gated by `bodyMounts`. `devcontainerOf` accepts the plain string a form sends beside the `{ folder }` object a body written by hand may send, and a blank string is the field nobody filled in rather than a refusal. The "names both" refusal no longer fires for an `image` equal to `defaults.image`.
+- `packages/computer/test/computer-devcontainer.test.ts` - the form's own body makes a container.
+- `packages/computer/test/computer.test.ts` - the two schema key lists in "says in capabilities what a create body may contain".
+
+What the tests cover: a body of exactly the shape ahpapp sends (every field a string, `image` carrying the host's untouched default, blank `cpus`/`memory`/`workdir`) reaches `up` with the folder and the two id labels; `source` is published with the default and `devcontainer` as a string field; an `image` somebody typed beside the folder is still refused with "names both"; and, from the review, `source: "image"` beside a folder makes an image machine and never asks the CLI, `source: "devcontainer"` with no folder is refused, and a source the host does not know is refused.
+
+Notes and open questions:
+
+- `source` was published and not read, which the review of this task found. It is read now: when a body carries `source`, `image` reads only the image fields and the folder beside it is ignored, `devcontainer` requires the folder and refuses a body that has none, and any other value is refused with the enum's own sentence. A body with no `source` behaves as it did. So the open question above is closed rather than deferred.
+- The review also asked for the `devcontainer: false` case to publish no source fields at all, which is [task 08](task-08-only-allowed-folders-and-an-off-switch-for-every-route.md)'s off switch rather than this task's form, and is recorded in that task's Resume.
+- `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` green after the change (2489 tests).
+
+### The fix turn of 2026-10-05
+
+No code changed for this task on 2026-10-05; the hard-wrapped notes above were unwrapped.

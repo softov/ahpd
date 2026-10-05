@@ -199,6 +199,17 @@ export interface ManifestDefaults {
    */
   devcontainer?: string;
   /**
+   * The folder a dev container is made from here, resolved, or the sentence for
+   * one this host will not build from.
+   *
+   * The operator's list of folders is the plugin's, so the plugin answers and
+   * this only reports it: a create body is a fourth route beside the session
+   * setting, the picker's row and a relay's `connect`, and all four go through
+   * this one check - decision
+   * `a-dev-container-is-made-only-from-a-folder-the-operator-allows`.
+   */
+  folderFor?: (folder: string) => FolderAnswer;
+  /**
    * Whose the machine is, as a typed reference, recorded on it.
    *
    * Whoever asked for it - the connection's owner on a body a person wrote, the
@@ -222,6 +233,18 @@ export interface ManifestDefaults {
 }
 
 /**
+ * The folder a dev container is made from, as the CLI is handed it, or the
+ * sentence for one this host will not build from.
+ *
+ * The maker's answer carries the resolved path rather than the one that was
+ * typed, because that path is both the folder the CLI reads the file from and
+ * the value of the `ahpd.devcontainer.folder` label it is found by: a symlink
+ * and what it points at are one folder, and two spellings of it would give the
+ * folder two containers.
+ */
+export type FolderAnswer = string | { refusal: string };
+
+/**
  * The create body, as a schema a client draws a form from.
  *
  * One source with `manifestOf` below: a field this names is a field that is
@@ -236,6 +259,14 @@ export const MANIFEST_SCHEMA = (
     profiles?: Record<string, Profile>;
     bodyMounts?: boolean;
     images?: string[];
+    /**
+     * Whether this host makes dev containers at all. Absent means it does.
+     *
+     * Off hides `source` and the folder beside it, because a control a client
+     * draws and a host refuses is a form that cannot be filled in. The refusal
+     * in `manifestOf` is still the gate, for a body written by hand.
+     */
+    devcontainer?: boolean;
   },
 ): Record<string, unknown> => {
   const names = Object.keys(options.profiles ?? {});
@@ -280,6 +311,24 @@ export const MANIFEST_SCHEMA = (
       enum: [options.runtime],
       default: options.runtime,
     },
+    /*
+     * The two recipes, as a choice and the two fields beside it, both always
+     * drawn. Which of them is read is the host's answer and not the form's -
+     * decision `the-computer-form-offers-a-folder-as-a-flat-source-choice`.
+     */
+    ...(options.devcontainer === false ? {} : {
+      source: {
+        type: 'string',
+        title: 'Source',
+        description: 'What the machine is made from.',
+        enum: ['image', 'devcontainer'],
+        'x-choices': [
+          { value: 'image', title: 'Image', description: 'What to make it from.' },
+          { value: 'devcontainer', title: 'Dev container', description: "A folder's own devcontainer.json makes it." },
+        ],
+        default: 'image',
+      },
+    }),
     image: {
       type: 'string',
       title: 'Image',
@@ -287,6 +336,20 @@ export const MANIFEST_SCHEMA = (
       default: options.image,
       ...(choices === undefined ? {} : { enum: choices }),
     },
+    /*
+     * The folder, beside the image, as the one string the form sends.
+     *
+     * Not `folder`, which is a host path made visible inside the machine and is
+     * the deployment's to allow; this one is the machine's recipe, and the CLI
+     * reads the file it names.
+     */
+    ...(options.devcontainer === false ? {} : {
+      devcontainer: {
+        type: 'string',
+        title: 'Dev container',
+        description: 'A host folder whose devcontainer.json makes the machine.',
+      },
+    }),
     cpus: { type: 'string', title: 'CPUs', description: 'A number, such as 2.' },
     memory: { type: 'string', title: 'Memory', description: 'A size, such as 512m or 2g.' },
     /*
@@ -475,20 +538,51 @@ const list = (value: unknown): string[] | undefined => {
 };
 
 /**
+ * Which of the two recipes a body chose, when it says one at all.
+ *
+ * A form draws both fields and sends both, so the choice beside them is what
+ * says which of them is read: `image` reads the image fields and ignores the
+ * folder, `devcontainer` reads the folder and needs it. A body that names no
+ * `source` is read the way it always was, from whichever field it filled in -
+ * decision `the-computer-form-offers-a-folder-as-a-flat-source-choice`.
+ */
+const recipeOf = (held: Record<string, unknown>): 'image' | 'devcontainer' | undefined => {
+  const raw = held.source;
+  if (raw === undefined) return undefined;
+  if (raw !== 'image' && raw !== 'devcontainer') {
+    throw new RpcError(-32602, `source is "image" or "devcontainer", and that body says ${JSON.stringify(raw)}`);
+  }
+  return raw;
+};
+
+/**
  * The folder a machine is a dev container of, from the body or the maker.
  *
- * The body's `devcontainer` is an object naming a folder, as
- * `{"devcontainer": {"folder": "/path"}}`; a maker's own source is the plain
- * string it was configured with. A folder that is not there, is not absolute,
- * or carries no `devcontainer.json` is refused here, so a body that names one
- * is answered by this host rather than by a CLI a minute later.
+ * The body's `devcontainer` is the folder itself, as a string, which is what a
+ * form sends, or an object naming one, as `{"devcontainer": {"folder":
+ * "/path"}}`, which is what a body written by hand sends; a maker's own source
+ * is the plain string it was configured with. A folder that is not there, is
+ * not absolute, or carries no `devcontainer.json` is refused here, so a body
+ * that names one is answered by this host rather than by a CLI a minute later.
+ *
+ * `required` is a body that chose this recipe rather than a maker configured
+ * with a folder: it has to name one itself, because it said it wanted one and
+ * saying so is not naming it.
  */
-const devcontainerOf = (held: Record<string, unknown>, defaults: ManifestDefaults): string | undefined => {
+const devcontainerOf = (
+  held: Record<string, unknown>,
+  defaults: ManifestDefaults,
+  required: boolean,
+): string | undefined => {
   const raw = held.devcontainer;
   let fromBody: string | undefined;
-  if (raw !== undefined) {
+  if (typeof raw === 'string') {
+    // The form's own shape: one field, and blank when nobody filled it in.
+    fromBody = said(held, 'devcontainer');
+  }
+  else if (raw !== undefined) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-      throw new RpcError(-32602, 'devcontainer is an object naming a folder, as {"folder": "/path"}, and that body is not one');
+      throw new RpcError(-32602, 'devcontainer is a folder path, or an object naming one as {"folder": "/path"}, and that body is not one');
     }
     fromBody = said(raw as Record<string, unknown>, 'folder');
     if (fromBody === undefined) {
@@ -496,17 +590,25 @@ const devcontainerOf = (held: Record<string, unknown>, defaults: ManifestDefault
     }
   }
   const folder = fromBody ?? defaults.devcontainer;
-  if (folder === undefined) return undefined;
+  if (folder === undefined) {
+    if (!required) return undefined;
+    throw new RpcError(-32602, 'source says a dev container, and that body names no folder to read a devcontainer.json from');
+  }
   if (!folder.startsWith('/')) {
     throw new RpcError(-32602, `devcontainer names a folder on this host, and ${folder} is not an absolute path`);
   }
-  if (!existsSync(folder)) {
-    throw new RpcError(-32602, `devcontainer names ${folder}, and that path is not there`);
+  const answer = defaults.folderFor?.(folder);
+  if (answer !== undefined && typeof answer !== 'string') {
+    throw new RpcError(-32602, answer.refusal);
   }
-  if (!hasDefinition(folder)) {
-    throw new RpcError(-32602, `devcontainer names ${folder}, and it has no devcontainer.json or .devcontainer/devcontainer.json`);
+  const there = typeof answer === 'string' ? answer : folder;
+  if (!existsSync(there)) {
+    throw new RpcError(-32602, `devcontainer names ${there}, and that path is not there`);
   }
-  return folder;
+  if (!hasDefinition(there)) {
+    throw new RpcError(-32602, `devcontainer names ${there}, and it has no devcontainer.json or .devcontainer/devcontainer.json`);
+  }
+  return there;
 };
 
 /**
@@ -554,7 +656,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
    * one that is not a dev container is a sentence about the body and no
    * process is spawned for it.
    */
-  const devcontainer = devcontainerOf(held, defaults);
+  const source = recipeOf(held);
+  const devcontainer = source === 'image' ? undefined : devcontainerOf(held, defaults, source === 'devcontainer');
   let image: string | undefined;
   if (devcontainer === undefined) {
     // Named and blank is a body saying the wrong thing; absent is the default.
@@ -590,8 +693,21 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
       throw new RpcError(-32602, `This host does not run ${image}; it runs ${allowed.names.join(', ')}`);
     }
   }
-  else if (said(held, 'image') !== undefined) {
-    throw new RpcError(-32602, 'A computer is made from an image or from a folder\'s devcontainer.json, and that body names both');
+  else {
+    /*
+     * An image beside a folder is a body naming two sources, unless it is this
+     * host's own default.
+     *
+     * A form sends every field it drew, filled in or not, so the image field
+     * arrives carrying the default beside a folder that was chosen - which is
+     * the form's untouched value and not a second choice. An image somebody
+     * typed is still refused - decision
+     * `the-computer-form-offers-a-folder-as-a-flat-source-choice`.
+     */
+    const both = said(held, 'image');
+    if (both !== undefined && both !== defaults.image) {
+      throw new RpcError(-32602, 'A computer is made from an image or from a folder\'s devcontainer.json, and that body names both');
+    }
   }
 
   const cpus = said(held, 'cpus') ?? profile.cpus ?? defaults.cpus;

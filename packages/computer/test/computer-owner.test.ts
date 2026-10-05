@@ -219,7 +219,7 @@ it('keeps the Dev Container CLI on the folder identity and records the owner bes
   const configDir = join(dir, 'config');
   const folder = join(dir, 'work');
   mkdirSync(join(folder, '.devcontainer'), { recursive: true });
-  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
 
   const { options } = await load(optionsOf(dockerState, devState), configDir);
 
@@ -243,14 +243,23 @@ it('keeps the Dev Container CLI on the folder identity and records the owner bes
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    // The override config, whose own path is a temporary one: the id labels
+    // are the whole of what identifies this container.
+    '--override-config', expect.any(String),
   ]);
 
-  // So the creator is in the file beside the configuration, under the id the
-  // listing answers this machine by.
-  const box = dockerHeld(dockerState).machines[0];
-  expect(box?.name).toBe('abc123');
-  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({
-    abc123: { owner: 'user:ana', team: 'backend', project: 'ahpd' },
+  // So the creator is in the file beside the configuration, under the name the
+  // create gave the machine rather than the one the CLI named it. The entry
+  // carries the machine's probed environment beside the owner, which is the
+  // other half of what the file keeps.
+  // The container id the CLI answered, the name Docker gave it and the name
+  // the create gave it are three different things.
+  const box = dockerHeld(dockerState).machines[0] as { id?: string; name: string; labels?: Record<string, string> } | undefined;
+  expect(box?.id).toBe('abc123');
+  expect(box?.name).not.toBe('abc123');
+  expect(box?.labels?.['ahpd.name']).toMatch(/^ahpd-computer-\w{8}$/);
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toMatchObject({
+    [box?.labels?.['ahpd.name'] ?? '']: { owner: 'user:ana', team: 'backend', project: 'ahpd', probe: { container: 'abc123' } },
   });
 });
 
@@ -261,7 +270,7 @@ it('forgets the record of a machine the CLI made once it is removed', async () =
   const configDir = join(dir, 'config');
   const folder = join(dir, 'work');
   mkdirSync(join(folder, '.devcontainer'), { recursive: true });
-  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
 
   const { options } = await load(optionsOf(dockerState, devState), configDir);
   const client = await serving(options);
@@ -276,9 +285,12 @@ it('forgets the record of a machine the CLI made once it is removed', async () =
   });
   await until(() => devCalls(devState).length > 0);
 
+  // By the name the create gave it, which is the name the listing answers.
+  const id = dockerHeld(dockerState).machines[0]?.labels?.['ahpd.name'] ?? '';
+  expect(id).not.toBe('');
   const remove = options.resourceProviders?.computer?.remove as
     ((uri: string) => Promise<void>) | undefined;
-  await remove?.('computer://abc123');
+  await remove?.(`computer://${id}`);
   await until(() => dockerHeld(dockerState).machines.length === 0);
 
   // An entry for a machine that is gone is a claim on an id nothing holds, and

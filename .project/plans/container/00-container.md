@@ -33,10 +33,12 @@ A machine id records which runtime made it, so several runtimes can serve one ho
 
 A `docker` machine is made from an image, a manifest and the mounts a person or the deployment names.
 A dev container is made from a folder's own `devcontainer.json` by the Dev Container CLI's `up`, which decides the image, the features, the mounts and the user.
+A create body picks between them with a flat `source` field: `image` reads the image fields and ignores the folder, `devcontainer` requires the folder, and any other value is refused.
 Both carry `ahpd.computer=1`, so both are listed, picked and reached as `computer://<id>`; a dev container also carries `ahpd.devcontainer.folder=<folder>`, which is how a listing and the picker know a folder already has its computer.
 Every command in a dev container, the relay's nested host included, runs through `docker exec` with the user, environment and working folder read from the container's `devcontainer.metadata` label plus one `userEnvProbe` run when the container is made, per [A dev container is made by the Dev Container CLI and reached by docker exec](../../decisions/a-dev-container-is-reached-by-docker-exec.md).
 A dev container outlives the connection and the client that made it, and destroying the computer removes the container, never the folder or its `devcontainer.json`.
-A container made by hand with `devcontainer up` and without the labels is not a computer and is not listed.
+A container made by hand with `devcontainer up` carries only the CLI's `devcontainer.local_folder=<folder>`, is not listed, and is adopted by a `connect` for that folder rather than duplicated; the adoption is recorded in `computers.json`, which lists it from then on.
+`devcontainer.folders` names the absolute folders a dev container may be made from, compared resolved, with no list meaning any folder, and `devcontainer: false` switches every route off at once.
 VS Code's dev container flow stays as a door for clients that speak it, and its `connect` finds or makes the same computer.
 
 ## Runtime path
@@ -59,6 +61,6 @@ The real CLI is checked by hand; `@devcontainers/cli` 0.89.0 and Docker 29.6.2 a
 
 ## Known gaps
 
-- The code still reaches a dev container through `devcontainer exec`; container/03 moves every road to `docker exec`.
+- An adopted container gets none of what the override config carries - read-only needs, `containerEnv`, limits, the name and agents labels - because it was made before this host knew the folder; container/03 task 15 records the choice.
 - The relay serves `vscode/devContainers/isDockerAvailable`, `connect`, `disconnect` and `relaySend`, not `stop` and `remove`.
 - Only the `docker` runtime exists.

@@ -255,7 +255,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // offers the flow, so it is true only where a container can
           // actually be made: a host with the launcher loaded and no
           // Docker, or no Dev Container CLI, omits it and is never asked -
-          // decision `a-dev-container-is-made-by-the-dev-container-cli`.
+          // decision `a-dev-container-is-reached-by-docker-exec`.
           ...(containersReady ? { 'vscode.devContainers': true } : {}),
           // What this host serves beside `file:`, so a client can draw a
           // screen for a scheme before it has a URI to ask.

@@ -1,6 +1,6 @@
 ---
 title: Docs and the domain text
-status: todo
+status: implemented
 depends: [task-03-the-form-offers-a-folder.md, task-08-only-allowed-folders-and-an-off-switch-for-every-route.md, task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "docs"
 refs:
@@ -44,3 +44,32 @@ Task 03 is blocked, so both docs say the create form does not offer the source a
 Reopened on 2026-09-26 by the review. What the first version wrote that is now wrong: the form does not offer a folder (task 03 changes that); `docs/CONTAINERS.md:55` says the option "can switch the whole thing off", which task 08 makes true of every route; `00-container.md:23` says the CLI is not installed, and `/usr/local/bin/devcontainer` 0.89.0 is.
 The first version reflowed `docs/CONTAINERS.md` from its 80-column wrap to one sentence per line; Softov's rule is not to reformat text he wrote, so this pass corrects only what is wrong and reflows nothing further.
 
+Reopened again on 2026-10-03 and left until task 18 was in. Two of its three dependencies existed by then - tasks 03 and 08 landed that day - and most of this task's edits are about the `docker exec` reach task 18 builds, so the pass waited for that reach rather than being half-written against one that was not there yet.
+
+What that left for the pass after task 18:
+
+- `docs/CONTAINERS.md:42` and `:178`, `docs/COMPUTER.md` and `00-container.md` still say the create form does not offer the source, which task 03 made untrue. `docs/CONTAINERS.md:33` still shows `{"devcontainer": {"folder": "/path"}}` as the only form a body may take; a form now sends `{"source": "devcontainer", "devcontainer": "/path", "image": "<default>"}`, and the object form still works.
+- `docs/CONTAINERS.md:55` says the option "can switch the whole thing off", which task 08 made true of every route; it still has to say that `devcontainer: false` turns off the create body, the session-time create, the picker row and the relay's `connect`, not only the launcher, and that `devcontainer.folders` is a list of absolute folders compared resolved, with no list meaning any folder. The README's options table has no row for `folders`; `computer-options.test.ts` only checks that the README lists what the schema declares, not the reverse, so nothing fails until the README is written.
+- Everything this task says about `docker exec` waits on task 18.
+
+Closed on 2026-10-03, with tasks 03, 08 and 18 all in.
+
+Files changed:
+
+- `docs/CONTAINERS.md` - the recipe table says `docker exec`; the two labels are described as what the picker reads and what the derivation reads, not as what decides how a machine is reached; a hand-made container is described as adopted by its folder rather than unreachable; the create body is the form's flat `source` choice, with the object form still named as working; a session-time create's needs are described as they are delivered, a read-only need through the override config's `mounts` and an environment need as `containerEnv` in it; the `devcontainer` option says `false` switches all four routes off and names `folders` as the resolved allowlist; the option says the CLI is run for `up` only; `install` no longer says it skips the probe, which it does not, and the probe is described where it happens; the relay steps gained the stopped-container and adoption branches and a step for the derivation, and the `how()` line at the end is the `docker exec` argv with the decision link.
+- `docs/COMPUTER.md` - the folder recipe uses the `source` form and says what each `source` value means; the reach is the `docker exec` line with the `devcontainer.metadata` label, the probe and the `a-dev-container-is-reached-by-docker-exec` decision; it says a dotfile changed afterwards is not seen until the container is made again, and that a hand-made container is adopted rather than duplicated; the backend table says `docker exec` for both kinds of machine; the session's working directory says what a dev container falls back to; Security gained "Allowed folders" with the four routes and the off switch.
+- `.project/plans/container/00-container.md` - the two-recipes section gained the `source` field, the hand-made container's adoption, the allowlist and the off switch; the known gap about `devcontainer exec` is gone and one about an adopted container not being listed replaced it.
+- `packages/computer/README.md` - the options table gained a `devcontainer` row. This file is not in the task's Files list; the earlier pass noted that `folders` had no row and that `computer-options.test.ts` only checks the README against the schema, so nothing failed. `devcontainer` itself had no row either, so the row is for the key rather than for the one sub-field.
+
+Validation: `rg -n "devcontainer exec" docs .project/plans/container/00-container.md` finds nothing. No em dash in either doc, no line this pass wrote is wrapped, every decision link resolves, and `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` are green (2509 tests).
+
+Notes and open questions:
+
+- Step 3 held: only what was wrong was changed. `docs/CONTAINERS.md` keeps its one-sentence-per-line shape and the 3-space indent under its numbered list, and neither doc was reflowed.
+- The `ahpd.devcontainer.folder` label no longer says anything about how a command reaches the container, which is what this pass changed. What it now says is what it is for: the picker's way of knowing a folder already has a computer. The label that answers how the container is reached is `devcontainer.metadata`, and the two are named apart so that neither is read for the other's job.
+- A container made by hand is documented as adopted, which is task 15's behaviour, and as not listed until one is.
+- Nothing in either doc was written about the probed environment's file beyond what it does: `computers.json` beside the daemon's config, keyed by container id, written once per container.
+
+### The fix turn of 2026-10-05
+
+Task 15's adoption now records the container in `computers.json`, and it is listed, metered and found again from there, so the sentences that said an adopted container is not listed were wrong. `docs/CONTAINERS.md` (the hand-made container paragraph and step 2 of the relay), `docs/COMPUTER.md` (the hand-made container sentence) and `00-container.md` (the two-recipes paragraph) now say it is recorded and listed once adopted; the known gap in `00-container.md` is replaced by the one that holds, that an adopted container gets nothing the override config carries. `docs/COMPUTER.md`'s decision link pointed at the superseded `a-dev-container-is-made-by-the-dev-container-cli` and now points at `a-dev-container-is-reached-by-docker-exec`. Only those sentences changed, and nothing was reflowed.

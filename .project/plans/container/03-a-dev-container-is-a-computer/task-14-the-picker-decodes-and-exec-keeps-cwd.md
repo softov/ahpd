@@ -1,6 +1,6 @@
 ---
 title: The picker decodes the session folder, and a dev container keeps the working directory asked for
-status: todo
+status: implemented
 depends: [task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "computer"
 refs:
@@ -31,3 +31,22 @@ A session folder with a space in it gets its `devcontainer://` row, and a backen
 - `how()` with a `cwd` no mount covers answers the workspace folder inside.
 
 ## Resume
+
+Implemented on 2026-10-03.
+
+Files changed:
+
+- `packages/computer/src/plugin.ts` - the picker decodes the URI with `fileURLToPath` rather than stripping a `file://` prefix. A `workingDirectory` that is not a `file:` URI is left as it is, since the SDK types it as "a URI" and says nothing else about what a client sends.
+- `packages/computer/test/computer-devcontainer.test.ts` - the two cases below.
+
+What the tests cover: a folder `/my app` sent as `pathToFileURL(folder).href` gets its `devcontainer://` row, which with the prefix strip it does not, because the strip leaves `my%20app` in the path and no such folder has a definition. And `how()` for a dev container answers `-w /workspaces/Box/sub` for `cwd: <folder>/sub`, `-w /workspaces/Box` for a `cwd` no mount covers, and `-w /workspaces/Box` for none; dropping the `within(held, asked.cwd)` makes the first answer `/workspaces/Box`.
+
+Notes and open questions:
+
+- The `cwd` half was already in place when this task ran, and no code changed for it. Task 18 built `reach`'s dev container branch on `execArgv`, which takes the same `start` a `docker` machine does: `within(held, asked.cwd)` when a mount covers the path, else the machine's own. What a dev container's own is, `workdirOf` already answered, by reading the `ahpd.devcontainer.folder` label and finding the bind mount it names - which is the workspace folder inside. So the rule the task spells out is the rule the code follows, and what was missing was only a case that says so. A version of the fallback computed inside `reach` from `within(held, devcontainerFolder(held))` was tried first and dropped: it is the same answer as a second place for it.
+- Step 1 holds as the task says: `within` is still the one mapping, `execArgv` still emits `-w`, and no `sh -c cd` was added anywhere. The case asserts `-w` on the argv rather than on the argv's effect, which is what proves there is no wrapper.
+- A path a mount covers but whose inside does not exist is left to Docker, which makes the directory on `exec -w` if it can and refuses if it cannot. Nothing here creates directories, and no task asks for it.
+
+### The fix turn of 2026-10-05
+
+Added `computer-devcontainer.test.ts` "omits the dev container row for a URI it cannot read a folder from, and keeps the others": for `file://elsewhere/w/app` and `file:///w/a%2Fb`, which `fileURLToPath` refuses, the picker answers the host row and the existing computer and no `devcontainer://` row, rather than failing. It covers the `decoded` guard that was already in the picker, and passed when written. No code changed for this task.

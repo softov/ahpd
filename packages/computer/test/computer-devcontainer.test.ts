@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
@@ -10,7 +10,7 @@ import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
-import type { HostOptions } from '../../sdk/src/types/host.js';
+import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -30,16 +30,16 @@ const DEV = fileURLToPath(new URL('./fixtures/devcontainer.mjs', import.meta.url
 const DOCKER = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url));
 const HOST = fileURLToPath(new URL('./fixtures/container-host.mjs', import.meta.url));
 
-/** A temporary directory removed after the test that made it. */
-let loose: string | undefined;
+/** Temporary directories, removed after the test that made them. */
+const loose: string[] = [];
 afterEach(() => {
-  if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
-  loose = undefined;
+  for (const one of loose.splice(0)) rmSync(one, { recursive: true, force: true });
 });
 
 const temp = (): string => {
-  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-devc-'));
-  return loose;
+  const one = mkdtempSync(join(tmpdir(), 'ahpd-computer-devc-'));
+  loose.push(one);
+  return one;
 };
 
 /** A folder that is a dev container, and one that is not. */
@@ -47,28 +47,56 @@ function workspace(root: string, withDefinition = true, name = 'work-'): string 
   const folder = mkdtempSync(join(root, name));
   if (withDefinition) {
     mkdirSync(join(folder, '.devcontainer'), { recursive: true });
-    writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+    writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
   }
   return folder;
 }
+
+/**
+ * Where the CLI mounts a folder, which is `/workspaces/<basename>` unless the
+ * override says `workspaceMount` - the path the real CLI works out, so a test
+ * reads it rather than naming it.
+ */
+const mounted = (folder: string): string => `/workspaces/${basename(folder)}`;
 
 /** What the scripted CLI recorded. */
 interface DevHeld {
   calls: string[][];
   commands: string[];
+  /** Every override config an `up` was handed, as it was on disk. */
+  overrides?: { where: string; mode: number; config: Record<string, unknown> }[];
 }
 const devHeld = (state: string): DevHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DevHeld
   : { calls: [], commands: [] });
 
+/**
+ * What one `up` was asked, with the override config's own path put out of the
+ * way: it is a fresh temporary directory's path and is gone after the call.
+ */
+const upOf = (state: string): string[] | undefined => {
+  const argv = devHeld(state).calls.find((one) => one[0] === 'up');
+  if (argv === undefined) return undefined;
+  const at = argv.indexOf('--override-config');
+  return at === -1 ? argv : [...argv.slice(0, at), '--override-config', '<override>'];
+};
+
+/** The override config the CLI was handed, its mode, and whether it is gone. */
+const overrideOf = (state: string): { mode: number; config: Record<string, unknown>; gone: boolean } | undefined => {
+  const said = devHeld(state).overrides?.[0];
+  return said === undefined ? undefined : { mode: said.mode, config: said.config, gone: !existsSync(said.where) };
+};
+
 /** What the scripted Docker holds. */
 interface DockerHeld {
-  machines: { name: string; image: string; labels?: Record<string, string>; mounts?: string[] }[];
+  machines: { name: string; image: string; labels?: Record<string, string>; mounts?: string[]; state?: string }[];
   calls: string[][];
+  /** Every command run in a container, with the flags it was reached under. */
+  commands: { id: string; user?: string; workdir?: string; env: Record<string, string>; command: string[] }[];
 }
 const dockerHeld = (state: string): DockerHeld => (existsSync(state)
   ? JSON.parse(readFileSync(state, 'utf8')) as DockerHeld
-  : { machines: [], calls: [] });
+  : { machines: [], calls: [], commands: [] });
 
 /**
  * Wait until the scripted Docker has answered every call a case made of it:
@@ -105,7 +133,14 @@ const optionsOf = (devState: string, dockerState: string, more: Record<string, u
   ...more,
 });
 
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = REPO) => loadPlugins(
+/**
+ * Load the plugin, with its configuration directory somewhere of its own.
+ *
+ * That directory is where the daemon keeps `computers.json`, which is where a
+ * dev container's probed environment is kept - a load that defaulted to the
+ * repository would write one there.
+ */
+const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp()) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
   { base: { path: '/tmp/computer-devcontainer', agents, resources: fileResources() }, configDir, cwd: REPO, log: () => {} },
 );
@@ -113,6 +148,7 @@ const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], conf
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
+  remove(uri: string): Promise<void>;
 };
 
 const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
@@ -184,23 +220,35 @@ it('makes a computer from a folder\'s devcontainer.json, and lists it by its fol
   });
 
   // The exact line, which is the whole create: the folder and the two labels
-  // every later call about this container repeats.
-  expect(devHeld(devState).calls[0]).toEqual([
+  // every later call about this container repeats, and the override config
+  // this host adds to the folder's own definition.
+  expect(upOf(devState)).toEqual([
     'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
+    '--override-config', '<override>',
   ]);
+  /*
+   * The override is the folder's whole definition with the name over it, not
+   * only what this host adds: the CLI replaces the file rather than merging
+   * with it, so an override naming no recipe would be refused by name.
+   */
+  expect(overrideOf(devState)?.config).toEqual({ image: 'base', runArgs: ['--label', 'ahpd.name=box'] });
+  // Only its own user may read it while it holds environment values, and it is
+  // gone once `up` is answered.
+  expect(overrideOf(devState)?.mode).toBe(0o600);
+  expect(overrideOf(devState)?.gone).toBe(true);
   // The container the CLI reported is what the provider lists, under the name
-  // a listing reports, and the folder is what the machine is read by.
-  expect((await provider.list('computer://')).map((one) => one.name)).toEqual(['abc123']);
+  // the create gave it, and the folder is what the machine is read by.
+  expect((await provider.list('computer://')).map((one) => one.name)).toEqual(['box']);
   const runtime = dockerRuntime({
     command: process.execPath,
     args: [DOCKER],
     env: { DOCKER_FAKE_STATE: dockerState },
     label: 'ahpd.computer=1',
   });
-  expect((await runtime.list())[0]).toMatchObject({ id: 'abc123', folder });
+  expect((await runtime.list())[0]).toMatchObject({ id: 'box', folder });
   await answered(dockerState, 6);
 });
 
@@ -240,55 +288,229 @@ it('refuses a folder with no devcontainer.json, and a CLI that is not there', as
 });
 
 /*
- * Task 02: reached through the CLI, by the folder's own label.
+ * Task 18: reached by `docker exec`, the way the CLI itself reaches it.
+ *
+ * The user's own login shell is probed for what it was holding, and that answer
+ * is what the command runs with - which is the whole of the derivation, and the
+ * reason a definition's `remoteEnv` reaches a command nobody set it on.
  */
-it('reaches it through devcontainer exec, with the folder from its label', async () => {
+it('reaches it by docker exec, as the folder\'s own user in its own environment', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
   const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({
+    calls: [],
+    metadata: [{ remoteUser: 'vscode', remoteEnv: { GREETING: 'hello' } }],
+  }));
   const { options: loaded } = await load(optionsOf(devState, dockerState));
   await providerOf(loaded).write('computer://box', {
     data: JSON.stringify({ devcontainer: { folder } }),
     encoding: 'utf-8',
   });
 
-  const how = await loaded.computers?.how('abc123', { command: 'node', args: ['server.mjs'] });
+  const how = await loaded.computers?.how('box', { command: 'node', args: ['server.mjs'] });
   expect(how).toEqual({
     command: process.execPath,
     args: [
-      DEV, 'exec',
-      '--workspace-folder', folder,
-      '--id-label', 'ahpd.computer=1',
-      '--id-label', `ahpd.devcontainer.folder=${folder}`,
+      DOCKER, 'exec', '-i',
+      // The user the folder's own configuration asks for, and the environment
+      // that user's shell was holding with the folder's `remoteEnv` over it.
+      '-u', 'vscode',
+      '-e', 'PATH=/usr/bin',
+      '-e', 'HOME=/root',
+      '-e', 'GREETING=hello',
+      // And where in the machine the workspace is mounted.
+      '-w', mounted(folder),
+      'abc123',
       'node', 'server.mjs',
     ],
-    // The CLI's own environment, which is the program's and not the machine's.
-    env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+    // The docker program's own environment, which is the program's and not the
+    // machine's.
+    env: { DOCKER_FAKE_STATE: dockerState },
   });
-  // A caller's environment travels as the CLI's own `--remote-env`.
-  expect((await loaded.computers?.how('abc123', {
+  // A caller's environment is the last of the `-e` flags, beside the machine's
+  // own rather than instead of it.
+  expect((await loaded.computers?.how('box', {
     command: 'node', args: ['server.mjs'], env: { A: '1' },
   }))?.args).toEqual([
-    DEV, 'exec',
+    DOCKER, 'exec', '-i', '-u', 'vscode',
+    '-e', 'PATH=/usr/bin', '-e', 'HOME=/root', '-e', 'GREETING=hello',
+    '-w', mounted(folder), '-e', 'A=1',
+    'abc123', 'node', 'server.mjs',
+  ]);
+
+  // And a backend spawned through that descriptor really lands there: the
+  // scripted Docker records the command line, which is the proof the spawn is
+  // not a shell line that would have looked the same.
+  const before = dockerHeld(dockerState).calls.length;
+  spawnSync(how?.command as string, how?.args as string[], {
+    encoding: 'utf8',
+    env: { ...process.env, DOCKER_FAKE_STATE: dockerState },
+  });
+  expect(dockerHeld(dockerState).calls.length).toBe(before + 1);
+  expect(dockerHeld(dockerState).commands.at(-1)).toMatchObject({
+    id: 'abc123',
+    user: 'vscode',
+    workdir: mounted(folder),
+    command: ['node', 'server.mjs'],
+  });
+  await answered(dockerState, 6);
+});
+
+/*
+ * The directory a command starts in is the caller's, read through the machine's
+ * mounts: a path under the folder the container was made from is the same place
+ * under its name inside, and a path no mount covers is a directory that machine
+ * does not have, so the workspace stands instead. No `cd` in a shell line, and
+ * `within` is the one mapping either branch of it uses.
+ */
+it('keeps the working directory a caller asks for, mapped through the mounts', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  mkdirSync(join(folder, 'sub'));
+  writeFileSync(devState, JSON.stringify({ calls: [], metadata: [{ remoteUser: 'vscode' }] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [] }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+
+  const inside = async (cwd?: string): Promise<string | undefined> => {
+    const args = (await loaded.computers?.how('box', {
+      command: 'node', args: ['server.mjs'], ...(cwd === undefined ? {} : { cwd }),
+    }))?.args ?? [];
+    return args[args.indexOf('-w') + 1];
+  };
+
+  expect(await inside(join(folder, 'sub'))).toBe(`${mounted(folder)}/sub`);
+  // A path on this host that the container has no mount for is not a directory
+  // in there, and the workspace is where the command belongs.
+  expect(await inside('/elsewhere')).toBe(mounted(folder));
+  // And a caller that names nowhere gets the workspace too.
+  expect(await inside()).toBe(mounted(folder));
+  await answered(dockerState, 6);
+});
+
+/*
+ * The tool a backend runs a command with, on the same road.
+ *
+ * `how` describes a spawn for a backend to make itself; `computer_exec` is the
+ * daemon making it. Both go through the runtime, so both derive the same user
+ * and the same environment - a machine reachable by one and not the other
+ * would be a machine whose login shell depends on who asked.
+ */
+it('runs `computer_exec` on it with the same flags a backend is reached with', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], metadata: [{ remoteUser: 'vscode' }] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], execOut: 'v22.14.0\n' }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const ran = String(await tool.run({ id: 'box', command: 'node --version' }, {} as ToolCall));
+  expect(ran).toContain('v22.14.0');
+  expect(ran).toContain('exit 0');
+  // By the container id, as `how` and the relay reach it, and not by the name
+  // Docker gave the container.
+  expect(dockerHeld(dockerState).commands.at(-1)).toMatchObject({
+    id: 'abc123',
+    user: 'vscode',
+    workdir: mounted(folder),
+    command: ['sh', '-lc', 'node --version'],
+  });
+  await answered(dockerState, 6);
+});
+
+/*
+ * Task 03: the form's own shape, as ahpapp sends it.
+ */
+it('makes one from the body a form sends, and still refuses an image beside it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const provider = providerOf(loaded);
+
+  // What ahpapp draws from the schema and sends: every field as a string, and
+  // the image field carrying the default nobody touched.
+  const schema = loaded.resourceProviders?.computer as {
+    describe(): { manifest?: { properties?: Record<string, { default?: string }> } };
+  };
+  expect(schema.describe().manifest?.properties?.source?.default).toBe('image');
+  expect(schema.describe().manifest?.properties?.devcontainer).toMatchObject({ type: 'string' });
+  await provider.write('computer://box', {
+    data: JSON.stringify({
+      source: 'devcontainer',
+      runtime: 'docker',
+      image: 'debian:bookworm-slim',
+      devcontainer: folder,
+      cpus: '',
+      memory: '',
+      workdir: '',
+    }),
+    encoding: 'utf-8',
+  });
+  expect(upOf(devState)).toEqual([
+    'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
-    '--remote-env', 'A=1',
-    'node', 'server.mjs',
+    '--override-config', '<override>',
   ]);
 
-  // And a backend spawned through that descriptor really goes through the CLI:
-  // the fixture records the command line, which is the proof the spawn is not
-  // a `docker exec` wearing a dev container's name.
-  const before = devHeld(devState).calls.length;
-  spawnSync(how?.command as string, how?.args as string[], {
-    encoding: 'utf8',
-    env: { ...process.env, DEVCONTAINER_FAKE_STATE: devState },
+  // An image somebody typed beside the folder is still two sources, and is
+  // refused with the sentence that says so.
+  await expect(provider.write('computer://other', {
+    data: JSON.stringify({ source: 'devcontainer', devcontainer: folder, image: 'node:22' }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/names both/);
+  await answered(dockerState, 4);
+});
+
+/*
+ * The source beside the two fields, read by the host rather than the form.
+ */
+it('reads only the recipe the source names, and refuses a source that names none', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const provider = providerOf(loaded);
+
+  // An image beside a folder, with the source saying which of the two is read:
+  // the folder is ignored, and what the CLI is asked for is a `docker run`.
+  await provider.write('computer://box', {
+    data: JSON.stringify({ source: 'image', image: 'debian:bookworm-slim', devcontainer: folder }),
+    encoding: 'utf-8',
   });
-  expect(devHeld(devState).calls.length).toBe(before + 1);
-  expect(devHeld(devState).calls.at(-1)).toContain('--workspace-folder');
-  await answered(dockerState, 6);
+  await answered(dockerState, 4);
+  expect(devHeld(devState).calls).toEqual([]);
+  expect(dockerHeld(dockerState).calls.some((one) => one[0] === 'run')).toBe(true);
+
+  // A dev container with no folder beside it is a recipe naming no recipe: a
+  // folder the form left blank, which is not the same as not choosing one.
+  await expect(provider.write('computer://other', {
+    data: JSON.stringify({ source: 'devcontainer', devcontainer: '', image: 'debian:bookworm-slim' }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/names no folder/);
+
+  // And a source this host does not know is refused rather than guessed at.
+  await expect(provider.write('computer://third', {
+    data: JSON.stringify({ source: 'compose', devcontainer: folder }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/source is "image" or "devcontainer"/);
 });
 
 /*
@@ -368,7 +590,30 @@ it('reads a folder holding a comma whole, so the picker offers no second contain
   await answered(dockerState, 1);
 });
 
-it('makes it at session start, with the harness needs as --mount and --remote-env', async () => {
+/*
+ * The same row for a folder whose name a URI had to escape: `file:///w/my%20app`
+ * is the same folder as `/w/my app`, and only a decode says so.
+ */
+it('offers the dev container of a folder whose name a URI had to escape', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = mkdtempSync(join(dir, 'my app'));
+  mkdirSync(join(folder, '.devcontainer'), { recursive: true });
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+
+  const offered = await answerer({
+    property: 'computer',
+    query: '',
+    workingDirectory: pathToFileURL(folder).href,
+  });
+  expect(offered.some((one) => one.value === `devcontainer://${folder}`)).toBe(true);
+  await answered(dockerState, 2);
+});
+
+it('makes it at session start, with the harness needs in the override config', async () => {
   const dir = temp();
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
@@ -387,20 +632,30 @@ it('makes it at session start, with the harness needs as --mount and --remote-en
     snapshot: { state: { config?: { values?: Record<string, unknown> } } };
   };
 
-  const up = devHeld(devState).calls.find((one) => one[0] === 'up');
-  expect(up).toEqual([
+  expect(upOf(devState)).toEqual([
     'up',
     '--workspace-folder', folder,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${folder}`,
-    // The need the harness declared, as the CLI's own two flags.
+    // The need the harness declared that names a host path, which the CLI's
+    // own `--mount` takes.
     '--mount', `type=bind,source=${configDir},target=/ahpd/config`,
-    '--remote-env', 'ANTHROPIC_API_KEY=from-the-agent',
+    '--override-config', '<override>',
   ]);
+  /*
+   * And the need that names a variable, as `containerEnv`: the container's own
+   * environment, which every later `docker exec` in there inherits, where
+   * `up --remote-env` reaches only the lifecycle commands `up` runs.
+   */
+  expect(overrideOf(devState)?.config).toMatchObject({
+    image: 'base',
+    containerEnv: { ANTHROPIC_API_KEY: 'from-the-agent' },
+  });
+  expect(upOf(devState)).not.toContain('--remote-env');
 
-  // What the session actually runs in is the machine the CLI named, not the
-  // source the person picked.
-  expect(opened.snapshot.state.config?.values?.computer).toBe('computer://abc123');
+  // What the session actually runs in is the machine this host made for it,
+  // under the name the create gave, not the source the person picked.
+  expect(opened.snapshot.state.config?.values?.computer).toMatch(/^computer:\/\/ahpd-computer-\w{8}$/);
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 2);
 });
@@ -459,10 +714,11 @@ it('connect twice for one folder makes one container', async () => {
   const devState = join(dir, 'dev.json');
   const dockerState = join(dir, 'docker.json');
   const folder = workspace(dir);
-  // The host inside is the fake, run for real through the CLI's exec: the
+  // The host inside is the fake, run for real through the Docker exec: the
   // launcher holds the pipes, and a `passthrough` prefix is what makes the
   // fixture spawn it rather than only record the line.
-  writeFileSync(devState, JSON.stringify({ calls: [], commands: [], passthrough: [process.execPath] }));
+  writeFileSync(devState, JSON.stringify({ calls: [] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], passthrough: [process.execPath] }));
   const { options: loaded } = await load(optionsOf(devState, dockerState, {
     devcontainer: {
       command: process.execPath,
@@ -508,14 +764,15 @@ it('connect twice for one folder makes one container', async () => {
 it('installs the server in a container at the daemon\'s version, from the plugin\'s context', async () => {
   const root = temp();
   const devState = join(root, 'dev.json');
+  const dockerState = join(root, 'docker.json');
   writeFileSync(devState, JSON.stringify({ calls: [], commands: [], hostPresent: false, passthrough: [process.execPath] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], hostPresent: false, passthrough: [process.execPath] }));
   const { options, problems } = await loadPlugins(
-    [{ name: SOURCE, options: optionsOf(devState, join(root, 'docker.json'), {
+    [{ name: SOURCE, options: optionsOf(devState, dockerState, {
       devcontainer: {
         command: process.execPath,
         args: [DEV],
-        env: { DEVCONTAINER_FAKE_STATE: devState },
-        docker: process.execPath,
+        env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
         host: [process.execPath, HOST],
         plugins: ['@ahpd/agent-cofold'],
       },
@@ -529,7 +786,665 @@ it('installs the server in a container at the daemon\'s version, from the plugin
     { connectionId: 'a', workspaceFolder: workspace(root), name: 'Box' },
     { message: (t) => { said.push(t); }, output: () => {}, close: (why) => { closed.push(why); } },
   );
-  expect(devHeld(devState).commands[1]).toBe('npm i -g @ahpd/server@0.9.77 --allow-scripts=node-pty');
+  expect(dockerHeld(dockerState).commands.map((one) => one.command.at(-1)))
+    .toContain('npm i -g @ahpd/server@0.9.77 --allow-scripts=node-pty');
   for (let i = 0; i < 600 && said.length === 0 && closed.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
-  await answered(join(root, 'docker.json'), 2);
+  await answered(dockerState, 2);
+});
+
+/*
+ * Task 08: only the folders the operator named, on every route.
+ */
+it('refuses a folder outside the list on every route, and makes one inside it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const allowed = workspace(dir);
+  const outside = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+      folders: [allowed],
+    },
+  }), [], join(dir, 'config'));
+  const provider = providerOf(loaded);
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+  const silent = { message: () => {}, output: () => {}, close: () => {} };
+  const computers = loaded.computers;
+  /** What the session route does when a session names this source. */
+  const starting = async (source: string): Promise<unknown> => {
+    if (computers?.create === undefined) throw new Error('the plugin registered no create on its computers port');
+    return computers.create({ source, session: 'ahp-session:/one', provider: 'echo' });
+  };
+
+  // The create body, the session setting and the relay's connect are refused
+  // with the one sentence, and the folder outside is never built.
+  await expect(provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder: outside } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(new RegExp(`${outside} is not one of them`));
+  await expect(starting(`devcontainer://${outside}`)).rejects.toThrow(new RegExp(`${outside} is not one of them`));
+  await expect(loaded.containers?.connect(
+    { connectionId: 'a', workspaceFolder: outside, name: 'Box' },
+    silent,
+  )).rejects.toThrow(new RegExp(`${outside} is not one of them`));
+
+  // The picker's row is gone for it and still there for the folder named.
+  const rowFor = async (where: string): Promise<boolean> =>
+    (await answerer({ property: 'computer', query: '', workingDirectory: `file://${where}` }))
+      .some((one) => one.value === `devcontainer://${where}`);
+  expect(await rowFor(outside)).toBe(false);
+  expect(await rowFor(allowed)).toBe(true);
+  expect(devHeld(devState).calls).toEqual([]);
+
+  // And a folder the list names is made, on the create body.
+  await provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder: allowed } }),
+    encoding: 'utf-8',
+  });
+  expect(upOf(devState)).toEqual([
+    'up',
+    '--workspace-folder', allowed,
+    '--id-label', 'ahpd.computer=1',
+    '--id-label', `ahpd.devcontainer.folder=${allowed}`,
+    '--override-config', '<override>',
+  ]);
+  await answered(dockerState, 6);
+});
+
+it('switches every route off when devcontainer is false', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState, {
+    devcontainer: false,
+  }), [], join(dir, 'config'));
+  const provider = providerOf(loaded);
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+  const computers = loaded.computers;
+  /** What the session route does when a session names this source. */
+  const starting = async (source: string): Promise<unknown> => {
+    if (computers?.create === undefined) throw new Error('the plugin registered no create on its computers port');
+    return computers.create({ source, session: 'ahp-session:/one', provider: 'echo' });
+  };
+
+  // The launcher is not contributed at all, so there is no connect to refuse.
+  expect(loaded.containers).toBeUndefined();
+  // And the form is drawn no field for the route: a control the host refuses is
+  // a form that cannot be filled in.
+  const schema = loaded.resourceProviders?.computer as {
+    describe(): { manifest?: { properties?: Record<string, unknown> } };
+  };
+  expect(Object.keys(schema.describe().manifest?.properties ?? {}))
+    .toEqual(['runtime', 'image', 'cpus', 'memory', 'workdir']);
+  await expect(provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/switched off on this host/);
+  await expect(starting(`devcontainer://${folder}`)).rejects.toThrow(/switched off on this host/);
+  expect((await answerer({ property: 'computer', query: '', workingDirectory: `file://${folder}` }))
+    .some((one) => one.value.startsWith('devcontainer://'))).toBe(false);
+  expect(devHeld(devState).calls).toEqual([]);
+  expect(dockerHeld(dockerState).machines).toEqual([]);
+  await answered(dockerState, 1);
+});
+
+/*
+ * The routes, and the folder each of them is handed.
+ */
+it('hands every route the folder as it resolves, and refuses one that is not a path', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const link = join(dir, 'linked');
+  symlinkSync(folder, link);
+  const there = realpathSync(link);
+  const { options: loaded } = await load(optionsOf(devState, dockerState, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+      folders: [link],
+    },
+  }), [], join(dir, 'config'));
+  const provider = providerOf(loaded);
+
+  // The list names the link and the body names it too, so they are the same
+  // folder to the check and only one spelling goes on to the CLI: a container
+  // made for one and looked up by the other would be a second container.
+  await provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder: link } }),
+    encoding: 'utf-8',
+  });
+  expect(upOf(devState)).toEqual([
+    'up',
+    '--workspace-folder', there,
+    '--id-label', 'ahpd.computer=1',
+    '--id-label', `ahpd.devcontainer.folder=${there}`,
+    '--override-config', '<override>',
+  ]);
+  await answered(dockerState, 4);
+});
+
+it('refuses a devcontainer.folders entry that is not absolute', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const loaded = await load(optionsOf(devState, dockerState, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+      folders: ['./work'],
+    },
+  }));
+  expect(loaded.problems.join('\n')).toMatch(/devcontainer\.folders are absolute paths/);
+});
+
+/*
+ * The fakes refuse what the real ones refuse, so a manifest this host cannot
+ * honour fails here rather than passing and failing against the real program.
+ */
+
+/*
+ * A read-only bind is what `cliMount` used to write as `,readonly`, and
+ * `,readonly` is not one of the keys the CLI's `--mount` takes - so the CLI
+ * answers "Unmatched argument format" and builds nothing. It is the override
+ * config's `mounts` now, which the CLI reads as part of the folder's own
+ * definition.
+ */
+it('mounts a read-only need, once it is in the config the CLI is handed', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'claude-home');
+  const folder = workspace(dir);
+  mkdirSync(configDir);
+
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [
+    agentWith({
+      config: { directory: configDir, target: '/ahpd/config', required: true, readOnly: true },
+    }),
+  ], join(dir, 'config'));
+  const { client, open } = await room(loaded);
+  await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder);
+
+  // No `--mount` at all: the CLI would refuse this one, and the override is
+  // where a read-only mount goes.
+  expect(upOf(devState)).not.toContain('--mount');
+  // The CLI's string spelling: it renders an object mount as `type`, `source`
+  // and `target` and drops `readOnly`, so only the string reaches Docker
+  // read-only.
+  expect(overrideOf(devState)?.config).toMatchObject({
+    image: 'base',
+    mounts: [`type=bind,source=${configDir},target=/ahpd/config,readonly`],
+  });
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  expect(dockerHeld(dockerState).machines[0]?.mounts).toContain(`${configDir}:/ahpd/config:ro`);
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+});
+
+/*
+ * The override file holds environment values on disk while `up` runs, and it
+ * is gone either way: a `up` that fails still must not leave one behind.
+ */
+it('takes the override file away after a failed up, as after a good one', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upFailure: 'the image would not pull' }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+
+  await expect(providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/would not pull/);
+
+  expect(overrideOf(devState)?.mode).toBe(0o600);
+  expect(overrideOf(devState)?.gone).toBe(true);
+  expect(dockerHeld(dockerState).machines).toEqual([]);
+  await answered(dockerState, 2);
+});
+
+/*
+ * A need's variable, as `containerEnv`, is the container's own environment:
+ * every process in there inherits it, so a command run after the create sees
+ * it. `up --remote-env` reaches only the lifecycle commands `up` runs and
+ * nothing afterwards.
+ */
+it('gives a command run after the create a need\'s variable, as the container\'s own environment', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], metadata: [{ remoteUser: 'vscode' }] }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [
+    agentWith({ key: { name: 'ANTHROPIC_API_KEY', default: 'from-the-agent' } }),
+  ], join(dir, 'config'));
+  const { client, open } = await room(loaded);
+  const opened = await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder) as {
+    snapshot: { state: { config?: { values?: Record<string, unknown> } } };
+  };
+
+  expect(overrideOf(devState)?.config).toMatchObject({ containerEnv: { ANTHROPIC_API_KEY: 'from-the-agent' } });
+
+  // The variable is the container's own environment, which every `docker exec`
+  // inherits: it is on the machine Docker holds, and on no command's flags.
+  const id = String(opened.snapshot.state.config?.values?.computer ?? '').slice('computer://'.length);
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  await tool.run({ id, command: 'true' }, {} as ToolCall);
+  const held = dockerHeld(dockerState) as DockerHeld & { machines: { env?: Record<string, string> }[] };
+  expect(held.machines[0]?.env).toMatchObject({ ANTHROPIC_API_KEY: 'from-the-agent' });
+  expect(held.commands.length).toBeGreaterThan(0);
+  expect(held.commands.filter((one) => 'ANTHROPIC_API_KEY' in one.env)).toEqual([]);
+  expect(held.calls.flat().filter((one) => one.includes('from-the-agent'))).toEqual([]);
+  // And the probe kept beside the configuration holds only what the container
+  // does not already hold, so the value is not written there either.
+  const kept = readFileSync(join(dir, 'config', 'computers.json'), 'utf8');
+  expect(JSON.parse(kept)).toMatchObject({ [id]: { probe: { container: 'abc123' } } });
+  expect(kept).not.toContain('from-the-agent');
+  expect(kept).not.toContain('ANTHROPIC_API_KEY');
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await answered(dockerState, 4);
+});
+
+/*
+ * The agents a machine was made for are a label a picker reads, and a `docker`
+ * machine and a dev container answer it the same way. As a `runArgs` label
+ * rather than an id one: the id labels are how the CLI finds the container.
+ */
+it('records the agents a body was made for, and the limits, in the override config', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [
+    agentWith({ config: { directory: folder, target: folder, required: true } }),
+  ], join(dir, 'config'));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ source: 'devcontainer', runtime: 'docker', image: '', devcontainer: folder, cpus: '2', memory: '2g', workdir: '/work' }),
+    encoding: 'utf-8',
+  });
+
+  expect(overrideOf(devState)?.config).toMatchObject({
+    runArgs: ['--label', 'ahpd.name=box', '--cpus', '2', '--memory', '2g'],
+    // The working directory is where the folder lands in the container, which
+    // is what `-w` reads back through the mount: `workspaceFolder` alone names
+    // a directory the CLI does not mount the folder at.
+    workspaceFolder: '/work',
+    workspaceMount: `source=${folder},target=/work,type=bind`,
+  });
+  // The agents the profile prepared it for, on the container as a plain label
+  // beside exactly the two id labels.
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({
+    'ahpd.computer': '1',
+    'ahpd.devcontainer.folder': folder,
+    'ahpd.name': 'box',
+  });
+  await answered(dockerState, 6);
+});
+
+/*
+ * `--id-label` is what makes a second `up` answer the container the first one
+ * made rather than build a second beside it. A fake that always made a new one
+ * would pass a test that a real daemon fails.
+ *
+ * A second name for the same folder is refused rather than ignored: the name
+ * is a `runArgs` label, set when the container is made, so a create that found
+ * the first one's container cannot rename it.
+ */
+it('answers the container its labels already name, and refuses a second name for it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const provider = providerOf(loaded);
+  await provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  await expect(provider.write('computer://other', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(new RegExp(`${folder} is already the computer box`));
+
+  expect(devHeld(devState).calls.filter((one) => one[0] === 'up')).toHaveLength(2);
+  // Both answered the same container, the listing holds one machine, and the
+  // machine is listed and removed by the name the first create gave it.
+  expect((await provider.list('computer://')).map((one) => one.name)).toEqual(['box']);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  // The container carries exactly the two id labels, and the name as a plain
+  // one: a third id label would give the folder a second container.
+  expect(dockerHeld(dockerState).machines[0]?.labels).toEqual({
+    'ahpd.computer': '1',
+    'ahpd.devcontainer.folder': folder,
+    'ahpd.name': 'box',
+    'devcontainer.metadata': '[{"remoteUser":"dev"}]',
+  });
+  await provider.remove('computer://box');
+  expect(dockerHeld(dockerState).machines).toEqual([]);
+  await answered(dockerState, 8);
+});
+
+/*
+ * `--override-config` replaces the folder's file rather than merging with it,
+ * so an override holding only what this host adds names no recipe at all. The
+ * CLI says so by name rather than building an image from nothing, and the fake
+ * has to say it too, or an override missing the folder's recipe would pass
+ * here and fail there.
+ */
+it('refuses an override config that names no recipe, as the real CLI does', () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  writeFileSync(devState, JSON.stringify({ calls: [] }));
+  const folder = workspace(dir);
+  const held = join(dir, 'override.json');
+  writeFileSync(held, JSON.stringify({ containerEnv: { A: '1' } }));
+  const ran = spawnSync(
+    process.execPath,
+    [DEV, 'up', '--workspace-folder', folder, '--override-config', held],
+    { encoding: 'utf8', env: { ...process.env, DEVCONTAINER_FAKE_STATE: devState } },
+  );
+  expect(ran.status).not.toBe(0);
+  expect(ran.stderr).toContain('missing one of "image", "dockerFile" or "dockerComposeFile"');
+});
+
+/*
+ * `docker exec` refuses a container that is not running, whatever its state
+ * says, and that refusal is the whole of what a stopped dev container is
+ * reached through.
+ */
+it('refuses a command in a container that is not running, with the daemon\'s sentence', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{
+      name: 'stopped',
+      image: 'devcontainer',
+      labels: { 'ahpd.computer': '1', 'ahpd.devcontainer.folder': folder },
+      state: 'exited',
+    }],
+    calls: [],
+  }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  const ran = String(await tool.run({ id: 'stopped', command: 'true' }, {} as ToolCall));
+  expect(ran).toContain('container stopped is not running');
+  expect(ran).toContain('exit 1');
+  expect(devHeld(devState).calls).toEqual([]);
+});
+
+/*
+ * A container an older connect made carries the CLI's folder label and none of
+ * this host's, and `up` with the id labels would make a second one beside it.
+ * The connect that adopts it records it beside the configuration, owner or no
+ * owner, so it is a computer from then on: listed, and found again by its folder
+ * on the next connect and on the first connect after a restart.
+ */
+it('finds an adopted container again by its folder, on a second connect and after a restart', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  const id = 'c0ffee00c0ffee00';
+  writeFileSync(devState, JSON.stringify({ calls: [] }));
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{
+      id,
+      name: 'older',
+      image: 'devcontainer',
+      // Somebody else's as far as this host's labels go: no `ahpd.computer`.
+      bare: true,
+      labels: { 'devcontainer.local_folder': folder },
+      mounts: [`${folder}:${mounted(folder)}`],
+      state: 'exited',
+    }],
+    calls: [],
+    passthrough: [],
+  }));
+  const options = optionsOf(devState, dockerState, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+      host: [process.execPath, HOST],
+      install: false,
+      plugins: ['@ahpd/agent-cofold'],
+    },
+  });
+  const silent = { message: () => {}, output: () => {}, close: () => {} };
+  const { options: loaded } = await load(options, [], configDir);
+
+  // A connect with nobody behind it, which is what a relay with no users is.
+  await loaded.containers?.connect({ connectionId: 'one', workspaceFolder: folder, name: 'Box' }, silent);
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toMatchObject({ [id]: { adopted: true } });
+  expect((await providerOf(loaded).list('computer://')).map((one) => one.name)).toEqual([id]);
+
+  // The second connect finds it by its folder, from the record.
+  await loaded.containers?.connect({ connectionId: 'two', workspaceFolder: folder, name: 'Box' }, silent);
+  // And so does a daemon started afterwards, which remembers nothing else.
+  const { options: later } = await load(options, [], configDir);
+  await later.containers?.connect({ connectionId: 'three', workspaceFolder: folder, name: 'Box' }, silent);
+
+  expect(devHeld(devState).calls.filter((one) => one[0] === 'up')).toEqual([]);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  expect(dockerHeld(dockerState).machines[0]?.state).toBe('running');
+  loaded.containers?.disconnect('one');
+  loaded.containers?.disconnect('two');
+  later.containers?.disconnect('three');
+});
+
+/*
+ * The folder's own definition is read before anything is written, so one that
+ * does not parse is refused in its own words, not as a CLI that is missing,
+ * and no override directory is left behind.
+ */
+it('refuses a definition that does not parse in its own words, and leaves no override behind', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": ');
+  const scratch = join(dir, 'tmp');
+  mkdirSync(scratch);
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = scratch;
+  try {
+    const { options: loaded } = await load(optionsOf(devState, dockerState));
+    const refused = await providerOf(loaded).write('computer://box', {
+      data: JSON.stringify({ devcontainer: { folder } }),
+      encoding: 'utf-8',
+    }).then(() => undefined, (error: unknown) => error as Error);
+    expect(refused?.message).toMatch(/devcontainer\.json and it does not parse/);
+    expect(refused?.message).not.toMatch(/Install @devcontainers\/cli/);
+    expect(readdirSync(scratch).filter((one) => one.startsWith('ahpd-devcontainer-'))).toEqual([]);
+    expect(devHeld(devState).calls).toEqual([]);
+  }
+  finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
+  await answered(dockerState, 1);
+});
+
+it('masks the values in the error a failed up is refused with', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [], upFailure: 'Start: Run: docker run -e SECRET=hunter2 -e "QUOTED=a b" base\nError: the image would not pull' }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const refused = await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  }).then(() => undefined, (error: unknown) => error as Error);
+  expect(refused?.message).toMatch(/would not pull/);
+  expect(refused?.message).toContain('SECRET=<set>');
+  expect(refused?.message).not.toContain('hunter2');
+  expect(refused?.message).not.toContain('a b');
+  await answered(dockerState, 2);
+});
+
+/*
+ * The JSONC reader takes a trailing comma out only where it is JSONC's: a comma
+ * inside a string is part of the value.
+ */
+it('reads a definition with comments and trailing commas, and keeps a comma inside a string', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), [
+    '{',
+    '  // the image',
+    '  "image": "base", /* and a block */',
+    '  "postCreateCommand": "echo a, }",',
+    '  "forwardPorts": [3000, ],',
+    '}',
+  ].join('\n'));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(overrideOf(devState)?.config).toMatchObject({
+    image: 'base',
+    postCreateCommand: 'echo a, }',
+    forwardPorts: [3000],
+  });
+  await answered(dockerState, 6);
+});
+
+/*
+ * The probe kept for a machine names the container it was taken from, so an
+ * entry naming another container is replaced rather than believed.
+ */
+it('rewrites the kept probe when up answers another container', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  mkdirSync(configDir);
+  writeFileSync(join(configDir, 'computers.json'), JSON.stringify({
+    box: { probe: { container: 'gone', env: { STALE: '1' } } },
+  }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [], configDir);
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  const kept = JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8')) as Record<string, { probe?: { container: string; env: Record<string, string> } }>;
+  expect(kept.box?.probe).toEqual({ container: 'abc123', env: { PATH: '/usr/bin', HOME: '/root' } });
+  await answered(dockerState, 6);
+});
+
+/** The probes the scripted Docker was asked to run. */
+const probes = (dockerState: string): number => dockerHeld(dockerState).commands
+  .filter((one) => one.command.join(' ').includes('/proc/self/environ')).length;
+
+it('reads the kept probe back after a restart, and runs no probe for it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  const options = optionsOf(devState, dockerState);
+  const { options: first } = await load(options, [], configDir);
+  await providerOf(first).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(probes(dockerState)).toBe(1);
+
+  const { options: later } = await load(options, [], configDir);
+  const tool = (later.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  expect(String(await tool.run({ id: 'box', command: 'true' }, {} as ToolCall))).toContain('exit 0');
+  expect(probes(dockerState)).toBe(1);
+  // And the command ran with what was kept.
+  expect(dockerHeld(dockerState).commands.at(-1)?.env).toEqual({ PATH: '/usr/bin', HOME: '/root' });
+  await answered(dockerState, 9);
+});
+
+it('keeps no probe that answered nothing, and probes again on the next command', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  // A shell that printed its markers and no environment between them.
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], probeEnv: {} }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [], configDir);
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(probes(dockerState)).toBe(1);
+  const kept = existsSync(join(configDir, 'computers.json'))
+    ? JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8')) as Record<string, { probe?: unknown }>
+    : {};
+  expect(kept.box?.probe).toBeUndefined();
+
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
+  expect(probes(dockerState)).toBe(2);
+  await answered(dockerState, 9);
+});
+
+/*
+ * A working directory no path can be read out of - another host's, or a name
+ * holding an escaped `/` - is no folder this machine has, so the picker offers
+ * no dev container row for it and still answers every other row.
+ */
+it('omits the dev container row for a URI it cannot read a folder from, and keeps the others', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{ name: 'held', image: 'node:22', labels: { 'ahpd.computer': '1' } }],
+    calls: [],
+  }));
+  const { options: loaded } = await load(optionsOf(devState, dockerState));
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+  for (const workingDirectory of ['file://elsewhere/w/app', 'file:///w/a%2Fb']) {
+    const rows = await answerer({ property: 'computer', query: '', workingDirectory });
+    expect(rows.map((one) => one.value)).toEqual(['', 'computer://held']);
+  }
+  await answered(dockerState, 3);
+});
+
+/*
+ * A dev container made for a session records the agent it was made for, and a
+ * picker asking for another agent does not offer it: that agent's needs were
+ * never put in it.
+ */
+it('keeps a dev container made for one agent out of another agent\'s picker', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [agentWith()], join(dir, 'config'));
+  const { client, open } = await room(loaded);
+  const opened = await open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder) as {
+    snapshot: { state: { config?: { values?: Record<string, unknown> } } };
+  };
+  const made = String(opened.snapshot.state.config?.values?.computer);
+  expect(dockerHeld(dockerState).machines[0]?.labels).toMatchObject({ 'ahpd.agents': 'echo' });
+
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+  const offered = async (provider: string): Promise<string[]> =>
+    (await answerer({ property: 'computer', query: '', provider })).map((one) => one.value);
+  expect(await offered('echo')).toContain(made);
+  expect(await offered('cofold')).not.toContain(made);
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await answered(dockerState, 4);
 });

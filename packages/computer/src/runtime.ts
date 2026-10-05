@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Owner } from '@ahpd/sdk';
-import { cliOf, DEVCONTAINER_FOLDER, hasDefinition, idLabels, parseUp, runCli } from './devcontainer.js';
-import type { Cli, CliOptions } from './devcontainer.js';
+import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
+import { adoptedOf, keepProbe, probeOf } from './owners.js';
+import type { Cli, CliOptions, Reach } from './devcontainer.js';
 
 /**
  * What a machine is, and what a runtime does with one.
@@ -177,7 +181,7 @@ export interface MachineSpec {
    * The profile this machine was made from, recorded as a label.
    *
    * Every machine a body makes from a profile carries it, disposable or not,
-   * so the profile's own recipe - `host`, today - can be read back after the
+   * so the profile's own recipe - `host` - can be read back after the
    * daemon that made it is gone. Absent for a machine made without one, which
    * falls back to the runtime's defaults.
    */
@@ -393,6 +397,16 @@ export interface DockerOptions extends CommandOptions {
    * plugin's own option defaults to as well.
    */
   devcontainerCli?: CliOptions;
+  /**
+   * Where the daemon keeps its own configuration, which is where the probed
+   * environment of a dev container is kept.
+   *
+   * Absent leaves the probe out of it, so a container is probed on every reach:
+   * right, and a spawn per command.
+   */
+  configDir?: string;
+  /** Lines worth keeping. A probe that could not be run is said here. */
+  log?: (line: string) => void;
 }
 
 interface Ran {
@@ -470,6 +484,21 @@ const ours = (found: Record<string, unknown>, label: string): boolean => {
  * agent, and an empty value is a machine prepared for none.
  */
 export const MACHINE_AGENTS = 'ahpd.agents';
+
+/**
+ * The label the name a create gave a dev container is kept as.
+ *
+ * A machine made from an image is `docker run --name <name>`, and a dev
+ * container is made by the CLI, which names the container after the folder
+ * rather than after anything said here. So the name a `computer://<name>` write
+ * asked for is left on the container as a plain label and read back by a
+ * listing, and a container with no such label is one the CLI named for its
+ * folder - decision `the-name-a-create-gives-a-dev-container-is-a-label-on-it`.
+ *
+ * Never an `--id-label`: the set of id labels is how the CLI finds a folder's
+ * container, and a name among them would give the folder a second container.
+ */
+export const MACHINE_NAME = 'ahpd.name';
 
 /**
  * The label a machine made from a disposable profile carries, and the one that
@@ -574,6 +603,18 @@ export const preparedFor = (found: Record<string, unknown>): string[] =>
   agentsSaid(labelsOf(found)[MACHINE_AGENTS]);
 
 /**
+ * The name a create gave a machine, from the record `inspect` answered.
+ *
+ * The label a dev container carries rather than a Docker container name, so a
+ * machine made from an image - which is `docker run --name` - answers nothing
+ * here and is listed by the name it was run under.
+ */
+export const namedOf = (found: Record<string, unknown>): string | undefined => {
+  const named = labelsOf(found)[MACHINE_NAME];
+  return typeof named === 'string' && named !== '' ? named : undefined;
+};
+
+/**
  * Whose a machine is, from the record `inspect` answered.
  *
  * `claimedBy` over the flat labels a listing reads; this is the same answer for
@@ -588,25 +629,157 @@ export const claimedOf = (found: Record<string, unknown>): ReturnType<typeof cla
  * The one place both a listing and a port answer read it, so a machine made by
  * the Dev Container CLI is reached through the CLI and a machine made from an
  * image is reached through Docker: the label is what says which recipe it was.
+ *
+ * A container the CLI made before this host passed its own labels to `up`
+ * carries the CLI's folder label instead, which names the same folder.
  */
-export const devcontainerFolder = (found: Record<string, unknown>): string | undefined => {
-  const folder = labelsOf(found)[DEVCONTAINER_FOLDER];
-  return typeof folder === 'string' && folder !== '' ? folder : undefined;
+export const devcontainerFolder = (found: Record<string, unknown>): string | undefined =>
+  folderLabelOf(found);
+
+/**
+ * A `source:target` mount as the Dev Container CLI's `--mount` takes it.
+ *
+ * A manifest and a need speak the short Docker form, because that is what
+ * `docker run -v` takes; the CLI wants its own. Read-only is not here: the
+ * CLI's pattern has no word for it and answers "Unmatched argument format", so
+ * a read-only mount goes in the override config's `mounts` instead.
+ */
+const cliMount = (mount: string): string => {
+  const [source, target] = mount.split(':');
+  return `type=bind,source=${source ?? ''},target=${target ?? ''}`;
+};
+
+/** Whether a mount is the read-only one, which the override config carries. */
+const readOnlyMount = (mount: string): boolean => mount.endsWith(':ro');
+
+/**
+ * A folder's own definition as an object, read the way the CLI reads it.
+ *
+ * JSONC rather than JSON: the file is the one the Dev Container CLI documents
+ * as carrying comments and a trailing comma, so a plain parse would refuse a
+ * folder whose definition works, and the override config is that file's own
+ * contents with this host's keys laid over it.
+ */
+const configOf = (folder: string): Record<string, unknown> => {
+  const where = definitionOf(folder);
+  if (where === undefined) {
+    throw new Error(`${folder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsoncOf(readFileSync(where, 'utf8')));
+  }
+  catch (error) {
+    throw new Error(`${where} is the folder's devcontainer.json and it does not parse: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(`${where} is the folder's devcontainer.json and it is not an object`);
+  }
+  return parsed as Record<string, unknown>;
+};
+
+/** JSONC as JSON: the comments and trailing commas taken out, nothing else. */
+const jsoncOf = (text: string): string => {
+  let out = '';
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i] ?? '';
+    if (quoted) {
+      out += char;
+      // A backslash inside a string escapes the next character, so a quote
+      // behind one is not the end of the string.
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') { quoted = true; out += char; continue; }
+    if (char === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+      continue;
+    }
+    if (char === '/' && text[i + 1] === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i++;
+      i++;
+      continue;
+    }
+    /*
+     * A comma that is the last one before a closing bracket, taken out where a
+     * string is not: a definition's own text may hold `"echo a, }"`, and a
+     * comma inside one is part of the value rather than a JSONC habit.
+     */
+    if (char === ',' && /^[\s]*[}\]]/.test(text.slice(i + 1))) continue;
+    out += char;
+  }
+  return out;
 };
 
 /**
- * A `source:target[:ro]` mount as the Dev Container CLI's `--mount` takes it.
+ * What this host adds to a folder's own definition for one make, or nothing.
  *
- * A manifest and a need speak the short Docker form, because that is what
- * `docker run -v` takes; the CLI wants its own. The two halves are the same
- * statement, so it is spelled once here rather than in every caller.
+ * `--override-config` replaces that file rather than merging with it, so this
+ * is the folder's whole config with the added keys laid over it: an override
+ * holding only what was added names no recipe at all, and the CLI says so by
+ * name rather than building an image from nothing.
+ *
+ * What goes in, and why each is here:
+ *
+ * - a read-only mount, which `--mount` cannot spell;
+ * - a need's environment as `containerEnv`, which is the container's own
+ *   environment and so is inherited by every `docker exec` into it;
+ * - the working directory, as `workspaceFolder` with the `workspaceMount` that
+ *   puts the folder there, since the CLI mounts at `/workspaces/<basename>`
+ *   without it and the path a command is given would name nothing;
+ * - the name, the agents and the limits as `runArgs`, which is the one place a
+ *   plain Docker label and a limit reach a container the CLI makes.
+ *
+ * A read-only mount is the CLI's own string spelling and not the object form,
+ * because the CLI renders an object mount as `type`, `source` and `target` and
+ * silently drops `readOnly` from it: the container would be made with the mount
+ * writable and every write inside it would succeed.
+ *
+ * The name and the agents are `--label` and never `--id-label`: the set of id
+ * labels is how the CLI finds a folder's container, and a third one would give
+ * the folder a second container - decision
+ * `a-dev-container-owner-is-kept-beside-the-config`.
  */
-const cliMount = (mount: string): string => {
-  const parts = mount.split(':');
-  const source = parts[0] ?? '';
-  const target = parts[1] ?? '';
-  const readOnly = parts[2] === 'ro';
-  return `type=bind,source=${source},target=${target}${readOnly ? ',readonly' : ''}`;
+const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<string, unknown> => {
+  const held: Record<string, unknown> = { ...config };
+  const readOnly = (spec.mounts ?? []).filter(readOnlyMount);
+  if (readOnly.length > 0) {
+    held.mounts = [
+      ...(Array.isArray(held.mounts) ? (held.mounts as unknown[]) : []),
+      ...readOnly.map((mount) => {
+        const at = mount.slice(0, -':ro'.length).lastIndexOf(':');
+        const source = mount.slice(0, at);
+        const target = mount.slice(at + 1, -':ro'.length);
+        return `type=bind,source=${source},target=${target},readonly`;
+      }),
+    ];
+  }
+  if (Object.keys(spec.env ?? {}).length > 0) {
+    held.containerEnv = {
+      ...(typeof held.containerEnv === 'object' && held.containerEnv !== null ? held.containerEnv as Record<string, string> : {}),
+      ...spec.env,
+    };
+  }
+  if (spec.workdir !== undefined) {
+    held.workspaceFolder = spec.workdir;
+    held.workspaceMount = `source=${spec.devcontainer ?? ''},target=${spec.workdir},type=bind`;
+  }
+  const runArgs = [...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : [])];
+  runArgs.push('--label', `${MACHINE_NAME}=${spec.name}`);
+  const agents = spec.agents ?? [];
+  if (agents.length > 0) {
+    runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
+  }
+  if (spec.cpus !== undefined) runArgs.push('--cpus', spec.cpus);
+  if (spec.memory !== undefined) runArgs.push('--memory', spec.memory);
+  held.runArgs = runArgs;
+  return held;
 };
 
 /**
@@ -698,6 +871,8 @@ const LISTED_LABELS = [
   MACHINE_DISPOSABLE,
   MACHINE_ALONE,
   DEVCONTAINER_FOLDER,
+  LOCAL_FOLDER,
+  MACHINE_NAME,
   MACHINE_OWNER,
   MACHINE_TEAM,
   MACHINE_PROJECT,
@@ -705,8 +880,11 @@ const LISTED_LABELS = [
   MACHINE_HOST,
 ] as const;
 
-/** The `--format` a listing asks with: the four fields a machine is read from. */
-const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}}'].join('\t');
+/**
+ * The `--format` a listing asks with: the fields a machine is read from, and its
+ * id, which is what a record of an adopted container names it by.
+ */
+const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}}', '{{.ID}}'].join('\t');
 
 /**
  * The `--format` the labels come back by.
@@ -722,6 +900,9 @@ const LISTED_FORMAT = ['{{.Names}}', '{{.Image}}', '{{.Status}}', '{{.CreatedAt}
  */
 const LISTED_LABELS_FORMAT = ['{{.Name}}', '{{json .Config.Labels}}'].join('\t');
 
+/** One machine as a listing answered it. */
+type Listed = { name: string; image: string; status: string; created: string; id: string };
+
 /** The labels one row answered, by the keys `LISTED_LABELS` holds. */
 type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
 
@@ -731,13 +912,13 @@ type ListedLabels = Record<(typeof LISTED_LABELS)[number], string>;
  * A tab between the columns, which is what `LISTED_FORMAT` joins with, so the
  * fields come in the order that string holds them.
  */
-const listed = (said: string): { name: string; image: string; status: string; created: string }[] =>
+const listed = (said: string): Listed[] =>
   said
     .split('\n')
     .filter((line) => line !== '')
     .map((line) => {
-      const [name, image, status, created] = line.split('\t');
-      return { name: name ?? '', image: image ?? '', status: status ?? '', created: created ?? '' };
+      const [name, image, status, created, id] = line.split('\t');
+      return { name: name ?? '', image: image ?? '', status: status ?? '', created: created ?? '', id: id ?? '' };
     });
 
 /**
@@ -774,9 +955,9 @@ const labelRecords = (said: string): Map<string, Record<string, unknown>> => {
  * being absent, so a row is read the same way whatever it holds.
  */
 const withLabels = (
-  found: { name: string; image: string; status: string; created: string }[],
+  found: Listed[],
   held: Map<string, Record<string, unknown>>,
-): { name: string; image: string; status: string; created: string; labels: ListedLabels }[] =>
+): (Listed & { labels: ListedLabels })[] =>
   found.flatMap((row) => {
     const labels = held.get(row.name);
     if (labels === undefined) return [];
@@ -805,6 +986,84 @@ export const isRunning = (machine: Machine): boolean =>
  * a provider that answers an empty listing when the daemon is unreachable is
  * worse than one that says so.
  */
+/**
+ * How one dev container is reached: its user, its environment and the folder
+ * its workspace is in.
+ *
+ * From the probe kept beside the daemon's configuration, or from a fresh one.
+ * The probe is what the user's login shell was holding when the container was
+ * made and it cannot be read off the container, so it is kept: read back for a
+ * container it names, taken again for one the CLI has since made afresh, and
+ * taken once for a machine this daemon has no record of - one made by a daemon
+ * before this, or by a person by hand - decision
+ * `a-dev-container-is-reached-by-docker-exec`.
+ *
+ * Kept under the machine id every road uses rather than under whichever id the
+ * road happens to hold, so the three ways in - a create, `computer_exec` and the
+ * relay - read and write one entry for one computer. A probe that answered
+ * nothing is not kept, so a container whose shell was not in place yet is
+ * asked again rather than reached without an environment for the rest of its
+ * life.
+ */
+export const reachedDevContainer = async (
+  options: DockerOptions,
+  id: string,
+  found: Record<string, unknown>,
+): Promise<Reach> => {
+  const log = options.log ?? ((): void => { /* nothing is kept without one */ });
+  const container = typeof found.Id === 'string' && found.Id !== '' ? found.Id : id;
+  // `${localEnv:NAME}` resolves against the environment the CLI itself was run
+  // with, its own `env` option included, rather than against this process's.
+  const local = { ...process.env, ...options.devcontainerCli?.env };
+  const kept = options.configDir === undefined ? undefined : probeOf(options.configDir, id, log);
+  if (kept !== undefined && kept.container === container) return reachOf(found, kept, local);
+  const env = await probeEnv(cliOf(options), found, log);
+  const probe = probeKept(found, container, env);
+  if (options.configDir !== undefined && Object.keys(env).length !== 0) {
+    keepProbe(options.configDir, id, probe, log);
+  }
+  return reachOf(found, probe, local);
+};
+
+/**
+ * The label the Dev Container CLI puts on every container it makes.
+ *
+ * Re-exported from where it is written down, beside the folder label it is the
+ * other half of.
+ */
+export { LOCAL_FOLDER };
+
+/**
+ * A container the CLI made for a folder before this host labelled it.
+ *
+ * Asked for where the folder's own computer is not listed, which is what an
+ * older connect leaves behind: it made the container through the CLI's own
+ * route, so the container carries the CLI's label and none of this host's. The
+ * answer is what is needed to reach it without `up` - the container id, and
+ * where in it the folder lands, read back out of the mount the container
+ * carries rather than out of a label it does not have. A container no mount
+ * names the folder for is not answered for: `up` would have to be asked what
+ * the CLI decided, and a guess at the path would start the session in a
+ * directory the definition never chose.
+ */
+export const adoptedDevContainer = async (
+  options: DockerOptions,
+  folder: string,
+): Promise<{ id: string; remoteWorkspaceFolder: string } | undefined> => {
+  const listed = await ran(options, ['ps', '-a', '--filter', `label=${LOCAL_FOLDER}=${folder}`, '--format', '{{json .}}']);
+  if (listed.code !== 0) return undefined;
+  const named = text(rows(listed.stdout)[0]?.Names);
+  if (named === '') return undefined;
+  const held = rows((await ran(options, ['inspect', '--format', '{{json .}}', named])).stdout)[0];
+  if (held === undefined) return undefined;
+  const remote = workdirOf(held, folder);
+  // The container id rather than the name, because this is the machine id it is
+  // recorded and listed under from here on.
+  const id = text(held.Id);
+  if (remote === undefined || id === '') return undefined;
+  return { id, remoteWorkspaceFolder: remote };
+};
+
 export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   const must = async (args: string[]): Promise<string> => {
     const held = await ran(options, args);
@@ -814,6 +1073,18 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     }
     return held.stdout;
   };
+
+  /**
+   * The containers a connect adopted, as the record beside the configuration
+   * says them.
+   *
+   * Read on every call rather than held, because the record is written by a
+   * relay that runs after this runtime was made and a listing has to show it.
+   */
+  const adoptedIds = (): string[] =>
+    options.configDir === undefined
+      ? []
+      : adoptedOf(options.configDir, options.log ?? ((): void => { /* nothing is kept without one */ }));
 
   /**
    * What a dev container is called, by the folder label the CLI was given.
@@ -835,6 +1106,31 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     return name ?? containerId;
   };
 
+  /** What `docker inspect` says about one machine, or an empty record. */
+  const recordOf = async (id: string): Promise<Record<string, unknown>> =>
+    rows((await ran(options, ['inspect', '--format', '{{json .}}', id])).stdout)[0] ?? {};
+
+  /**
+   * The container a caller's id names, whichever of the two names it is.
+   *
+   * A dev container carries the name its create gave as a label, and the name
+   * Docker knows it by is the one the CLI gave it after the folder. So a
+   * `computer://<name>` write is reached by the name it was written under, and
+   * an id Docker does not know is looked for by that label before any verb runs
+   * - otherwise every verb past the make would have to be told both.
+   */
+  const containerOf = async (id: string): Promise<string> => {
+    if ((await ran(options, ['inspect', '--format', '{{json .}}', id])).code === 0) return id;
+    const held = await rows(await must([
+      'ps', '-a',
+      '--filter', `label=${options.label}`,
+      '--filter', `label=${MACHINE_NAME}=${id}`,
+      '--format', '{{json .}}',
+    ]));
+    const name = text(held[0]?.Names);
+    return name === '' ? id : name;
+  };
+
   return {
     kind: 'docker',
 
@@ -853,11 +1149,34 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * A machine whose labels came back with nothing is dropped rather than
      * answered empty ones, which is how a machine says it has no owner and no
      * session.
+     *
+     * An adopted container cannot be given `ahpd.computer`: Docker will not
+     * change a container's labels, and asking the CLI to make one again would
+     * leave two containers over one `devcontainer.json`. The record beside the
+     * configuration is what says it is a computer, so the listing reads it and
+     * asks Docker about the ids it names - one unfiltered `ps` rather than one
+     * per record.
      */
     list: async () => {
-      const found = listed(await must([
+      const adopted = adoptedIds();
+      /*
+       * Which row an adopted record names, and under which id.
+       *
+       * `docker ps` prints a container id in its short form, so the record is
+       * matched on the prefix either way names.
+       */
+      const isAdopted = (row: Listed): string | undefined => {
+        const at = row.id || row.name;
+        return at === '' ? undefined : adopted.find((one) => one.startsWith(at) || at.startsWith(one));
+      };
+      const every = listed(await must([
         'ps', '-a', '--filter', `label=${options.label}`, '--format', LISTED_FORMAT,
       ]));
+      const rest = adopted.length === 0
+        ? []
+        : listed((await ran(options, ['ps', '-a', '--format', LISTED_FORMAT])).stdout)
+          .filter((row) => isAdopted(row) !== undefined && !every.some((one) => one.name === row.name));
+      const found = [...every, ...rest];
       const held = found.length === 0
         ? new Map<string, Record<string, unknown>>()
         : labelRecords((await ran(options, [
@@ -866,11 +1185,17 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       return withLabels(found, held)
         .map((row) => {
           const profile = row.labels[MACHINE_DISPOSABLE];
-          const folder = row.labels[DEVCONTAINER_FOLDER];
+          const folder = row.labels[DEVCONTAINER_FOLDER] || row.labels[LOCAL_FOLDER];
           const session = row.labels[MACHINE_SESSION];
           const host = row.labels[MACHINE_HOST];
+          const named = row.labels[MACHINE_NAME];
           return {
-            id: row.name,
+            // The name a create gave, where the container carries one: the CLI
+            // names its own after the folder, and a listing has to answer what
+            // the create said or `computer://<name>` would not be found again.
+            // An adopted container carries no such label, so it is listed under
+            // the id its record was written with.
+            id: isAdopted(row) ?? (named === '' ? row.name : named),
             image: row.image,
             status: row.status,
             created: row.created,
@@ -888,7 +1213,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     },
 
     inspect: async (id) => {
-      const held = await ran(options, ['inspect', '--format', '{{json .}}', id]);
+      // The name a create gave, when that is what the caller holds: a listing
+      // answers it, so every caller reading a listing back must be able to
+      // hand that answer to anything that inspects.
+      const held = await ran(options, ['inspect', '--format', '{{json .}}', await containerOf(id)]);
       // A machine that is not there is docker exiting non-zero, which is an
       // answer rather than a failure: the provider turns it into `-32008`.
       if (held.code !== 0) return undefined;
@@ -896,7 +1224,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // Docker runs plenty this provider did not make, and none of them is a
       // computer. Not there and not ours read the same on purpose: a refusal
       // that named the difference would answer whether a container exists.
-      if (parsed !== undefined && !ours(parsed, options.label)) return undefined;
+      // An adopted container is ours by its record, not by a label.
+      if (parsed !== undefined && !ours(parsed, options.label) && !adoptedIds().includes(id)) return undefined;
       return parsed;
     },
 
@@ -917,14 +1246,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * The CLI decides the image, the features, the mounts, the user and the
        * lifecycle commands, so none of that is built here - which is the whole
        * reason the CLI makes it - decision
-       * `a-dev-container-is-made-by-the-dev-container-cli`. The two id labels
-       * are the same pair `how` and the relay hand back, so the container this
-       * makes is the one every later call reaches.
+       * `a-dev-container-is-reached-by-docker-exec`. The id labels are
+       * how the CLI finds the folder's container rather than making another
+       * beside it, so the container this makes is the one every later call
+       * reaches.
        */
       if (spec.devcontainer !== undefined) {
-        if (!hasDefinition(spec.devcontainer)) {
-          throw new Error(`${spec.devcontainer} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
-        }
         const cli = cliOf(options.devcontainerCli);
         const argv = [
           'up',
@@ -932,35 +1259,89 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           ...idLabels(options.label, spec.devcontainer),
         ];
         /*
-         * What the agents this machine is prepared for need, in the CLI's own
-         * flags: a host path made visible, and a variable set in there.
+         * A host path made visible, in the CLI's own spelling of one.
          *
          * A copy-in has no CLI verb, so it is bind-mounted as well, which is
          * the delivery this recipe has - and a copy saying what a mount already
-         * says is one mount, not two, as it is on the Docker route.
+         * says is one mount, not two, as it is on the Docker route. A read-only
+         * mount is not here: the override config carries it.
          */
         const bound = [...new Set([
-          ...(spec.mounts ?? []).map(cliMount),
+          ...(spec.mounts ?? []).filter((mount) => !readOnlyMount(mount)).map(cliMount),
           ...(spec.copies ?? []).map((one) => `type=bind,source=${one.source},target=${one.target}`),
         ])];
         for (const mount of bound) argv.push('--mount', mount);
-        for (const [key, value] of Object.entries(spec.env ?? {})) argv.push('--remote-env', `${key}=${value}`);
+        /*
+         * The override config, for the length of this `up` and gone once it answers.
+         *
+         * It is the folder's own definition with this host's keys over it, and
+         * it holds environment values on disk while the CLI runs, a value read
+         * from the vault included - so a fresh directory and a file only its
+         * user may read, and nothing here logs what is in it.
+         *
+         * The folder's definition is read before the directory exists, so a
+         * definition that does not parse is refused in its own words and leaves
+         * nothing behind.
+         */
+        const config = configOf(spec.devcontainer);
+        const scratch = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
+        const override = join(scratch, 'override.json');
         let ran: { code: number; stdout: string; stderr: string };
         try {
-          ran = await runCli(cli, argv);
+          writeFileSync(override, JSON.stringify(overrideOf(spec, config), undefined, 2), { mode: 0o600 });
+          argv.push('--override-config', override);
+          ran = await runCli(cli, argv).catch((error: unknown) => {
+            throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
+          });
         }
-        catch (error) {
-          throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
+        finally {
+          // The directory holds the definition's own values, so it goes whether
+          // the CLI ran, refused or was never written to.
+          rmSync(scratch, { recursive: true, force: true });
         }
         const made = parseUp(ran.stdout);
         if (made === undefined) {
-          const said = [ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' ');
+          /*
+           * Masked before it is thrown: the CLI echoes the `docker run` it
+           * builds at info level, which carries every `-e` a need asked for, and
+           * an error text goes into a log and into whatever a person is told.
+           */
+          const said = masked([ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' '));
           throw new Error(`The Dev Container CLI reported no container for ${spec.devcontainer}: ${said === '' ? `exit ${String(ran.code)}` : said}`);
         }
+        /*
+         * The name this create gave, when the container carries it.
+         *
+         * The CLI names a container for its folder, so a listing answers that
+         * unless the container says what it was created as. A container
+         * carrying no such label keeps the name a listing reads for it.
+         */
+        const named = namedOf(await recordOf(made.containerId));
+        /*
+         * Two names for one folder is one container with two answers, and the
+         * second name is refused rather than quietly ignored: a `runArgs` label
+         * is set when the container is made, so a create for a folder that
+         * already has one finds the container the first made and cannot rename
+         * it - decision `the-name-a-create-gives-a-dev-container-is-a-label-on-it`.
+         */
+        if (named !== undefined && named !== spec.name) {
+          throw new Error(`${spec.devcontainer} is already the computer ${named}, and its name is set when the container is made; destroy ${named} or choose another folder`);
+        }
+        const id = named ?? await namedByFolder(made.containerId, spec.devcontainer);
+        /*
+         * The probe, taken once for the container this `up` answered.
+         *
+         * Every command in a dev container afterwards is a `docker exec` with
+         * this environment on it, and the only way to know it is to run the
+         * user's own login shell in there - so it is taken now and kept beside
+         * the configuration, keyed by the machine's id, rather than once per
+         * command. A container the CLI makes again gets its own.
+         */
+        await reachedDevContainer(options, id, await recordOf(made.containerId));
         return {
-          // The container's own name, which is what a listing reports, so the
-          // id a session writes down and the row a picker offers are one.
-          id: await namedByFolder(made.containerId, spec.devcontainer),
+          // The name a create gave, which is what a listing reports, so the id
+          // a session writes down and the row a picker offers are one.
+          id,
           image: '',
           status: 'running',
           created: new Date().toISOString(),
@@ -1046,8 +1427,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       return { id: spec.name, image, status: 'running', created: new Date().toISOString() };
     },
 
-    stop: async (id) => { await must(['stop', id]); },
-    start: async (id) => { await must(['start', id]); },
+    stop: async (id) => { await must(['stop', await containerOf(id)]); },
+    start: async (id) => { await must(['start', await containerOf(id)]); },
     /*
      * One `restart` rather than a stop and a start.
      *
@@ -1056,37 +1437,30 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * it was: a stop-then-start of its own would race anybody else acting on
      * the same machine between the two.
      */
-    restart: async (id) => { await must(['restart', id]); },
-    remove: async (id) => { await must(['rm', '-f', id]); },
+    restart: async (id) => { await must(['restart', await containerOf(id)]); },
+    remove: async (id) => { await must(['rm', '-f', await containerOf(id)]); },
 
     exec: async (id, command) => {
+      const at = await containerOf(id);
       /*
-       * A dev container is reached by the CLI, not by Docker.
-       *
-       * Its user, its environment and its lifecycle are the repository's own,
-       * so a command that went through `docker exec` would run as whoever the
-       * image defaults to with none of what the file asks for - decision
-       * `a-dev-container-is-made-by-the-dev-container-cli`. The folder comes
-       * from the container's own label, never from the caller.
+       * A dev container is reached by the same `docker exec` as any other
+       * machine, with the user and environment its own definition asks for -
+       * which is exactly what the CLI's own exec builds - decision
+       * `a-dev-container-is-reached-by-docker-exec`.
        */
-      const found = await (async () => {
-        const held = await ran(options, ['inspect', '--format', '{{json .}}', id]);
-        return held.code === 0 ? rows(held.stdout)[0] : undefined;
-      })();
-      const folder = found === undefined ? undefined : devcontainerFolder(found);
-      if (folder !== undefined) {
-        const cli = cliOf(options.devcontainerCli);
-        const held = await runCli(cli, [
-          'exec',
-          '--workspace-folder', folder,
-          ...idLabels(options.label, folder),
-          ...command,
-        ]);
+      const found = await recordOf(at);
+      if (devcontainerFolder(found) !== undefined) {
+        // Under the machine id a caller holds, which is what the create and the
+        // relay keep their probe against, not the name Docker answers for it.
+        const reached = await reachedDevContainer(options, id, found);
+        // Against the container id, as `how` and the relay reach it.
+        const container = text(found.Id) === '' ? at : text(found.Id);
+        const held = await ran(options, execArgv({ ...reached, id: container }, command));
         // Not tolerated and not thrown: a command that failed is the tool
         // working, and its exit code is what the caller asked for.
         return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
       }
-      const held = await ran(options, ['exec', '-i', id, ...command]);
+      const held = await ran(options, ['exec', '-i', at, ...command]);
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
@@ -1102,7 +1476,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * `undefined` rather than zeroes, which a gauge would draw as idle.
      */
     stats: async (id) => {
-      const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', id]);
+      const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', await containerOf(id)]);
       if (held.code !== 0) return undefined;
       const row = rows(held.stdout)[0];
       if (row === undefined) return undefined;

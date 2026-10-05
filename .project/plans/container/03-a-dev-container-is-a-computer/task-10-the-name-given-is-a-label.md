@@ -1,6 +1,6 @@
 ---
 title: The name a create gives a dev container is kept for it
-status: todo
+status: implemented
 depends: [task-07-the-fake-cli-behaves-like-the-real-one.md, task-09-read-only-needs-through-an-override-config.md]
 layer: "computer"
 refs:
@@ -38,3 +38,26 @@ This applies [The name a create gives a dev container is kept as a label on the 
 - The container carries exactly the two id labels after the create, and `ahpd.name=box` as a plain label.
 
 ## Resume
+
+Implemented on 2026-10-03.
+
+Files changed:
+
+- `packages/computer/src/runtime.ts` - `MACHINE_NAME = 'ahpd.name'` beside the other label constants, documented as a plain label and never an id one; `overrideOf` pushes `--label ahpd.name=<name>` into the override config's `runArgs`; `namedOf(found)` reads it back; `list` answers it in place of the Docker name; `containerOf(id)` resolves a name to the container and every verb - `inspect`, `exec`, `stop`, `start`, `restart`, `remove` and `stats` - runs it first; and `run` refuses a second name for a folder whose container already carries one.
+- `packages/computer/src/plugin.ts` - `reach` hands `docker exec` the container's own `Id` rather than the name the caller gave, which is the CLI's own name for it. **This file is not named in the task's Files list.** Without it `how('box')` would build `docker exec ... box`, and the name would be reachable from a listing and by nothing else; the plugin is where `how` is built.
+- `packages/computer/src/provider.ts` - no change. The write already took the name from the URI and passed it to `manifestOf`, so there was nothing to keep.
+- `packages/computer/test/computer-devcontainer.test.ts` - the case below, and the `how` and `computer_exec` cases, which now ask for `box` rather than for the CLI's id.
+- `packages/computer/test/computer-owner.test.ts` - the owner record is keyed by the name the create gave rather than by the container's Docker name, and the removal is by that name.
+
+What the tests cover: writing `computer://box` lists `box` and `dockerRuntime.list()` answers the same; `how('box')` and `computer_exec` on `box` both reach `abc123`; a second write `computer://other` for the same folder is refused with a sentence naming `box`, both `up` calls answered the same container and the listing holds one machine; the container carries exactly `ahpd.computer`, `ahpd.devcontainer.folder`, `ahpd.name` and `devcontainer.metadata`, so the two id labels and nothing more; and `remove('computer://box')` takes the container away.
+
+Choices the task did not settle:
+
+- The second-name refusal is in `run`, after `up` has answered the container the folder already has, because that is the only point at which the name on it can be read. `up` on an existing container starts it, so a refused second write can leave a stopped container running; refusing it earlier would cost a `ps` and an `inspect` on every make.
+- `containerOf` resolves by `inspect` first and falls back to `label=ahpd.name=<id>`, rather than trying the label first. A machine made from an image is `docker run --name <name>`, so the name a caller holds is very often already the container's; and an id Docker does not know is left alone so the verb itself answers with its own message.
+
+**By hand, not run.** With the real CLI, a folder made through `computer://box`, `docker ps --filter label=ahpd.computer=1 --format '{{.Labels}}'` shows `ahpd.name=box` beside the two id labels, `devcontainer exec --workspace-folder "$F" --id-label ahpd.computer=1 --id-label "ahpd.devcontainer.folder=$F" true` answers without making a second container, and a second `devcontainer up` for the same folder with a different `ahpd.name` in its override answers the same `containerId` and its labels are unchanged.
+
+### The fix turn of 2026-10-05
+
+`packages/computer/test/computer-owner.test.ts` "keeps the Dev Container CLI on the folder identity" asserted the container's Docker name was `abc123`; the fake CLI keeps the container id, the Docker name and the `ahpd.name` label apart, so it now asserts `id` is `abc123`, the name is something else, and the record under the `ahpd.name` holds the owner and a probe for container `abc123`. No code changed for this task.

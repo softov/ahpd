@@ -379,10 +379,10 @@ it('says in capabilities what a create body may contain', async () => {
   expect(caps.actions).toEqual(['create', 'destroy', 'exec', 'start', 'stop', 'restart']);
   // No `mounts`: this host does not let a body name any, so a client drawing a
   // form from the schema draws no field for something it would be refused.
-  expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'image', 'cpus', 'memory', 'workdir']);
+  expect(Object.keys(caps.manifest.properties)).toEqual(['runtime', 'source', 'image', 'devcontainer', 'cpus', 'memory', 'workdir']);
   const open = computerProvider(runtime, { ...options, bodyMounts: true });
   expect(Object.keys((open.describe().manifest as { properties: Record<string, unknown> }).properties))
-    .toEqual(['runtime', 'image', 'cpus', 'memory', 'mounts', 'workdir', 'folder']);
+    .toEqual(['runtime', 'source', 'image', 'devcontainer', 'cpus', 'memory', 'mounts', 'workdir', 'folder']);
   // The same schema `describe` advertises, with this provider's own default.
   expect(caps.manifest).toEqual(provider.describe().manifest);
   expect(caps.manifest.properties.image?.default).toBe('debian:bookworm-slim');

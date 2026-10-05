@@ -54,26 +54,29 @@ A manifest may name `folder`, a host folder mounted at the same path inside the 
 
 ### From a folder's devcontainer.json
 
-In place of `image`, a manifest may name a folder whose `devcontainer.json` makes the container:
+In place of `image`, a manifest may name a folder whose `devcontainer.json` makes the container, through a flat `source` choice:
 
 ```json
-{ "devcontainer": { "folder": "/path/to/repo" } }
+{ "source": "devcontainer", "devcontainer": "/path/to/repo", "image": "debian:bookworm-slim" }
 ```
 
-The Dev Container CLI reads the file, so the image, the features, the mounts, the `remoteUser` and the lifecycle commands are the repository's and this host decides none of them - decision [a dev container is made by the Dev Container CLI](../.project/decisions/a-dev-container-is-made-by-the-dev-container-cli.md).
+The Dev Container CLI reads the file, so the image, the features, the mounts, the `remoteUser` and the lifecycle commands are the repository's and this host decides none of them - decision [a dev container is made by the Dev Container CLI and reached by docker exec](../.project/decisions/a-dev-container-is-reached-by-docker-exec.md).
 The create runs `devcontainer up --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder>`, and the folder is refused before the CLI runs when it is not there or has no `.devcontainer/devcontainer.json` or `.devcontainer.json`.
-`image` and `devcontainer` are exclusive, and a body that names both is refused.
-The create form a client draws offers no such field: the manifest is a flat set of properties and this source is not one of them, so a body written by hand or by a client that knows the field is the route.
+A body whose `source` is `image` reads the image fields and ignores the folder, and one whose `source` is `devcontainer` requires the folder and is refused without it; any other value for `source` is refused.
+The object form `{ "devcontainer": { "folder": "/path/to/repo" } }` still works for a client that writes it by hand, and a body with no `source` is read as it always was.
+`devcontainer.folders` in the plugin options is the allowlist: absolute host paths, compared resolved, of which a dev container may be made, with no list meaning any folder.
 
-A session in one is reached through the CLI rather than Docker, so its user and environment are the file's:
+A session in one is reached the same way any other machine is, by `docker exec`, with the user and environment the file asks for:
 
 ```
-devcontainer exec --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder> <command>
+docker exec -i -u <remoteUser> -e <each derived variable> -w <remoteWorkspaceFolder> <containerId> <command>
 ```
 
-The folder comes from the container's own label, never from the session, so a session can only reach the container that folder's file made.
+The user and the environment come from the container's own `devcontainer.metadata` label and one probe of the login shell that was holding them when the container was made, which is what the CLI's own `exec` derives - decision [a dev container is reached by docker exec](../.project/decisions/a-dev-container-is-reached-by-docker-exec.md).
+A dotfile changed after the container was made is not seen until it is made again, because what a command runs in is what that shell was holding then.
+The container id is the one `up` answered with, never the folder and never the name, so a session can only reach the container that folder's file made.
 Removing the computer removes the container and never the folder or its `devcontainer.json`.
-A container someone made with `devcontainer up` by hand, without the labels, is not listed and cannot be reached as a computer.
+A container someone made with `devcontainer up` by hand carries only the CLI's `devcontainer.local_folder=<folder>` and is not listed; a `connect` for that folder adopts it rather than making a second, and records it in `computers.json` under its container id, which is what lists, meters and finds it again from then on. Until a connect adopts it, it is not a computer.
 
 | Command | What it does |
 | --- | --- |
@@ -123,13 +126,13 @@ A machine is also kept to the agents it was prepared for. A profile with `agents
 
 | Backend | In a machine |
 | --- | --- |
-| `@ahpd/agent-acp` | Its command runs under `docker exec`, or `devcontainer exec` in a dev container |
-| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec`, or `devcontainer exec` in a dev container |
+| `@ahpd/agent-acp` | Its command runs under `docker exec`, with the dev container's own user and environment when that is the machine |
+| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec`, with the dev container's own user and environment when that is the machine |
 | `@ahpd/agent-cofold` | A whole `ahpd` with the plugin runs inside the machine, and its frames are carried out as the session's - see below |
 
 Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image or folder and status. When the client says which agent the session would run, the machines not prepared for it are left out. A [disposable profile](#disposable-machines) is offered too, as `disposable:<profile>`, and once the session has made one it is an ordinary `computer://<id>`. A `devcontainer://<folder>` row is offered when the session's folder has a `devcontainer.json` and no computer is labelled with it.
 
-The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own `workdir`.
+The session's working directory is mapped through the machine's mounts. With `/srv/app:/workspaces/app`, a session in `/srv/app/x` starts in `/workspaces/app/x`. The longest mount wins, and a path no mount covers starts in the machine's own working directory - for a dev container, the folder it was made from as that is mounted inside.
 
 ### A backend that runs nested
 
@@ -339,6 +342,17 @@ Read this before exposing the plugin to anyone but yourself.
 That is reasonable on a single-person host. With it on, `computer:write` is root on the host.
 
 A `devcontainer` source is not gated by `bodyMounts`: the folder names a `devcontainer.json`, and what that file mounts is the CLI's to apply, so a body that may name one is a body that may build a folder's container. It is not a way to mount an arbitrary host path by itself, but `computer:write` with it reaches whatever the named file declares.
+
+**Allowed folders.** By default any folder with a `devcontainer.json` may be built from. To limit them, name them under `devcontainer`:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "devcontainer": { "folders": ["/srv/app", "/srv/site"] } } }] }
+```
+
+Each entry is an absolute host path and is compared resolved, so a symlinked or relative way of naming the same folder is the same folder and a folder outside the list is refused with a sentence naming it - on the create body, the `devcontainer://<folder>` setting, the picker's row and the relay's `connect` alike, so the allowlist cannot be stepped around by choosing a different route.
+An entry that is not an absolute path is refused when the options are read, because a relative one means something different depending on where the daemon was started.
+
+`devcontainer: false` switches all four off, and no folder is ever built from.
 
 **Allowed images.** By default any image may be used. To limit them:
 

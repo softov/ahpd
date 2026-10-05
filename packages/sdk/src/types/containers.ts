@@ -9,7 +9,7 @@
  * A container is a workspace's own `devcontainer.json`, made by the Dev
  * Container CLI, so the port is a `devcontainer` client and not a Docker one:
  * Docker is what it reaches through, and the file is what it obeys. Decision
- * `a-dev-container-is-made-by-the-dev-container-cli`.
+ * `a-dev-container-is-reached-by-docker-exec`.
  */
 
 import type { Owner } from './usage.js';

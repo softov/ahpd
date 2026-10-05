@@ -1,16 +1,18 @@
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
-import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
+import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
 import { revealed } from './secrets.js';
 import { manifestOf } from './manifest.js';
-import type { Profile } from './manifest.js';
-import { claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, roomFor, sessionOf } from './runtime.js';
-import type { ComputerRuntime, MachineSpec } from './runtime.js';
-import { claimOwned, forgetOwned, ownedOf } from './owners.js';
+import type { FolderAnswer, Profile } from './manifest.js';
+import { adoptedDevContainer, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
+import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
+import { claimAdopted, claimOwned, forgetOwned, keepProbe, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
 
 /**
@@ -70,7 +72,7 @@ const needValues = { type: 'object', additionalProperties: needValue } as const;
 export const optionsSchema = {
   type: 'object',
   properties: {
-    runtime: { type: 'string', enum: ['docker'], description: 'Which runtime to use. docker, the only one today.' },
+    runtime: { type: 'string', enum: ['docker'], description: 'Which runtime to use. docker, the only one.' },
     command: { ...text, description: 'The program to run. docker.' },
     args: { ...list, description: 'Arguments before its own, for a wrapper or a context.' },
     env: { type: 'object', additionalProperties: { type: 'string', writeOnly: true }, description: "Environment variables merged over the daemon's. A variable is a credential wherever the image keeps one, so each answers <set>." },
@@ -101,8 +103,9 @@ export const optionsSchema = {
         plugins: { type: 'array' },
         docker: text,
         install: { type: ['string', 'boolean'] },
+        folders: list,
       },
-      description: 'The Dev Container CLI, as a launcher and as a machine maker; false switches the launcher off.',
+      description: 'The Dev Container CLI, as a launcher and as a machine maker, and the folders it may make one from; false switches every dev container route off.',
     },
   },
 };
@@ -340,9 +343,11 @@ export const apply: Plugin['apply'] = (host, options) => {
    * One option, read once, because both routes run the same program with the
    * same words before its verb: the launcher puts a nested host in a
    * container, and the runtime makes a computer from a folder's definition -
-   * decision `a-dev-container-is-made-by-the-dev-container-cli`. `false`
-   * switches the launcher off, and the runtime keeps the default program so a
-   * session can still ask for a `devcontainer://<folder>`.
+   * decision `a-dev-container-is-reached-by-docker-exec`. `false`
+   * switches every dev container route off: no `folders` are read, `folderFor`
+   * refuses every folder, the picker offers no row, the create form draws no
+   * source field and no launcher is contributed, while the runtime is still
+   * built so the machines already there are listed, reached and stopped.
    */
   const container = options.devcontainer as boolean | Record<string, unknown> | undefined;
   const held = typeof container === 'object' ? container : {};
@@ -350,22 +355,77 @@ export const apply: Plugin['apply'] = (host, options) => {
   const hostCommand = held.host as string[] | undefined;
   const containerEnv = named(held.env);
   const containerPlugins = held.plugins as PluginSpec[] | undefined;
+  /*
+   * The folders a dev container may be made from, as the operator wrote them.
+   *
+   * Absent allows any, as an unset `images` does: a definition is a recipe the
+   * folder's owner wrote, and an operator on a host with one person on it has
+   * nothing to narrow. Naming a set is the opting in.
+   */
+  const containerFolders = words(held.folders);
+  for (const one of containerFolders ?? []) {
+    if (!one.startsWith('/')) {
+      throw new Error(`plugin ${name}: devcontainer.folders are absolute paths on this host, and ${one} is not one`);
+    }
+  }
   const cliOptions: CliOptions = {
     ...(held.command === undefined ? {} : { command: held.command as string }),
     ...(cliArgs === undefined ? {} : { args: cliArgs }),
     ...(containerEnv === undefined ? {} : { env: containerEnv }),
   };
 
-  const dockered = dockerRuntime({
+  /** A path resolved, so `..` and a symlink cannot be walked out of a list. */
+  const resolved = (path: string): string => {
+    try { return realpathSync(path); }
+    catch { return path; }
+  };
+
+  /**
+   * The folder a dev container is made from here, resolved, or the sentence for
+   * one this host will not build from.
+   *
+   * One check for all four routes - a create body, a `devcontainer://` session
+   * setting, the picker's row and a relay's `connect` - because a route that
+   * checked for itself is a route the operator's list does not cover, and the
+   * folder is the whole of what a definition can reach - decision
+   * `a-dev-container-is-made-only-from-a-folder-the-operator-allows`.
+   *
+   * It answers with the folder rather than a yes, so no route can pass on the
+   * spelling it was given: the CLI is handed this one and the container is
+   * labelled with it, and two spellings of a folder are two containers.
+   */
+  const folderFor = (folder: string): FolderAnswer => {
+    const here = resolved(folder);
+    if (container === false) {
+      return { refusal: `Dev containers are switched off on this host, so ${here} makes no computer` };
+    }
+    if (containerFolders === undefined) return here;
+    if (containerFolders.some((one) => resolved(one) === here)) return here;
+    return { refusal: `This host makes dev containers from ${containerFolders.join(', ')}, and ${here} is not one of them` };
+  };
+
+  /** What the daemon's own record said, in this plugin's own log. */
+  const noted = (line: string): void => { host.log(`${name}: ${line}`); };
+
+  /*
+   * The Docker this plugin runs, as one set of options.
+   *
+   * The runtime and the launcher and `reach` are three roads into the same
+   * machines, and each is given this rather than a copy of it: the probe a dev
+   * container is reached with is kept where the daemon keeps its own
+   * configuration, and a probe written by one road and read by another is the
+   * one thing a container reached twice must not do differently.
+   */
+  const dockeredOptions: DockerOptions = {
     command,
     label,
     devcontainerCli: cliOptions,
     ...(args === undefined ? {} : { args }),
     ...(env === undefined ? {} : { env }),
-  });
-
-  /** What the daemon's own record said, in this plugin's own log. */
-  const noted = (line: string): void => { host.log(`${name}: ${line}`); };
+    configDir: host.configDir,
+    log: noted,
+  };
+  const dockered = dockerRuntime(dockeredOptions);
 
   /*
    * Read one need's value when it names a secret.
@@ -380,7 +440,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   /*
    * One open stretch of up time per running machine.
    *
-   * What a machine costs is known only once it is no longer up, so a stretch
+   * What a machine costs is known only once it has stopped, so a stretch
    * opens when a machine starts and is written whole when it stops: `at` is when
    * it began and `seconds` how long it ran - decision
    * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`. The
@@ -627,6 +687,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(profiles === undefined ? {} : { profiles }),
     ...(images === undefined ? {} : { images }),
     bodyMounts,
+    // The same check the three session routes make, so a create body is
+    // refused a folder the operator's list does not name.
+    folderFor,
+    // Whether this host makes one at all, so a client draws no source field for
+    // a route `folderFor` refuses.
+    ...(container === false ? { devcontainer: false } : {}),
     // Read when a body picks an agent-naming profile, never here: the plugin
     // that registers that agent may apply after this one.
     needsOf: (provider) => host.machineNeeds(provider),
@@ -645,35 +711,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const reach: ComputerPort['how'] = async (id, asked) => {
     const held = await made.inspect(id);
     if (held === undefined) return undefined;
-    /*
-     * A dev container is reached through the CLI that made it.
-     *
-     * Its user, its environment and everything the repository's file asks
-     * for are the CLI's to apply, so a `docker exec` would run the backend
-     * as somebody else with none of it. The folder is the container's own
-     * `ahpd.devcontainer.folder` label rather than the session's, because a
-     * session's working directory is a host path and this is the container's
-     * recipe - decision
-     * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`.
-     */
-    const folder = devcontainerFolder(held);
-    if (folder !== undefined) {
-      const cli = cliOf(cliOptions);
-      const remote = Object.entries(asked.env ?? {}).flatMap(([key, value]) => ['--remote-env', `${key}=${value}`]);
-      return {
-        command: cli.command,
-        args: [
-          ...cli.args,
-          'exec',
-          '--workspace-folder', folder,
-          ...idLabels(label, folder),
-          ...remote,
-          asked.command,
-          ...(asked.args ?? []),
-        ],
-        ...(cli.env === undefined ? {} : { env: cli.env }),
-      };
-    }
+    const into = Object.entries(asked.env ?? {}).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
     /*
      * Where in the machine to start.
      *
@@ -685,16 +723,41 @@ export const apply: Plugin['apply'] = (host, options) => {
      */
     const config = (typeof held.Config === 'object' && held.Config !== null ? held.Config : {}) as Record<string, unknown>;
     const workdir = typeof config.WorkingDir === 'string' && config.WorkingDir !== '' ? config.WorkingDir : undefined;
-    const inside = (asked.cwd === undefined ? undefined : within(held, asked.cwd)) ?? workdir;
-    const into = Object.entries(asked.env ?? {}).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
+    const start = (asked.cwd === undefined ? undefined : within(held, asked.cwd)) ?? workdir;
+    /*
+     * The container Docker knows this machine by, which is not always the name
+     * the caller gave: a dev container carries the name its create gave as a
+     * label and the CLI named it after the folder, so the `docker exec` is
+     * handed the latter - decision
+     * `the-name-a-create-gives-a-dev-container-is-a-label-on-it`.
+     */
+    const at = typeof held.Id === 'string' && held.Id !== '' ? held.Id : id;
+    /*
+     * A dev container is reached the way the CLI reaches it, which is the same
+     * `docker exec` as any other machine with the user and environment its own
+     * definition asks for - decision `a-dev-container-is-reached-by-docker-exec`.
+     */
+    if (devcontainerFolder(held) !== undefined) {
+      // Under the machine id the caller gave, which is what a create and the
+      // relay keep their probe against, not the container id `held.Id` holds.
+      const reached = await reachedDevContainer(dockeredOptions, id, held);
+      return {
+        command,
+        args: [
+          ...(args ?? []),
+          ...execArgv({ ...reached, id: at, ...(start === undefined ? {} : { workdir: start }) }, [asked.command, ...(asked.args ?? [])], into),
+        ],
+        ...(env === undefined ? {} : { env }),
+      };
+    }
     return {
       command,
       args: [
         ...(args ?? []),
         'exec', '-i',
-        ...(inside === undefined ? [] : ['-w', inside]),
+        ...(start === undefined ? [] : ['-w', start]),
         ...into,
-        id,
+        at,
         asked.command,
         ...(asked.args ?? []),
       ],
@@ -795,7 +858,8 @@ export const apply: Plugin['apply'] = (host, options) => {
        * what it names; the machine's recipe is the runtime's, so the CLI reads
        * the file. What the session's harness needs is resolved by `manifestOf`
        * exactly as it is for a profile, and the runtime hands the result to the
-       * CLI as `--mount` and `--remote-env` - decision
+       * CLI: a mount as `--mount`, a read-only one and an environment need
+       * through the override config's own `mounts` and `containerEnv` - decision
        * `the-host-hands-an-agents-machine-needs-to-the-machine-maker`.
        */
       const devPrefix = 'devcontainer://';
@@ -804,8 +868,10 @@ export const apply: Plugin['apply'] = (host, options) => {
         if (!folder.startsWith('/')) {
           throw new Error(`devcontainer:// names a folder on this host, and ${folder} is not an absolute path`);
         }
-        if (!hasDefinition(folder)) {
-          throw new Error(`${folder} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
+        const answer = folderFor(folder);
+        if (typeof answer !== 'string') throw new Error(answer.refusal);
+        if (!hasDefinition(answer)) {
+          throw new Error(`${answer} has no devcontainer.json or .devcontainer/devcontainer.json, so there is no dev container to make`);
         }
         const id = `${prefix}-${randomUUID().slice(0, 8)}`;
         const work: SecretWork = {
@@ -827,7 +893,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(values === undefined ? {} : { needValues: values }),
           needsOf: forSession,
           for: asked.provider,
-          devcontainer: folder,
+          devcontainer: answer,
           // Whose it is, which this machine cannot carry as a label: the record
           // is in the file beside the configuration, keyed by the id the CLI
           // made.
@@ -1019,25 +1085,37 @@ export const apply: Plugin['apply'] = (host, options) => {
    * loaded and no Docker is a host no client offers the flow against. Every
    * part of it is an option, because the program, the image's own host and the
    * plugins that host loads are deployment facts - decision
-   * `a-dev-container-is-made-by-the-dev-container-cli`.
+   * `a-dev-container-is-reached-by-docker-exec`.
    */
   if (container !== false) {
     /*
-     * The computer a folder already is, so a relay finds rather than makes.
+     * The computer a folder already is, and whether it is up, so a relay finds
+     * rather than makes.
      *
      * The runtime is the only thing that knows what is listed, and the launcher
      * cannot ask it without owning a Docker command of its own - which would be
      * a second place the label is spelled. The same answer names the container
      * a relay just brought up, which is what the launcher's own result calls a
-     * container id rather than a machine.
+     * container id rather than a machine. A container that is stopped is no
+     * computer a command can be run in, so the state is answered too.
      */
-    const machineFor = async (folder: string): Promise<string | undefined> =>
-      (await made.list()).find((one) => one.folder === folder)?.id;
+    const machineFor = async (folder: string): Promise<{ id: string; running: boolean } | undefined> => {
+      const found = (await made.list()).find((one) => one.folder === folder);
+      return found === undefined ? undefined : { id: found.id, running: isRunning(found) };
+    };
 
     const relay = devContainer({
       ...cliOptions,
       ...(hostCommand === undefined ? {} : { host: hostCommand }),
-      ...(held.docker === undefined ? {} : { docker: held.docker as string }),
+      // The same Docker the listing reads, and not a program named beside it:
+      // every command inside the container is a `docker exec` against this one,
+      // so a wrapper or a context an operator configured once is in force for
+      // the computer as well as for the listing.
+      docker: {
+        command: held.docker === undefined ? command : held.docker as string,
+        args: args ?? [],
+        ...(env === undefined ? {} : { env }),
+      },
       ...(held.install === undefined || held.install === true ? {} : { install: held.install as string | false }),
       ...(containerPlugins === undefined ? {} : { plugins: containerPlugins }),
       // The same label the computers carry, so the CLI finds the folder's own
@@ -1046,6 +1124,24 @@ export const apply: Plugin['apply'] = (host, options) => {
       // The daemon's version, which the server installed inside is pinned to.
       version: host.version,
       existing: machineFor,
+      // A container the CLI made for this folder before the labels above were
+      // on it, which a listing cannot answer for because the listing is what
+      // they are read from.
+      adopted: (folder) => adoptedDevContainer(dockeredOptions, folder),
+      // An adopted container carries no label this host could find it by, so
+      // the record beside the configuration is what makes it a computer: it is
+      // listed from there, inspected from there, metered from there and
+      // forgotten from there when it is removed - decision
+      // `a-relay-container-is-owned-by-who-connected`.
+      onAdopted: (one, id) => {
+        claimAdopted(host.configDir, id, one.owner === undefined ? {} : { owner: one.owner }, noted);
+      },
+      // The probe store, which is the daemon's own file: read for the container
+      // a `connect` is about, written when it is one this daemon has not seen.
+      probes: {
+        of: (id) => probeOf(host.configDir, id, noted),
+        keep: (id, probe) => keepProbe(host.configDir, id, probe, noted),
+      },
     });
 
     host.registerContainers({
@@ -1061,13 +1157,16 @@ export const apply: Plugin['apply'] = (host, options) => {
        * connection started is metered from now.
        */
       connect: async (asked, sink) => {
-        const result = await relay.connect(asked, sink);
-        const id = await machineFor(asked.workspaceFolder);
-        if (id === undefined) return result;
+        const answer = folderFor(asked.workspaceFolder);
+        if (typeof answer !== 'string') throw new Error(answer.refusal);
+        const here = { ...asked, workspaceFolder: answer };
+        const result = await relay.connect(here, sink);
+        const machine = await machineFor(answer);
+        if (machine === undefined) return result;
         if (asked.owner !== undefined) {
-          claimOwned(host.configDir, id, { owner: asked.owner }, noted);
+          claimOwned(host.configDir, machine.id, { owner: asked.owner }, noted);
         }
-        open(id);
+        open(machine.id);
         return result;
       },
     });
@@ -1134,13 +1233,34 @@ export const apply: Plugin['apply'] = (host, options) => {
        * twice - decision
        * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`.
        */
-      const where = ask.workingDirectory === undefined ? undefined : ask.workingDirectory.replace(/^file:\/\//, '');
-      const devcontainer = where === undefined || where === '' || !hasDefinition(where) || running.some((one) => one.folder === where)
+      /*
+       * The folder the session would work in, which a client sends as a URI.
+       *
+       * Decoded rather than stripped of a `file://` prefix: a folder with a
+       * space in it is written as `%20`, and a strip leaves the escape in the
+       * path, which is not the folder's name and is on no allowlist.
+       *
+       * A URI no path can be read out of - another host's, or one whose name
+       * carries a `/` - is not a folder this machine can offer a row for, so it
+       * answers no folder rather than taking the whole picker down with it.
+       */
+      const decoded = (uri: string): string | undefined => {
+        try { return fileURLToPath(uri); }
+        catch { return undefined; }
+      };
+      const where = ask.workingDirectory === undefined
+        ? undefined
+        : ask.workingDirectory.startsWith('file:')
+          ? decoded(ask.workingDirectory)
+          : ask.workingDirectory;
+      const answer = where === undefined || where === '' ? undefined : folderFor(where);
+      const fromFolder = answer === undefined || typeof answer !== 'string'
+        || !hasDefinition(answer) || running.some((one) => one.folder === answer)
         ? []
         : [{
-          value: `devcontainer://${where}`,
+          value: `devcontainer://${answer}`,
           label: 'Dev container',
-          description: `The development container ${where} defines.`,
+          description: `The development container ${answer} defines.`,
         }].filter((one) => one.value.toLowerCase().includes(ask.query.toLowerCase())
           || one.label.toLowerCase().includes(ask.query.toLowerCase()));
       /*
@@ -1163,7 +1283,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       return [
         ...(ask.query === '' ? [{ value: '', label: 'This host', description: 'Run the session here, in no machine.' }] : []),
         ...found,
-        ...devcontainer,
+        ...fromFolder,
         ...sources,
       ];
     });

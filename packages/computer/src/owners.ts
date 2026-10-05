@@ -1,10 +1,11 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Owner } from '@ahpd/sdk';
+import type { Probe } from './devcontainer.js';
 import { ownerSaid } from './runtime.js';
 
 /**
- * The owners of the machines whose owner is not on the machine.
+ * The halves of a machine that live beside the daemon's own configuration.
  *
  * A `docker run` machine carries its creator as a label, so the label is the
  * whole of that record. The Dev Container CLI labels a container only through
@@ -13,10 +14,15 @@ import { ownerSaid } from './runtime.js';
  * folder's lookup matching two - decision
  * `a-dev-container-owner-is-kept-beside-the-config`.
  *
- * So this is where the other half lives, one file beside the daemon's own
+ * The probed environment is here for the same reason and one more: the CLI
+ * keeps no probe its own `exec` could read back, so a container made before
+ * this, or by a daemon that lost the file, is only reachable with its user's
+ * shell run in there again.
+ *
+ * So this is where the other halves live, one file beside the daemon's own
  * configuration keyed by machine id. A machine this file has no entry for is
- * charged to the host, which is what a container made outside ahpd has always
- * been.
+ * charged to the host and probed on its first reach, which is what a container
+ * made outside ahpd has always been.
  */
 
 /** The file, in the folder the daemon keeps its own configuration in. */
@@ -29,6 +35,15 @@ export interface Owned {
   project?: string;
 }
 
+/** What one machine's entry holds, any part of which may be absent. */
+interface Entry {
+  owner?: Owner;
+  team?: string;
+  project?: string;
+  probe?: Probe;
+  adopted?: true;
+}
+
 /** One line, for a file that could not be read or written. */
 const complain = (log: (line: string) => void, what: string, why: unknown): void =>
   log(`${what} ${OWNERS_FILE}: ${why instanceof Error ? why.message : String(why)}`);
@@ -37,28 +52,43 @@ const complain = (log: (line: string) => void, what: string, why: unknown): void
 const at = (configDir: string): string => join(configDir, OWNERS_FILE);
 
 /**
- * What one entry holds, or nothing when it is not an entry.
+ * What one entry holds, or nothing when it is neither half.
  *
  * The owner is held to the spelling a reference has everywhere else, so a file
  * a person has edited by hand is read as what it says rather than charged to
  * somebody the usage rules do not know.
  */
-const owned = (said: unknown): Owned | undefined => {
+const entry = (said: unknown): Entry | undefined => {
   if (typeof said !== 'object' || said === null || Array.isArray(said)) return undefined;
   const one = said as Record<string, unknown>;
   const owner = ownerSaid(one.owner);
-  if (owner === undefined) return undefined;
   const team = one.team;
   const project = one.project;
+  const adopted = one.adopted === true;
+  const probe = ((): Probe | undefined => {
+    if (typeof one.probe !== 'object' || one.probe === null || Array.isArray(one.probe)) return undefined;
+    const held = one.probe as Record<string, unknown>;
+    if (typeof held.container !== 'string' || typeof held.env !== 'object' || held.env === null || Array.isArray(held.env)) {
+      return undefined;
+    }
+    const env: Record<string, string> = {};
+    for (const [key, value] of Object.entries(held.env as Record<string, unknown>)) {
+      if (typeof value === 'string') env[key] = value;
+    }
+    return { container: held.container, env };
+  })();
+  if (owner === undefined && probe === undefined && !adopted) return undefined;
   return {
-    owner,
+    ...(owner === undefined ? {} : { owner }),
     ...(typeof team === 'string' && team !== '' ? { team } : {}),
     ...(typeof project === 'string' && project !== '' ? { project } : {}),
+    ...(probe === undefined ? {} : { probe }),
+    ...(adopted ? { adopted } : {}),
   };
 };
 
 /** Every machine this file says something about. */
-const read = (configDir: string, log: (line: string) => void): Record<string, Owned> => {
+const read = (configDir: string, log: (line: string) => void): Record<string, Entry> => {
   let text: string;
   try { text = readFileSync(at(configDir), 'utf8'); }
   catch (error) {
@@ -81,7 +111,7 @@ const read = (configDir: string, log: (line: string) => void): Record<string, Ow
   return Object.fromEntries(
     Object.entries(parsed as Record<string, unknown>)
       .flatMap(([id, one]) => {
-        const held = owned(one);
+        const held = entry(one);
         return held === undefined ? [] : [[id, held] as const];
       }),
   );
@@ -95,12 +125,13 @@ const read = (configDir: string, log: (line: string) => void): Record<string, Ow
  * dropped: the machine is already made, and failing the create over a record of
  * who made it would be worse than the record.
  */
-const write = (configDir: string, held: Record<string, Owned>, log: (line: string) => void): void => {
+const write = (configDir: string, held: Record<string, Entry>, log: (line: string) => void): void => {
   const path = at(configDir);
   try {
     mkdirSync(configDir, { recursive: true });
     // 0600, as the daemon's own records are: who owns a machine is not
-    // everybody's business on a host with more than one person on it.
+    // everybody's business on a host with more than one person on it, and a
+    // probed environment is what a user's shell was holding.
     const scratch = `${path}.${String(process.pid)}.tmp`;
     writeFileSync(scratch, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
     renameSync(scratch, path);
@@ -111,8 +142,14 @@ const write = (configDir: string, held: Record<string, Owned>, log: (line: strin
 };
 
 /** Who a machine is recorded as belonging to, or nothing when it is not in the file. */
-export const ownedOf = (configDir: string, id: string, log: (line: string) => void): Owned | undefined =>
-  read(configDir, log)[id];
+export const ownedOf = (configDir: string, id: string, log: (line: string) => void): Owned | undefined => {
+  const held = read(configDir, log)[id];
+  return held?.owner === undefined ? undefined : {
+    owner: held.owner,
+    ...(held.team === undefined ? {} : { team: held.team }),
+    ...(held.project === undefined ? {} : { project: held.project }),
+  };
+};
 
 /**
  * Record who a machine the Dev Container CLI made belongs to, unless it is
@@ -125,8 +162,69 @@ export const ownedOf = (configDir: string, id: string, log: (line: string) => vo
  */
 export const claimOwned = (configDir: string, id: string, said: Owned, log: (line: string) => void): void => {
   const held = read(configDir, log);
-  if (held[id] !== undefined) return;
-  write(configDir, { ...held, [id]: said }, log);
+  if (held[id]?.owner !== undefined) return;
+  write(configDir, { ...held, [id]: { ...held[id], ...said } }, log);
+};
+
+/**
+ * The containers a connect adopted, by the id each was found under.
+ *
+ * An adopted container carries no `ahpd.computer` label and never will: Docker
+ * cannot add one to a container that already exists, and the CLI is not asked
+ * again or it would make a second container beside it. The record here is what
+ * makes it listed and inspected like any other machine, under the person whose
+ * connect adopted it - decision `a-relay-container-is-owned-by-who-connected`.
+ */
+export const adoptedOf = (configDir: string, log: (line: string) => void): string[] =>
+  Object.entries(read(configDir, log))
+    .flatMap(([id, held]) => held.adopted === true ? [id] : []);
+
+/**
+ * Record a container a connect adopted, and who adopted it when the connect
+ * carried anybody.
+ *
+ * Written under the container id, which is the machine id it has for the rest
+ * of its life, and the record a listing and an up-time stretch read it from.
+ * Recorded with no owner as well, as a relay container whose connect carried
+ * none is: it is still a computer, listed and found again by its folder, and
+ * its time is the host's. An owner already recorded is kept, so the first
+ * person to adopt it is the one it is charged to.
+ */
+export const claimAdopted = (
+  configDir: string,
+  id: string,
+  said: Partial<Owned>,
+  log: (line: string) => void,
+): void => {
+  const held = read(configDir, log);
+  const was = held[id];
+  if (was?.adopted === true && (was.owner !== undefined || said.owner === undefined)) return;
+  write(configDir, { ...held, [id]: { ...was, ...(was?.owner === undefined ? said : {}), adopted: true } }, log);
+};
+
+/**
+ * What one userEnvProbe run found for a machine, or nothing when this file has
+ * none for it.
+ */
+export const probeOf = (configDir: string, id: string, log: (line: string) => void): Probe | undefined =>
+  read(configDir, log)[id]?.probe;
+
+/**
+ * Keep what one userEnvProbe run found, against the container it was taken for.
+ *
+ * The container is recorded beside it so a container made again is probed
+ * again: the probe is what the user's shell was holding when the container was
+ * made, and a container the CLI has since replaced has a shell that has since
+ * been started afresh.
+ */
+export const keepProbe = (
+  configDir: string,
+  id: string,
+  probe: Probe,
+  log: (line: string) => void,
+): void => {
+  const held = read(configDir, log);
+  write(configDir, { ...held, [id]: { ...held[id], probe } }, log);
 };
 
 /** Forget a machine, which is what its being removed means. */

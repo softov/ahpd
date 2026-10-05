@@ -10,6 +10,7 @@
  * under test, not Docker.
  */
 
+import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 
 const state = process.env.DOCKER_FAKE_STATE;
@@ -48,6 +49,18 @@ process.on('exit', () => {
   try { rmdirSync(lock); }
   catch {}
 });
+/**
+ * Let the lock go, for a call that is done with the state file.
+ *
+ * A command the fixture runs for real has already written what it recorded and
+ * will not touch the file again, and it can be the whole lifetime of a nested
+ * host - a lock held for that long would answer every other call about this
+ * host as a daemon that hangs.
+ */
+const release = () => {
+  try { rmdirSync(lock); }
+  catch {}
+};
 
 const args = process.argv.slice(2);
 const held = existsSync(state)
@@ -150,6 +163,29 @@ if (verb === 'build') {
   process.exit(0);
 }
 
+/*
+ * The version flag, which is how the launcher asks whether Docker is there.
+ *
+ * Without it every `docker()` and `available()` would be answered by a program
+ * that has nothing to say about itself, and the two would read as a host with
+ * no Docker.
+ */
+if (args.includes('--version')) {
+  process.stdout.write('Docker version 29.6.2, build 0000000\n');
+  keep();
+  process.exit(0);
+}
+
+/*
+ * The container a call names, whichever of the two names it used.
+ *
+ * Docker answers to an id and to a name for the same object, and this host makes
+ * containers that carry both - the id the CLI reported and the name Docker gave
+ * it - so a lookup that only knew the name would say a container is not there
+ * when it plainly is.
+ */
+const named = (id) => held.machines.find((machine) => machine.name === id || machine.id === id);
+
 if (verb === 'ps') {
   /*
    * The label filter, honoured rather than ignored.
@@ -159,8 +195,22 @@ if (verb === 'ps') {
    * what the label is for. A machine marked `bare` is something else's,
    * running on the same daemon with none of our labels on it.
    */
-  const wanted = args.includes('--filter') ? args[args.indexOf('--filter') + 1] : undefined;
-  const asked = wanted?.startsWith('label=') === true ? wanted.slice('label='.length) : undefined;
+  /*
+   * Every `--filter`, not the first one: Docker intersects them, and a lookup
+   * that names two labels is asking for the container carrying both.
+   */
+  const asked = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--filter') continue;
+    const said = String(args[i + 1]);
+    if (said.startsWith('label=')) asked.push(said.slice('label='.length));
+  }
+  const labelled = (labels, one) => {
+    const eq = one.indexOf('=');
+    return eq === -1
+      ? Object.keys(labels).includes(one)
+      : labels[one.slice(0, eq)] === one.slice(eq + 1);
+  };
   /*
    * Any `--format` a provider asks with, as Docker renders it.
    *
@@ -185,9 +235,17 @@ if (verb === 'ps') {
   );
   const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : undefined;
   for (const machine of held.machines) {
-    if (asked !== undefined && machine.bare === true) continue;
-    const labels = machine.labels ?? {};
+    /*
+     * The same projection `inspect` makes: a machine that is not somebody
+     * else's carries this provider's label, which is what makes `ps` and
+     * `inspect` answer about the same container.
+     */
+    const labels = machine.bare === true ? { ...(machine.labels ?? {}) } : { 'ahpd.computer': '1', ...(machine.labels ?? {}) };
+    if (!asked.every((one) => labelled(labels, one))) continue;
     const row = {
+      // The short id and the name, as `docker ps` prints them. The short form is
+      // what makes an id recorded in full matchable against a listing.
+      ID: String(machine.id ?? machine.name).slice(0, 12),
       Names: machine.name,
       Image: machine.image,
       // As `docker ps` words it: `Up ...` for a container that is running,
@@ -226,6 +284,7 @@ if (verb === 'ps') {
  */
 const recordOf = (found) => ({
   Name: `/${found.name}`,
+  Id: found.id ?? found.name,
   Image: found.image,
   Created: '2026-09-22T00:00:00Z',
   // `Running` as well as the word, because the provider answers the state
@@ -240,6 +299,11 @@ const recordOf = (found) => ({
   Config: {
     WorkingDir: found.workdir ?? '',
     Labels: found.bare === true ? { ...(found.labels ?? {}) } : { 'ahpd.computer': '1', ...(found.labels ?? {}) },
+    // As Docker records the image's environment: the list a
+    // `${containerEnv:NAME}` in a dev container's `remoteEnv` is resolved
+    // from, which is this and never the probe.
+    Env: Object.entries(found.env ?? {}).map(([key, value]) => `${key}=${value}`),
+    User: found.user ?? '',
   },
   // The limits as docker records them: nanoseconds of CPU per second, and
   // bytes. A gauge is drawn against these, so the units have to be real.
@@ -292,7 +356,7 @@ if (verb === 'inspect') {
   const format = formatAt === -1 ? '{{json .}}' : args[formatAt + 1];
   const missing = [];
   for (const id of args.slice(formatAt === -1 ? 1 : formatAt + 2)) {
-    const found = held.machines.find((machine) => machine.name === id);
+    const found = named(id);
     if (found === undefined) {
       missing.push(id);
       continue;
@@ -312,7 +376,7 @@ if (verb === 'stats') {
   // in every field, mixing binary and decimal units the way it really does,
   // so the parsing under test is the parsing that runs.
   const id = args[args.length - 1];
-  const found = held.machines.find((machine) => machine.name === id);
+  const found = named(id);
   if (found === undefined) {
     process.stderr.write(`Error: No such container: ${id}\n`);
     keep();
@@ -403,9 +467,16 @@ if (verb === 'cp') {
 
 if (verb === 'start' || verb === 'restart') {
   const id = args[args.length - 1];
-  const found = held.machines.find((machine) => machine.name === id);
+  const found = named(id);
   if (found === undefined) {
     process.stderr.write(`Error: No such container: ${id}\n`);
+    keep();
+    process.exit(1);
+  }
+  // A start the daemon refuses, in the words a test sets: a container whose
+  // mount source is gone, for one.
+  if (typeof held.failStart === 'string') {
+    process.stderr.write(`${held.failStart}\n`);
     keep();
     process.exit(1);
   }
@@ -416,7 +487,7 @@ if (verb === 'start' || verb === 'restart') {
 }
 
 if (verb === 'stop') {
-  const found = held.machines.find((machine) => machine.name === args[args.length - 1]);
+  const found = named(args[args.length - 1]);
   // Recorded, so a `state` read after a stop answers what actually happened
   // rather than the status the machine was made with.
   if (found !== undefined) found.state = 'exited';
@@ -426,18 +497,122 @@ if (verb === 'stop') {
 }
 
 if (verb === 'rm') {
-  held.machines = held.machines.filter((machine) => machine.name !== args[args.length - 1]);
+  const gone = named(args[args.length - 1]);
+  held.machines = held.machines.filter((machine) => machine !== gone);
   keep();
   process.stdout.write(`${args[args.length - 1]}\n`);
   process.exit(0);
 }
 
+/*
+ * `exec`, which is how every command in a dev container is reached.
+ *
+ * The flags are read rather than guessed at, and the command is answered from
+ * this state file: a probe (`cat /proc/self/environ`), whether the host inside
+ * is present (`command -v`), a `plugin install`, and a prefix a test wants run
+ * for real behind the relay. What `passthrough` starts is a real process, which
+ * is how the nested host is put behind the relay in a test with no Docker.
+ */
 if (verb === 'exec') {
+  const env = {};
+  let user;
+  let workdir;
+  let at = 1;
+  for (; at < args.length; at++) {
+    const said = args[at];
+    if (said === '-i' || said === '-t' || said === '-it') continue;
+    if (said === '-u') { user = args[at + 1]; at++; continue; }
+    if (said === '-w') { workdir = args[at + 1]; at++; continue; }
+    if (said === '-e') {
+      const pair = args[at + 1];
+      const eq = String(pair).indexOf('=');
+      if (eq === -1) env[String(pair)] = '';
+      else env[String(pair).slice(0, eq)] = String(pair).slice(eq + 1);
+      at++;
+      continue;
+    }
+    break;
+  }
+  const id = args[at];
+  const command = args.slice(at + 1);
+  const found = held.machines.find((machine) => machine.name === id || machine.id === id);
+  if (found === undefined) {
+    process.stderr.write(`Error: No such container: ${id}\n`);
+    keep();
+    process.exit(1);
+  }
+  /*
+   * A container that is not running, with the daemon's own sentence.
+   *
+   * `docker exec` refuses one whatever its state says, and that refusal is
+   * what a command in a stopped dev container is answered with.
+   */
+  if ((found.state ?? 'running') !== 'running') {
+    process.stderr.write(`Error response from daemon: container ${id} is not running\n`);
+    keep();
+    process.exit(1);
+  }
+  const said = command.join(' ');
+  (held.commands ??= []).push({ id, ...(user === undefined ? {} : { user }), ...(workdir === undefined ? {} : { workdir }), env, command });
+
+  // The probe the derivation runs: its markers around what the user's shell was
+  // holding, NUL-separated as `/proc/self/environ` prints it.
+  const probe = /echo -n (\S+); cat \/proc\/self\/environ/.exec(said);
+  if (probe !== null) {
+    const marker = probe[1];
+    // The container's own `Config.Env` under what the login shell was holding:
+    // every process in a container inherits the environment it was created
+    // with, so an override's `containerEnv` is seen by the probe.
+    const env = { ...(found.env ?? {}), ...(found.probeEnv ?? held.probeEnv ?? { PATH: '/usr/bin', HOME: '/root' }) };
+    process.stdout.write(`${marker}${Object.entries(env)
+      .map(([key, value]) => `${key}=${value}\0`).join('')}${marker}`);
+    keep();
+    process.exit(0);
+  }
+  // Whether the host inside is already in the image. The line is quoted for
+  // `/bin/sh -c`, so the question is looked for inside it rather than at its
+  // start.
+  if (said.includes('command -v ')) {
+    keep();
+    if (held.hostPresent === true) {
+      process.stdout.write('/usr/local/bin/ahpd\n');
+      process.exit(0);
+    }
+    process.exit(1);
+  }
+  // The line is quoted for `/bin/sh -c`, so a prefix is looked for inside it
+  // rather than at its start.
+  const failing = (held.failCommands ?? []).find((prefix) => said.includes(prefix));
+  if (failing !== undefined) {
+    process.stderr.write(`${held.failErr ?? `${failing} failed`}\n`);
+    keep();
+    process.exit(held.failCode ?? 1);
+  }
+  // Recorded and answered, never run: the line starts the host program, and
+  // the host here is a fake that would serve stdio instead of installing.
+  const runnable = (held.passthrough ?? []).find((prefix) => said.includes(prefix));
+  if (runnable === undefined) {
+    process.stdout.write(held.execOut ?? '');
+    keep();
+    process.exit(held.execCode ?? 0);
+  }
   keep();
-  process.stdout.write(`scripted output from ${args[2]}\n`);
-  process.exit(0);
+  release();
+  const child = spawn('/bin/sh', ['-c', command[command.length - 1]], { stdio: ['inherit', 'inherit', 'inherit'] });
+  child.on('close', (code) => process.exit(code ?? 0));
+  child.on('error', (error) => {
+    process.stderr.write(`${error.message}\n`);
+    process.exit(127);
+  });
 }
 
-keep();
-process.stderr.write(`the scripted docker does not answer ${verb}\n`);
-process.exit(2);
+/*
+ * Anything else. `exec` is above and the verb that got here is one this script
+ * does not answer, said rather than run: the relay reads it as the container
+ * refusing what it asked.
+ */
+if (verb !== 'exec') {
+  keep();
+  process.stderr.write(`the scripted docker does not answer ${String(verb)}\n`);
+  process.exit(2);
+}

@@ -4,7 +4,7 @@ import type {
   SecretWork, Write,
 } from '@ahpd/sdk';
 import { bodyText, MANIFEST_SCHEMA, manifestOf, pickedOf } from './manifest.js';
-import type { Profile } from './manifest.js';
+import type { FolderAnswer, Profile } from './manifest.js';
 import { revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
 import { inTurn, roomFor } from './runtime.js';
@@ -40,6 +40,19 @@ export interface ProviderOptions {
   bodyMounts?: boolean;
   /** The images a machine may be made from, as patterns. Absent allows any. */
   images?: string[];
+  /**
+   * The folder a dev container is made from here, resolved, or the sentence for
+   * one this host will not build from. The plugin's own list, reported so a
+   * create body is refused the way a session setting is.
+   */
+  folderFor?: (folder: string) => FolderAnswer;
+  /**
+   * Whether this host makes dev containers at all. Absent means it does.
+   *
+   * The plugin's own `devcontainer: false`, reported so the create form draws no
+   * field for a route the host refuses.
+   */
+  devcontainer?: boolean;
   /**
    * Read one agent's machine needs, as the host knows them.
    *
@@ -133,6 +146,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
       ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
       ...(options.images === undefined ? {} : { images: options.images }),
+      ...(options.devcontainer === undefined ? {} : { devcontainer: options.devcontainer }),
     }),
   }, null, 2);
 
@@ -172,9 +186,9 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
   /*
    * Answered in the words the write takes, not the runtime's own.
    *
-   * It used to answer `docker`'s status, which is a longer vocabulary than the
-   * three below: a client that read `exited` and wrote it back was refused its
-   * own reading. The runtime's word is not lost - `status` is its whole record
+   * `docker`'s own status is a longer vocabulary than the three below, and a
+   * client that read `exited` and wrote it back would be refused its own
+   * reading. The runtime's word is not lost - `status` is its whole record
    * and `State.Status` is in it - but this leaf is the one a client round-trips,
    * so it says only what it will accept.
    */
@@ -245,6 +259,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.profiles === undefined ? {} : { profiles: options.profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
         ...(options.images === undefined ? {} : { images: options.images }),
+        ...(options.devcontainer === undefined ? {} : { devcontainer: options.devcontainer }),
       }),
     }),
 
@@ -358,6 +373,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(profiles === undefined ? {} : { profiles }),
         ...(options.bodyMounts === undefined ? {} : { bodyMounts: options.bodyMounts }),
         ...(options.images === undefined ? {} : { images: options.images }),
+        ...(options.folderFor === undefined ? {} : { folderFor: options.folderFor }),
         ...(options.needsOf === undefined ? {} : { needsOf: options.needsOf }),
         ...(values === undefined ? {} : { needValues: values }),
         ...(owner === undefined ? {} : { owner }),

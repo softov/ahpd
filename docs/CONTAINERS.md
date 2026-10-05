@@ -10,12 +10,13 @@ One object, `computer://<id>`, can be made two ways - a *recipe*:
 
 | Recipe | Where the container comes from | What runs inside |
 | --- | --- | --- |
-| a folder | the folder's own `devcontainer.json`, read by the Dev Container CLI | either the backend's process through `devcontainer exec`, or a whole `ahpd` reached through the relay |
+| a folder | the folder's own `devcontainer.json`, read by the Dev Container CLI | either the backend's process through `docker exec`, or a whole `ahpd` reached through the relay |
 | a profile | a manifest a person writes: image, mounts, working directory | the backend's process through the `computers` port, or a nested host |
 
 Which recipe a computer is is written on the container itself: every computer carries `ahpd.computer=1`, and one made from a folder also carries `ahpd.devcontainer.folder=<folder>`.
-That second label is what says a machine is reached through `devcontainer exec` rather than `docker exec`, and it is what the picker reads to know a folder already has a computer.
-A container made by hand with `devcontainer up` and without those labels is not a computer: it is not listed, and no session here reaches it.
+That second label is what the picker reads to know a folder already has a computer; how a command reaches the container is another label, `devcontainer.metadata`, which is where the CLI leaves the folder's own configuration and what the user and the environment are derived from.
+Both kinds of computer are reached the same way, by `docker exec`: the Dev Container CLI makes the container and is not run again.
+A container made by hand with `devcontainer up`, which carries the CLI's own `devcontainer.local_folder=<folder>` and neither label here, is not a computer until a connect adopts it by that label; from then on it is recorded in `computers.json` beside the daemon's configuration, and listed, metered and found again by its folder like any other.
 
 A computer made from a folder is listed, picked and reached like any other.
 It survives the connection and the client that made it: a relay that ends or a socket that drops stops the host inside, and the container stays where the CLI can reuse it.
@@ -27,14 +28,15 @@ The decisions are [a computer is an object a person manages](../.project/decisio
 
 ## Asking for one
 
-A create body names the folder instead of an image:
+A create body names the folder instead of an image, as a flat source choice:
 
 ```json
-{ "devcontainer": { "folder": "/path/to/repo" } }
+{ "source": "devcontainer", "devcontainer": "/path/to/repo", "image": "debian:bookworm-slim" }
 ```
 
-The two are exclusive, and a folder that is not there or has no `.devcontainer/devcontainer.json` or `.devcontainer.json` is refused before the CLI runs.
-The create form a client draws from the host's manifest offers no such field: the manifest is a flat set of properties and this source is not one of them, so a body written by hand or by a client that knows the field is the route.
+`source` is what the create form offers a person, and the two recipes are exclusive: a body whose `source` is `image` reads the image fields and ignores the folder, and one whose `source` is `devcontainer` requires the folder and is refused without it.
+The form a client draws from the host's manifest sends `source` for this reason, and the object form above still works for a client that writes it by hand.
+A folder that is not there or has no `.devcontainer/devcontainer.json` or `.devcontainer.json` is refused before the CLI runs.
 
 A session may also name the source:
 
@@ -43,7 +45,7 @@ A session may also name the source:
 ```
 
 The picker offers that row for the session's own folder, when the folder has a `devcontainer.json` and no computer is labelled with it.
-The machine is made when the session starts, with the session agent's `machine()` needs as `--mount` and `--remote-env`, and what the session runs in is then the ordinary `computer://<id>`.
+The machine is made when the session starts, with the session agent's `machine()` needs delivered as they are meant - a read-only need through the override config's `mounts`, an environment need as `containerEnv` in that same config - and what the session runs in is then the ordinary `computer://<id>`.
 Once the computer exists the picker offers its `computer://` row and the source row is gone, so nothing makes a second container for one folder.
 
 ## What the host needs
@@ -52,17 +54,22 @@ Docker, and the Dev Container CLI (`@devcontainers/cli`, whose program is `devco
 Both are checked by asking each program for its version, and `_meta['vscode.devContainers']` is `true` only when both answer.
 A host without the CLI advertises nothing, so a client never offers the flow against it: that is why the key is a probe and not a setting.
 
-The launcher is contributed by the computer plugin, whose `devcontainer` option names the CLI and can switch the whole thing off:
+The launcher is contributed by the computer plugin, whose `devcontainer` option names the CLI and, given `false`, switches every dev container route off at once: the create body's folder source, the `devcontainer://<folder>` row, the `devcontainer://<folder>` session setting and the relay's `connect`.
 
 ```json
 { "name": "@ahpd/computer", "options": { "devcontainer": { "command": "npx", "args": ["-y", "-p", "@devcontainers/cli", "devcontainer"] } } }
 ```
 
-The same option is the CLI a computer is made with, so the `up` and `exec` behind a session and the `up` and `exec` behind a relay are one program.
+The same option is the CLI a computer is made with, and it is the only thing it is run for: it runs `up` to make the container, and every command afterwards is a `docker exec`, so the `up` behind a session and the `up` behind a relay are one program.
+
+`folders` under that key is the allowlist: a list of absolute host paths, compared resolved, of which a dev container may be made.
+With no list, any folder is allowed; with one, a folder outside it is refused with a sentence naming it on each of the four routes.
+An entry that is not an absolute path is refused when the options are read, rather than being a folder nothing can match.
 
 Anything else under that key is a deployment fact.
 `host` is the program that runs inside the container, and it defaults to `ahpd`, the command the install step provides.
-`install` is how that step runs: a shell command, or `false` to skip it along with the probe, for an operator whose image already has a host or whose `host` names something else.
+`install` is how that step runs: a shell command, or `false` to skip it, for an operator whose image already has a host or whose `host` names something else.
+The probe is not part of it: the environment every command runs in is read once per container whatever this is set to, because a command needs it whether or not anything was installed.
 `plugins` is what the host inside loads, and it is the one option with no useful default.
 The host in there is an `ahpd` of the same build, and this one bundles no backend either, so a list with nothing in it is a process that exits on startup.
 `available()` answers false on an empty list, so a client is never offered a flow that could only fail, and the reason is on the log because a list nobody filled in is a configuration somebody can fix.
@@ -125,19 +132,30 @@ The grant is `container:write` and not `computer:write`, because the parameters 
 ## How the host inside runs
 
 1. The folder must be a dev container: `.devcontainer/devcontainer.json` or `.devcontainer.json`, refused with a sentence naming the folder if neither is there.
-2. A computer already labelled with the folder is reused.
-   When there is none, `devcontainer up --log-level debug --workspace-folder <dir> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<dir>` makes it, and the CLI's own JSON is read off whichever line carries it - the CLI logs as it works, so the result is one line among several.
-   The labels are the CLI's own way of finding a container, so the `up` and the `exec` below reach the folder's own container rather than a second one.
-3. Inside, `command -v <host[0]>` decides whether the image already has a host.
+2. A computer already labelled with the folder is reused, and so is one that is stopped: `devcontainer up` starts it and keeps its id.
+   When there is none of ours, `devcontainer up --log-level debug --workspace-folder <dir> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<dir>` makes it, and the CLI's own JSON is read off whichever line carries it - the CLI logs as it works, so the result is one line among several.
+   The labels are the CLI's own way of finding a container, so a second connect, or a connect after a session made one, reaches the same container rather than a second one.
+   A container the CLI made before those labels were on it carries only `devcontainer.local_folder=<dir>`; one that is there is adopted instead, started with `docker start` and taken as it stands, and recorded in `computers.json` under its container id, which is the last thing that stops a folder's own container from being made twice. A later connect, or the first one after a restart, finds it again by that record and does not run `up`.
+3. The environment is derived once per container, before anything runs in it: the user is the last `remoteUser` any entry of the folder's configuration named, else `containerUser`, else the image's own `User`, else `root`; the environment is what that user's login shell was holding, read through one probe of `/proc/self/environ` inside the container, with each entry's `remoteEnv` laid over it in order.
+   A `${containerEnv:NAME}` in a `remoteEnv` resolves from the container's own environment and a `${localEnv:NAME}` from the process reaching it, so both are as the CLI's own `exec` resolves them.
+   The probe's answer is kept in this daemon's `computers.json`, keyed by container id, and read back for the same container next time; a container the CLI made again is a container whose shell has started afresh and is probed again.
+   What is kept is what the shell was holding when the container was made, so a dotfile changed afterwards is not seen until the container is made again.
+4. Inside, `command -v <host[0]>` decides whether the image already has a host.
    A container without one gets `npm i -g @ahpd/server@<this version>`, so the two hosts are the same build.
    Whether or not that line ran, every `plugins` entry that is a package name and is not already in the container's configuration directory is put there with `<host> plugin install --no-enable`, because a bare name resolves from that directory and nowhere else.
-4. The nested host's configuration is written to a temporary file with its mode set to 600, through a shell command built from base64 and a name nothing chose.
+5. The nested host's configuration is written to a temporary file with its mode set to 600, through a shell command built from base64 and a name nothing chose.
    No credential goes in it: the relayed client signs in to the host inside, which is where a token for the container's models belongs.
-5. The host is started as `ahpd --stdio --path <remoteWorkspaceFolder> --config-file <that file>`, and the CLI's exec carries this process's pipes into the container.
+6. The host is started as `ahpd --stdio --path <remoteWorkspaceFolder> --config-file <that file>`, by the same `docker exec` every other command is, and that exec carries this process's pipes into the container.
    Nothing listens in there, so the only way to reach that host is through this one - decision [the nested host speaks AHP over stdio](../.project/decisions/a-nested-host-speaks-stdio.md).
-6. A line the host writes that is JSON is a frame and becomes `relayMessage`; a line that is not is the CLI talking and becomes `output`.
+7. A line the host writes that is JSON is a frame and becomes `relayMessage`; a line that is not is the CLI talking and becomes `output`.
 
-The same container is what a session reaches: `how()` for a dev container computer answers `devcontainer exec --workspace-folder <folder> --id-label ahpd.computer=1 --id-label ahpd.devcontainer.folder=<folder> <command>` with the folder read from the container's own label, so the backend runs as the config's `remoteUser` with the file's environment.
+The same container is what a session reaches, and by the same line every step above ran:
+
+```
+docker exec -i -u <user> -e <each of the derived environment> -w <remoteWorkspaceFolder> <containerId> <command>
+```
+
+The id is the one `up` answered with, never the folder and never the name, and the user and the environment are the definition's own, so the backend runs as the config's `remoteUser` with the file's environment - decision [a dev container is reached by docker exec](../.project/decisions/a-dev-container-is-reached-by-docker-exec.md).
 
 ## `ahpd --stdio`
 
@@ -175,7 +193,7 @@ with a configuration naming the computer plugin and an open door:
 ```
 
 Then, from a client that serves the four methods: `connect` with `{ "connectionId": "box", "workspaceFolder": "/tmp/devc-work", "name": "Box" }`, followed by `relaySend` carrying an `initialize` and a `ping`.
-The same folder may also be reached as a computer, by writing `{"devcontainer": {"folder": "/tmp/devc-work"}}` to `computer://box` or by starting a session with `"computer": "devcontainer:///tmp/devc-work"`.
+The same folder may also be reached as a computer, by writing `{"source": "devcontainer", "devcontainer": "/tmp/devc-work", "image": "debian:bookworm-slim"}` to `computer://box` or by starting a session with `"computer": "devcontainer:///tmp/devc-work"`.
 What was seen with the relay on 2026-09-24 is in the plan's [implemented.md](../.project/plans/container/01-a-session-in-a-dev-container/implemented.md): the CLI made the container, the host was installed into it, and the frames came back.
 
 ## What this is not

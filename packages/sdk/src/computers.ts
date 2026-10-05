@@ -7,7 +7,7 @@ import type { Owner } from './types/usage.js';
  *
  * A session key is the person's, and the host hands it to whichever backend was
  * named in `Start.settings`. A backend that spawns its process through the
- * host's `computers` port honours it, and there is exactly one of those today,
+ * host's `computers` port honours it, and the one that does is
  * `@ahpd/agent-acp`. Every other backend must refuse rather than run on the
  * host and leave a person believing they are inside a sandbox they are not in -
  * decision `a-backend-reaches-a-computer-through-a-port`.
@@ -36,8 +36,8 @@ export const machineAsked = (start: Start): string | undefined => {
  * A setting that names a source to make a machine from, or nothing.
  *
  * A `computer://<id>` names a machine that already exists, and an empty value
- * runs the session on this host. Anything else - `disposable:<profile>` today,
- * `devcontainer://<folder>` after it - is a source the plugin that owns the
+ * runs the session on this host. Anything else - `disposable:<profile>`,
+ * `devcontainer://<folder>` - is a source the plugin that owns the
  * machines knows how to make one from, which is what the host asks about
  * before a session starts.
  */
@@ -58,7 +58,7 @@ export const computerId = (said: unknown): string | undefined => {
  * The value a session should run with, making a machine when it names a source.
  *
  * The one session-time create, shared by every kind of source a plugin serves:
- * a disposable profile today and a folder's dev container after it. A value
+ * a disposable profile and a folder's dev container. A value
  * that already names a machine comes back unchanged, so a restart before the
  * first turn is the same call with the same answer and no second machine.
  *

@@ -1,10 +1,13 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { devContainer, hasDefinition, parseUp, pluginInstallLine } from '../src/devcontainer.js';
+import { devContainer, hasDefinition, parseUp, pluginInstallLine, reachOf } from '../src/devcontainer.js';
+import type { Probe } from '../src/devcontainer.js';
+import { adoptedDevContainer } from '../src/runtime.js';
+import type { DockerOptions } from '../src/runtime.js';
 import type { ContainerSink } from '../../sdk/src/types/containers.js';
 
 /*
@@ -16,13 +19,16 @@ import type { ContainerSink } from '../../sdk/src/types/containers.js';
  */
 
 const CLI = fileURLToPath(new URL('./fixtures/devcontainer.mjs', import.meta.url));
+const DOCKER = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url));
 const HOST = fileURLToPath(new URL('./fixtures/container-host.mjs', import.meta.url));
 
 let root: string;
 let state: string;
+let dockerState: string;
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
   state = join(root, 'cli.json');
+  dockerState = join(root, 'docker.json');
 });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
@@ -31,13 +37,29 @@ function workspace(withDefinition = true): string {
   const folder = mkdtempSync(join(root, 'work-'));
   if (withDefinition) {
     mkdirSync(join(folder, '.devcontainer'), { recursive: true });
-    writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+    writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
   }
   return folder;
 }
 
+/**
+ * Where the CLI mounts a folder, which is `/workspaces/<basename>` unless the
+ * override says `workspaceMount` - the path the real CLI works out, so a test
+ * reads it rather than naming it.
+ */
+const at = (folder: string): string => `/workspaces/${basename(folder)}`;
+
 const wrote = (extra: Record<string, unknown> = {}): void => {
   writeFileSync(state, JSON.stringify({ calls: [], commands: [], ...extra }));
+  /*
+   * The scripted Docker's half as well, from the same record.
+   *
+   * `up` puts the container in there, and everything after it - whether the
+   * host inside is present, what a command answers, which line is refused - is
+   * that container's own property rather than the CLI's, so one set of answers
+   * reaches both.
+   */
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], ...extra }));
 };
 const read = (): { calls: string[][]; commands: string[] } =>
   JSON.parse(readFileSync(state, 'utf8')) as { calls: string[][]; commands: string[] };
@@ -50,12 +72,21 @@ function sink(): ContainerSink & { said: string[]; out: string[]; closed: (strin
   return { said, out, closed, message: (t) => { said.push(t); }, output: (t) => { out.push(t); }, close: (why) => { closed.push(why); } };
 }
 
-/** The launcher, with the fake CLI, and the fake Docker being this same node. */
+/**
+ * The launcher, with the fake CLI making the container and the fake Docker
+ * answering for it.
+ *
+ * The CLI runs `up` and nothing else, so every command inside the container is
+ * the Docker fixture's `exec` - which is where this test now reads what the
+ * launcher ran.
+ */
 const launcher = (extra: Record<string, unknown> = {}, options: { docker?: string } = {}) => devContainer({
   command: process.execPath,
   args: [CLI],
-  docker: options.docker ?? process.execPath,
-  env: { DEVCONTAINER_FAKE_STATE: state },
+  docker: options.docker === undefined
+    ? { command: process.execPath, args: [DOCKER], env: { DOCKER_FAKE_STATE: dockerState } }
+    : { command: options.docker, args: [] },
+  env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState },
   host: [process.execPath, HOST],
   // A backend, because `connect` refuses a host inside that would have none.
   // The fake host below never reads the configuration, so this only has to be
@@ -63,6 +94,27 @@ const launcher = (extra: Record<string, unknown> = {}, options: { docker?: strin
   plugins: ['@ahpd/agent-cofold'],
   ...extra,
 });
+
+/** What the scripted Docker recorded, as its own calls and the commands it ran. */
+const ran = (): {
+  calls: string[][];
+  machines: { id?: string; name: string; labels?: Record<string, string>; state?: string }[];
+  commands: { id: string; user?: string; workdir?: string; env: Record<string, string>; command: string[] }[];
+} =>
+  (existsSync(dockerState)
+    ? JSON.parse(readFileSync(dockerState, 'utf8'))
+    : { calls: [], machines: [], commands: [] }) as never;
+
+/**
+ * The shell lines the relay ran inside the container.
+ *
+ * Every command is a `docker exec ... /bin/sh -c <line>`, and the derivation's
+ * own two probes are in there too: what is asserted is what the launcher asked
+ * the container to do, not how it worked out how to ask.
+ */
+const shell = (): string[] => ran().commands
+  .map((one) => one.command.join(' ').replace(/^\/bin\/sh -c /, ''))
+  .filter((one) => !one.startsWith('getent passwd') && !one.includes('/proc/self/environ'));
 
 const until = async (check: () => boolean, times = 600): Promise<void> => {
   for (let i = 0; i < times; i++) {
@@ -73,6 +125,14 @@ const until = async (check: () => boolean, times = 600): Promise<void> => {
 
 const connect = { connectionId: 'a', workspaceFolder: '', name: 'Box' };
 
+/** The same Docker the launcher runs, as the runtime's own options. */
+const dockered = (): DockerOptions => ({
+  command: process.execPath,
+  args: [DOCKER],
+  env: { DOCKER_FAKE_STATE: dockerState },
+  label: 'ahpd.computer=1',
+});
+
 it('answers Docker and the launcher as two questions', async () => {
   wrote();
   expect(await launcher().docker()).toBe(true);
@@ -82,7 +142,7 @@ it('answers Docker and the launcher as two questions', async () => {
   expect(await launcher({}, { docker: '/nonexistent/docker' }).available()).toBe(false);
   // No CLI is a yes to Docker and a no to a container, which is the difference
   // the two methods are for.
-  const noCli = devContainer({ command: '/nonexistent/devcontainer', docker: process.execPath, env: { DEVCONTAINER_FAKE_STATE: state } });
+  const noCli = devContainer({ command: '/nonexistent/devcontainer', docker: { command: process.execPath, args: [] }, env: { DEVCONTAINER_FAKE_STATE: state } });
   expect(await noCli.docker()).toBe(true);
   expect(await noCli.available()).toBe(false);
 });
@@ -147,7 +207,7 @@ it('makes the container the folder asks for, and answers the reference shape', a
 
   expect(made).toEqual({
     address: 'devcontainer:abc123',
-    remoteWorkspaceFolder: '/workspaces/Box',
+    remoteWorkspaceFolder: at(folder),
     hostWorkspaceFolder: folder,
   });
   // The id labels are the same pair every other call about this folder uses,
@@ -176,8 +236,9 @@ it('refuses with the CLI\'s own words when there is no container', async () => {
 it('installs a host when the image has none, and configures it either way', async () => {
   wrote({ hostPresent: false, passthrough: [process.execPath] });
   const where = sink();
-  await launcher().connect({ ...connect, workspaceFolder: workspace() }, where);
-  const commands = read().commands;
+  const folder = workspace();
+  await launcher().connect({ ...connect, workspaceFolder: folder }, where);
+  const commands = shell();
   // The program `host` actually names, not the default's: a deployment that
   // runs a checkout mounted into the container was told its image had no host
   // and watched a package it will never run being installed.
@@ -193,7 +254,7 @@ it('installs a host when the image has none, and configures it either way', asyn
   const encoded = /printf %s ([A-Za-z0-9+/=]+) \| base64 -d/.exec(commands[3] ?? '')?.[1];
   expect(encoded).toBeDefined();
   expect(JSON.parse(Buffer.from(encoded as string, 'base64').toString('utf8'))).toEqual({
-    paths: ['/workspaces/Box'],
+    paths: [at(folder)],
     sessions: 'memory',
     automations: 'memory',
     // Always written, and never empty: the host inside needs a backend the
@@ -202,12 +263,12 @@ it('installs a host when the image has none, and configures it either way', asyn
   });
   // The host itself is the next exec, which is a stream rather than a
   // collection: it is recorded by the fake as it starts.
-  await until(() => read().commands.length >= 5);
+  await until(() => shell().length >= 5);
   // And it is started in stdio mode on that file, with no port.
-  expect(read().commands[4]).toContain('--stdio');
-  expect(read().commands[4]).toContain('--path');
-  expect(read().commands[4]).toContain('--config-file');
-  expect(read().commands[4]).not.toContain('--port');
+  expect(shell()[4]).toContain('--stdio');
+  expect(shell()[4]).toContain('--path');
+  expect(shell()[4]).toContain('--config-file');
+  expect(shell()[4]).not.toContain('--port');
   await until(() => where.said.length > 0 || where.closed.length > 0);
 });
 
@@ -215,7 +276,7 @@ it('pins the host it installs to the version it was given', async () => {
   wrote({ hostPresent: false, passthrough: [process.execPath] });
   const where = sink();
   await launcher({ version: '0.8.77' }).connect({ ...connect, workspaceFolder: workspace() }, where);
-  expect(read().commands[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
+  expect(shell()[1]).toBe('npm i -g @ahpd/server@0.8.77 --allow-scripts=node-pty');
   await until(() => where.said.length > 0 || where.closed.length > 0);
 });
 
@@ -224,8 +285,8 @@ it('skips the install entirely when the operator says the host is there', async 
   await launcher({ install: false }).connect({ ...connect, workspaceFolder: workspace() }, sink());
   // The launch is a stream rather than a collection, so it is recorded as it
   // starts; the configuration write has already returned by now.
-  await until(() => read().commands.some((one) => one.includes('--stdio')));
-  const commands = read().commands;
+  await until(() => shell().some((one) => one.includes('--stdio')));
+  const commands = shell();
   // No probe and no install: the two commands are the configuration and the
   // launch, which is what a checkout mounted into the container needs.
   expect(commands.filter((one) => one.startsWith('command -v'))).toEqual([]);
@@ -239,16 +300,16 @@ it('skips the install entirely when the operator says the host is there', async 
 it('installs with the command it was given instead of the default', async () => {
   wrote({ hostPresent: false, passthrough: [] });
   await launcher({ install: 'echo installed' }).connect({ ...connect, workspaceFolder: workspace() }, sink());
-  expect(read().commands).toContain('echo installed');
+  expect(shell()).toContain('echo installed');
 });
 
 it('does not install over a host the image already has', async () => {
   wrote({ hostPresent: true, passthrough: [process.execPath] });
   await launcher().connect({ ...connect, workspaceFolder: workspace() }, sink());
-  expect(read().commands.filter((one) => one.startsWith('npm i -g'))).toEqual([]);
+  expect(shell().filter((one) => one.startsWith('npm i -g'))).toEqual([]);
   // The backend is still installed, because an image built with the server
   // may still have none - which is the gap this line closes.
-  expect(read().commands.filter((one) => one.includes('plugin install'))).toHaveLength(1);
+  expect(shell().filter((one) => one.includes('plugin install'))).toHaveLength(1);
 });
 
 it('installs only the package names, leaving a path for the container', async () => {
@@ -258,7 +319,7 @@ it('installs only the package names, leaving a path for the container', async ()
   // A path is resolved against the container's own working directory and a
   // scheme is the runtime's to resolve, so neither is this launcher's to
   // install.
-  expect(read().commands.filter((one) => one.includes('plugin install')))
+  expect(shell().filter((one) => one.includes('plugin install')))
     .toEqual([pluginInstallLine([process.execPath, HOST], ['@ahpd/agent-cofold'])]);
 });
 
@@ -352,6 +413,146 @@ it('writes a frame to the host, and stops it on disconnect', async () => {
   port.disconnect('a');
 });
 
+/*
+ * A container the CLI made for a folder before this host labelled it.
+ *
+ * It carries the CLI's own record of the folder and none of the two id labels
+ * `up` is asked with, so `up` would not find it and would make a second
+ * container over one `devcontainer.json`. The connect asks for it by that label
+ * and starts it, which is what `up` would have done to it.
+ */
+it('adopts a container the CLI made for the folder before it labelled it, and makes no second', async () => {
+  const folder = workspace();
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{
+      name: 'older',
+      image: 'devcontainer',
+      // What the CLI leaves and nothing of this host's: no `ahpd.computer`, no
+      // `ahpd.devcontainer.folder`, so a listing answers nothing for it.
+      labels: { 'devcontainer.local_folder': folder },
+      mounts: [`${folder}:${at(folder)}`],
+      env: { PATH: '/usr/bin' },
+      // What the user's login shell holds, which is not the image's own: the
+      // probe answers this, and a `docker exec` inherits the image's.
+      probeEnv: { PATH: '/from-the-shell' },
+      state: 'exited',
+    }],
+    calls: [],
+    hostPresent: true,
+    passthrough: [],
+  }));
+  writeFileSync(state, JSON.stringify({ calls: [], commands: [], metadata: [{ remoteUser: 'dev' }] }));
+
+  await launcher({
+    // Nothing of ours answers for the folder, which is what an older connect's
+    // container looks like from here.
+    existing: async () => undefined,
+    adopted: async (asked: string) => adoptedDevContainer(dockered(), asked),
+  }).connect({ ...connect, workspaceFolder: folder }, sink());
+
+  // The CLI was not asked to bring anything up, and the container it adopted is
+  // the one every command went into, after it was started.
+  expect(read().calls).toEqual([]);
+  expect(ran().machines).toHaveLength(1);
+  expect(ran().machines[0]?.state).toBe('running');
+  expect(ran().commands.filter((one) => one.id === 'older').length).toBeGreaterThan(4);
+  // And it is probed like any other, so every command after the probe runs in
+  // the environment that probe answered rather than in this process's.
+  expect(ran().commands.filter((one) => one.id === 'older')
+    .some((one) => one.env.PATH === '/from-the-shell')).toBe(true);
+});
+
+/*
+ * `docker start` is the whole of what brings an adopted container up, so a
+ * container it will not start is refused there, in Docker's own words, and
+ * nothing is run in it.
+ */
+it('refuses an adopted container that will not start, with Docker\'s own sentence', async () => {
+  const folder = workspace();
+  writeFileSync(dockerState, JSON.stringify({
+    machines: [{
+      name: 'older',
+      image: 'devcontainer',
+      bare: true,
+      labels: { 'devcontainer.local_folder': folder },
+      mounts: [`${folder}:${at(folder)}`],
+      state: 'exited',
+    }],
+    calls: [],
+    failStart: 'Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /gone',
+  }));
+  writeFileSync(state, JSON.stringify({ calls: [], commands: [] }));
+
+  await expect(launcher({
+    existing: async () => undefined,
+    adopted: async (asked: string) => adoptedDevContainer(dockered(), asked),
+  }).connect({ ...connect, workspaceFolder: folder }, sink()))
+    .rejects.toThrow(/could not be started: Error response from daemon: invalid mount config.*does not exist: \/gone/);
+  expect(read().calls).toEqual([]);
+  expect(ran().commands ?? []).toEqual([]);
+});
+
+/*
+ * `${localEnv:NAME}` is read from the environment the CLI is spawned with, the
+ * launcher's own `env` option included, which is the environment the CLI
+ * resolves it against when it runs the command itself.
+ */
+it('resolves a localEnv reference from the environment the CLI is spawned with', async () => {
+  wrote({
+    hostPresent: true,
+    passthrough: [],
+    metadata: [{ remoteUser: 'vscode', remoteEnv: { FROM_OPTION: '${localEnv:AHPD_TEST_FROM_OPTION}' } }],
+  });
+  await launcher({
+    env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState, AHPD_TEST_FROM_OPTION: 'the-option' },
+  }).connect({ ...connect, workspaceFolder: workspace() }, sink());
+  const asked = ran().commands.find((one) => one.command.join(' ').includes('command -v'));
+  expect(asked?.env.FROM_OPTION).toBe('the-option');
+});
+
+it('falls back to a localEnv reference\'s default when the name is not set', () => {
+  const found = {
+    Id: 'abc123',
+    Config: {
+      Labels: { 'devcontainer.metadata': JSON.stringify([{ remoteEnv: { A: '${localEnv:AHPD_UNSET:fallback}', B: '${localEnv:AHPD_SET:fallback}' } }]) },
+      Env: [],
+    },
+  };
+  expect(reachOf(found, undefined, { AHPD_SET: 'set' }).env).toEqual({ A: 'fallback', B: 'set' });
+});
+
+/*
+ * What the CLI prints goes to the client, and the CLI prints the `docker run`
+ * it builds with every `-e` on it. A pipe hands that over in pieces cut
+ * anywhere, so a value is masked a line at a time, and a value with a space in
+ * it is masked whole.
+ */
+it('masks a value cut across two reads, and a quoted one whole', async () => {
+  wrote({
+    hostPresent: true,
+    passthrough: [],
+    probeEnv: { PATH: '/usr/bin', TOKEN: 'probe-secret' },
+    upLog: ['Start: Run: docker run -e SECR', 'ET=hunter2 -e "QUOTED=a b c" --env=OTHER=\'d e\' x\n'],
+  });
+  const where = sink();
+  await launcher().connect({ ...connect, workspaceFolder: workspace() }, where);
+  const out = where.out.join('');
+  expect(out).toContain('SECRET=<set>');
+  expect(out).not.toContain('hunter2');
+  expect(out).not.toContain('a b c');
+  expect(out).not.toContain('d e');
+  // The commands the launcher echoes name each variable and never its value.
+  expect(out).toContain(`'-e' 'TOKEN'`);
+  expect(out).not.toContain('probe-secret');
+});
+
+it('masks the values in the error a failed up is refused with', async () => {
+  wrote({ upFailure: 'Start: Run: docker run -e SECRET=hunter2 base\nError: the image would not pull' });
+  const refused = await launcher().connect({ ...connect, workspaceFolder: workspace() }, sink()).then(() => undefined, (error: unknown) => error as Error);
+  expect(refused?.message).toMatch(/would not pull/);
+  expect(refused?.message).not.toContain('hunter2');
+});
+
 it('starts nothing when the folder has no definition', async () => {
   wrote();
   const where = sink();
@@ -360,4 +561,156 @@ it('starts nothing when the folder has no definition', async () => {
   expect(existsSync(state)).toBe(true);
   expect(read().calls).toEqual([]);
   expect(where.said).toEqual([]);
+});
+
+/*
+ * Everything inside the container is reached by Docker, against the id `up`
+ * answered with - decision `a-dev-container-is-reached-by-docker-exec`.
+ *
+ * The CLI runs `up` and nothing else, so its own record holds that one verb and
+ * every command after it is the scripted docker's. What the id is worth is
+ * what the CLI left out of it: nothing here looks a container up by folder.
+ */
+it('reaches every command by the id the CLI answered with, and asks the CLI only for `up`', async () => {
+  wrote({ hostPresent: true, passthrough: [] });
+  const folder = workspace();
+  await launcher().connect({ ...connect, workspaceFolder: folder }, sink());
+
+  expect(read().calls.map((one) => one[0])).toEqual(['up']);
+  const execs = ran().calls.filter((one) => one[0] === 'exec');
+  expect(execs.length).toBeGreaterThan(4);
+  for (const one of execs) {
+    expect(one.slice(0, 4)).toEqual(['exec', '-i', '-u', 'dev']);
+    expect(one).toContain('abc123');
+  }
+  // The launcher's own commands run in the workspace, as every other command
+  // in there does; only the probe's two lines are run with no `-w`.
+  await until(() => shell().some((one) => one.includes('--stdio')));
+  const own = ran().commands.filter((one) => !one.command.join(' ').includes('/proc/self/environ') && one.command[0] !== 'getent');
+  expect(own.length).toBeGreaterThan(2);
+  expect(own.map((one) => one.workdir)).toEqual(own.map(() => at(folder)));
+});
+
+/*
+ * A container the folder already has is reached rather than made again, but
+ * only while it is up. A stopped one is nothing to `docker exec`, so `up` runs
+ * again, and the id labels are what make the CLI answer the same container
+ * instead of a second one beside it.
+ */
+it('runs up for a stopped container before the first command in it, and keeps its id', async () => {
+  wrote({ hostPresent: true, passthrough: [] });
+  const folder = workspace();
+  const relay = launcher({
+    // What the plugin hands in: the computer the folder is, and whether it is
+    // up, read here from the same record the scripted Docker holds.
+    existing: async () => {
+      const found = ran().machines.find((one) => (one.labels ?? {})['ahpd.devcontainer.folder'] === folder);
+      return found === undefined
+        ? undefined
+        : { id: found.name, running: (found.state ?? 'running') === 'running' };
+    },
+  });
+  await relay.connect({ ...connect, workspaceFolder: folder }, sink());
+  const id = ran().machines[0]?.id as string;
+  // This launcher already knows where the folder is inside the container, so
+  // the next connect is the one that could skip `up` - if the container is up.
+  const stopped = JSON.parse(readFileSync(dockerState, 'utf8')) as { machines: { name: string; state?: string }[] };
+  stopped.machines = [{ ...stopped.machines[0]!, state: 'exited' }];
+  writeFileSync(dockerState, JSON.stringify(stopped));
+  await relay.connect({ ...connect, workspaceFolder: folder }, sink());
+
+  expect(read().calls.filter((one) => one[0] === 'up')).toHaveLength(2);
+  expect(ran().machines).toHaveLength(1);
+  expect(ran().machines[0]?.id).toBe(id);
+  // The commands after the second `up` ran in it, which a stopped container
+  // refuses with `container <id> is not running`.
+  expect(ran().commands.filter((one) => one.id === id).length).toBeGreaterThan(4);
+});
+
+/*
+ * The derivation the CLI makes, copied rather than guessed at: the user is the
+ * last one any entry of the folder's configuration named, and the environment
+ * is the user's own login shell as it was holding it, with the entries'
+ * `remoteEnv` laid over it in order - each value read for what it refers to.
+ */
+it('runs each command as the folder\'s own user, in the environment its shell held', async () => {
+  wrote({
+    hostPresent: true,
+    passthrough: [],
+    containerEnv: { USER: 'vscode' },
+    metadata: [
+      { remoteUser: 'root' },
+      { remoteUser: 'vscode', remoteEnv: {
+        PATH: 'from-remote',
+        GREETING: 'hello',
+        WHO: '${containerEnv:USER}',
+        FROM_LOCAL: '${localEnv:PATH}',
+      } },
+    ],
+  });
+  await launcher().connect({ ...connect, workspaceFolder: workspace() }, sink());
+
+  const asked = ran().commands.find((one) => one.command.join(' ').includes('command -v'));
+  // The later entry wins: an image's own user and the folder's are both here,
+  // and the folder's is the one the machine is for.
+  expect(asked?.user).toBe('vscode');
+  expect(asked?.env).toEqual({
+    // What the shell held, with the folder's own path over it rather than
+    // beside it - a command run in the entry's PATH, not in the image's.
+    PATH: 'from-remote',
+    HOME: '/root',
+    GREETING: 'hello',
+    // From the container itself, and from this process, which is what the two
+    // references mean.
+    WHO: 'vscode',
+    FROM_LOCAL: process.env.PATH,
+  });
+  // The `containerEnv` entry is not among them, and that is the point: the
+  // container already holds it and every `docker exec` inherits it, so passing
+  // it would put the value in this host's process list for nothing.
+  expect(asked?.env.USER).toBeUndefined();
+});
+
+/*
+ * The probe is run once for a container, and kept beside the daemon's own
+ * configuration rather than by the CLI - which keeps none. A container the CLI
+ * made again is a container with a shell that has since started afresh, so it
+ * is probed again; a daemon that has not seen the container reads back what
+ * the last one kept and runs nothing.
+ */
+it('probes once for a container, and reads the kept probe back on a later daemon', async () => {
+  const probed = (): number => ran().commands
+    .filter((one) => one.command.join(' ').includes('/proc/self/environ')).length;
+  wrote({ hostPresent: true, passthrough: [] });
+  const probes = new Map<string, Probe>();
+  const store = { of: (id: string) => probes.get(id), keep: (id: string, probe: Probe) => { probes.set(id, probe); } };
+
+  const first = launcher({ probes: store });
+  await first.connect({ ...connect, workspaceFolder: workspace() }, sink());
+  expect(probed()).toBe(1);
+  expect([...probes.keys()]).toEqual(['abc123']);
+
+  // The same container again: it is looked up, and the probe it answered is
+  // the one still kept, so the shell is not run a second time.
+  await first.connect({ ...connect, workspaceFolder: workspace() }, sink());
+  expect(probed()).toBe(1);
+
+  // Another folder's container, which is another container: the kept probe is
+  // of the last one and is replaced rather than believed.
+  const other = workspace();
+  writeFileSync(state, JSON.stringify({
+    calls: [],
+    up: { outcome: 'success', containerId: 'def456', remoteWorkspaceFolder: '/workspaces/Box' },
+    hostPresent: true,
+    passthrough: [],
+  }));
+  await first.connect({ ...connect, workspaceFolder: other }, sink());
+  expect(probed()).toBe(2);
+  expect([...probes.keys()]).toEqual(['abc123', 'def456']);
+
+  // And a daemon that has not seen either of them reads the second entry back
+  // and probes nothing, where a probe would be the same shell answering again.
+  const later = launcher({ probes: store });
+  await later.connect({ ...connect, workspaceFolder: other }, sink());
+  expect(probed()).toBe(2);
 });

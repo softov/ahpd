@@ -268,6 +268,24 @@ it('needs computer:write to name a source for a session, and no more to name a m
   expect(worker.refused()).toEqual(['claude:/two: w may not computer:write here']);
 });
 
+it('needs computer:write to name a folder\'s dev container for a session', async () => {
+  const made = host({
+    users: directory({ w: ['file:read', 'session:read', 'session:write'] }),
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
+  });
+  const worker = await withRole(made, 'w');
+  expect(await call(worker.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+
+  // A dev container made for the session is a machine made for it, held to
+  // the grant a disposable one is - decision
+  // `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+  expect(await call(worker.client, 'createSession', {
+    channel: 'ahp-session:/two', provider: 'claude', config: { computer: 'devcontainer:///w/app' },
+  })).toMatchObject({ code: -32009, message: 'w may not computer:write here' });
+  await worker.send('claude:/one', { type: 'session/configChanged', config: { computer: 'devcontainer:///w/app' } });
+  expect(worker.refused()).toEqual(['claude:/one: w may not computer:write here']);
+});
+
 it('asks an automation\'s owner for computer:write, and refuses a run it cannot check', async () => {
   const store = memoryAutomations();
   const made = host({

@@ -43,6 +43,7 @@ sudo usermod -aG docker "$USER"
 | `memory` | A memory limit for every machine this host makes |
 | `max` | How many may exist at once. `3` |
 | `label` | The label every machine carries. `ahpd.computer=1` |
+| `devcontainer` | The Dev Container CLI, as the program that makes a container from a folder and nothing else. `false` switches every dev container route off, and `folders` is the list of absolute folders one may be made from |
 
 ```json
 {

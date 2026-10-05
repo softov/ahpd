@@ -369,7 +369,7 @@ it('charges a relay container to whoever connected and metered it from the conne
   const configDir = join(dir, 'config');
   const folder = join(dir, 'work');
   mkdirSync(join(folder, '.devcontainer'), { recursive: true });
-  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{}');
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
   const usage = meter();
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(at);
@@ -395,25 +395,115 @@ it('charges a relay container to whoever connected and metered it from the conne
 
   // Whose the container is, in the file beside the configuration: the CLI
   // labels a container only by what identifies it - decision
-  // `a-relay-container-is-owned-by-who-connected`.
-  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({
-    abc123: { owner: 'user:ana' },
+  // `a-relay-container-is-owned-by-who-connected`. The entry holds the
+  // machine's probed environment beside the owner, which is what a command run
+  // in there is reached with.
+  // The machine id is the one a listing answers, which for a container the
+  // CLI named is its Docker name; the probe is kept against the container id.
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toMatchObject({
+    'work-devcontainer': { owner: 'user:ana', probe: { container: 'abc123' } },
   });
 
   // And metered from the moment the connection brought it up, charged to the
   // connection that did.
   vi.setSystemTime(new Date(at.getTime() + 300_000));
-  await providerOf(options).write('computer://abc123/state', said('stopped'));
+  await providerOf(options).write('computer://work-devcontainer/state', said('stopped'));
 
   expect(usage.entries).toEqual([{
     kind: 'computer',
     source: 'computer',
     at: '2026-10-02T12:00:00.000Z',
     seconds: 300,
-    computer: 'abc123',
+    computer: 'work-devcontainer',
     owner: 'user:ana',
     pools: ['user:ana'],
   }]);
+});
+
+/*
+ * A container an older connect made carries no label of this host's and
+ * cannot be given one, so the connect that adopts it records it beside the
+ * configuration under its container id. That record is what makes it a
+ * computer: listed, inspected, found again on the next connect rather than made
+ * a second time, metered to whoever adopted it, and forgotten when removed.
+ */
+it('records an adopted container, lists, inspects and meters it, and forgets it once removed', async () => {
+  const dir = temp();
+  const held = join(dir, 'docker.json');
+  const devState = join(dir, 'dev.json');
+  const configDir = join(dir, 'config');
+  const folder = join(dir, 'work');
+  mkdirSync(join(folder, '.devcontainer'), { recursive: true });
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
+  const id = 'c0ffee00c0ffee00';
+  writeFileSync(held, JSON.stringify({
+    machines: [{
+      id,
+      name: 'older',
+      image: 'devcontainer',
+      bare: true,
+      labels: { 'devcontainer.local_folder': folder },
+      mounts: [`${folder}:/workspaces/work`],
+      state: 'exited',
+    }],
+    calls: [],
+    passthrough: [],
+  }));
+  writeFileSync(devState, JSON.stringify({ calls: [] }));
+  const usage = meter();
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(at);
+  const { loaded } = load(base(usage), held, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      plugins: ['@ahpd/agent-cofold'],
+      install: false,
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: held },
+    },
+  }, configDir);
+  const { options, problems } = await loaded;
+  expect(problems).toEqual([]);
+
+  const client = await serving(options);
+  const connect = (connectionId: string) => client.handle({
+    method: 'vscode/devContainers/connect',
+    params: { connectionId, workspaceFolder: folder, name: 'Box' },
+  });
+  await connect('one');
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toMatchObject({
+    [id]: { owner: 'user:ana', adopted: true },
+  });
+  const provider = options.resourceProviders?.computer as {
+    list(uri: string): Promise<{ name: string }[]>;
+    read(uri: string): Promise<unknown>;
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    remove(uri: string): Promise<void>;
+  };
+  expect((await provider.list('computer://')).map((one) => one.name)).toEqual([id]);
+  await expect(provider.read(`computer://${id}/status`)).resolves.toBeDefined();
+
+  // The second connect finds the same container by its folder, and `up` is
+  // never asked for one.
+  await connect('two');
+  expect(JSON.parse(readFileSync(devState, 'utf8')).calls.filter((one: string[]) => one[0] === 'up')).toEqual([]);
+  expect(dockerHeld(held).machines).toHaveLength(1);
+
+  vi.setSystemTime(new Date(at.getTime() + 120_000));
+  await provider.write(`computer://${id}/state`, said('stopped'));
+  expect(usage.entries).toEqual([{
+    kind: 'computer',
+    source: 'computer',
+    at: '2026-10-02T12:00:00.000Z',
+    seconds: 120,
+    computer: id,
+    owner: 'user:ana',
+    pools: ['user:ana'],
+  }]);
+
+  await provider.remove(`computer://${id}`);
+  expect(dockerHeld(held).machines).toEqual([]);
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({});
 });
 
 it('closes every open stretch when the daemon stops', async () => {

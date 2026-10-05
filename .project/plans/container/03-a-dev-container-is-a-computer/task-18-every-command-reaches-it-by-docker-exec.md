@@ -1,6 +1,6 @@
 ---
 title: Every command reaches a dev container by docker exec
-status: todo
+status: implemented
 depends: [task-17-docker-exec-matches-devcontainer-exec.md]
 layer: "computer"
 refs:
@@ -51,6 +51,44 @@ The Dev Container CLI runs only `up` and `--version`; every command in a dev con
 - The same file: a second `up` answering the same container id runs no probe; one answering a new id runs it and rewrites the `computers.json` entry; a daemon restart reads the kept probe without probing.
 - `rg -n "'exec'" packages/computer/src/devcontainer.ts` finds no CLI `exec`, and `rg -n "devcontainer exec" packages/computer/src` finds nothing.
 - `node_modules/.bin/vitest run packages/computer/test` and `pnpm typecheck` pass.
-- By hand, against the real CLI with task 17's `nvm/` folder: a `devcontainer://` session runs `node --version` through `computer_exec` and gets nvm's Node.
+- By hand, against the real CLI with task 17's `nvm/` folder: a `devcontainer://` session runs `bash -lic 'node --version'` through `computer_exec` and gets nvm's Node (nvm loads from `~/.bashrc`, which only an interactive shell reads); a plain `node --version` fails there under the real CLI too, because that folder's `remoteEnv.PATH` replaces the probe's `PATH` (task 17).
 
 ## Resume
+
+Implemented on 2026-10-03 from task 17's derivation, which ran that day against `@devcontainers/cli` 0.89.0 and Docker 29.6.2; task 17's Resume was read whole first and nothing here is re-derived from it.
+
+**What is where**
+
+- `devcontainer.ts`: `Probe`, `Reach` and `execArgv` are the derivation's three exported shapes; `reachOf(found, probe)` reads the `devcontainer.metadata` label into a user and an environment, `probeEnv(docker, found)` runs the probe, and `workdirOf(found)` reads the remote workspace folder back out of the mount the CLI made. `inside()` and the nested host spawn both go through `execArgv` against the container id, and `DevContainerOptions.docker` is now a `Cli` rather than a program name, because the launcher no longer looks a program up on its own.
+- `runtime.ts`: `reachedDevContainer(options, id, found)` is the glue - inspect, read the kept probe, probe when it does not name this container, keep it. It lives here and not in `devcontainer.ts` because `devcontainer.ts` cannot import `owners.ts` without a cycle through `runtime.ts`.
+- `owners.ts`: `probeOf` and `keepProbe` beside `ownedOf`/`claimOwned`, in the same 0600 file, as one `Entry` that carries either half.
+- `plugin.ts`: the `devcontainer exec` branch is gone; the dev container takes the same branch as any other machine, with the derivation's `-u` and `-e` before the caller's own and `-w` from `within(held, cwd)` else the folder inside.
+
+**Choices the task did not settle**
+
+- Every command carries `-w`, the launcher's own included: `reachOf` reads the workspace folder inside back out of the mount, and `execArgv` puts it on every argv, as the CLI's own `exec` does.
+- The probe is taken after `up` and before the launcher's install, and once per connect rather than once per command - the container is the thing it describes, not the command.
+- A probe that cannot be answered (no `getent`, a shell that refuses, no `/proc`) answers an empty environment and logs one line. `docker exec` would run with whatever it has, so refusing the whole connect would be worse than the command running under less than it was owed.
+
+**By hand, run on 2026-10-03** against the real CLI with task 17's `nvm/` folder: the build's `computer_exec` of `env` matched `devcontainer exec ... env` for all three of task 17's definitions, and `bash -lic 'node --version'` printed `v22.23.3` through both, where `bash -lc` failed through both with `node: command not found`. The commands, for a rerun:
+
+```sh
+devcontainer up --workspace-folder <nvm-folder> \
+  --id-label ahpd.computer=1 \
+  --id-label "ahpd.devcontainer.folder=<nvm-folder>" --log-level debug
+docker inspect --format '{{json .}}' <containerId> \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["Config"]["Labels"]["devcontainer.metadata"])'
+docker exec -i -u vscode <containerId> getent passwd vscode
+docker exec -i -u vscode <containerId> bash -lic 'echo -n MARK; cat /proc/self/environ; echo -n MARK'
+```
+
+Then a `devcontainer://` session, with a `computer_exec` of `bash -lic 'node --version'` answering nvm's Node and a plain `node --version` failing in that folder, because its `remoteEnv.PATH` replaces the probe's `PATH` (task 17).
+
+### The fix turn of 2026-10-05
+
+The real-CLI run of 2026-10-03 found one container keyed under three probe entries, a need's value written to `computers.json`, and values leaking through the relay. What changed:
+
+- `packages/computer/src/devcontainer.ts` - `probeKept(found, container, env)` keeps only the variables whose value the container's `Config.Env` does not already hold, the rule `execArgv` follows, and both roads that keep a probe go through it, so no `containerEnv` value is written to `computers.json` (Softov, 2026-10-05, a row in the plan's answer table). The relay resolves `${localEnv:...}` from the environment the CLI is spawned with, its `env` option included. `masked` reads a line at a time and masks a quoted value whole, and `maskedLines` holds a partial line until it completes, so a `-e K=V` cut across two reads of the CLI's output no longer leaks. The `container/05-p1` citation on `execArgv` is gone.
+- `packages/computer/src/runtime.ts` - `computer_exec` on a dev container runs `docker exec` against the container id, as `how` and the relay do, rather than against the Docker name. `configOf` runs before the override directory is made, so a definition that does not parse is refused in its own words rather than as a CLI to install, and nothing is left behind. `reachedDevContainer` keeps the stripped probe.
+- Tests: `computer-devcontainer.test.ts` "gives a command run after the create a need's variable" (the value is in the machine's environment, in no command's `-e`, in no argv and not in `computers.json`), "runs `computer_exec` on it with the same flags" (id `abc123`), "rewrites the kept probe when up answers another container", "reads the kept probe back after a restart, and runs no probe for it", "keeps no probe that answered nothing, and probes again", "refuses a definition that does not parse in its own words", "masks the values in the error a failed up is refused with"; `devcontainer.test.ts` "resolves a localEnv reference from the environment the CLI is spawned with", "falls back to a localEnv reference's default", "masks a value cut across two reads, and a quoted one whole" (with the echoed commands showing `-e NAME` only), "masks the values in the error a failed up is refused with", and the `-w` on the relay's own commands in "reaches every command by the id". `computer-owner.test.ts` and `computer-uptime.test.ts` now expect the container id `abc123` apart from the Docker name and the record under the listing's name.
+- Failed before the fix: the need-variable, `computer_exec`, localEnv, masking and definition-parse cases. The restart, failed-probe, rewrite, failed-`up` masking, localEnv default and `-w` cases cover fixes that were already in the code and passed when written.
