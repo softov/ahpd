@@ -339,6 +339,12 @@ export function createOpening(ctx: SessionContext): Opening {
         ctx.learnModels(created);
       }
       /*
+       * The server has now said what it serves, so the host can read
+       * `Session.models` and put the list on the agent, as agent-claude and
+       * agent-pi do. Without this a client is never offered a model.
+       */
+      ctx.start.onHandshake?.();
+      /*
        * The catalogue's record starts here, where the server has named the
        * session and what it said is known. The turn already running is attached
        * because `begin` opens it before the server does, and a transcript that
