@@ -1,6 +1,6 @@
 ---
 title: A dev container gets its parts as a Docker machine does
-status: todo
+status: implemented
 depends: [task-04-a-volume-is-the-fallback.md]
 layer: "computer"
 refs:
@@ -35,3 +35,8 @@ A dev container made for an agent with a part gets it the way a Docker machine d
 - By hand: a dev container runs `/opt/ahpd/codex/bin/codex-acp --help` through `docker exec`.
 
 ## Resume
+
+- Built 2026-10-05. `devcontainerPartRoute` beside the probe in `dockerRuntime` answers `image` where `canMountImages` does and `volume` otherwise. `overrideOf` takes the route: `image` adds `--mount type=image,...` (the task 03 fields, `image-subpath` included) to `runArgs`; `volume` fills each volume first and adds `type=volume,source=<volume>,target=/opt/ahpd/<id>,readonly` to `mounts`. Both add the `ahpd.parts` label to `runArgs`. `cliMount` is untouched and parts never pass through it.
+- The task's line refs (`runtime.ts:656-697`, `494-500`) had moved; the code is `overrideOf` and the dev container branch of `run`.
+- Tests: `devcontainer.test.ts` "gives a dev container its parts as image mounts in runArgs..." and "...as read-only volumes where Docker refuses image mounts"; both failed before the change. The fake CLI records `runArgs` `--mount` entries and refuses an image mount whose source is not in the Docker state with "pull access denied for vsc-<folder>", as the real pair does.
+- Real check, 2026-10-05, `@devcontainers/cli` 0.89.0 and Docker 29.6.2 through the built runtime: a dev container from `{ "image": "debian:bookworm-slim" }` with `codex` and `node`, once by each route, answered `command -v codex-acp` with `/opt/ahpd/codex/bin/codex-acp` through `docker exec` with `PATH=/opt/ahpd/codex/bin:/opt/ahpd/node/bin:...`, Node answered, and `/opt/ahpd/codex` was read-only. Containers, volumes and folders removed.

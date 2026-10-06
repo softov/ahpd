@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink, PluginSpec } from '@ahpd/sdk';
 import { byName } from './byname.js';
+import { IMAGE_PATH, MACHINE_PARTS, partsSaid, pathWith } from './parts.js';
 
 /**
  * Dev containers, by the CLI that defines them.
@@ -383,6 +384,13 @@ export const reachOf = (
       .replace(CONTAINER_ENV, (_, name: string) => containerEnv[name] ?? '')
       .replace(LOCAL_ENV, (_, name: string, fallback: string | undefined) => local[name] ?? fallback ?? '');
   }
+  /*
+   * Each part's `bin` in front of the `PATH` worked out above. Every command
+   * passes that `PATH` by name, which would hide one set when the container
+   * was made, so the parts the container's label names are put in it here.
+   */
+  const parts = partsSaid(labelsOf(found)[MACHINE_PARTS]);
+  if (parts.length > 0) env.PATH = pathWith(parts, env.PATH ?? containerEnv.PATH ?? IMAGE_PATH);
   const workdir = workdirOf(found);
   return { user, env, containerEnv, ...(workdir === undefined ? {} : { workdir }) };
 };

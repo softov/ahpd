@@ -42,7 +42,7 @@ export type { ToolsEndpoint, ToolsServerOptions, ToolsServers } from './toolserv
 export { machineAsked, refuseComputer, computersFor, computerId, computerSource, machineRefusal, openComputer } from './computers.js';
 export { nestedAgent } from './nested.js';
 export type { NestedAsked, NestedHost, NestedOptions } from './nested.js';
-export { resolveNeeds, expandHome } from './machine.js';
+export { resolveNeeds, expandHome, partTarget, PART_ROOT } from './machine.js';
 export type { NeedSources } from './machine.js';
 export { sessionTools } from './sessiontools.js';
 export { artifactTools, ARTIFACTS_META } from './artifacttools.js';

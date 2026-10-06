@@ -5,7 +5,9 @@
  * It answers `ps`, `inspect`, `run`, `stop`, `rm` and `exec` from one JSON file
  * named by `DOCKER_FAKE_STATE`, and appends every call to the same file, so a
  * test can ask what the provider ran and what it left behind. `image inspect`
- * and `build` are there too, so a part image can be built without a daemon.
+ * and `build` are there too, so a part image can be built without a daemon, and
+ * `pull`, `volume` and an image `--mount`, so a part can be mounted from its
+ * image or from a volume filled from it.
  * Nothing here talks to a daemon and nothing sleeps: the provider is what is
  * under test, not Docker.
  */
@@ -96,12 +98,18 @@ if (verb === 'image') {
    * A tag that is in `images` answers with a record and exits zero; a tag that
    * is not there is a non-zero exit, which is what the provider reads as "not
    * here, build it" - so an unknown tag must not answer zero and must not print
-   * anything that looks like a record.
+   * anything that looks like a record. `--format '{{json .Config.Env}}'` answers
+   * the image's environment: `imageEnv` by tag, else the `PATH` Docker's own
+   * images carry.
    */
   const tag = args[args.length - 1];
   const images = held.images ?? [];
   if (args[1] === 'inspect' && images.includes(tag)) {
-    process.stdout.write(`${JSON.stringify({ Id: `sha256:${tag}` })}\n`);
+    const env = (held.imageEnv ?? {})[tag] ?? ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'];
+    const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : undefined;
+    process.stdout.write(format === '{{json .Config.Env}}'
+      ? `${JSON.stringify(env)}\n`
+      : `${JSON.stringify({ Id: `sha256:${tag}`, Config: { Env: env } })}\n`);
     keep();
     process.exit(0);
   }
@@ -160,6 +168,43 @@ if (verb === 'build') {
   held.images.push(tag);
   keep();
   process.stdout.write(`Successfully tagged ${tag}\n`);
+  process.exit(0);
+}
+
+/*
+ * `docker pull`, which puts an image here unless `failPull` says the registry
+ * has none.
+ */
+if (verb === 'pull') {
+  const tag = args[args.length - 1];
+  if (held.failPull === true) {
+    keep();
+    process.stderr.write(`Error response from daemon: pull access denied for ${tag}, repository does not exist or may require 'docker login'\n`);
+    process.exit(1);
+  }
+  held.images ??= [];
+  if (!held.images.includes(tag)) held.images.push(tag);
+  keep();
+  process.exit(0);
+}
+
+/*
+ * Named volumes: `volume inspect` and `volume rm`.
+ *
+ * `volumes` holds each by name with the files in it, which is what a fill from
+ * a part image and the marker written after it put there.
+ */
+if (verb === 'volume') {
+  const name = args[args.length - 1];
+  held.volumes ??= {};
+  if (held.volumes[name] === undefined) {
+    keep();
+    process.stderr.write(`Error response from daemon: get ${name}: no such volume\n`);
+    process.exit(1);
+  }
+  if (args[1] === 'rm') delete held.volumes[name];
+  else process.stdout.write(`${JSON.stringify([{ Name: name, Driver: 'local' }])}\n`);
+  keep();
   process.exit(0);
 }
 
@@ -438,26 +483,90 @@ if (verb === 'run' || verb === 'create') {
     process.exit(1);
   }
   const named = args.indexOf('--name');
-  const image = args[args.length - 3];
+  /*
+   * The image is the first word that is not a flag or a flag's value, as Docker
+   * reads it: a machine runs `<image> sleep infinity`, and a probe or a fill
+   * helper is `<image> x`.
+   */
+  const valued = new Set(['--name', '--label', '-v', '-e', '-w', '--cpus', '--memory', '--mount']);
+  let image;
+  for (let i = 1; i < args.length; i++) {
+    if (valued.has(args[i])) { i++; continue; }
+    if (String(args[i]).startsWith('-')) continue;
+    image = args[i];
+    break;
+  }
   /** `key=value` as its two halves, on the first `=`. */
   const pair = (said) => {
     const at = String(said).indexOf('=');
     return at === -1 ? [String(said), ''] : [String(said).slice(0, at), String(said).slice(at + 1)];
   };
   const mounts = [];
+  const typed = [];
   const env = {};
   const labels = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '-v') mounts.push(args[i + 1]);
+    if (args[i] === '--mount') typed.push(args[i + 1]);
     if (args[i] === '-e') { const [key, value] = envPair(args[i + 1]); env[key] = value; }
     if (args[i] === '--label') { const [key, value] = pair(args[i + 1]); labels[key] = value; }
+  }
+  /*
+   * An image mount, as Docker 29 takes it and an older Docker refuses it.
+   *
+   * `imageMounts: false` is a Docker that does not know the type, in the
+   * daemon's own words; `failMount` is any other refusal a test wants, such as
+   * the source image missing. A Docker that takes one warns on stderr that it
+   * is experimental, and makes the container all the same.
+   */
+  const field = (mount, key) => String(mount).split(',').find((one) => one.startsWith(`${key}=`))?.slice(key.length + 1);
+  const images = typed.filter((one) => field(one, 'type') === 'image');
+  if (images.length > 0) {
+    if (held.imageMounts === false) {
+      keep();
+      process.stderr.write('Error response from daemon: invalid mount config for type "image": mount type unknown\n');
+      process.exit(1);
+    }
+    if (typeof held.failMount === 'string') {
+      keep();
+      process.stderr.write(`${held.failMount}\n`);
+      process.exit(1);
+    }
+    const absent = images.map((one) => field(one, 'source')).find((one) => !(held.images ?? []).includes(one));
+    if (absent !== undefined) {
+      keep();
+      // Docker names the container's image here rather than the missing one.
+      process.stderr.write(`Unable to find image '${image}' locally\nError response from daemon: pull access denied for ${String(image).split(':')[0]}, repository does not exist or may require 'docker login'\n`);
+      process.exit(1);
+    }
+    process.stderr.write('WARNING: Image mount is an experimental feature\n');
+  }
+  /*
+   * A named volume, made when it is first mounted and filled from the image
+   * at that path when it is empty - which is what makes a part's volume.
+   */
+  held.volumes ??= {};
+  for (const mount of mounts) {
+    const [source, target] = String(mount).split(':');
+    if (source.startsWith('/')) continue;
+    // A volume a test wants Docker to fail to fill, such as on a full disk.
+    if ((held.failVolume ?? []).includes(source)) {
+      keep();
+      process.stderr.write(`Error response from daemon: failed to populate volume ${source}: no space left on device\n`);
+      process.exit(1);
+    }
+    const volume = (held.volumes[source] ??= { files: [] });
+    if (volume.files.length === 0 && (held.images ?? []).includes(image)) {
+      volume.files.push(`from ${image} at ${target}`);
+      (held.fills ??= []).push(source);
+    }
   }
   /*
    * Two mounts at one target, refused as Docker refuses them: the same error,
    * so a manifest that named one target twice fails here as it would there.
    */
   const targets = new Set();
-  for (const mount of mounts) {
+  for (const mount of [...mounts, ...typed.map((one) => `:${field(one, 'target')}`)]) {
     const target = mount.split(':')[1];
     if (targets.has(target)) {
       keep();
@@ -474,10 +583,13 @@ if (verb === 'run' || verb === 'create') {
     cpus: args.includes('--cpus') ? args[args.indexOf('--cpus') + 1] : undefined,
     memory: args.includes('--memory') ? args[args.indexOf('--memory') + 1] : undefined,
     mounts,
+    // Each `--mount` as it was written, an image mount among them.
+    ...(typed.length === 0 ? {} : { typed }),
     env,
     // The provider's own label plus whatever it added, which is what `inspect`
-    // and `ps` read back.
-    labels: { 'ahpd.computer': '1', ...labels },
+    // and `ps` read back. A container made with no label at all - a probe, a
+    // volume's fill - is not the provider's machine and is not listed.
+    ...(args.includes('--label') ? { labels: { 'ahpd.computer': '1', ...labels } } : { labels: {}, bare: true }),
     workdir: args.includes('-w') ? args[args.indexOf('-w') + 1] : undefined,
     // A create leaves it stopped, which is the whole point of the verb: what a
     // copy-in puts there has to be before the first process starts.
@@ -489,8 +601,48 @@ if (verb === 'run' || verb === 'create') {
 }
 
 if (verb === 'cp') {
-  // Recorded like every other call, so a test can assert the order: after the
-  // create and before the start.
+  /*
+   * Recorded like every other call, so a test can assert the order: after the
+   * create and before the start.
+   *
+   * Into or out of a named volume a container mounts, the files are the
+   * volume's: `cp - <id>:<dir>` unpacks the tar on stdin there, and `cp
+   * <id>:<path> -` answers only a file that is there.
+   */
+  const volumeAt = (said) => {
+    const at = String(said).indexOf(':');
+    const found = named(String(said).slice(0, at));
+    const path = String(said).slice(at + 1);
+    for (const mount of found?.mounts ?? []) {
+      const [source, target] = String(mount).split(':');
+      if (!source.startsWith('/') && (path === target || path.startsWith(`${target}/`))) {
+        return { volume: (held.volumes ??= {})[source] ??= { files: [] }, rest: path.slice(target.length + 1) };
+      }
+    }
+    return undefined;
+  };
+  if (args[1] === '-') {
+    const piped = await readStdin();
+    const into = volumeAt(args[2]);
+    for (let at = 0; into !== undefined && at + 512 <= piped.length;) {
+      const header = piped.subarray(at, at + 512);
+      if (header.every((byte) => byte === 0)) break;
+      const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
+      into.volume.files.push(header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''));
+      at += 512 + ((size + 511) & ~511);
+    }
+    keep();
+    process.exit(0);
+  }
+  if (args[2] === '-') {
+    const from = volumeAt(args[1]);
+    keep();
+    if (from === undefined || !from.volume.files.includes(from.rest)) {
+      process.stderr.write(`Error response from daemon: Could not find the file ${String(args[1]).slice(String(args[1]).indexOf(':') + 1)} in container\n`);
+      process.exit(1);
+    }
+    process.exit(0);
+  }
   keep();
   process.stdout.write('');
   process.exit(0);

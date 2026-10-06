@@ -1,12 +1,16 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { partTarget } from '@ahpd/sdk';
 import type { Owner } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
+import { archiveOf, FILLED_MARKER, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
+import type { MadePart } from './parts.js';
 import type { Cli, CliOptions, Reach } from './devcontainer.js';
 
 /**
@@ -154,6 +158,29 @@ export interface MachineSpec {
    * starting, so what is copied is there before anything runs.
    */
   copies?: { source: string; target: string }[];
+  /**
+   * The parts this machine asks for, by id, the ones each requires among them.
+   *
+   * What a manifest answers; the plugin builds them into `parts` before the
+   * machine is made, and a runtime reads only `parts`.
+   */
+  partsAsked?: string[];
+  /**
+   * The parts the session's own agent needs, on a machine made for one
+   * session; absent on a machine any session may share.
+   */
+  sessionParts?: string[];
+  /**
+   * The parts this machine is made with, each built and tagged.
+   *
+   * Each is mounted read-only at `/opt/ahpd/<id>`: from its own image where the
+   * runtime takes an image mount, from a volume filled once from that image
+   * otherwise - decision
+   * `a-part-is-mounted-from-its-image-and-a-volume-is-the-fallback`. The
+   * machine is labelled `ahpd.parts` with exactly these, and its `PATH` has each
+   * one's `bin` in front.
+   */
+  parts?: MadePart[];
   /**
    * The agents this machine is prepared for, recorded as a label.
    *
@@ -425,7 +452,32 @@ export interface DockerOptions extends CommandOptions {
   configDir?: string;
   /** Lines worth keeping. A probe that could not be run is said here. */
   log?: (line: string) => void;
+  /**
+   * Whether a part may be mounted from its own image. Absent asks Docker once.
+   *
+   * `false` mounts every part from its volume without asking, which is the
+   * route a Docker that refuses image mounts takes anyway.
+   */
+  imageMounts?: boolean;
 }
+
+/** How a part reaches a machine: from its own image, or from a volume filled from it. */
+export type PartRoute = 'image' | 'volume';
+
+/**
+ * Whether a refused image mount was refused for the mount type itself.
+ *
+ * Only that answer is kept for the daemon's life: Docker answers a missing
+ * source image with a pull error that names the container's image, and an
+ * unreachable daemon says so, and neither says anything about image mounts.
+ */
+const refusesImageMounts = (said: string): boolean =>
+  /type=image|image-subpath|mount type|type "image"|invalid field 'type'/i.test(said)
+  && !/no such image|unable to find image|pull access denied|cannot connect/i.test(said);
+
+/** A part as the `--mount` that takes it from its own image, read-only. */
+const imageMountOf = (part: MadePart): string =>
+  `type=image,source=${part.tag},image-subpath=${partTarget(part.id).slice(1)},target=${partTarget(part.id)},readonly`;
 
 interface Ran {
   code: number;
@@ -625,6 +677,10 @@ const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
 export const preparedFor = (found: Record<string, unknown>): string[] =>
   agentsSaid(labelsOf(found)[MACHINE_AGENTS]);
 
+/** The part ids a machine was made with, from its own `ahpd.parts` label; none where it has no label. */
+export const partsHeld = (found: Record<string, unknown>): string[] =>
+  partsSaid(labelsOf(found)[MACHINE_PARTS]);
+
 /**
  * The name a create gave a machine, from the record `inspect` answered.
  *
@@ -771,7 +827,10 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  *   puts the folder there, since the CLI mounts at `/workspaces/<basename>`
  *   without it and the path a command is given would name nothing;
  * - the name, the agents, the profile and the limits as `runArgs`, which is the one place a
- *   plain Docker label and a limit reach a container the CLI makes.
+ *   plain Docker label and a limit reach a container the CLI makes;
+ * - each part, as a `--mount type=image` in `runArgs` where `route` is
+ *   `image`, or as a read-only volume in `mounts` where it is `volume`, and the
+ *   `ahpd.parts` label beside them.
  *
  * A read-only mount is the CLI's own string spelling and not the object form,
  * because the CLI renders an object mount as `type`, `source` and `target` and
@@ -783,10 +842,13 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  * the folder a second container - decision
  * `a-dev-container-owner-is-kept-beside-the-config`.
  */
-const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<string, unknown> => {
+const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: PartRoute): Record<string, unknown> => {
   const held: Record<string, unknown> = { ...config };
   const readOnly = (spec.mounts ?? []).filter(readOnlyMount);
-  if (readOnly.length > 0) {
+  // A part from its volume is a read-only mount like any other, and the CLI's
+  // `--mount` has no word for read-only either.
+  const volumes = route === 'volume' ? spec.parts ?? [] : [];
+  if (readOnly.length > 0 || volumes.length > 0) {
     held.mounts = [
       ...(Array.isArray(held.mounts) ? (held.mounts as unknown[]) : []),
       ...readOnly.map((mount) => {
@@ -795,6 +857,7 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<
         const target = mount.slice(at + 1, -':ro'.length);
         return `type=bind,source=${source},target=${target},readonly`;
       }),
+      ...volumes.map((part) => `type=volume,source=${volumeOf(part)},target=${partTarget(part.id)},readonly`),
     ];
   }
   const plain = madeWith(spec);
@@ -821,6 +884,14 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<
   }
   if (spec.cpus !== undefined) runArgs.push('--cpus', spec.cpus);
   if (spec.memory !== undefined) runArgs.push('--memory', spec.memory);
+  // A part from its own image, which only `runArgs` can spell: the CLI passes
+  // the entry to its `docker run` as written.
+  if (route === 'image') {
+    for (const part of spec.parts ?? []) runArgs.push('--mount', imageMountOf(part));
+  }
+  // The parts it was made with, which is what a session needing one is
+  // checked against and what puts each part's `bin` on every command's `PATH`.
+  if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts)}`);
   held.runArgs = runArgs;
   return held;
 };
@@ -1114,14 +1185,154 @@ export const adoptedDevContainer = async (
 };
 
 export function dockerRuntime(options: DockerOptions): ComputerRuntime {
-  /** Run the program and answer what it printed, or throw; `env` gives each `-e NAME` its value. */
-  const must = async (args: string[], env?: Record<string, string>): Promise<string> => {
-    const held = await ran(options, args, undefined, env);
+  /**
+   * Run the program and answer what it printed, or throw; `env` gives each `-e
+   * NAME` its value and `input` is piped to it.
+   *
+   * Success is the exit code alone, so a warning on stderr - an image mount's
+   * "experimental feature" line among them - is not a failure.
+   */
+  const must = async (args: string[], env?: Record<string, string>, input?: Buffer): Promise<string> => {
+    const held = await ran(options, args, input, env);
     if (held.code !== 0) {
       const said = held.stderr.trim() || held.stdout.trim() || 'no output';
       throw new Error(`${options.command} ${readable(args)} exited ${held.code}: ${said}`);
     }
     return held.stdout;
+  };
+
+  /**
+   * Whether this Docker takes an image mount, once it has said so about the
+   * mount type.
+   *
+   * Asked with the part being mounted, after its image is built, so the probe
+   * never names an image that may not exist. A yes, and a refusal of the mount
+   * type, are kept for this runtime's life; any other failure - the image
+   * missing, the daemon unreachable - is not an answer about image mounts, and
+   * the next machine asks again.
+   */
+  let imagesMount: boolean | undefined = options.imageMounts === false ? false : undefined;
+  const canMountImages = async (tag: string): Promise<boolean> => {
+    if (imagesMount !== undefined) return imagesMount;
+    const probe = `ahpd-part-probe-${randomUUID().slice(0, 8)}`;
+    const held = await ran(options, ['create', '--name', probe, '--mount', `type=image,source=${tag},target=/probe`, tag, 'x']);
+    if (held.code === 0) {
+      await ran(options, ['rm', '-f', probe]);
+      imagesMount = true;
+      return true;
+    }
+    if (refusesImageMounts(held.stderr)) imagesMount = false;
+    return false;
+  };
+
+  /**
+   * How a dev container gets its parts, and the one place that is chosen.
+   *
+   * The image route is a `--mount type=image` in the override config's
+   * `runArgs`, which the Dev Container CLI 0.89.0 passes to its `docker run`
+   * as written; it is taken where Docker takes image mounts, and the volume
+   * route everywhere else.
+   */
+  const devcontainerPartRoute = async (tag: string): Promise<PartRoute> =>
+    (await canMountImages(tag) ? 'image' : 'volume');
+
+  /**
+   * One part's volume, filled from its image the first time it is asked for.
+   *
+   * `docker create` with an empty named volume at the part's path fills the
+   * volume from the image, and nothing is started. The marker is written last,
+   * through the same container, so a fill that stopped half way leaves a volume
+   * without it, and such a volume is removed and filled again. One fill per
+   * volume at a time, shared as a build is.
+   */
+  const ensurePartVolume = (part: MadePart): Promise<string> => {
+    const volume = volumeOf(part);
+    const at = partTarget(part.id);
+    const helper = (): string => `ahpd-part-fill-${randomUUID().slice(0, 8)}`;
+    return once(`volume:${volume}`, async () => {
+      if ((await ran(options, ['volume', 'inspect', volume])).code === 0) {
+        const looking = helper();
+        let filled = false;
+        try {
+          await must(['create', '--name', looking, '-v', `${volume}:${at}`, part.tag, 'x']);
+          filled = (await ran(options, ['cp', `${looking}:${at}/${FILLED_MARKER}`, '-'])).code === 0;
+        }
+        finally {
+          await ran(options, ['rm', '-f', looking]);
+        }
+        if (filled) return volume;
+        await must(['volume', 'rm', volume]);
+      }
+      const filling = helper();
+      try {
+        await must(['create', '--name', filling, '-v', `${volume}:${at}`, part.tag, 'x']);
+        await must(['cp', '-', `${filling}:${at}`], undefined,
+          archiveOf([{ name: FILLED_MARKER, bytes: Buffer.from(`${part.tag}\n`, 'utf8') }]));
+      }
+      finally {
+        await ran(options, ['rm', '-f', filling]);
+      }
+      return volume;
+    });
+  };
+
+  /**
+   * How a machine's parts reach it, and the parts that can.
+   *
+   * On the volume route each volume is filled first, and a part whose volume
+   * cannot be filled is left out with a line naming it, as a part whose build
+   * failed is: the machine is made with the rest and labelled with them.
+   */
+  const mountable = async (
+    name: string,
+    parts: readonly MadePart[],
+    routeOf: (tag: string) => Promise<PartRoute>,
+  ): Promise<{ route?: PartRoute; parts: MadePart[] }> => {
+    const first = parts[0];
+    if (first === undefined) return { parts: [] };
+    const route = await routeOf(first.tag);
+    if (route === 'image') return { route, parts: [...parts] };
+    const filled: MadePart[] = [];
+    for (const part of parts) {
+      try {
+        await ensurePartVolume(part);
+        filled.push(part);
+      }
+      catch (error) {
+        options.log?.(`${name} is made without the part ${part.id}: its volume ${volumeOf(part)} could not be filled: ${(error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ')}`);
+      }
+    }
+    // A part whose requirement was left out cannot run, so it goes too.
+    let kept = filled;
+    for (;;) {
+      const next = kept.filter((part) => (part.requires ?? []).every((need) => kept.some((one) => one.id === need)));
+      for (const part of kept.filter((one) => !next.includes(one))) {
+        options.log?.(`${name} is made without the part ${part.id}: it requires ${(part.requires ?? []).join(', ')}, which the machine is made without`);
+      }
+      if (next.length === kept.length) break;
+      kept = next;
+    }
+    return { route, parts: kept };
+  };
+
+  /**
+   * The `PATH` an image gives its containers, or Docker's own where it sets none.
+   *
+   * Pulled first when it is not here yet, since `docker run` would pull it
+   * anyway and its environment is only known once it is.
+   */
+  const imagePath = async (image: string): Promise<string> => {
+    const asked = (): Promise<Ran> => ran(options, ['image', 'inspect', '--format', '{{json .Config.Env}}', image]);
+    let held = await asked();
+    if (held.code !== 0) {
+      await ran(options, ['pull', image]);
+      held = await asked();
+    }
+    if (held.code !== 0) return IMAGE_PATH;
+    let env: unknown;
+    try { env = JSON.parse(held.stdout.trim()); } catch { return IMAGE_PATH; }
+    const path = Array.isArray(env) ? env.find((one) => typeof one === 'string' && one.startsWith('PATH=')) as string | undefined : undefined;
+    return path === undefined ? IMAGE_PATH : path.slice('PATH='.length);
   };
 
   /**
@@ -1335,11 +1546,18 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * nothing behind.
          */
         const config = configOf(spec.devcontainer);
+        /*
+         * The parts, by the route a dev container takes: an image mount needs
+         * the part image here before `up`, which the plugin has built, and the
+         * volume route needs each volume filled before the CLI mounts it.
+         */
+        const reached = await mountable(spec.name, spec.parts ?? [], devcontainerPartRoute);
+        const withParts: MachineSpec = spec.parts === undefined ? spec : { ...spec, parts: reached.parts };
         const scratch = mkdtempSync(join(tmpdir(), 'ahpd-devcontainer-'));
         const override = join(scratch, 'override.json');
         let ran: { code: number; stdout: string; stderr: string };
         try {
-          writeFileSync(override, JSON.stringify(overrideOf(spec, config), undefined, 2), { mode: 0o600 });
+          writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route), undefined, 2), { mode: 0o600 });
           argv.push('--override-config', override);
           ran = await runCli(cli, argv).catch((error: unknown) => {
             throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
@@ -1461,9 +1679,25 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         ...(spec.folder === undefined ? [] : [`${spec.folder}:${spec.folder}`]),
       ])];
       for (const mount of mounted) flags.push('-v', mount);
+      /*
+       * Each part, read-only at `/opt/ahpd/<id>`, after the binds; the label
+       * names exactly the parts the machine has, and its `PATH` puts each one's
+       * `bin` in front of the image's own, so a command a preset names is found
+       * without its path.
+       */
+      const { route, parts } = await mountable(spec.name, spec.parts ?? [], async (tag) => (await canMountImages(tag) ? 'image' : 'volume'));
+      for (const part of parts) {
+        if (route === 'image') flags.push('--mount', imageMountOf(part));
+        else flags.push('-v', `${volumeOf(part)}:${partTarget(part.id)}:ro`);
+      }
+      if (spec.parts !== undefined) flags.push('--label', `${MACHINE_PARTS}=${partsLabel(parts)}`);
+      const variables = madeWith(spec);
+      if (parts.length > 0) {
+        variables.PATH = pathWith(parts.map((one) => one.id), spec.env?.PATH ?? await imagePath(image));
+      }
       // Each variable by name, with its value in docker's own environment, and
       // none the vault gave: those would be kept in the container's record.
-      const given = byName(madeWith(spec));
+      const given = byName(variables);
       flags.push(...given.flags);
       if (spec.workdir !== undefined) flags.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine

@@ -60,6 +60,18 @@ it('lets a machine of this daemon\'s own through, whatever else it is kept for',
   expect(await machineRefusal(kept(undefined), 'box', 'echo', 'echo:/one')).toBeUndefined();
 });
 
+it('refuses a machine made without a part the agent needs, naming the part', async () => {
+  const port: ComputerPort = {
+    how: async () => undefined,
+    partsMissing: async (_id, provider) => (provider === 'gemini' ? ['gemini'] : []),
+  };
+  expect(await machineRefusal(port, 'box', 'gemini', 'gemini:/one')).toBe(
+    'computer://box was made without the part gemini, which gemini needs; make a machine with it or run this session on the host',
+  );
+  // Every other session on the machine runs.
+  expect(await machineRefusal(port, 'box', 'codex', 'codex:/one')).toBeUndefined();
+});
+
 /*
  * Who the owner check is asked about, at the two roads that ask it.
  *

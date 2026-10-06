@@ -1,6 +1,6 @@
 ---
 title: The docs say how parts reach a machine
-status: todo
+status: implemented
 depends: [task-05-a-dev-container-gets-its-parts-by-volume.md]
 layer: "docs"
 refs:
@@ -24,3 +24,6 @@ refs:
 - Read by hand against the code.
 
 ## Resume
+
+- Written 2026-10-05: `docs/COMPUTER.md` Profiles gains `parts`, and Parts gains "Parts in a machine": the part need, the two routes as a table, the `imageMounts` option, the probe, the volume and its marker, the dev container route, the `ahpd.parts` label and `PATH`, and what a failed build leaves. Read against the code.
+- `plans/index.md` is not touched by this build.

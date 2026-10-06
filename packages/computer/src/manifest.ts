@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { RpcError } from '@ahpd/sdk';
-import { resolveNeeds } from '@ahpd/sdk';
+import { partTarget, resolveNeeds } from '@ahpd/sdk';
 import { hasDefinition } from './devcontainer.js';
+import { withRequires } from './parts.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
@@ -50,6 +51,16 @@ export interface Profile {
    * `ahpd.agents` label, which is what the picker and the session check read.
    */
   agents?: string[];
+  /**
+   * The parts a machine made from this profile carries, by their ids in the
+   * versions file, beside the ones its agents' needs name.
+   *
+   * Each is mounted read-only at `/opt/ahpd/<id>` with the parts it requires,
+   * and the machine is labelled `ahpd.parts` with the ones it was made with. A
+   * running machine never gains one, so a long-lived machine names here every
+   * part a session in it will want.
+   */
+  parts?: string[];
   /**
    * Values this profile gives those agents' needs, by need name.
    *
@@ -809,20 +820,24 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(defaults.for === undefined ? [] : [defaults.for]),
   ])];
   const resolved: ResolvedNeed[] = [];
+  // The parts the session's own agent needs, for a machine made for a session.
+  const sessionParts: string[] = [];
   for (const provider of agents) {
     const needs = defaults.needsOf?.(provider);
     if (needs === undefined) {
       throw new RpcError(-32602, `profile ${picked ?? ''} prepares a machine for ${provider}, and this host has no agent called ${provider}`);
     }
     try {
-      resolved.push(...resolveNeeds(needs, {
+      const own = resolveNeeds(needs, {
         // What arrives here is what was written as a value; a value that named
         // a secret was read by the caller, for the machine's owner, and only
         // if an agent on this machine declares its need. So these are the
         // strings `resolveNeeds` works in.
         ...(profile.needs === undefined ? {} : { profile: profile.needs as Record<string, string> }),
         ...(defaults.needValues === undefined ? {} : { option: defaults.needValues as Record<string, string> }),
-      }));
+      });
+      resolved.push(...own);
+      if (provider === defaults.for) sessionParts.push(...own.filter((one) => one.kind === 'part').map((one) => one.source));
     }
     catch (error) {
       throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
@@ -852,6 +867,15 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     .map((one) => ({ source: one.source, target: one.target }));
   const mounts = [...new Set([...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? []), ...needMounts])];
   /*
+   * The parts this machine asks for: the profile's own, then each agent's part
+   * needs, then what each of those requires. Built by whoever makes the
+   * machine, which may leave out one whose build fails.
+   */
+  const parts = withRequires([
+    ...(profile.parts ?? []),
+    ...resolved.filter((one) => one.kind === 'part').map((one) => one.source),
+  ]);
+  /*
    * Every mount this machine will carry, in the order the runtime is given
    * them: the deployment's, the profile's, the body's, then what the agents
    * declared. The same mount is one entry however many say it, since a runtime
@@ -880,6 +904,9 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(devcontainer === undefined && folder !== undefined
       ? [{ mount: `${folder}:${folder}`, target: folder, said: `the folder ${folder}` }]
       : []),
+    // And each part, at the one place a part lands; the same part asked twice
+    // is one entry.
+    ...parts.map((id) => ({ mount: `part:${id}`, target: partTarget(id), said: `the part ${id}` })),
   ]);
   // A machine with a folder starts a session in it, so a host path inside the
   // folder is the same path in there.
@@ -901,6 +928,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(Object.keys(env).length === 0 ? {} : { env }),
     ...(named.length === 0 ? {} : { named }),
     ...(copies.length === 0 ? {} : { copies }),
+    ...(parts.length === 0 ? {} : { partsAsked: parts }),
+    ...(defaults.for === undefined ? {} : { sessionParts: [...new Set(sessionParts)] }),
     ...(agents.length === 0 ? {} : { agents }),
     ...(folder === undefined ? {} : { folder }),
     ...(workdir === undefined ? {} : { workdir }),

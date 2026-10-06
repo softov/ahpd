@@ -36,13 +36,23 @@ export interface NeedSources {
 export const expandHome = (value: string, home: string = homedir()): string =>
   (value === '~' ? home : value.startsWith('~/') ? join(home, value.slice(2)) : value);
 
-/** The path a need carries itself, or nothing for an environment variable. */
+/** The value a need carries itself: its path, its part id, or nothing for an environment variable. */
 const carriedBy = (need: MachineNeed): string | undefined => {
   if ('directory' in need) return need.directory;
   if ('file' in need) return need.file;
   if ('source' in need) return need.source;
+  if ('part' in need) return need.part;
   return undefined;
 };
+
+/** Where every part is mounted inside a machine, one directory each. */
+export const PART_ROOT = '/opt/ahpd';
+
+/** A part id: a plain name, so the directory it is mounted at is one level under `PART_ROOT`. */
+const PART_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** Where one part is mounted inside a machine. */
+export const partTarget = (id: string): string => `${PART_ROOT}/${id}`;
 
 /** Where a value came from, in the words a refusal uses. */
 const from = (source: 'profile' | 'option' | 'default'): string =>
@@ -82,8 +92,17 @@ export function resolveNeeds(
       }
       continue;
     }
-    const value = expandHome(said, home);
     const about = need.description === undefined ? {} : { description: need.description };
+    // A part is an id rather than a host path, so it is neither expanded nor
+    // looked for here; whatever makes the machine builds it.
+    if ('part' in need) {
+      if (!PART_ID.test(said)) {
+        throw new Error(`machine need ${name} names the part ${said} (from ${from(where)}), and a part is named by its id in the versions file`);
+      }
+      resolved.push({ name, kind: 'part', source: said, target: partTarget(said), ...about });
+      continue;
+    }
+    const value = expandHome(said, home);
     if ('name' in need) {
       resolved.push({ name, kind: 'env', target: need.name, source: value, ...about });
       continue;

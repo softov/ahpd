@@ -2,15 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
-import { secretRef } from '@ahpd/sdk';
+import { resolveNeeds, secretRef } from '@ahpd/sdk';
 import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
 import { madeAgain, namedAgain, revealed, vaultNamed, withDefaults } from './secrets.js';
 import { manifestOf } from './manifest.js';
+import { ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
+import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
@@ -96,6 +97,7 @@ export const optionsSchema = {
         type: 'object',
         properties: {
           needs: needValues,
+          parts: { ...list, description: 'The parts every machine from this profile carries, by their ids in the versions file.' },
           secretUnreadable: {
             type: 'string',
             enum: ['fail', 'drop'],
@@ -106,6 +108,7 @@ export const optionsSchema = {
       description: 'The named sets a person picks from when making a machine.',
     },
     bodyMounts: { type: 'boolean', description: 'Whether a person making a machine may name mounts of their own.' },
+    imageMounts: { type: 'boolean', description: 'Whether a part may be mounted from its own image. false mounts every part from a volume filled once from it.' },
     images: { ...list, description: 'The image patterns a machine may be made from.' },
     devcontainer: {
       type: ['object', 'boolean'],
@@ -174,6 +177,9 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       ...(words(said.mounts) === undefined ? {} : { mounts: words(said.mounts) as string[] }),
       // The agents a profile prepares for, and any value it gives their needs.
       ...(words(said.agents) === undefined ? {} : { agents: words(said.agents) as string[] }),
+      // The parts its machines carry beside the ones its agents name, checked
+      // against the versions file once the plugin applies.
+      ...(words(said.parts) === undefined ? {} : { parts: words(said.parts) as string[] }),
       ...(needValuesOf(said.needs) === undefined ? {} : { needs: needValuesOf(said.needs) as Record<string, string | SecretRef> }),
       ...(text('folder') === undefined ? {} : { folder: text('folder') as string }),
       // How the host inside a machine from this profile is started. Absent
@@ -329,6 +335,23 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const profiles = profilesOf(options.profiles);
   /*
+   * Each profile's parts, against the versions file: an id the file does not
+   * name is left out with a line naming it, and the profile keeps the rest. A
+   * file that cannot be read leaves the ids as written, and each build says so
+   * when a machine asks for it.
+   */
+  const partIds = ((): Set<string> | undefined => {
+    try { return new Set(readParts().map((one) => one.id)); }
+    catch { return undefined; }
+  })();
+  for (const [key, one] of Object.entries(profiles ?? {})) {
+    if (one.parts === undefined || partIds === undefined) continue;
+    for (const id of one.parts.filter((part) => !partIds.has(part))) {
+      host.log(`${name}: profiles.${key}.parts names ${id}, which the versions file does not, so its machines are made without it`);
+    }
+    one.parts = one.parts.filter((part) => partIds.has(part));
+  }
+  /*
    * A `secretUnreadable` that is neither answer is fatal here rather than
    * dropped: the loader's check does not reach into a profile, and a value read
    * as the default would fail every command into a machine whose operator
@@ -453,6 +476,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(env === undefined ? {} : { env }),
     configDir: host.configDir,
     log: noted,
+    ...(options.imageMounts === false ? { imageMounts: false } : {}),
   };
   const dockered = dockerRuntime(dockeredOptions);
 
@@ -597,7 +621,26 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const made: ComputerRuntime = {
     ...dockered,
-    run: async (spec: MachineSpec) => {
+    run: async (asked: MachineSpec) => {
+      /*
+       * The parts the machine asks for, built before it is made. One that will
+       * not build is left out with a line naming it and the build's reason,
+       * and the machine is made with the rest: only a session needing the part
+       * is refused, by the label that does not name it. A machine made for one
+       * session whose own agent needs the part is not made at all, as
+       * `refusedWithout` decides.
+       */
+      let spec = asked;
+      if (asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
+        const built = await ensureParts(asked.partsAsked, { runtime: dockered });
+        const refused = refusedWithout(asked, built.failed.map((one) => one.id));
+        if (refused.length > 0) {
+          const said = built.failed.filter((one) => refused.includes(one.id)).map((one) => `${one.id}: ${one.reason}`).join('; ');
+          throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be built (${said})`);
+        }
+        for (const one of built.failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
+        spec = { ...asked, parts: built.made };
+      }
       const machine = await dockered.run(spec);
       // What the vault gave, which the runtime left off the make: held for
       // every command into the machine from now on, and its references
@@ -901,6 +944,36 @@ export const apply: Plugin['apply'] = (host, options) => {
     agents: async (id) => {
       const held = await made.inspect(id);
       return held === undefined ? undefined : preparedFor(held);
+    },
+    /*
+     * And the parts the asking agent needs that the machine was made without,
+     * from its `ahpd.parts` label.
+     *
+     * Each part need is named as it was for the machine: the value its profile
+     * or this plugin's option gives it, else the agent's own. A need whose value
+     * is not a part id is refused when a machine is made, and is named here as
+     * the agent wrote it.
+     */
+    partsMissing: async (id, provider) => {
+      const held = await made.inspect(id);
+      const needs = host.machineNeeds(provider);
+      if (held === undefined || needs === undefined) return undefined;
+      const key = profileOf(held);
+      const profile = key === undefined ? undefined : profiles?.[key];
+      const plain = (values: Record<string, string | SecretRef> | undefined): Record<string, string> =>
+        Object.fromEntries(Object.entries(values ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
+      const has = partsHeld(held);
+      const wanted: string[] = [];
+      for (const [need, one] of Object.entries(needs)) {
+        if (!('part' in one)) continue;
+        try {
+          wanted.push(...resolveNeeds({ [need]: one }, { profile: plain(profile?.needs), option: plain(needValues) }).map((part) => part.source));
+        }
+        catch {
+          wanted.push(one.part);
+        }
+      }
+      return [...new Set(wanted)].filter((part) => !has.includes(part));
     },
     /*
      * And the session a machine is kept for alone, read from the same record.

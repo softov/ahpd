@@ -154,6 +154,16 @@ export interface ComputerPort {
    */
   agents?(id: string): Promise<string[] | undefined>;
   /**
+   * The parts an agent needs that a machine was made without, or nothing when
+   * the port cannot say.
+   *
+   * A part whose build failed is left out of the machine rather than refusing
+   * it, so a session whose agent needs that part is refused by name and every
+   * other session runs; a running machine never gains one. Empty where the
+   * machine has every part the agent's needs name.
+   */
+  partsMissing?(id: string, provider: string): Promise<string[] | undefined>;
+  /**
    * The session a machine is kept for alone, or nothing when any may run in it.
    *
    * The machine's own labels, read back the way `agents` is: a machine made

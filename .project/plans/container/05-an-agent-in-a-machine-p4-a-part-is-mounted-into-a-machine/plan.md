@@ -1,7 +1,7 @@
 ---
 title: A part is mounted into a machine, from its image or from a volume
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -68,6 +68,7 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 | A part's target is always `/opt/ahpd/<part>`, never chosen by the agent | the joined image puts it there, so both routes agree | 01 |
 | Whether image mounts work is probed with the part being mounted, after it is ensured, and only an answer about the mount type is kept for the daemon's life | (defaulted: the mount type's answer does not change while Docker runs, and a missing image says nothing about it) | 03 |
 | A part whose build fails is left out of the machine, which is labelled with the parts it has; only a session needing the missing part is refused | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" (a failure belongs to the item that failed) | 02 |
+| For now, a machine made for one session (a disposable, or a dev container) is refused at create, naming the part, when a part that session needs fails to build; a shared machine is still made without it | Softov, 2026-10-05, asked "a machine made for one session is still created when that session's own part fails to build, and the session is then refused: refuse before the machine is made instead?": "I dont want to decide it as a rule, but for now refuse at create. in a future, some parts are desired, some are mandatory"; the split is the idea [a-part-is-desired-or-mandatory](../../../ideas/a-part-is-desired-or-mandatory.md) | 02 |
 | A part volume is filled first and marked filled last, by a marker file; one without the marker is filled again | (defaulted: "present means filled" would keep a half-filled volume for ever) | 04 |
 | Whether a real Docker fills a volume from a scratch image at create is checked by hand, and the build keeps the fake | (defaulted: the build agent has no Docker) | 04 |
 | A dev container's parts reach `PATH` by being prepended to the probed `PATH` in container/03 task 18's exec derivation | (defaulted: the probed `PATH` is passed as `-e` on every exec and would override one set at create) | 02 |
@@ -83,12 +84,12 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The SDK has a part need](task-01-the-sdk-has-a-part-need.md) | todo | - |
-| [02 - A machine is made with its parts](task-02-a-machine-is-made-with-its-parts.md) | todo | 01 |
-| [03 - Docker mounts a part from its image](task-03-docker-mounts-a-part-from-its-image.md) | todo | 02 |
-| [04 - A volume is the fallback](task-04-a-volume-is-the-fallback.md) | todo | 03 |
-| [05 - A dev container gets its parts as a Docker machine does](task-05-a-dev-container-gets-its-parts-by-volume.md) | todo | 04 |
-| [06 - Docs](task-06-docs.md) | todo | 05 |
+| [01 - The SDK has a part need](task-01-the-sdk-has-a-part-need.md) | implemented | - |
+| [02 - A machine is made with its parts](task-02-a-machine-is-made-with-its-parts.md) | implemented | 01 |
+| [03 - Docker mounts a part from its image](task-03-docker-mounts-a-part-from-its-image.md) | implemented | 02 |
+| [04 - A volume is the fallback](task-04-a-volume-is-the-fallback.md) | implemented | 03 |
+| [05 - A dev container gets its parts as a Docker machine does](task-05-a-dev-container-gets-its-parts-by-volume.md) | implemented | 04 |
+| [06 - Docs](task-06-docs.md) | implemented | 05 |
 
 ## Risks and tradeoffs
 
@@ -97,9 +98,9 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 
 ## Resume state
 
-- **Done so far:** nothing; revalidated against main 2026-10-02.
-- **Next action:** [task-01-the-sdk-has-a-part-need.md](task-01-the-sdk-has-a-part-need.md).
-- **Open questions:** none.
+- **Done so far:** every task built on 2caabb1, 2026-10-05, and each is `implemented`; see [implemented.md](implemented.md). The image and volume routes were run against Docker 29.6.2 and `@devcontainers/cli` 0.89.0 through the built runtime. A machine made for one session is refused at create when that session's part fails to build, as the answer table says, decided in `refusedWithout`.
+- **Next action:** Softov's review of the six tasks, and the by-hand lines of the checklist below.
+- **Open questions:** none; the session-time question is answered in the table above (Softov, 2026-10-05).
 - **Watch out for:**
   - plugin 15's task 09 checks every mount target at create; a part's target joins that check.
   - Task 05 waits for container/03's switch to `docker exec` (its tasks 17 and 18) and its override configuration (task 09).
@@ -107,8 +108,8 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 ## Final verification checklist
 
 - [ ] A disposable machine for an agent that needs `codex` has `/opt/ahpd/codex` and `/opt/ahpd/node`, read-only, and nothing else of ours.
-- [ ] With image mounts switched off in the fake, the same machine gets both from volumes.
-- [ ] A session on a long-lived machine without its part is refused with the part named.
-- [ ] A part whose build fails leaves the machine made without it, and only sessions needing it are refused.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/COMPUTER.md`, `plans/index.md` updated.
+- [x] With image mounts switched off in the fake, the same machine gets both from volumes.
+- [x] A session on a long-lived machine without its part is refused with the part named.
+- [x] A part whose build fails leaves the machine made without it, and only sessions needing it are refused.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
+- [x] `docs/COMPUTER.md`, `plans/index.md` updated.

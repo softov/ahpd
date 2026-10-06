@@ -7,10 +7,11 @@
  * makes the machine supplies them, so the knowledge lives with the agent that
  * has it rather than with the plugin that makes machines.
  *
- * A need is delivered one of four ways, and the field that names the way is
+ * A need is delivered one of five ways, and the field that names the way is
  * the one that carries its value: a `directory` or a `file` is made visible in
- * the machine, a `name` is an environment variable, and a `source` is copied
- * in rather than mounted, so a runtime that cannot bind-mount still has a way.
+ * the machine, a `name` is an environment variable, a `source` is copied in
+ * rather than mounted, so a runtime that cannot bind-mount still has a way, and
+ * a `part` is a CLI the host builds and mounts at `/opt/ahpd/<part>`.
  * Which fields a delivery takes is `MachineNeed`; what a runtime is handed once
  * the value is settled is `ResolvedNeed`.
  */
@@ -85,11 +86,25 @@ export interface CopyNeed extends Need {
   target: string;
 }
 
+/**
+ * A part the machine carries: one agent CLI, or ahpd itself, built by the host
+ * at the version its versions file pins.
+ *
+ * A part is an image of its own, mounted read-only at `/opt/ahpd/<part>` with
+ * the parts it requires beside it, so it has no host path and its target is
+ * never the agent's to choose. A profile's or an option's value names another
+ * part id, which is how a profile pins another build.
+ */
+export interface PartNeed extends Need {
+  /** The part's id in the host's versions file, such as `codex`. */
+  part: string;
+}
+
 /** One thing an agent needs, by the delivery it names. */
-export type MachineNeed = DirectoryNeed | FileNeed | EnvNeed | CopyNeed;
+export type MachineNeed = DirectoryNeed | FileNeed | EnvNeed | CopyNeed | PartNeed;
 
 /** How a resolved need reaches the machine. */
-export type NeedKind = 'directory' | 'file' | 'env' | 'copy';
+export type NeedKind = 'directory' | 'file' | 'env' | 'copy' | 'part';
 
 /** One need with its value settled, as a runtime is handed it. */
 export interface ResolvedNeed {
@@ -97,9 +112,12 @@ export interface ResolvedNeed {
   name: string;
   /** How it reaches the machine. */
   kind: NeedKind;
-  /** The host path for a mount or a copy-in, or the value for an environment variable. */
+  /**
+   * The host path for a mount or a copy-in, the value for an environment
+   * variable, or the part's id.
+   */
   source: string;
-  /** The mount point, the copied-to path, or the variable's name. */
+  /** The mount point, the copied-to path, the variable's name, or `/opt/ahpd/<part>`. */
   target: string;
   /** A mount delivered read-only. */
   readOnly?: boolean;

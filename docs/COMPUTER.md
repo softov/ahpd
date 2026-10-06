@@ -235,7 +235,13 @@ A need is filled from the profile, then the plugin option, then the agent's own 
 { "profiles": { "claude": { "agents": ["claude"], "needs": { "claudeConfigJson": "/srv/claude.json" } } } }
 ```
 
-A need is delivered as a bind mount, an environment variable or a file copied in. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine.
+A need is delivered as a bind mount, an environment variable, a file copied in, or a part. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine.
+
+`parts` names the parts every machine from the profile carries, by their ids in the versions file, beside the ones its agents' needs name. A running machine never gains a part, so a long-lived machine names here every part a session in it will want. An id the versions file does not name is left out with a log line, and the rest of the profile stands. See [Parts in a machine](#parts-in-a-machine).
+
+```json
+{ "profiles": { "agents": { "title": "Agents", "parts": ["codex", "gemini"] } } }
+```
 
 A need value may be the name of a secret rather than the value itself, which is what keeps a credential out of the file:
 
@@ -417,6 +423,33 @@ The versions file is `packages/computer/images/versions.json`, and it is the onl
 | `ahpd` | ahpd itself | From npm, or from a checkout's own tarballs |
 
 A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A part whose build fails is refused by name and every other part still builds.
+
+### Parts in a machine
+
+A machine asks for a part two ways: its profile's `parts`, and an agent's part need, `{ "part": "codex" }`, in what its `machine()` answers. A profile's or the plugin option's `needs` value for that need names another part id, which is how a profile pins another build. Every part asked for is built with the parts it requires before the machine is made, and each lands read-only at `/opt/ahpd/<id>`; the target is never the agent's to choose, and a mount at it is refused as any other shared target.
+
+A part reaches the machine one of two ways:
+
+| Route | When | What Docker is given |
+| --- | --- | --- |
+| Image | Docker takes an image mount | `--mount type=image,source=ahpd-part/<id>:<version>,image-subpath=opt/ahpd/<id>,target=/opt/ahpd/<id>,readonly` |
+| Volume | Docker refuses one, or the option `imageMounts` is `false` | `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro` |
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": { "imageMounts": false } }] }
+```
+
+Whether Docker takes an image mount is asked once, on the first machine with a part, by creating and removing a container that mounts that part's own image. A refusal of the mount type is kept for the daemon's life; any other failure, such as the image missing, is asked again for the next machine. Docker 29 prints `WARNING: Image mount is an experimental feature`, which is not a failure.
+
+A part volume is filled once from its image: an empty volume mounted at the part's path by `docker create` is filled by Docker, nothing is started, and a `.ahpd-filled` marker is written into it last. A volume without the marker is a fill that stopped half way, and is removed and filled again. The version is in the volume's name, so a bump makes a new volume and the old one is left for `docker volume prune`.
+
+A dev container gets its parts the same way: an image mount as a `--mount` entry in the override config's `runArgs`, or the volume as a read-only entry in its `mounts`, since the CLI's own `--mount` has no word for read-only.
+
+The machine is labelled `ahpd.parts=<id>@<version>,...` with the parts it was made with, and its `PATH` has each one's `bin` in front: a Docker machine's is set at `docker run` over the image's own, and a dev container's is put in front of the probed `PATH` every command is given. So a command a preset names is found inside without its path.
+
+A part whose build fails, or whose requirement's build fails, is left out of the machine with one log line naming it and the build's reason, and the machine is made with the rest. A session whose agent needs a part the label does not name is refused with a sentence naming the part, and every other session on the machine runs.
+
+A machine made for one session, a disposable or a `devcontainer://` made when the session starts, is the exception: when a part that session's agent needs fails to build, the machine is not made and the session is refused at create with a sentence naming the part, so no container, volume or `computers.json` entry is left behind. A failed part that session's agent does not need is left out as above.
 
 ### The joined image
 

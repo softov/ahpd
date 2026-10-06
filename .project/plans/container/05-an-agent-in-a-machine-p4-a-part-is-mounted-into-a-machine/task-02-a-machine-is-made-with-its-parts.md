@@ -1,6 +1,6 @@
 ---
 title: A machine is made with its parts
-status: todo
+status: implemented
 depends: [task-01-the-sdk-has-a-part-need.md]
 layer: "computer"
 refs:
@@ -38,3 +38,10 @@ A profile's `parts` and every part need are ensured with their requirements befo
 - `devcontainer.test.ts`: an exec into a dev container with the `codex` part has `-e PATH=/opt/ahpd/codex/bin:/opt/ahpd/node/bin:<probed PATH>`.
 
 ## Resume
+
+- Built 2026-10-05. `Profile.parts` in `packages/computer/src/manifest.ts`; the plugin drops an id the versions file does not name at load, with one log line, and keeps the rest of the profile. `manifestOf` gathers the profile's parts and every resolved part need, adds what each requires (`withRequires` in `parts.ts`), checks each part's target with every other mount, and answers them as `MachineSpec.partsAsked`.
+- The plugin's `made.run` builds them with `ensureParts` (`parts.ts`, over p3's `ensurePart`) before the runtime is asked; a part whose build, or whose requirement's build, fails is logged once as `<machine> is made without the part <id>: <the build's reason>` and left out. The runtime labels `ahpd.parts=<id>@<version>,...` with exactly the parts the machine got (`--label` on `docker run`, `runArgs` on a dev container).
+- Refusal: the computer port answers `partsMissing(id, provider)` from the label and the provider's part needs, resolved with the machine's profile and the option; `machineRefusal` in `packages/sdk/src/computers.ts` refuses with "computer://<id> was made without the part <id>, which <provider> needs; ...". This needed an SDK port method the task's file list did not name: the plugin's `how` is never told the session's provider, and the SDK's check is the one every session road already passes through.
+- `PATH`: a Docker machine gets `-e PATH=<each part's bin>:<the image's PATH>`, read with `docker image inspect --format '{{json .Config.Env}}'` after a `docker pull` when the image is not here yet, else Docker's default; a dev container's derivation (`reachOf` in `devcontainer.ts`) puts the bins in front of the probed `PATH`, read from the container's `ahpd.parts` label.
+- Tests: `computer-needs.test.ts` (6 new: a profile's parts and their requirement with the label and `PATH`; an agent's part need; a gemini session refused on a codex machine; the gemini build failing beside a healthy codex, one log line, codex runs and gemini is refused; an unknown profile part; a mount at a part's target refused), `packages/sdk/test/machine-refusal.test.ts` (1 new), and `devcontainer.test.ts` "puts each part's bin in front of the probed PATH". Each failed before the change.
+- Session-time machines, per Softov's answer of 2026-10-05: `manifestOf` records `sessionParts`, the parts the session's own agent (`for`) resolved, on a disposable or a `devcontainer://` spec, and `refusedWithout` in `parts.ts` is the one function that picks the failed parts a machine is not made without. The plugin's `made.run` throws "<machine> is not made, because the part <id> this session's agent needs could not be built (<reason>)" before the runtime is asked, so no container, volume or `computers.json` entry is made. A shared machine keeps the rule above. Tests in `computer-needs.test.ts`: a disposable refused with a healthy codex beside the failing gemini and nothing left in the fake Docker or `computers.json`; a session-time dev container refused with no `up` run; a disposable whose session needs codex made without the profile's failing gemini. The first two failed before the change.

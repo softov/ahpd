@@ -178,6 +178,12 @@ if (verb === 'up') {
       const eq = said.indexOf('=');
       if (eq !== -1) labels[said.slice(0, eq)] = said.slice(eq + 1);
     }
+    /*
+     * A `--mount type=image` in `runArgs` whose source image is not here, which
+     * Docker refuses naming the container's own image rather than the missing
+     * one: the part image has to be built before `up`.
+     */
+    let missing;
     locked(() => {
       const record = existsSync(docker) ? JSON.parse(readFileSync(docker, 'utf8')) : { machines: [], calls: [] };
       /*
@@ -201,13 +207,21 @@ if (verb === 'up') {
          * container.
          */
         const runArgs = Array.isArray(said.runArgs) ? said.runArgs : [];
+        const typed = [];
         for (let i = 0; i < runArgs.length; i++) {
           if (runArgs[i] === '--label') {
             const pair = String(runArgs[i + 1]);
             const eq = pair.indexOf('=');
             if (eq !== -1) labels[pair.slice(0, eq)] = pair.slice(eq + 1);
           }
+          // A `--mount` reaches `docker run` as written, an image mount among them.
+          if (runArgs[i] === '--mount') typed.push(String(runArgs[i + 1]));
         }
+        missing = typed
+          .filter((one) => one.split(',').includes('type=image'))
+          .map((one) => one.split(',').find((pair) => pair.startsWith('source='))?.slice('source='.length))
+          .find((one) => !(record.images ?? []).includes(one));
+        if (missing !== undefined) return;
         /*
          * The `mounts` the override asked for, as the CLI's own renderer makes
          * them.
@@ -251,6 +265,7 @@ if (verb === 'up') {
           // caller's folder can be read through; the override's own `mounts`
           // are added to it as the container's other binds.
           mounts: [`${folder}:${made.remoteWorkspaceFolder}`, ...mounts],
+          ...(typed.length === 0 ? {} : { typed }),
           // The container's own environment: the image's, with the override's
           // `containerEnv` laid over it, which is what `${containerEnv:NAME}`
           // in a `remoteEnv` resolves from.
@@ -267,6 +282,11 @@ if (verb === 'up') {
       writeFileSync(`${docker}.${process.pid}.tmp`, JSON.stringify(record));
       renameSync(`${docker}.${process.pid}.tmp`, docker);
     });
+    if (missing !== undefined) {
+      process.stderr.write(`Error response from daemon: pull access denied for vsc-${base}, repository does not exist or may require 'docker login'\n`);
+      keep();
+      process.exit(1);
+    }
   }
   process.stdout.write(`${JSON.stringify(made)}\n`);
   keep();

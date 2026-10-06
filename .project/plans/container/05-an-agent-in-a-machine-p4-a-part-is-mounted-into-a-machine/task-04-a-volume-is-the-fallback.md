@@ -1,6 +1,6 @@
 ---
 title: A volume is the fallback
-status: todo
+status: implemented
 depends: [task-03-docker-mounts-a-part-from-its-image.md]
 layer: "computer"
 refs:
@@ -30,3 +30,9 @@ Where the probe says no, each part is `-v ahpd-part-<id>-<version>:/opt/ahpd/<id
 - By hand (Softov): on a real Docker, whether `docker create` alone fills the volume from the scratch part image; the same codex machine as task 03, with image mounts switched off by option.
 
 ## Resume
+
+- Built 2026-10-05. `ensurePartVolume` in `dockerRuntime`: `docker volume inspect`; a present volume is checked for `/opt/ahpd/<id>/.ahpd-filled` by `docker cp <helper>:<path> -` through a helper created from the part image and never started, and one without it is removed. A fill is `docker create --name ahpd-part-fill-<n> -v ahpd-part-<id>-<version>:/opt/ahpd/<id> <tag> x`, then the marker written last by `docker cp - <helper>:/opt/ahpd/<id>` with a one-file tar on stdin, then `rm -f`. One fill per volume at a time through p3's `once`, now exported from `parts.ts`. Each part is then `-v ahpd-part-<id>-<version>:/opt/ahpd/<id>:ro`.
+- The plugin option `imageMounts: false` takes the volume route without probing; it is the "switched off by option" of the validation.
+- Beyond the steps: a part whose volume cannot be filled is left out with a log line, and so is a part that requires it, since one broken part must not take the machine down.
+- Tests: `computer-parts-mount.test.ts` "mounts each part from a volume filled once...", "fills again a volume that holds no marker, and writes the marker last", "makes the machine without a part whose volume cannot be filled, and without what requires it", and "takes the volumes without asking where the option switches image mounts off"; each failed before the change. The fake learned `volume inspect|rm`, a named volume filled from the image at create, `cp -` into and `cp ... -` out of it, and `failVolume`.
+- Step 4's question, seen on Docker 29.6.2 on 2026-10-05: `docker create -v <empty volume>:/opt/ahpd/node ahpd-part/node:24.21.0 x` alone filled the volume from the `FROM scratch` image, for a volume made beforehand and for one the create made, so no `docker cp` stream is needed. The built runtime then made two codex machines from volumes, filling each volume once; inside, `codex-acp` was on the `PATH`, Node answered, and `/opt/ahpd/codex` was read-only and held `.ahpd-filled`. Containers and volumes removed. Softov's own check stays open in the plan's checklist.

@@ -87,7 +87,7 @@ export const openComputer = async (
 /**
  * What stops `provider` running on machine `id`, or nothing.
  *
- * Two rules, both read from the machine itself and both refused in one
+ * The rules are read from the machine itself and each is refused in one
  * sentence. A machine is prepared for the agents its profile named, and
  * remembers them in its `ahpd.agents` label: the picker already offers only
  * machines prepared for the asking agent, but a value can be set by hand, or
@@ -95,7 +95,10 @@ export const openComputer = async (
  * machine that was not prepared for it fails much later and further away, if
  * it runs at all. A machine made from a `disposableAlone` profile is kept for
  * the one session it was made for, and the picker is not consulted when an id
- * is typed - decision `a-disposable-alone-machine-refuses-another-session`.
+ * is typed - decision `a-disposable-alone-machine-refuses-another-session`. And
+ * a machine made without a part the agent needs - its build failed, or nothing
+ * asked for it - is refused naming the part, since a machine never gains one
+ * while it runs.
  *
  * A machine with no label is one made before this existed, and is offered to
  * every agent and to every session; a port that cannot answer labels is one
@@ -136,8 +139,17 @@ export const machineRefusal = async (
     return `computer://${id} was made for another owner, which is the only one it runs for; make a machine of your own for this session or run it on the host`;
   }
   const for_ = computers?.agents === undefined ? undefined : await computers.agents(id);
-  if (for_ === undefined || for_.length === 0 || for_.includes(provider)) return undefined;
-  return `computer://${id} was prepared for ${for_.join(', ')}, and this session runs ${provider}; make a machine prepared for ${provider} or run this session on the host`;
+  if (for_ !== undefined && for_.length > 0 && !for_.includes(provider)) {
+    return `computer://${id} was prepared for ${for_.join(', ')}, and this session runs ${provider}; make a machine prepared for ${provider} or run this session on the host`;
+  }
+  /*
+   * A part the agent needs and the machine was made without, which is a build
+   * that failed or a profile that never named it: the machine runs every other
+   * session, and never gains a part while it runs.
+   */
+  const missing = computers?.partsMissing === undefined ? undefined : await computers.partsMissing(id, provider);
+  if (missing === undefined || missing.length === 0) return undefined;
+  return `computer://${id} was made without ${missing.length === 1 ? 'the part' : 'the parts'} ${missing.join(', ')}, which ${provider} needs; make a machine with ${missing.length === 1 ? 'it' : 'them'} or run this session on the host`;
 };
 
 /**

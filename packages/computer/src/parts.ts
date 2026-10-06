@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { partTarget } from '@ahpd/sdk';
 import type { ComputerRuntime } from './runtime.js';
 
 /**
@@ -567,16 +568,17 @@ const tarEntry = (name: string, bytes: Buffer): Buffer => {
  * at run time and an installed package may sit on a read-only filesystem.
  */
 export const contextOf = (dockerfile: string, files: Tarball[] = []): Buffer =>
-  Buffer.concat([
-    ...[tarEntry('Dockerfile', Buffer.from(dockerfile, 'utf8')), ...files.map((one) => tarEntry(one.name, one.bytes))],
-    Buffer.alloc(1024),
-  ]);
+  archiveOf([{ name: 'Dockerfile', bytes: Buffer.from(dockerfile, 'utf8') }, ...files]);
 
-/** The builds running in this process, by tag, so two callers wait for one of them. */
+/** Files as one tar archive, which is what `docker build -` and `docker cp -` read on stdin. */
+export const archiveOf = (files: Tarball[]): Buffer =>
+  Buffer.concat([...files.map((one) => tarEntry(one.name, one.bytes)), Buffer.alloc(1024)]);
+
+/** The builds and fills running in this process, by key, so two callers wait for one of them. */
 const building = new Map<string, Promise<unknown>>();
 
 /**
- * One turn per tag.
+ * One turn per key: an image's tag, or a volume's name.
  *
  * Two callers that arrive while a build is running wait for it rather than run
  * one of their own, and only a running build is held: a caller that arrives
@@ -584,7 +586,7 @@ const building = new Map<string, Promise<unknown>>();
  * because a build that succeeded left an image behind and one that failed did
  * not.
  */
-const once = <T>(tag: string, work: () => Promise<T>): Promise<T> => {
+export const once = <T>(tag: string, work: () => Promise<T>): Promise<T> => {
   const held = building.get(tag);
   if (held !== undefined) return held as Promise<T>;
   const started = work();
@@ -617,6 +619,133 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     return tag;
   });
 };
+
+/** One part a machine is made with: its id, the image it comes from, and the version that image is. */
+export interface MadePart {
+  /** The part's id, which is the directory it is mounted at under `/opt/ahpd`. */
+  id: string;
+  /** The image it is mounted or filled from. */
+  tag: string;
+  /** What the tag says after its name: the version, and for the ahpd part its source hash. */
+  version: string;
+  /** The parts it cannot run without, which a machine leaving one out leaves this out with it. */
+  requires?: string[];
+}
+
+/**
+ * The label a machine carries naming the parts it has, as `<id>@<version>`
+ * joined by commas.
+ *
+ * Only the parts it was made with: a part whose build failed is not on it, and
+ * that absence is what refuses a session needing that part. The joined image
+ * carries the same label with ids alone, so a machine made from it reads the
+ * same way.
+ */
+export const MACHINE_PARTS = 'ahpd.parts';
+
+/** The label value for a machine made with these parts. */
+export const partsLabel = (parts: readonly MadePart[]): string =>
+  parts.map((one) => `${one.id}@${one.version}`).join(',');
+
+/** The part ids a label value names, with any version dropped. */
+export const partsSaid = (value: unknown): string[] =>
+  (typeof value === 'string'
+    ? value.split(',').map((one) => one.trim().split('@')[0] ?? '').filter((one) => one !== '')
+    : []);
+
+/** The `PATH` Docker gives a container whose image sets none. */
+export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+/**
+ * The volume a part is copied into where an image mount is refused,
+ * `ahpd-part-<id>-<version>`.
+ *
+ * The version is in the name, so a bump makes a new volume and the old one is
+ * left for `docker volume prune`. A character Docker refuses in a volume name -
+ * the `+` of a build suffix - is written `_`.
+ */
+export const volumeOf = (part: MadePart): string =>
+  `ahpd-part-${part.id}-${part.version.replace(/[^A-Za-z0-9_.-]/g, '_')}`;
+
+/**
+ * The file written into a part volume once it is filled, and last.
+ *
+ * A volume without it is a fill that stopped half way, which is removed and
+ * filled again rather than mounted.
+ */
+export const FILLED_MARKER = '.ahpd-filled';
+
+/** A `PATH` with each part's `bin` in front of `base`, in the order the parts are named. */
+export const pathWith = (ids: readonly string[], base: string): string =>
+  [...ids.map((id) => `${partTarget(id)}/bin`), base].join(':');
+
+/**
+ * The parts a machine asking for these is made with: each one, then the parts
+ * it requires, each once, in that order.
+ *
+ * An id the file does not name stays in the list, so the build that cannot find
+ * it is what says so, and a file that cannot be read answers the ids as asked.
+ */
+export const withRequires = (ids: readonly string[], parts?: Part[]): string[] => {
+  let named: Part[];
+  try {
+    named = parts ?? readParts();
+  }
+  catch {
+    return [...new Set(ids)];
+  }
+  const out: string[] = [];
+  const add = (id: string): void => {
+    if (out.includes(id)) return;
+    out.push(id);
+    for (const need of named.find((one) => one.id === id)?.requires ?? []) add(need);
+  };
+  for (const id of ids) add(id);
+  return out;
+};
+
+/**
+ * Every part a machine asks for, built where it is not already, with what each
+ * requires.
+ *
+ * A part whose build fails, or whose requirement's build fails, is answered
+ * among `failed` with the build's own reason rather than thrown: the machine is
+ * made with the rest, and only a session that needs the missing part is
+ * refused.
+ */
+export const ensureParts = async (
+  ids: readonly string[],
+  options: EnsureOptions,
+): Promise<{ made: MadePart[]; failed: { id: string; reason: string }[] }> => {
+  const made: MadePart[] = [];
+  const failed: { id: string; reason: string }[] = [];
+  let named: Part[] = [];
+  try { named = options.parts ?? readParts(); }
+  catch { /* each build below says why the file could not be read */ }
+  for (const id of withRequires(ids, options.parts)) {
+    try {
+      const tag = await ensurePart(id, options);
+      const requires = named.find((one) => one.id === id)?.requires;
+      made.push({ id, tag, version: tag.slice(tag.lastIndexOf(':') + 1), ...(requires === undefined ? {} : { requires }) });
+    }
+    catch (error) {
+      failed.push({ id, reason: (error instanceof Error ? error.message : String(error)).replace(/\s*\n\s*/g, ' ') });
+    }
+  }
+  return { made, failed };
+};
+
+/**
+ * The failed parts a machine is not made without, and the one place that is
+ * decided.
+ *
+ * A machine made for one session is refused when a part that session's agent
+ * needs failed, since no other session will run in it. A machine sessions
+ * share is made without any failed part, and only a session needing it is
+ * refused when it asks.
+ */
+export const refusedWithout = (spec: { sessionParts?: string[] }, failed: readonly string[]): string[] =>
+  (spec.sessionParts === undefined ? [] : failed.filter((id) => spec.sessionParts?.includes(id) === true));
 
 /** What the joined image holds beyond the parts, which is what an agent needs to work. */
 const JOINED = 'ca-certificates git ripgrep';

@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { devContainer, hasDefinition, parseUp, pluginInstallLine, reachOf } from '../src/devcontainer.js';
 import type { Probe } from '../src/devcontainer.js';
-import { adoptedDevContainer } from '../src/runtime.js';
+import { adoptedDevContainer, dockerRuntime } from '../src/runtime.js';
 import type { DockerOptions } from '../src/runtime.js';
+import type { MadePart } from '../src/parts.js';
 import type { ContainerSink } from '../../sdk/src/types/containers.js';
 
 /*
@@ -770,4 +771,64 @@ it('probes once for a container, and reads the kept probe back on a later daemon
   const later = launcher({ probes: store });
   await later.connect({ ...connect, workspaceFolder: other }, sink());
   expect(probed()).toBe(2);
+});
+
+/*
+ * A dev container gets its parts as a Docker machine does: an image mount in
+ * the override config's `runArgs` where Docker takes one, the part's volume in
+ * its `mounts` otherwise, and every command's `PATH` with each part's `bin` in
+ * front of the probed one.
+ */
+const CODEX: MadePart = { id: 'codex', tag: 'ahpd-part/codex:2.1.1', version: '2.1.1' };
+const NODE: MadePart = { id: 'node', tag: 'ahpd-part/node:24.21.0', version: '24.21.0' };
+
+/** The runtime making a dev container through the fake CLI, over the fake Docker. */
+const maker = () => dockerRuntime({
+  ...dockered(),
+  devcontainerCli: { command: process.execPath, args: [CLI], env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState } },
+});
+
+/** The override config the one `up` was handed. */
+const overridden = (): Record<string, unknown> =>
+  (JSON.parse(readFileSync(state, 'utf8')) as { overrides: { config: Record<string, unknown> }[] }).overrides[0]?.config ?? {};
+
+it('gives a dev container its parts as image mounts in runArgs where Docker takes them', async () => {
+  wrote({ images: [CODEX.tag, NODE.tag] });
+  await maker().run({ name: 'box', devcontainer: workspace(), label: 'ahpd.computer=1', parts: [CODEX, NODE] });
+
+  const runArgs = overridden().runArgs as string[];
+  expect(runArgs.filter((_, at) => runArgs[at - 1] === '--mount')).toEqual([
+    `type=image,source=${CODEX.tag},image-subpath=opt/ahpd/codex,target=/opt/ahpd/codex,readonly`,
+    `type=image,source=${NODE.tag},image-subpath=opt/ahpd/node,target=/opt/ahpd/node,readonly`,
+  ]);
+  expect(runArgs).toContain('ahpd.parts=codex@2.1.1,node@24.21.0');
+  expect(JSON.stringify(overridden().mounts ?? [])).not.toContain('ahpd-part');
+});
+
+it('gives a dev container its parts as read-only volumes where Docker refuses image mounts', async () => {
+  wrote({ images: [CODEX.tag, NODE.tag], imageMounts: false });
+  await maker().run({ name: 'box', devcontainer: workspace(), label: 'ahpd.computer=1', parts: [CODEX, NODE] });
+
+  expect(overridden().mounts).toEqual([
+    'type=volume,source=ahpd-part-codex-2.1.1,target=/opt/ahpd/codex,readonly',
+    'type=volume,source=ahpd-part-node-24.21.0,target=/opt/ahpd/node,readonly',
+  ]);
+  expect((overridden().runArgs as string[])).not.toContain('--mount');
+  // Each volume was filled before `up` mounted it.
+  const docker = JSON.parse(readFileSync(dockerState, 'utf8')) as { fills: string[]; machines: { mounts: string[] }[] };
+  expect(docker.fills).toEqual(['ahpd-part-codex-2.1.1', 'ahpd-part-node-24.21.0']);
+  expect(docker.machines.at(-1)?.mounts).toContain('ahpd-part-codex-2.1.1:/opt/ahpd/codex:ro');
+});
+
+it('puts each part\'s bin in front of the probed PATH on every command into a dev container', async () => {
+  wrote({ images: [CODEX.tag, NODE.tag] });
+  const docker = maker();
+  await docker.run({ name: 'box', devcontainer: workspace(), label: 'ahpd.computer=1', parts: [CODEX, NODE] });
+  await docker.exec('box', ['true']);
+
+  const command = ran().commands.at(-1);
+  expect(command?.command).toEqual(['true']);
+  // The probed PATH is the fake shell's `/usr/bin`.
+  expect(command?.env.PATH).toBe('/opt/ahpd/codex/bin:/opt/ahpd/node/bin:/usr/bin');
+  expect(ran().calls.at(-1)).toContain('PATH=/opt/ahpd/codex/bin:/opt/ahpd/node/bin:/usr/bin');
 });

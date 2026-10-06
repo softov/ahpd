@@ -129,6 +129,20 @@ it('takes a value over an environment need whose default names a secret, and ref
   expect(() => resolveNeeds(needs)).toThrow(/^machine need token names host:token, and nothing read it for this machine$/);
 });
 
+it('resolves a part to its place under /opt/ahpd, and a profile value names another part', () => {
+  const needs: Record<string, MachineNeed> = { codex: { part: 'codex', required: true } };
+  // A part has no host path, so nothing is expanded and nothing is looked for.
+  expect(resolveNeeds(needs)).toEqual([{ name: 'codex', kind: 'part', source: 'codex', target: '/opt/ahpd/codex' }]);
+  // The target follows the part named, so a profile pinning another build gets
+  // it where that build is.
+  expect(resolveNeeds(needs, { profile: { codex: 'codex-next' }, option: { codex: 'codex-old' } }))
+    .toEqual([{ name: 'codex', kind: 'part', source: 'codex-next', target: '/opt/ahpd/codex-next' }]);
+  expect(resolveNeeds(needs, { option: { codex: 'codex-old' } })[0]?.target).toBe('/opt/ahpd/codex-old');
+  // A part id is a name, never a path: it is where the part lands inside.
+  expect(() => resolveNeeds(needs, { profile: { codex: '../etc' } }))
+    .toThrow(/^machine need codex names the part \.\.\/etc \(from the profile\), and a part is named by its id in the versions file$/);
+});
+
 it('refuses a path that is not there, naming the need, the path and the source', () => {
   const dir = temp();
   const gone = join(dir, 'not-there');

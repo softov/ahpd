@@ -1,6 +1,6 @@
 ---
 title: The SDK has a part need
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -29,3 +29,7 @@ refs:
 - `pnpm --filter @ahpd/sdk test` and `pnpm typecheck` green.
 
 ## Resume
+
+- Built 2026-10-05 on 2caabb1. `PartNeed { part }` is the fifth `MachineNeed` and `'part'` the fifth `NeedKind` in `packages/sdk/src/types/machine.ts`; `resolveNeeds` in `packages/sdk/src/machine.ts` answers `{ kind: 'part', source: <id>, target: '/opt/ahpd/<id>' }`, with the profile's, then the option's, then the default's value naming another part id, never expanded or looked for on the host. `partTarget` and `PART_ROOT` are exported from the SDK.
+- Beyond the steps: a part id that is not a plain name (`../etc`) is refused naming the need and where the value came from, since it becomes a path inside the machine.
+- Test: `packages/sdk/test/machine-needs.test.ts` "resolves a part to its place under /opt/ahpd, and a profile value names another part"; it failed before the change.
