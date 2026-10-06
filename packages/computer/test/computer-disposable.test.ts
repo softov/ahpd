@@ -35,7 +35,7 @@ afterEach(() => {
   vi.useRealTimers();
   // The scripted docker this file spawns is stopped behind the case and may
   // still be writing its state file, so the folder is removed with retries.
-  if (loose !== undefined) rmSync(loose, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
+  if (loose !== undefined) rmSync(loose, { recursive: true, force: true, maxRetries: 100, retryDelay: 50 });
   loose = undefined;
 });
 

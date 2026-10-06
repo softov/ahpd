@@ -22,6 +22,12 @@ const IMAGE = 'node:22';
 const LABEL = 'ahpd.gitguard=1';
 const ME = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
 
+/**
+ * The budget of a case that runs a real container: a fresh runner pulls
+ * `node:22` first, which alone takes far longer than vitest's 5 s default.
+ */
+const DOCKER_CASE = 120_000;
+
 /** Whether a Docker daemon answers here, which is what these cases need. */
 const answers = (): boolean => {
   try {
@@ -86,7 +92,7 @@ it.skipIf(!DOCKER)('commits in a machine on a linked worktree, and writes nothin
   finally {
     await docker.remove(name).catch(() => {});
   }
-});
+}, DOCKER_CASE);
 
 it.skipIf(!DOCKER)('commits in a machine on a main checkout, whose git directory root stays writable', async () => {
   const { repo, gitDir } = repository();
@@ -115,4 +121,4 @@ it.skipIf(!DOCKER)('commits in a machine on a main checkout, whose git directory
   finally {
     await docker.remove(name).catch(() => {});
   }
-});
+}, DOCKER_CASE);
