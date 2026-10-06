@@ -1,6 +1,7 @@
 ---
 title: A machine's git directory is read-only, except the objects, refs and logs a commit writes and the session's own worktree entry
-status: accepted
+status: superseded
+superseded-by: decisions/a-machine-commits-in-its-own-repository-and-the-host-fetches-it.md
 date: 2026-10-06
 refs:
   - "[code://packages/computer/src/gitdir.ts#L115-L150](../../packages/computer/src/gitdir.ts#L115-L150) - `gitMounts`: today the git directory is read-write with four parts bound read-only over it"
