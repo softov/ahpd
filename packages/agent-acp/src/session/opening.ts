@@ -36,18 +36,61 @@ const advertised = <T>(capability: T | null | undefined): boolean =>
 const HOST_TOOLS = 'ahp';
 
 /**
+ * The hosts that name this machine itself, wherever the address is read.
+ *
+ * A loopback address is the reader's own, and a wildcard bind is the address a
+ * daemon listens on rather than one anything connects to: inside a container
+ * either one is the container.
+ */
+const SELF_ONLY = new Set(['localhost', '0.0.0.0', '[::]', '[::1]']);
+
+/**
+ * Whether a session running at `where` can reach the host's tools at `url`.
+ *
+ * `where` is the machine the session runs in, as its `computer://<id>`, or
+ * nothing for this host, which reaches the daemon at whatever address it
+ * serves. In a machine the answer is `false` for a loopback or wildcard
+ * address and `true` for any other, which is a guess about the network rather
+ * than an answer from the machine; this is the one place it is made, so a
+ * reachable address the machine's port reports can replace it.
+ */
+export const toolsReachable = (url: string, where: string | undefined): boolean => {
+  if (where === undefined) return true;
+  let host: string;
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  }
+  catch {
+    return false;
+  }
+  return !SELF_ONLY.has(host) && !/^127\./u.test(host);
+};
+
+/** Where a URL's server is, as `host:port`, with nothing of its path or credentials. */
+const addressOf = (url: string): string => {
+  try {
+    return new URL(url).host;
+  }
+  catch {
+    return 'an address that is not a URL';
+  }
+};
+
+/**
  * The MCP servers a session is opened with, in ACP's shape.
  *
  * The host's own map, less whatever the handshake says this server cannot take,
- * plus the host's tools as one HTTP server when `hostTools` is on. A server left
- * out is said rather than dropped, because a deployment that configured a
- * server and watches a session not reach it has no other way to find out.
+ * plus the host's tools as one HTTP server when `hostTools` is on and the
+ * session can reach them from `where` it runs. A server left out is said rather
+ * than dropped, because a deployment that configured a server and watches a
+ * session not reach it has no other way to find out.
  */
 const serversFor = (
   start: Start,
   own: () => ToolsEndpoint | undefined,
   capabilities: AgentCapabilities | undefined,
   hostTools: boolean,
+  where: string | undefined,
   say: (line: string) => void,
 ): AcpMcpServer[] => {
   const taken: AcpMcpServer[] = [];
@@ -90,6 +133,10 @@ const serversFor = (
   }
   const endpoint = own();
   if (endpoint === undefined) return taken;
+  if (!toolsReachable(endpoint.url, where)) {
+    say(`host tools: ${String(where)} cannot reach the daemon at ${addressOf(endpoint.url)}, so they were left out`);
+    return taken;
+  }
   taken.push({
     type: 'http',
     name: HOST_TOOLS,
@@ -185,9 +232,12 @@ export function createOpening(ctx: SessionContext): Opening {
    *
    * A sign-in the server refuses is the server's own refusal, said as it made
    * it, rather than a request for a sign-in nobody has made.
+   *
+   * `placed` says the server runs in a machine, where the preset's machine
+   * variables are set too and `authenticateInMachine` is the one sent.
    */
-  const signIn = async (connection: AcpConnection): Promise<void> => {
-    const asked = options.authenticate;
+  const signIn = async (connection: AcpConnection, placed: boolean): Promise<void> => {
+    const asked = placed ? options.authenticateInMachine ?? options.authenticate : options.authenticate;
     if (asked === undefined) return;
     if (!signIns.includes(asked.methodId)) {
       const offered = signIns.join(', ');
@@ -284,7 +334,7 @@ export function createOpening(ctx: SessionContext): Opening {
       ctx.takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
       extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
       signIns = (handshake.authMethods ?? []).map((one) => one.id);
-      await signIn(connection);
+      await signIn(connection, moved !== undefined);
       /*
        * The directories beside the one the server runs in, only to a server that
        * advertised them.
@@ -300,9 +350,17 @@ export function createOpening(ctx: SessionContext): Opening {
       /*
        * The servers this session is opened with: the host's own, less what the
        * handshake says this server cannot take, plus the host's tools as one
-       * HTTP server unless the deployment turned that off.
+       * HTTP server unless the deployment turned that off or the machine the
+       * session runs in cannot reach them.
        */
-      const servers = serversFor(start, toolsServer, handshake.agentCapabilities, options.hostTools !== false, (line) => options.log?.(line));
+      const servers = serversFor(
+        start,
+        toolsServer,
+        handshake.agentCapabilities,
+        options.hostTools !== false,
+        moved === undefined ? undefined : machineAsked(start),
+        (line) => options.log?.(line),
+      );
       /*
        * The conversation to continue: the one a resume named, or the one this
        * session already had when its server died. Both go through the same

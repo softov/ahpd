@@ -1,6 +1,6 @@
 ---
 title: The host's tools are offered to a session in a machine only where the machine can reach the daemon
-status: todo
+status: implemented
 depends: []
 layer: "agent-acp"
 refs:
@@ -38,3 +38,8 @@ A session on this host is unchanged.
 - `pnpm --filter @ahpd/agent-acp test` green.
 
 ## Resume
+
+- Implemented 2026-10-05. The refs' `session.ts` lines are stale: `serversFor` and the endpoint asked once per session live in `packages/agent-acp/src/session/opening.ts` since the session was split by area, and the call is in `open()` there.
+- `toolsReachable(url, where)` is exported from `opening.ts`; `where` is the `computer://<id>` only when `placed()` returned a spawn. Loopback is `localhost`, any `127.x` and `[::1]`; wildcard is `0.0.0.0` and `[::]` (WHATWG `URL` spells `::` with brackets). An address that is not a URL counts as unreachable.
+- The line names the machine and `host:port` only, never the token or the path.
+- Tests: `packages/agent-acp/test/agent-acp-catalog.test.ts`, five unreachable addresses, one reachable, and two `toolsReachable` cases; a session on this host is the existing cases, unchanged.

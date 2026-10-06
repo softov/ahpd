@@ -767,6 +767,126 @@ it('answers which needs a reference gave their value', async () => {
 });
 
 /*
+ * An agent may name a secret as an environment need's own default, which is
+ * how a preset written `{ "$secret": "<name>" }` reaches a machine. It is read
+ * as a value in the plugin's `needs` is, when the machine is made and for its
+ * owner, and it is the default: a profile's or the option's value wins.
+ */
+const DEFAULTED: Record<string, MachineNeed> = {
+  'codex.CODEX_API_KEY': { name: 'CODEX_API_KEY', default: { $secret: 'user:ada/codex' }, required: false },
+  'codex.CODEX_HOME': { name: 'CODEX_HOME', default: '/ahpd/codex', required: false },
+};
+
+it('reads an agent need whose default names a secret, for the machine\'s owner at create', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const store = holding({ 'user:ada/codex': 'ada-codex' });
+  const lines: string[] = [];
+  const { options, problems } = await loadPlugins(
+    [{
+      name: SOURCE,
+      options: {
+        command: process.execPath,
+        args: [FIXTURE],
+        env: { DOCKER_FAKE_STATE: state },
+        sessionSetting: false,
+        profiles: { codex: { agents: ['codex'] }, gone: { agents: ['codex'], disposable: true } },
+      },
+    }],
+    { base: base([agent('codex', DEFAULTED)], store), configDir: dir, cwd: REPO, log: (line) => { lines.push(line); } },
+  );
+  expect(problems).toEqual([]);
+
+  await written(options, 'ada', { profile: 'codex' }, 'user:ada');
+  // The plain default is given at create; the vault's is never, and it is
+  // passed by name on each command instead.
+  expect(envOf(state)).toEqual({ CODEX_HOME: '/ahpd/codex' });
+  const ada = await execOf(options, 'ada');
+  expect(ada.names).toEqual(['CODEX_API_KEY']);
+  expect(ada.env.CODEX_API_KEY).toBe('ada-codex');
+
+  // A disposable machine reads it for the session's owner the same way.
+  const create = options.computers?.create as NonNullable<NonNullable<typeof options.computers>['create']>;
+  const id = String(await create({ source: 'disposable:gone', session: 'ahp-session:/one', provider: 'codex', owner: 'user:ada' }));
+  expect((await execOf(options, id)).env.CODEX_API_KEY).toBe('ada-codex');
+
+  // The value is on no argv, in no machine record, in no file beside the
+  // configuration and in no log line; the reference is what is recorded.
+  expect(readFileSync(state, 'utf8')).not.toContain('ada-codex');
+  expect(makes(state).flat().join(' ')).not.toContain('ada-codex');
+  expect(ada.args.join(' ')).not.toContain('ada-codex');
+  const recorded = readFileSync(join(dir, 'computers.json'), 'utf8');
+  expect(recorded).toContain('user:ada/codex');
+  expect(recorded).not.toContain('ada-codex');
+  expect(lines.join('\n')).not.toContain('ada-codex');
+
+  // Bo's machine cannot read Ada's secret, so that create alone is refused,
+  // naming the need and the secret and never a value.
+  const refused = await written(options, 'bo', { profile: 'codex' }, 'user:bo');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toContain('machine need codex.CODEX_API_KEY names user:ada/codex');
+  expect((refused as Error).message).toContain('is not a secret this work may read');
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines.map((one) => one.name)).not.toContain('bo');
+});
+
+it('refuses only the create whose agent default names a secret the vault does not hold', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { codex: { agents: ['codex'] }, plain: { agents: ['plain'] } },
+  }, [agent('codex', DEFAULTED), agent('plain', KEY)], holding({}));
+
+  const refused = await written(options, 'box', { profile: 'codex' }, 'user:ada');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toContain('machine need codex.CODEX_API_KEY names user:ada/codex: the vault holds no user:ada/codex');
+  // A machine for another agent is made as before.
+  expect(await written(options, 'other', { profile: 'plain' }, 'user:ada')).toBeUndefined();
+});
+
+it('gives a profile\'s or the option\'s value over an agent default that names a secret, which is then not read', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/codex': 'ada-codex', 'host:mine': 'mine-value' });
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    needs: { 'codex.CODEX_API_KEY': { $secret: 'host:mine' } },
+    profiles: { codex: { agents: ['codex'] }, own: { agents: ['codex'], needs: { 'codex.CODEX_API_KEY': 'profile-value' } } },
+  }, [agent('codex', DEFAULTED)], store);
+
+  await written(options, 'opt', { profile: 'codex' }, 'user:ada');
+  expect((await execOf(options, 'opt')).env.CODEX_API_KEY).toBe('mine-value');
+  await written(options, 'own', { profile: 'own' }, 'user:ada');
+  expect(envOf(state, 1)).toMatchObject({ CODEX_API_KEY: 'profile-value' });
+  expect(store.asked).not.toContain('user:ada/codex');
+});
+
+it('reads an agent default that names a secret again after a restart, for a machine with no recorded needs', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const store = holding({ 'user:ada/codex': 'ada-codex' });
+  const options = {
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { codex: { agents: ['codex'] } },
+  };
+  const first = await load(options, [agent('codex', DEFAULTED)], store);
+  await written(first.options, 'ada', { profile: 'codex' }, 'user:ada');
+  rmSync(join(dir, 'computers.json'));
+
+  const again = await load(options, [agent('codex', DEFAULTED)], store);
+  const reached = await execOf(again.options, 'ada');
+  expect(reached.names).toEqual(['CODEX_API_KEY']);
+  expect(reached.env.CODEX_API_KEY).toBe('ada-codex');
+});
+
+/*
  * A vault-named value is held with its machine in the daemon's memory and
  * nowhere else, so a daemon that restarted reads it again the first time the
  * machine is reached: for the owner the machine carries, from the profile it

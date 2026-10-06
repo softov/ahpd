@@ -15,8 +15,15 @@
  * the value is settled is `ResolvedNeed`.
  */
 
-/** The fields every need carries, whatever its delivery. */
-interface Need {
+import type { SecretRef } from './vault.js';
+
+/**
+ * The fields every need carries, whatever its delivery.
+ *
+ * `D` is what its `default` may be: a path for a mount or a copy-in, and for an
+ * environment variable its value or the name of a secret that is.
+ */
+interface Need<D = string> {
   /**
    * What the agent itself would use, under the profile and the plugin option.
    *
@@ -24,7 +31,7 @@ interface Need {
    * environment variable. `~` at the start is the host user's home, expanded
    * when the machine is made; this type only permits it.
    */
-  default?: string;
+  default?: D;
   /**
    * Whether a machine is refused when no value is available at all.
    *
@@ -57,8 +64,15 @@ export interface FileNeed extends Need {
   readOnly?: boolean;
 }
 
-/** An environment variable set inside the machine. */
-export interface EnvNeed extends Need {
+/**
+ * An environment variable set inside the machine.
+ *
+ * Its `default` may be written `{ "$secret": "<name>" }`, which whatever makes
+ * the machine reads for the machine's owner when it makes it, as it reads a
+ * profile's or an option's value written that way; the agent never holds the
+ * value.
+ */
+export interface EnvNeed extends Need<string | SecretRef> {
   /** The variable's name. Its value is the profile's, the option's or the default. */
   name: string;
 }

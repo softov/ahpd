@@ -7,7 +7,7 @@ import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcon
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
-import { madeAgain, namedAgain, revealed, vaultNamed } from './secrets.js';
+import { madeAgain, namedAgain, revealed, vaultNamed, withDefaults } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import type { FolderAnswer, Profile } from './manifest.js';
 import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
@@ -977,7 +977,9 @@ export const apply: Plugin['apply'] = (host, options) => {
         // No profile stands behind this one, so the machine is made for the
         // session's own harness and for nothing else's needs.
         const forSession = needsFor(asked);
-        const values = await revealed(needValues, [asked.provider], forSession, work, secret);
+        // The option's values, and under them any secret the harness names as
+        // its own default, read for the session's owner the same way.
+        const values = await revealed(withDefaults(needValues, [asked.provider], forSession), [asked.provider], forSession, work, secret);
         const spec = manifestOf(id, { data: JSON.stringify({}), encoding: 'utf-8' }, {
           runtime,
           image,
@@ -1038,10 +1040,11 @@ export const apply: Plugin['apply'] = (host, options) => {
       // The agents this machine is made for: the profile's own, and the
       // harness the session runs. Their declared needs are the whole of what a
       // value here can land on, so a need only another harness declares is left
-      // for the machines that harness is in.
+      // for the machines that harness is in; a secret one of them names as its
+      // own default is read under the option's values.
       const forSession = needsFor(asked);
       const agents = [...(profile.agents ?? []), asked.provider];
-      const values = await revealed(needValues, agents, forSession, work, secret);
+      const values = await revealed(withDefaults(needValues, agents, forSession), agents, forSession, work, secret);
       /*
        * Only this profile's needs are read, because only this profile is being
        * made into a machine: a reference in a profile nobody picked is not

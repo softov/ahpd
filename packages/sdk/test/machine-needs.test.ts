@@ -118,6 +118,17 @@ it('does not check an environment need, which is not a path', () => {
   expect(said()).toMatch(/^machine need token is required, and neither the profile, the plugin option nor the agent's default names one$/);
 });
 
+it('takes a value over an environment need whose default names a secret, and refuses one left unread', () => {
+  // The machine maker reads such a default and hands it over as a value; a
+  // profile's or an option's value wins over it as over any default.
+  const needs: Record<string, MachineNeed> = { token: { name: 'TOKEN', default: { $secret: 'host:token' } } };
+  expect(resolveNeeds(needs, { option: { token: 'read' } }))
+    .toEqual([{ name: 'token', kind: 'env', target: 'TOKEN', source: 'read' }]);
+  // Nothing read it, so there is no value to give, and the refusal names the
+  // need and the secret rather than handing the machine an object.
+  expect(() => resolveNeeds(needs)).toThrow(/^machine need token names host:token, and nothing read it for this machine$/);
+});
+
 it('refuses a path that is not there, naming the need, the path and the source', () => {
   const dir = temp();
   const gone = join(dir, 'not-there');

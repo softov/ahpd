@@ -38,6 +38,33 @@ const declared = (agents: readonly string[], needsOf: NeedsOf | undefined): Set<
   return names;
 };
 
+/**
+ * The option's need values with each agent's own secret default laid under them.
+ *
+ * An agent may write an environment need's `default` as `{ "$secret": "<name>" }`
+ * rather than hold the value, and it is read the way a reference in the plugin's
+ * `needs` is: for the machine's owner, when the machine is made. So it joins the
+ * option's values where the option names none, which keeps the order a value is
+ * taken in - the profile's, then the option's, then the agent's - and lets
+ * `revealed` read it and `vaultNamed` say it came from the vault.
+ */
+export const withDefaults = (
+  values: Record<string, string | SecretRef> | undefined,
+  agents: readonly string[],
+  needsOf: NeedsOf | undefined,
+): Record<string, string | SecretRef> | undefined => {
+  const defaults: Record<string, SecretRef> = {};
+  for (const agent of agents) {
+    for (const [need, one] of Object.entries(needsOf?.(agent) ?? {})) {
+      if (need in defaults || !('name' in one)) continue;
+      const name = secretRef(one.default);
+      if (name !== undefined) defaults[need] = { $secret: name };
+    }
+  }
+  if (Object.keys(defaults).length === 0) return values;
+  return { ...defaults, ...(values ?? {}) };
+};
+
 /** One need map with every reference read, and which of its needs were references. */
 export interface Revealed {
   /** Every value, as the machine maker wants them, by need name. */
@@ -154,7 +181,8 @@ export const madeAgain = async (
  * so the reference is read again from the same place it was read at create.
  * Only an environment need is read,
  * and only where its winning value is a reference - the profile's value, else
- * the option's - which is the same rule the create followed.
+ * the option's, else the agent's own default - which is the same rule the
+ * create followed.
  *
  * Each one is read on its own, so a reference that cannot be read is answered
  * beside the ones that were rather than in place of them.
@@ -174,7 +202,7 @@ export const namedAgain = async (
     for (const [need, declaredNeed] of Object.entries(needsOf(agent) ?? {})) {
       if (seen.has(need) || !('name' in declaredNeed)) continue;
       seen.add(need);
-      const winning = profile?.[need] ?? option?.[need];
+      const winning = profile?.[need] ?? option?.[need] ?? declaredNeed.default;
       const name = winning === undefined ? undefined : secretRef(winning);
       if (name === undefined) continue;
       try {

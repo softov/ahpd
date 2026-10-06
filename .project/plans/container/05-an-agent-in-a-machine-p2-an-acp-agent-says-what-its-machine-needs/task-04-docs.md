@@ -1,6 +1,6 @@
 ---
 title: The ACP docs cover a preset's machine
-status: todo
+status: implemented
 depends: [task-01-a-spec-declares-what-its-machine-needs.md, task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md]
 layer: "docs"
 refs:
@@ -28,3 +28,5 @@ refs:
 - Read by hand against `plugin.ts`.
 
 ## Resume
+
+- Implemented 2026-10-05: `docs/PLUGINS.md` has the `machine` row, the example, the need names, the `fromEnv` and `$secret` sentences linking `DAEMON.md#the-vault`, and the host tools sentence with its log line; `docs/COMPUTER.md`'s ACP row links it. `packages/agent-acp/README.md` was not in the plan's files and got the same row and skip sentence, since it carries the same options table.

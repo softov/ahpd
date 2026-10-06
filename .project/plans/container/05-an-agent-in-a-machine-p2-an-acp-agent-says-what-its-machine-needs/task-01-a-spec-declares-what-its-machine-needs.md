@@ -1,6 +1,6 @@
 ---
 title: A preset declares what its machine needs
-status: todo
+status: implemented
 depends: []
 layer: "agent-acp"
 refs:
@@ -45,3 +45,12 @@ A preset written `{ machine: { env: { CODEX_HOME: "/ahpd/codex", CODEX_API_KEY: 
 - `pnpm --filter @ahpd/agent-acp test` green.
 
 ## Resume
+
+- Implemented 2026-10-05 on a43c077, see [implemented.md](implemented.md).
+- acp/05 had already landed the presets map, so the block hangs on `presetOf` in `packages/agent-acp/src/plugin.ts`, read by `machineOf`; the variant's `machine()` is `needsOf` in `agent.ts`.
+- `AcpMachine` holds the settled values, `string | { $secret }`: a `{ fromEnv }` is the plugin option's form and is read before `AcpOptions` exists.
+- The schema leaves `machine` untyped and marks each `machine.env` value `secretAtUse` and `writeOnly`, so a wrongly written block costs its preset rather than the load; `machineOf` holds the shape, refuses an unknown key, a non-absolute copy `target`, and a `fromEnv` the daemon lacks. `machine` joined the keys refused at the top level.
+- `revealed` itself is unchanged: `withDefaults` in `packages/computer/src/secrets.ts` lays each declared env need's `$secret` default under the option's values, so the order stays profile, option, default, and `revealed` reads it and `vaultNamed` marks it. The three create paths (form, disposable, dev container) call it, and `namedAgain` falls back to the default after a restart.
+- `resolveNeeds` refuses a `$secret` default that reaches it unread, naming the need and the secret, rather than handing a runtime an object.
+- A shipped row's sign-in counts a variable set in `machine.env` for a session placed in a machine only: `presetOf` sets `authenticateInMachine` (methodId only, from the variable's name) and `signIn` in `session/opening.ts` sends it when `placed()` returned a spawn. The key's value reaches the server only as the machine's environment, through p1's path; the sign-in carries none of it.
+- Tests: `packages/agent-acp/test/agent-acp-machine.test.ts` (new, 12, two of them the sign-in in a machine and on this host), `packages/computer/test/computer-needs.test.ts` (4 new), `packages/sdk/test/machine-needs.test.ts` (1 new), `agent-acp-presets.test.ts` (`machine` refused at the top level).

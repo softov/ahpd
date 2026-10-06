@@ -126,7 +126,7 @@ A machine is also kept to the agents it was prepared for. A profile with `agents
 
 | Backend | In a machine |
 | --- | --- |
-| `@ahpd/agent-acp` | Its command runs under `docker exec`, with the dev container's own user and environment when that is the machine |
+| `@ahpd/agent-acp` | Its command runs under `docker exec`, with the dev container's own user and environment when that is the machine. A preset may declare what its machine needs with [`machine`](PLUGINS.md#a-second-worked-example-ahpdagent-acp) |
 | `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec`, with the dev container's own user and environment when that is the machine |
 | `@ahpd/agent-cofold` | A whole `ahpd` with the plugin runs inside the machine, and its frames are carried out as the session's - see below |
 

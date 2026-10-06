@@ -40,7 +40,24 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Bag, MessageFrom } from '@ahpd/sdk';
+import type { Bag, MessageFrom, SecretRef } from '@ahpd/sdk';
+
+/**
+ * What a machine needs for one agent to run in it, as the agent declares it.
+ *
+ * `env` is set in the machine and never in a spawn on this host: a value is the
+ * variable's own, or `{ "$secret": "<name>" }`, which whatever makes the machine
+ * reads for the machine's owner when it makes it. A plugin option written
+ * `{ "fromEnv": "<VAR>" }` is the daemon's value of that variable by the time it
+ * is here. `copy` is each host path copied in, `~` at its start being the host
+ * user's home.
+ */
+export interface AcpMachine {
+  /** Variables set inside the machine, by name. */
+  env?: Record<string, string | SecretRef>;
+  /** Host paths copied into the machine, each to an absolute path there. */
+  copy?: { source: string; target: string }[];
+}
 
 /** What an embedder, or a plugin's options, may set. */
 export interface AcpOptions {
@@ -71,6 +88,14 @@ export interface AcpOptions {
    */
   authenticate?: { methodId: string; _meta?: Record<string, unknown> };
   /**
+   * The sign-in to send instead for a session placed in a machine.
+   *
+   * A machine is given the preset's `machine.env` as well, so a shipped row
+   * whose variable only the machine has signs in there and nowhere else.
+   * Absent, a session in a machine sends `authenticate`.
+   */
+  authenticateInMachine?: AcpOptions['authenticate'];
+  /**
    * Whether the host's own tools are offered to each session as an MCP server.
    *
    * On by default, which is the case the bridge exists for: an ACP agent
@@ -81,6 +106,13 @@ export interface AcpOptions {
   hostTools?: boolean;
   /** Where a server left out of a session's list is said. */
   log?: (line: string) => void;
+  /**
+   * What a machine needs to run this agent, which `machine()` answers.
+   *
+   * Absent, the agent declares nothing and a machine for it carries only what
+   * its profile does.
+   */
+  machine?: AcpMachine;
 }
 
 /**

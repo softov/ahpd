@@ -1,7 +1,7 @@
 ---
 title: An ACP preset says what its machine needs
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -68,6 +68,7 @@ presets.<key>.machine -> the variant's acpAgent().machine() -> host.placedIn(pro
 | A secret is a `machine.env` value written `{ "fromEnv": "NAME" }` or `{ "$secret": "<scope:name>" }`, never a bare name the daemon's environment fills in | Softov, 2026-10-02, asked "What does the vault unlock first?": "Options and machines" (a `$secret` in any plugin option or computer need; claude/12's `fromEnv` stays the cheaper route) | 01 |
 | A `fromEnv` naming a variable the daemon does not have, or a malformed `machine`, skips only that preset with a line naming it, and the others register | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item"; mirrors [claude/16](../../claude/16-a-preset-that-fails-skips-only-itself/plan.md) ("Any preset failure") | 01 |
 | A preset's `machine.env` values are `secretAtUse`; a `$secret` is read by the computer plugin's `revealed` when the machine is made, and a failed read fails that create only | Softov, 2026-10-03, asked "when a `$secret` in a plugin's options can't be read at load, what fails?": "Only its item" | 01 |
+| A shipped row's `authenticate.fromEnv` also counts a variable the preset gives to its machine, for a session placed in that machine only; a session on this host still looks only at the daemon's environment | Softov, 2026-10-05, asked "an ACP preset can give a key only to its machine through `machine.env`, and `authenticate.fromEnv` checks only the daemon's environment, so such a session asks the user to sign in: should that check also count a variable the preset gives to its machine?": count it, in a machine only | 01 |
 | A wildcard bind (`0.0.0.0`, `::`) counts as unreachable from a machine | (defaulted: inside a container that address is the container itself) | 05 |
 | agent-acp takes presets in a later plan | Softov, 2026-10-02, asked "Does agent-acp take the same presets shape in this plan?": "Claude now, ACP after" | 01 |
 | Sign-in moves to the acp domain | Softov, 2026-09-26, asked "Container 05 p2 already has ACP sign-in and the presets. Where do they live?", answered "Sign-in moves to acp" | 02, 03 |
@@ -82,11 +83,11 @@ presets.<key>.machine -> the variant's acpAgent().machine() -> host.placedIn(pro
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A preset declares what its machine needs](task-01-a-spec-declares-what-its-machine-needs.md) | todo | acp 05, rewritten as the ACP presets plan |
+| [01 - A preset declares what its machine needs](task-01-a-spec-declares-what-its-machine-needs.md) | implemented | acp 05, rewritten as the ACP presets plan |
 | [02 - A spec may sign in after initialize](task-02-a-spec-may-sign-in.md) | dropped | - |
 | [03 - Presets for the ACP agents](task-03-presets.md) | dropped | - |
-| [04 - Docs](task-04-docs.md) | todo | 01, 05 |
-| [05 - The host's tools are offered to a session in a machine only where it can reach the daemon](task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md) | todo | - |
+| [04 - Docs](task-04-docs.md) | implemented | 01, 05 |
+| [05 - The host's tools are offered to a session in a machine only where it can reach the daemon](task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -94,17 +95,17 @@ presets.<key>.machine -> the variant's acpAgent().machine() -> host.placedIn(pro
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md](task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md), which needs no presets; it can go now. Then wait for acp/05, rewritten as the ACP presets plan, to define how agent-acp registers one agent per preset, and [task-01-a-spec-declares-what-its-machine-needs.md](task-01-a-spec-declares-what-its-machine-needs.md).
-- **Open questions:** none.
+- **Done so far:** built 2026-10-05 on a43c077, tasks 01, 04 and 05 `implemented`, see [implemented.md](implemented.md); 02 and 03 stay dropped. The answered sign-in row is in task 01: a row's `fromEnv` counts `machine.env` for a session placed in a machine.
+- **Next action:** Softov reviews; the first two checklist items want a real Docker and a real Codex or Copilot by hand.
+- **Open questions:** none; the sign-in question is answered in the table above (Softov, 2026-10-05).
 - **Watch out for:**
   - `machine()` is read at create with the live agent list, so a preset added later is seen by the next machine only.
-  - acp/05's `{ "preset": "gemini" }`, one preset per load, is not the shape this plan builds on.
+  - `toolsReachable` guesses from the address; a machine on a network that reaches a loopback daemon (`--network host`) is still left without the tools until the port can say.
 
 ## Final verification checklist
 
 - [ ] A disposable machine for a preset with `machine: { env: { COPILOT_HOME: "/ahpd/copilot", COPILOT_GITHUB_TOKEN: { fromEnv: "COPILOT_GITHUB_TOKEN" } } }` gets both by name, and a session answers a turn.
-- [ ] Two presets of one load make two machines with their own env.
-- [ ] An ACP session in a machine that cannot reach the daemon gets no host tools server and the log says why; one on this host gets it.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `docs/PLUGINS.md`, `plans/index.md` updated.
+- [x] Two presets of one load make two machines with their own env (against the fake Docker, `agent-acp-machine.test.ts`).
+- [x] An ACP session in a machine that cannot reach the daemon gets no host tools server and the log says why; one on this host gets it.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `docs/PLUGINS.md`, `plans/index.md` updated.

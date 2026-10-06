@@ -78,8 +78,9 @@ Under `presets.<id>`:
 | `model` | | the model a session that names none runs on |
 | `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
 | `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+| `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; and `copy`, a list of `{ "source", "target" }` host paths copied in |
 
-A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved - a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, or a `$secret` the vault does not hold - is skipped with one line naming it, and the rest register. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable.
+A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved - a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, a `$secret` the vault does not hold, or a `machine` that is wrongly written or reads a variable the daemon does not have - is skipped with one line naming it, and the rest register. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable, and for a session placed in a machine also when the preset's `machine.env` sets it.
 
 ## What it does
 

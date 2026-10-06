@@ -14,11 +14,11 @@
  * once.
  */
 
-import type { Plugin, PluginHost } from '@ahpd/sdk';
+import type { Plugin, PluginHost, SecretRef } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { presets as shipped } from './presets.js';
-import type { AcpOptions } from './types.js';
+import type { AcpMachine, AcpOptions } from './types.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = '@ahpd/agent-acp';
@@ -68,6 +68,17 @@ export const optionsSchema = {
             description: 'The sign-in to send after the handshake, as the methodId of a method the server lists in authMethods. A value naming one it does not offer fails the turn that opened.',
           },
           hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
+          // Typed by `machineOf` rather than here, so a wrongly written block
+          // costs its preset and not this load. A variable's value is read
+          // where the machine is made, so a `$secret` reaches this plugin as
+          // the name it wrote.
+          machine: {
+            description: 'What a machine needs to run this agent: env, variables set only inside the machine, each a string, { fromEnv: NAME } read from the daemon\'s NAME at load, or { "$secret": "<scope>:<name>" } read when the machine is made; and copy, a list of { source, target } host paths copied in.',
+            properties: {
+              env: { additionalProperties: { writeOnly: true, secretAtUse: true }, description: 'Variables set inside the machine, by name.' },
+              copy: { description: 'Host paths copied into the machine, each { source, target }.' },
+            },
+          },
         },
       },
     },
@@ -77,7 +88,7 @@ export const optionsSchema = {
 };
 
 /** The keys that belong to a preset rather than to the load, and are refused above one. */
-const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate'] as const;
+const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'machine'] as const;
 
 /** A preset as an object, however it was written. */
 const bagOf = (value: unknown): Record<string, unknown> =>
@@ -110,13 +121,77 @@ const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Re
   return out;
 };
 
+/** The variable a `{ "fromEnv": "<VAR>" }` value names, or nothing for any other value. */
+const fromEnvOf = (value: unknown): string | undefined => {
+  const held = bagOf(value);
+  const named = held.fromEnv;
+  return Object.keys(held).length === 1 && typeof named === 'string' && named !== '' ? named : undefined;
+};
+
+/**
+ * One preset's `machine`, with every `{ fromEnv }` read and every `$secret` kept.
+ *
+ * A variable read from the daemon's environment is settled here, once, and one
+ * the daemon does not have refuses the preset, as a preset's own `env` does in
+ * `agent-claude`. A `$secret` is not read: the machine it is for has an owner,
+ * and the computer plugin reads it for that owner when it makes the machine.
+ * Every refusal names the field and never a value.
+ */
+const machineOf = (said: unknown, by: string): AcpMachine => {
+  const at = `${by}.machine`;
+  if (typeof said !== 'object' || said === null || Array.isArray(said)) throw new Error(`${at} is not an object`);
+  const block = said as Record<string, unknown>;
+  for (const key of Object.keys(block)) {
+    if (key !== 'env' && key !== 'copy') throw new Error(`${at}.${key} is not a field; a machine takes env and copy`);
+  }
+  const env: Record<string, string | SecretRef> = {};
+  if (block.env !== undefined) {
+    if (typeof block.env !== 'object' || block.env === null || Array.isArray(block.env)) throw new Error(`${at}.env is not an object`);
+    for (const [variable, value] of Object.entries(block.env)) {
+      if (typeof value === 'string') {
+        env[variable] = value;
+        continue;
+      }
+      const referenced = secretRef(value);
+      if (referenced !== undefined) {
+        env[variable] = { $secret: referenced };
+        continue;
+      }
+      const named = fromEnvOf(value);
+      if (named === undefined) throw new Error(`${at}.env.${variable} is not a string, { fromEnv } or { $secret }`);
+      const held = process.env[named];
+      if (held === undefined) throw new Error(`${at}.env.${variable} reads ${named}, which the daemon's environment does not have`);
+      env[variable] = held;
+    }
+  }
+  const copy: { source: string; target: string }[] = [];
+  if (block.copy !== undefined) {
+    if (!Array.isArray(block.copy)) throw new Error(`${at}.copy is not a list`);
+    block.copy.forEach((one: unknown, index) => {
+      const { source, target } = bagOf(one);
+      if (typeof source !== 'string' || source === '' || typeof target !== 'string' || target === '') {
+        throw new Error(`${at}.copy[${String(index)}] needs a source and a target`);
+      }
+      // A path inside the machine, where no working directory makes a
+      // relative one mean what the person who wrote it could see.
+      if (!target.startsWith('/')) throw new Error(`${at}.copy[${String(index)}].target is not an absolute path`);
+      copy.push({ source, target });
+    });
+  }
+  return {
+    ...(Object.keys(env).length === 0 ? {} : { env }),
+    ...(copy.length === 0 ? {} : { copy }),
+  };
+};
+
 /**
  * One agent's options, out of a preset and the row it took.
  *
  * Everything a preset can be refused for is refused here and named by its own
  * key, so the caller says one line about it and the other presets carry on: a
  * `base` that names no row, no row and no `command`, an `authenticate` with no
- * `methodId`, and a `$secret` the host cannot read.
+ * `methodId`, a `$secret` the host cannot read, and a `machine` that is
+ * wrongly written or reads a variable the daemon does not have.
  */
 const presetOf = async (host: PluginHost, id: string, said: Record<string, unknown>, shared: unknown): Promise<AcpOptions> => {
   const by = `options.presets.${id}`;
@@ -128,6 +203,9 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
   const command = said.command ?? taken?.command;
   if (command === undefined) throw new Error(`${by} names no shipped preset and writes no command; the shipped presets are: ${listed}`);
 
+  // Read before the preset's own `env`, which asks the vault: a block that
+  // cannot be used refuses the preset without a secret being read for it.
+  const machine = said.machine === undefined ? undefined : machineOf(said.machine, by);
   const env = { ...(taken?.env ?? {}), ...await secretsOf(host, said.env, `${by}.env`) };
   // Checked here rather than by the schema, which says this key is an object
   // and cannot say the id inside it is the sign-in to a method of no name.
@@ -143,6 +221,12 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
   const authenticate = own ?? (wanted !== undefined && wanted.fromEnv.some((one) => process.env[one] !== undefined || env[one] !== undefined)
     ? { methodId: wanted.methodId }
     : undefined);
+  // A machine also has the block's variables, so a row's variable written
+  // there signs a session in that machine in. Only the name is looked for.
+  const inMachine = own === undefined && authenticate === undefined && wanted !== undefined
+    && wanted.fromEnv.some((one) => machine?.env?.[one] !== undefined)
+    ? { methodId: wanted.methodId }
+    : undefined;
 
   const args = said.args ?? taken?.args;
   const cwd = said.cwd;
@@ -163,6 +247,8 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
     ...(model === undefined ? {} : { model: model as string }),
     ...(authenticate === undefined ? {} : { authenticate: authenticate as NonNullable<AcpOptions['authenticate']> }),
     ...(hostTools === undefined ? {} : { hostTools }),
+    ...(machine === undefined ? {} : { machine }),
+    ...(inMachine === undefined ? {} : { authenticateInMachine: inMachine }),
   };
 };
 
@@ -172,8 +258,9 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
  *
  * `presets` is the one option whose contents the schema cannot check per key,
  * and a failure belongs to the preset it came from: one whose `base` names no
- * row, whose own `authenticate` carries no `methodId`, or whose `$secret`
- * cannot be read is left out with one line naming it and the rest register.
+ * row, whose own `authenticate` carries no `methodId`, whose `$secret` cannot
+ * be read, or whose `machine` cannot be resolved is left out with one line
+ * naming it and the rest register.
  * The load fails only when nothing is left, because a daemon with no ACP agent
  * at all is not a daemon somebody configured.
  */

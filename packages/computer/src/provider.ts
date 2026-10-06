@@ -5,7 +5,7 @@ import type {
 } from '@ahpd/sdk';
 import { bodyText, MANIFEST_SCHEMA, manifestOf, pickedOf } from './manifest.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { revealed, vaultNamed } from './secrets.js';
+import { revealed, vaultNamed, withDefaults } from './secrets.js';
 import type { Revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
 import { inTurn, roomFor } from './runtime.js';
@@ -363,7 +363,9 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       const profile = picked === undefined ? undefined : options.profiles?.[picked];
       const agents = profile?.agents ?? [];
       const own = await read(profile?.needs, agents, work);
-      const values = await read(options.needValues, agents, work);
+      // The option's values, and under them any secret an agent names as its
+      // own default, read for this machine's owner the same way.
+      const values = await read(withDefaults(options.needValues, agents, options.needsOf), agents, work);
       const profiles = profilesFor(picked, profile, own?.values);
       const spec = manifestOf(held.id, content, {
         runtime: runtime.kind,

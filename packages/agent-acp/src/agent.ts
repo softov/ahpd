@@ -12,11 +12,31 @@
  * catalogue is `catalog.ts`.
  */
 
-import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
 import { catalogueOf, deletes, forgetSession, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
-import type { AcpOptions } from './types.js';
+import type { AcpMachine, AcpOptions } from './types.js';
+
+/**
+ * A machine block as the needs a machine maker resolves.
+ *
+ * One environment need per variable, named `<provider>.<VARIABLE>`, and one copy
+ * need per entry, named `<provider>.copy.<n>`, so a profile or the computer
+ * plugin's `needs` can give any of them a value of its own by that name. A
+ * variable is not required: a machine made without it is the agent's to
+ * refuse, in its own words.
+ */
+const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineNeed> => ({
+  ...Object.fromEntries(Object.entries(machine.env ?? {}).map(([variable, value]): [string, MachineNeed] => [
+    `${provider}.${variable}`,
+    { name: variable, default: value, required: false, description: `${variable} for ${provider}.` },
+  ])),
+  ...Object.fromEntries((machine.copy ?? []).map((one, at): [string, MachineNeed] => [
+    `${provider}.copy.${String(at)}`,
+    { source: one.source, target: one.target, description: `Copied in for ${provider}.` },
+  ])),
+});
 
 /**
  * One AHP backend over one ACP server command.
@@ -121,6 +141,12 @@ export function acpAgent(options: AcpOptions): Agent {
     get delete() {
       return deletes(options) ? (id: string) => forgetSession(options, provider, id) : undefined;
     },
+
+    /*
+     * What a machine needs to run this agent, from the preset's own block, so
+     * each variant answers for itself. Absent when the preset wrote none.
+     */
+    ...(options.machine === undefined ? {} : { machine: () => needsOf(provider, options.machine as AcpMachine) }),
 
     create: (start) => acpSession(options, start),
   };

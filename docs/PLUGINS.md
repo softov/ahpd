@@ -834,13 +834,37 @@ Under `presets.<id>`:
 | `model` | The model id a session that names none runs on |
 | `authenticate` | The sign-in to send after the handshake, as `{"methodId": "api-key"}` for Codex with a key |
 | `hostTools` | Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+| `machine` | What a machine needs to run this agent: `env`, variables set only inside the machine, and `copy`, host paths copied in. See below |
 
 Each key is an agent of its own, so `copilot` and `codex` are two entries in the
 picker out of one package rather than two specs of one name. A per-agent option
 written at the top level fails the load and says where it goes now. A preset
 that cannot be resolved - a `base` naming no shipped preset, no `command` where
-one is needed, an `authenticate` with no `methodId`, or a `$secret` the vault
-does not hold - is skipped with one line naming it, and the rest register.
+one is needed, an `authenticate` with no `methodId`, a `$secret` the vault
+does not hold, or a `machine` that is wrongly written or reads a variable the
+daemon does not have - is skipped with one line naming it, and the rest register.
+
+A preset's `machine` says what a [machine](COMPUTER.md) needs to run it, and it reaches only a machine: a session on this host is spawned without any of it.
+
+```json
+{
+  "presets": {
+    "codex": {
+      "machine": {
+        "env": {
+          "CODEX_HOME": "/ahpd/codex",
+          "CODEX_API_KEY": { "fromEnv": "CODEX_API_KEY" }
+        },
+        "copy": [{ "source": "~/.codex/config.toml", "target": "/ahpd/codex/config.toml" }]
+      }
+    }
+  }
+}
+```
+
+Each `env` variable is a machine need named `<preset>.<VARIABLE>`, here `codex.CODEX_HOME`, and each `copy` entry one named `<preset>.copy.<n>`, so a computer profile's `needs` can give any of them another value. A `{ "fromEnv": "NAME" }` value is the daemon's `NAME` when the plugin loads. A value written `{ "$secret": "<scope>:<name>" }` is read from the [vault](DAEMON.md#the-vault) when the machine is made, for the machine's owner, and is passed by name on each command rather than given when the machine is made; one the vault cannot answer refuses that machine alone.
+
+A session in a machine is offered the host's tools only where the machine can reach the daemon: for now, where the endpoint's address is neither loopback nor a wildcard bind such as `0.0.0.0` or `::`. Otherwise they are left out and the log says `host tools: computer://box cannot reach the daemon at 127.0.0.1:8080, so they were left out`.
 
 The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`,
 `goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`, so `gemini --acp`,
@@ -848,7 +872,8 @@ The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`,
 Only a key that is written registers: an ACP agent's binary may not be installed
 on this host, and no shipped row is a backend anybody did not ask for. A row
 that names a key in `fromEnv` sends that sign-in only when the daemon's
-environment or the preset's `env` has the variable.
+environment or the preset's `env` has the variable, and for a session placed in
+a machine also when the preset's `machine.env` sets it.
 
 The `codex` CLI has no ACP mode of its own; `codex-acp` is Codex behind an
 adapter, installed with `npm i -g @agentclientprotocol/codex-acp`. The

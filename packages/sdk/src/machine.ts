@@ -17,6 +17,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { MachineNeed, ResolvedNeed } from './types/machine.js';
+import { secretRef } from './vault.js';
 
 /** What a profile and a plugin option name, by need name. */
 export interface NeedSources {
@@ -68,7 +69,11 @@ export function resolveNeeds(
   for (const [name, need] of Object.entries(needs)) {
     const profile = sources.profile?.[name];
     const option = sources.option?.[name];
-    const said = profile ?? option ?? need.default ?? carriedBy(need);
+    // A default naming a secret is read by whatever makes the machine and
+    // handed over as a value; one that arrives here unread has no value to give.
+    const unread = profile === undefined && option === undefined ? secretRef(need.default) : undefined;
+    if (unread !== undefined) throw new Error(`machine need ${name} names ${unread}, and nothing read it for this machine`);
+    const said = profile ?? option ?? (need.default as string | undefined) ?? carriedBy(need);
     const where: 'profile' | 'option' | 'default' =
       (profile !== undefined ? 'profile' : option !== undefined ? 'option' : 'default');
     if (said === undefined || said.trim() === '') {

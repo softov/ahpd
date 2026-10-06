@@ -157,7 +157,7 @@ it('skips a preset whose own authenticate carries no method id', async () => {
 });
 
 it('refuses a top-level option that belongs inside a preset, naming where it goes', async () => {
-  for (const key of ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate']) {
+  for (const key of ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'machine']) {
     const value = key === 'args' || key === 'env' ? {} : key === 'authenticate' ? { methodId: 'api-key' } : 'x';
     const { loaded, problems } = await load({ presets: { codex: {} }, [key]: value });
     expect(loaded).toEqual([]);

@@ -7,6 +7,7 @@ import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
+import { toolsReachable } from '../src/session/opening.js';
 import type { AcpOptions, AcpTurn } from '../src/types.js';
 
 /*
@@ -344,6 +345,78 @@ describe('the MCP servers a session is opened with', () => {
       { name: 'files', command: 'mcp-files', args: ['--root', '/tmp'], env: [{ name: 'KEY', value: 'k-1' }] },
       { type: 'http', name: 'api', url: 'https://example.test/mcp', headers: [{ name: 'authorization', value: 'Bearer k-2' }] },
     ]);
+  });
+
+  /*
+   * A session in a machine, through a port that spawns on this host as a
+   * machine's `docker exec` would, so the handshake is the fixture's own and
+   * only where the session says it runs differs.
+   */
+  const inBox = (url: string): Partial<Start> => ({
+    settings: { computer: 'computer://box' },
+    computers: {
+      how: async (_id, spawn) => ({
+        command: spawn.command,
+        args: spawn.args ?? [],
+        ...(spawn.env === undefined ? {} : { env: spawn.env }),
+      }),
+    },
+    toolsServer: () => ({ url, token: 't-kn', close: () => {} }),
+  });
+
+  for (const [url, at] of [
+    ['http://127.0.0.1:4242/ahp-mcp/one', '127.0.0.1:4242'],
+    ['http://localhost:4242/ahp-mcp/one', 'localhost:4242'],
+    ['http://[::1]:4242/ahp-mcp/one', '[::1]:4242'],
+    ['http://0.0.0.0:4242/ahp-mcp/one', '0.0.0.0:4242'],
+    ['http://[::]:4242/ahp-mcp/one', '[::]:4242'],
+  ] as const) {
+    it(`leaves the host's tools out of a session in a machine when the daemon is at ${at}, and says why`, async () => {
+      const { agent, log, said } = withLog();
+      const { session, watch } = start(agent, `boxed-${at}`, inBox(url));
+      const before = watch.endings().length;
+      session.begin('t1', 'hi');
+      await until(() => watch.endings().length > before);
+
+      expect(watch.endings()).toEqual(['chat/turnComplete']);
+      expect(opened(log)).toEqual([]);
+      expect(said).toEqual([`host tools: computer://box cannot reach the daemon at ${at}, so they were left out`]);
+      // The line names where, never the token that opens it.
+      expect(said.join('\n')).not.toContain('t-kn');
+    });
+  }
+
+  it('offers the host\'s tools to a session in a machine where the daemon is on an address it can reach', async () => {
+    const { agent, log, said } = withLog();
+    const { session, watch } = start(agent, 'boxed-reach', inBox('http://10.0.0.5:4242/ahp-mcp/one'));
+    const before = watch.endings().length;
+    session.begin('t1', 'hi');
+    await until(() => watch.endings().length > before);
+
+    expect(opened(log)).toEqual([{
+      type: 'http',
+      name: 'ahp',
+      url: 'http://10.0.0.5:4242/ahp-mcp/one',
+      headers: [{ name: 'authorization', value: 'Bearer t-kn' }],
+    }]);
+    expect(said).toEqual([]);
+  });
+});
+
+describe('toolsReachable', () => {
+  it('answers true on this host, whatever the address', () => {
+    for (const url of ['http://127.0.0.1:1/x', 'http://0.0.0.0:1/x', 'http://[::]:1/x', 'http://10.0.0.5:1/x']) {
+      expect(toolsReachable(url, undefined)).toBe(true);
+    }
+  });
+
+  it('answers false in a machine for a loopback or wildcard address, and true for any other', () => {
+    for (const url of ['http://127.0.0.1:1/x', 'http://127.1.2.3:1/x', 'http://localhost:1/x', 'http://[::1]:1/x', 'http://0.0.0.0:1/x', 'http://[::]:1/x']) {
+      expect(toolsReachable(url, 'computer://box')).toBe(false);
+    }
+    for (const url of ['http://10.0.0.5:1/x', 'http://host.docker.internal:1/x', 'http://[fd00::1]:1/x']) {
+      expect(toolsReachable(url, 'computer://box')).toBe(true);
+    }
   });
 });
 
