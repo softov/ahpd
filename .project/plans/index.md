@@ -139,8 +139,19 @@ Reference: [00-host.md](host/00-host.md)
 | [62 p4 - An ACP agent calls a client's tool](host/62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 62 p1, acp 11 | - |
 | [63 - Worktrees can live under one root](host/63-worktrees-can-live-under-one-root/plan.md) | medium | built 2026-10-06; reviewed and merged 2026-10-06 | - | - |
 | [64 - What the review of host/30, host/56, daemon/13 and claude/10 found is fixed](host/64-what-the-review-of-host-30-and-56-found/plan.md) | high | built 2026-10-06 ([implemented.md](host/64-what-the-review-of-host-30-and-56-found/implemented.md)); reviewed and merged 2026-10-06 | host 30, host 56, daemon 13, claude 10 | - |
+| [65 - What the review of the nine built plans found is fixed](host/65-what-the-review-of-the-nine-built-plans-found/plan.md) | high | planned 2026-10-06; p1-p6 planned, Softov's answers in; the reviewed plans' tasks are set done after this plan's review | host 48 p9-p11, container 05 p7, container 05 p3, host 58, container 04, container 03, proxy 02, daemon 15, daemon 12 | - |
+| [65 p1 - The gate refuses a method it does not know, and the proxy sends a call once](host/65-what-the-review-of-the-nine-built-plans-found-p1-the-gate-and-the-proxy/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 65 | - |
+| [65 p2 - A machine cannot change what git on the host runs, or reach another repository](host/65-what-the-review-of-the-nine-built-plans-found-p2-a-machines-git-directory/plan.md) | high | planned 2026-10-06; tasks 01-05 todo | host 65, container 05 p7 | - |
+| [65 p3 - A file URI keeps every character of its path, and every temp file is private and swept](host/65-what-the-review-of-the-nine-built-plans-found-p3-file-uris-and-private-files/plan.md) | high | planned 2026-10-06; tasks 01-06 todo | host 65, host 58 | - |
+| [65 p4 - An image holds what its tag says](host/65-what-the-review-of-the-nine-built-plans-found-p4-parts/plan.md) | medium | planned 2026-10-06; tasks 01-04 todo ([deferred.md](host/65-what-the-review-of-the-nine-built-plans-found-p4-parts/deferred.md)) | host 65, container 05 p3 | - |
+| [65 p5 - A nested host has one process per session, and a dev container is made only where it is allowed](host/65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/plan.md) | high | planned 2026-10-06; tasks 01-08 todo | host 65, container 04, container 03 | - |
+| [65 p6 - Each verb takes only what it reads, and the records name the right things](host/65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/plan.md) | medium | planned 2026-10-06; tasks 01-05 todo | host 65, daemon 15, daemon 12 | - |
+| [66 - A session honours the folders VS Code trusts](host/66-a-session-honours-the-folders-vscode-trusts/plan.md) | high | planned 2026-10-06; p1-p3 planned, Softov's four answers in ([deferred.md](host/66-a-session-honours-the-folders-vscode-trusts/deferred.md): ahpc and ahpapp must push the key) | - | host 45 task 01, which no longer declares `workspaceTrust` |
+| [66 p1 - The host declares workspaceTrust, keeps it per connection, and asks before a session moves](host/66-a-session-honours-the-folders-vscode-trusts-p1-the-host-declares-keeps-and-asks/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 66 | 66 p2, 66 p3 |
+| [66 p2 - Claude and pi load a project's files only when it is trusted](host/66-a-session-honours-the-folders-vscode-trusts-p2-claude-and-pi-load-project-files-only-when-trusted/plan.md) | high | planned 2026-10-06; tasks 01-02 todo, after p1 task 03 | host 66 p1 | - |
+| [66 p3 - An ACP agent in a folder nobody trusted](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/plan.md) | medium | planned 2026-10-06; task 01 todo, after p1 task 03 | host 66 p1 | - |
 
-Next free number in `host`: `63`.
+Next free number in `host`: `67`.
 
 ## claude
 

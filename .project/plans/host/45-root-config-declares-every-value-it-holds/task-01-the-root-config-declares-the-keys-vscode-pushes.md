@@ -12,6 +12,7 @@ refs:
 ## Objective
 
 Root state's `config.schema.properties` holds the 43 keys below beside the host's three and the daemon's, each with the property VS Code's agent host declares for it at `7516b04bc94`.
+`workspaceTrust`, one of the 43, moved to host/66 p1 task 01 and is declared there.
 
 ## Files
 
@@ -37,7 +38,7 @@ Root state's `config.schema.properties` holds the 43 keys below beside the host'
 | `terminalAutoApproveEnabled` | `agentHostSchema.ts#L846` |
 | `globalAutoApproveEnabled` | `agentHostSchema.ts#L852` |
 | `autoApprovePolicyRestricted` | `agentHostSchema.ts#L858` (no description upstream) |
-| `workspaceTrust` | `agentHostSchema.ts#L864` |
+| `workspaceTrust` | moved to [host/66 p1 task 01](../66-a-session-honours-the-folders-vscode-trusts-p1-the-host-declares-keeps-and-asks/task-01-workspacetrust-is-declared-as-vscode-declares-it.md), which declares it first; this task leaves it as host/66 wrote it |
 | `autoReplyEnabled` | `agentHostSchema.ts#L878` |
 | `systemProxyEnabled` | `agentHostSchema.ts#L884` |
 | `githubMcpServerEnabled` | `agentHostSchema.ts#L890` |
@@ -65,7 +66,7 @@ Not declared: `byokModelsEnabled`, `runtimePath`, `skillCharBudget` (scope `Loca
 
 ## Validation
 
-- `packages/sdk/test/root-config.test.ts`, new case "declares every key VS Code pushes": the root snapshot's `config.schema.properties` has all 43 keys; `telemetryLevel` is `{ type: 'string', title: 'Telemetry Level', enum: ['all', 'error', 'crash', 'off'], default: 'all' }` as upstream; `agentMerge.mergeMethod` has upstream's enum and `default: 'auto'`; `workspaceTrust` is `readOnly` with `required: ['enabled', 'trustedUris']`.
+- `packages/sdk/test/root-config.test.ts`, new case "declares every key VS Code pushes": the root snapshot's `config.schema.properties` has all 43 keys; `telemetryLevel` is `{ type: 'string', title: 'Telemetry Level', enum: ['all', 'error', 'crash', 'off'], default: 'all' }` as upstream; `agentMerge.mergeMethod` has upstream's enum and `default: 'auto'`; `workspaceTrust` is host/66's case.
 - The same file: `config.values` is `{}` on a fresh host.
 - `pnpm exec vitest run packages/sdk/test/root-config.test.ts packages/sdk/test/conformance.test.ts` passes; `pnpm exec tsc --noEmit` passes.
 
