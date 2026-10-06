@@ -151,8 +151,9 @@ Reference: [00-host.md](host/00-host.md)
 | [66 p2 - Claude and pi load a project's files only when it is trusted](host/66-a-session-honours-the-folders-vscode-trusts-p2-claude-and-pi-load-project-files-only-when-trusted/plan.md) | high | planned 2026-10-06; tasks 01-02 todo, after p1 task 03 | host 66 p1 | - |
 | [66 p3 - An ACP agent in a folder nobody trusted](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/plan.md) | medium | planned 2026-10-06; task 01 todo, after p1 task 03 | host 66 p1 | - |
 | [67 - A machine commits in a repository of its own, and ahpd fetches the work back](host/67-a-machine-commits-in-its-own-repository/plan.md) | high | planned 2026-10-06; tasks 01-09 todo, `sessionTree` shared or copy; supersedes host/65 p2's git allowlist | host 65 p2 (no `deferred.md` there to close), container 05 p7 | - |
+| [68 - An attachment's bytes are a file the host wrote, and every backend reads attachments through one helper with one set of limits](host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md) | medium | planned 2026-10-06 | - | claude 20, acp 14, pi 15, plugin 36 |
 
-Next free number in `host`: `68`.
+Next free number in `host`: `69`.
 
 ## claude
 
@@ -181,8 +182,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [17 - A Claude subagent chat opens with its task's description as title and its prompt as the first message](claude/17-a-subagent-chat-opens-with-its-task/plan.md) | high | built 2026-10-04 ([implemented.md](claude/17-a-subagent-chat-opens-with-its-task/implemented.md)); tasks implemented, awaiting review | - | - |
 | [18 - session.ts is split into one file per area, and session.ts only composes them](claude/18-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](claude/18-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [19 - An AskUserQuestion shows each question's header, and an answer shows on every client at once with its typed text reaching the tool](claude/19-a-question-shows-its-headers-and-its-answer-at-once/plan.md) | high | planned | claude 11 | - |
+| [20 - A Claude turn reads its message's attachments, queued and steered ones included](claude/20-a-claude-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | ahpapp `chat/03` for Claude sessions |
 
-Next free number in `claude`: `20`.
+Next free number in `claude`: `21`.
 
 ## documentation
 
@@ -242,8 +244,9 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
 | [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](plugin/34-cofold-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | built 2026-10-06 ([implemented.md](plugin/35-cofold-uses-what-cofold-ships/implemented.md)); reviewed and merged 2026-10-06 | plugin 05, plugin 32 p3 | - |
+| [36 - A cofold turn reads its message's attachments, and sends an image only to a model that takes images](plugin/36-a-cofold-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
 
-Next free number in `plugin`: `36`.
+Next free number in `plugin`: `37`.
 
 ## container
 
@@ -293,8 +296,9 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | built 2026-09-28 ([implemented.md](pi/12-a-tool-call-says-what-it-runs-on/implemented.md)) | - | - |
 | [13 - A model pi cannot find fails the turn that asked for it](pi/13-a-model-pi-cannot-find-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](pi/13-a-model-pi-cannot-find-fails-the-turn/implemented.md)) | - | - |
 | [14 - agent-pi.test.ts is split into one test file per area](pi/14-pi-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](pi/14-pi-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
+| [15 - A pi turn reads its message's attachments, queued and steered ones included](pi/15-a-pi-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
 
-Next free number in `pi`: `13`.
+Next free number in `pi`: `16`.
 
 ## acp
 
@@ -317,8 +321,9 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in a
 | [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/11-the-agent-gets-mcp-servers/implemented.md)) | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | built 2026-10-02 ([implemented.md](acp/12-the-bridge-is-on-the-current-sdk/implemented.md)) | acp 01 | - |
 | [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](acp/13-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | host 52 | - |
+| [14 - An ACP prompt reads a referenced file only within the limits, and a queued message keeps its attachments](acp/14-a-referenced-file-is-read-within-the-limits/plan.md) | high | planned 2026-10-06 | host 68 | - |
 
-Next free number in `acp`: `13`.
+Next free number in `acp`: `15`.
 
 ## usage
 

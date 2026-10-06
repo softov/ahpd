@@ -20,6 +20,7 @@ That name reaches the log and the listing only: root config keys ([`code://packa
 - Root config, `ahpd plugin` and the options are keyed by the id: `plugins.acp`, not the path.
 - Two specs resolving to the same id are refused, unless the later one names an id of its own.
 - A key written under the spec is moved to the id once, when the daemon starts.
+- A served `plugin list` masks a URL spec's userinfo, so today a credentialed git spec's row `name` matches no plugin and can be changed only from the terminal (daemon 16, `docs/DAEMON.md`); an id holds no secret, so a row keyed by it can be passed back from any client.
 
 ## One plugin, many things
 
