@@ -117,7 +117,14 @@ function served() {
   const heardOnRoot = (heard: Peer & { notes: { method: string; params: unknown }[] }): { action: Record<string, unknown>; rejectionReason?: string }[] =>
     heard.notes.filter((one) => one.method === 'action' && (one.params as { channel?: string }).channel === ROOT)
       .map((one) => one.params as { action: Record<string, unknown>; rejectionReason?: string });
-  return { signedIn, rootOf, heardOnRoot, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
+  /** The host's own root, admitted by the door token and signed in as nobody. */
+  const asRoot = async (clientId: string): Promise<{ client: Client; heard: Peer & { notes: { method: string; params: unknown }[] } }> => {
+    const heard = peer();
+    const client = host.accept(heard, undefined, true);
+    await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
+    return { client, heard };
+  };
+  return { signedIn, asRoot, rootOf, heardOnRoot, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
 }
 
 it('shows the daemon its keys beside the host own, and nobody else', async () => {
@@ -132,6 +139,23 @@ it('shows the daemon its keys beside the host own, and nobody else', async () =>
   const memberConfig = (await rootOf(member.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
   expect(Object.keys(memberConfig.schema.properties)).toEqual(['defaultShell', 'artifactToolsCompactPrompts', 'deferredTitleGeneration']);
   expect(memberConfig.values.daemonPort).toBeUndefined();
+});
+
+it('shows the host own root the daemon keys, and the echo of its write', async () => {
+  const { asRoot, rootOf, heardOnRoot, writes } = served();
+  const root = await asRoot('root');
+
+  const rootConfig = (await rootOf(root.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
+  expect(Object.keys(rootConfig.schema.properties)).toEqual(['defaultShell', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
+  expect(rootConfig.values).toMatchObject({ daemonPort: 9187, advancedTools: false, apiKey: '<set>' });
+
+  await root.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { daemonPort: 9000 } } },
+  });
+  await settle();
+  expect(writes).toEqual([{ daemonPort: 9000 }]);
+  expect(heardOnRoot(root.heard)).toEqual([expect.objectContaining({ action: { type: 'root/configChanged', config: { daemonPort: 9000 } } })]);
 });
 
 it('refuses a write from a member, and never asks the daemon', async () => {

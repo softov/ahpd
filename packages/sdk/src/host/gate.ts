@@ -310,10 +310,11 @@ export const PER_CONNECTION = new Set(['defaultShell']);
  * `root-config-shows-daemon-keys-to-config-read-and-never-a-write-only-value`.
  * The read is the whole group rather than the `settings` operation beside it:
  * what is behind it is every key the daemon holds, not one of them.
+ * The host's own root holds every grant, as it does at every other gate.
  * A host with no people directory has nobody to ask, so nobody sees them.
  */
 export const seesConfig = (connection: Connection | undefined): boolean =>
-  connection?.principal?.can('config:settings') === true;
+  connection?.root === true || connection?.principal?.can('config:settings') === true;
 
 /** The kinds of channel a family of client action can belong on. */
 export type Home = 'session' | 'terminal' | 'automations' | 'root' | 'watch';
