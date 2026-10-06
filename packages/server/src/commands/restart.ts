@@ -505,6 +505,8 @@ export const declareRestart = (registry: Registry<object>, served?: ServedFacts)
   summary: 'Stop it and start it again with the line it was started with',
   description: 'Refused while a turn is running, naming the sessions, unless --force; sessions resume from the store.',
   surfaces: { cli: { pattern: ['restart'] }, http: { method: 'POST', path: '/restart' } },
+  // The process is the thing changed, and it is not a row any list returns.
+  effect: 'change',
   input: {
     force: { type: 'boolean', description: 'Restart even while a turn is running.' },
   },

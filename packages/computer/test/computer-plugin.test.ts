@@ -336,7 +336,9 @@ it('lists its manifest and title without importing the entry', async () => {
 
   const row = await describePlugin(dir, { configDir: REPO, cwd: REPO });
   expect(row.state).toBe('ready');
-  expect(row.name).toBe('@ahpd/computer');
+  // The key is the directory as written; the package's own name is `module`.
+  expect(row.name).toBe(dir);
+  expect(row.module).toBe('@ahpd/computer');
   expect(row.title).toBe('Computer');
 });
 

@@ -170,6 +170,8 @@ export const declareConfig = (registry: Registry<object>, served?: ServedFacts):
   summary: 'Say where the configuration is, and what it says',
   description: 'Every file the daemon reads, then every key they hold and which file set it.',
   surfaces: { cli: { pattern: ['config'] }, http: { method: 'GET', path: '/config' } },
+  // The settings are the daemon's own, so this is done to no kind of row.
+  effect: 'read',
   // Served, the file is the daemon's own, so no field could name another.
   ...(served === undefined ? { input: flagFields } : {}),
   scopes: ['config:write'],

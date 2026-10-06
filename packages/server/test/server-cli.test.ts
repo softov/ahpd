@@ -953,15 +953,20 @@ describe('a daemon that binds a port', () => {
 });
 
 describe('plugin config', () => {
-  it('sets with three words and shows with two, in the file named', async () => {
+  it('sets with three words, shows with two, and unsets with the word unset', async () => {
     const secret = join(import.meta.dirname, 'fixtures', 'plugin-secret', 'index.ts');
     put({ plugins: [secret] });
     const set = await cli(['plugin', 'config', secret, 'retries', '2', '--config-file', config]);
     expect(set.code).toBe(0);
     expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({ plugins: [{ name: secret, options: { retries: 2 } }] });
-    const shown = await cli(['plugin', 'config', secret, 'retries', '--config-file', config]);
+
+    const shown = await cli(['plugin', 'config', secret, '--config-file', config]);
     expect(shown.code).toBe(0);
-    expect(shown.stdout).toBe('2\n');
+    expect(shown.stdout).toBe(`${secret}\n  retries: 2\n`);
+
+    const removed = await cli(['plugin', 'config', 'unset', secret, 'retries', '--config-file', config]);
+    expect(removed.code).toBe(0);
+    expect(JSON.parse(readFileSync(config, 'utf8'))).toEqual({ plugins: [{ name: secret }] });
   }, 20000);
 });
 
@@ -1001,14 +1006,29 @@ describe('user', () => {
     expect(minted.stdout.trim()).toMatch(/^[\w-]{20,}$/u);
     expect(minted.stderr).toContain('Shown once');
 
-    const removed = await cli(['user', 'rm', 'ada', '--users', users]);
+    const removed = await cli(['user', 'rm', 'ada', '--users', users, '--yes']);
     expect(removed.code).toBe(0);
     expect(removed.stdout).toContain('Removed ada.');
 
-    const again = await cli(['user', 'rm', 'ada', '--users', users]);
+    const again = await cli(['user', 'rm', 'ada', '--users', users, '--yes']);
     expect(again.code).toBe(1);
     expect(again.stderr).toBe('ahpd: No user called ada.\n');
   }, 20000);
+
+  it('asks before taking a person out, and runs with --yes where there is no terminal', async () => {
+    await cli(['user', 'add', 'bob', '--users', users]);
+    const asked = await cli(['user', 'rm', 'bob', '--users', users]);
+    expect(asked.code).toBe(2);
+    expect(asked.stdout).toBe('');
+    expect(asked.stderr).toBe('ahpd: user rm removes user bob; pass --yes to run it without a terminal\n');
+    // Nothing ran: the question was not answered.
+    expect((await cli(['user', 'list', '--users', users])).stdout).toContain('bob');
+
+    const removed = await cli(['user', 'rm', 'bob', '--users', users, '--yes']);
+    expect(removed.code).toBe(0);
+    expect(removed.stdout).toContain('Removed bob.');
+    expect((await cli(['user', 'list', '--users', users])).stdout).not.toContain('bob');
+  }, 30000);
 
   it('names the sub-commands of a bare verb and of one it does not have', async () => {
     for (const args of [['user'], ['user', 'toy', '--users', users], ['--json', 'user']]) {
@@ -1128,6 +1148,12 @@ describe('plugin', () => {
       const said = await cli(['plugin', sub, '--config-file', config]);
       expect(said.code).toBe(2);
     }
+    // What is missing is the name, and it is named: the words reach the
+    // declaration and are one argument short, rather than reaching nothing.
+    for (const sub of ['install', 'remove']) {
+      const said = await cli(['plugin', sub, '--config-file', config]);
+      expect(said.stderr).toBe(`ahpd: "plugin ${sub}" needs name.\nUsage: ahpd plugin ${sub} <name...>\n`);
+    }
   });
 
   it('refuses plugin install with a flag it does not take', async () => {
@@ -1152,7 +1178,7 @@ describe('plugin', () => {
 
   it('remove says the configuration changed before npm fails', async () => {
     put({ plugins: ['some-plugin'] });
-    const said = await cli(['plugin', 'remove', 'some-plugin', '--config-file', config], { env: fakeNpm(1) });
+    const said = await cli(['plugin', 'remove', 'some-plugin', '--config-file', config, '--yes'], { env: fakeNpm(1) });
     expect(said.code).toBe(2);
     expect(said.stdout).toContain('plugins -= some-plugin');
     expect(readFileSync(config, 'utf8')).not.toContain('some-plugin');
@@ -1165,7 +1191,7 @@ describe('plugin', () => {
     const runs: [string, string[]][] = [
       ['npm could not install some-plugin', ['plugin', 'install', 'some-plugin', '--config-file', config]],
       ['npm could not update some-plugin', ['plugin', 'update', 'all']],
-      ['npm could not uninstall some-plugin', ['plugin', 'remove', 'some-plugin', '--config-file', config]],
+      ['npm could not uninstall some-plugin', ['plugin', 'remove', 'some-plugin', '--config-file', config, '--yes']],
     ];
     for (const [failed, args] of runs) {
       const said = await cli(args, { env });

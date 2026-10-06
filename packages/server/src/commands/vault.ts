@@ -154,6 +154,10 @@ export const declareVault = (registry: Registry<object>, served?: ServedFacts): 
     summary: 'Keep a value under a name',
     description: 'At a terminal the value is standard input, pipe the value on standard input, and never the command line. Over /api it is the body\'s "value".',
     surfaces: { cli: { pattern: ['vault', 'set', ':name'] }, http: { method: 'POST', path: '/vault/set/{name}' } },
+    // A create: the name is not in the vault yet, and setting it again replaces
+    // what it held, which is not a row a list returned.
+    effect: 'add',
+    resource: { kind: 'secret' },
     input: {
       ...writing,
       name: { type: 'string', description: 'The name to keep it under, as host:<name>, team:<team>/<name> or user:<id>/<name>.' },
@@ -191,6 +195,10 @@ export const declareVault = (registry: Registry<object>, served?: ServedFacts): 
     summary: 'Take a name out',
     description: 'A name the vault does not hold is a conflict, so a script can tell an absent name from a taken one.',
     surfaces: { cli: { pattern: ['vault', 'delete', ':name'] }, http: { method: 'POST', path: '/vault/delete/{name}' } },
+    // The name is what keys the row, so the confirm a removal asks for can say
+    // which secret it is about to take out.
+    effect: 'remove',
+    resource: { kind: 'secret', key: 'name' },
     input: { ...writing, name: { type: 'string', description: 'The name to take out.' } },
     scopes: [],
     run: async (context) => {
@@ -208,6 +216,10 @@ export const declareVault = (registry: Registry<object>, served?: ServedFacts): 
     summary: 'Every name this host keeps a secret under',
     description: 'Each name and whether it is set, plus where the configuration names one the vault does not hold. No value is ever answered.',
     surfaces: { cli: { pattern: ['vault', 'list'] }, http: { method: 'GET', path: '/vault/list' } },
+    // No key: this is the listing, and each row carries the `name` the verbs
+    // above take.
+    effect: 'read',
+    resource: { kind: 'secret' },
     input: fields,
     scopes: [],
     run: async (context) => {

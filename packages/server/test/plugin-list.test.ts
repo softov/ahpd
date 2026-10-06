@@ -30,7 +30,10 @@ describe('describePlugin', () => {
   it('reads a path, a name and a title out of an ahpd manifest', async () => {
     const row = await listing('./fixtures/plugin-hello');
     expect(row.state).toBe('ready');
-    expect(row.name).toBe('plugin-hello');
+    // The key is the spec as written, which is what `plugin enable` takes; what
+    // the module calls itself is the row's `module`.
+    expect(row.name).toBe('./fixtures/plugin-hello');
+    expect(row.module).toBe('plugin-hello');
     expect(row.title).toBe('Hello');
     expect(row.path).toBe(join(fixtures, 'plugin-hello', 'index.ts'));
   });
@@ -38,7 +41,7 @@ describe('describePlugin', () => {
   it('lists a package with no ahpd key by its package name and no title', async () => {
     const row = await listing('./fixtures/plugin-plain');
     expect(row.state).toBe('ready');
-    expect(row.name).toBe('plugin-plain');
+    expect(row.module).toBe('plugin-plain');
     expect(row.title).toBeUndefined();
     expect(row.path).toBe(join(fixtures, 'plugin-plain', 'index.js'));
   });
@@ -49,7 +52,8 @@ describe('describePlugin', () => {
     const row = await listing(join(loose, 'loose.js'));
 
     expect(row.state).toBe('ready');
-    expect(row.name).toBe('loose');
+    expect(row.name).toBe(join(loose, 'loose.js'));
+    expect(row.module).toBe('loose');
     expect(row.title).toBeUndefined();
     expect(pluginLine(row)).toContain('(loose)');
   });
@@ -62,17 +66,17 @@ describe('describePlugin', () => {
     const row = await listing(join(loose, 'plugin-x', 'index.js'));
 
     expect(row.state).toBe('ready');
-    expect(row.name).toBe('plugin-x');
+    expect(row.module).toBe('plugin-x');
   });
 
   it('names a fixture file by its directory, not by the server package above it', async () => {
     const row = await listing('./fixtures/plugin-throws/index.ts');
-    expect(row.name).toBe('plugin-throws');
+    expect(row.module).toBe('plugin-throws');
   });
 
   it('takes a plugin package\'s manifest for a file inside it', async () => {
     const row = await listing(join(here, '..', '..', 'agent-claude', 'src', 'index.ts'));
-    expect(row.name).toBe('@ahpd/agent-claude');
+    expect(row.module).toBe('@ahpd/agent-claude');
     expect(row.title).toBe('Claude');
   });
 

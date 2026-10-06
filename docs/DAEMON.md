@@ -169,8 +169,11 @@ ahpd plugin remove <name>   drop it from the configuration and uninstall it,
 ahpd plugin update all      move every installed plugin to the daemon's
                             version, in one npm call
 ahpd plugin update <name>   move only the plugins named
-ahpd plugin config <name>   show a plugin's options; with <key>, one of them;
-                            with <key> <value>, set it; --unset removes it
+ahpd plugin config <name>   show a plugin's options
+ahpd plugin config <name> <key> <value>
+                            set one of them
+ahpd plugin config unset <name> <key>
+                            take one of them away
 ahpd plugin enable <name>   turn a configured plugin on
 ahpd plugin disable <name>  turn it off, keeping its entry and options
 ahpd user list              who is in the user file
@@ -195,6 +198,9 @@ ahpd --help              # every command, then the foreground run's flags
 ahpd plugin --help       # only what follows `plugin`
 ahpd user add --help     # the flags one sub-command takes
 ```
+
+A removal asks before it runs: `user rm`, `team rm`, `project rm`, `plugin remove` and `vault delete` say what they would take out - `user rm removes user bob` - and wait for an answer at the terminal.
+A script with no terminal there is refused with the same words and exit 2 until it passes `--yes`, which runs the removal without the question.
 
 ### `ahpd restart`
 
@@ -420,15 +426,14 @@ or that throws is reported on stdout and skipped; the one failure that refuses
 the start is two plugins claiming the same agent `provider`, because a host
 built over that answers a turn with the wrong backend.
 
-`ahpd plugin config` reads and writes a plugin's options in `config.json`, and `ahpd plugin enable` and `ahpd plugin disable` set its `enabled`.
+`ahpd plugin config <name>` reads a plugin's options in `config.json`, `ahpd plugin config <name> <key> <value>` writes one and `ahpd plugin config unset` takes one away, and `ahpd plugin enable` and `ahpd plugin disable` set its `enabled`.
 The plugin is named as `plugins` names it, and one the file does not name is refused.
 One module is named once. A name written twice is reported and the second entry is skipped, since a plugin's options are what make its variants and root config keys one entry under `plugins.<name>`.
 
 ```bash
 ahpd plugin config @ahpd/agent-claude                       # every option it sets
-ahpd plugin config @ahpd/agent-claude workerStop            # one of them
-ahpd plugin config @ahpd/agent-claude workerStop session    # set it
-ahpd plugin config @ahpd/agent-claude workerStop --unset    # remove it
+ahpd plugin config @ahpd/agent-claude workerStop session    # set one
+ahpd plugin config unset @ahpd/agent-claude workerStop      # take one away
 ahpd plugin disable @ahpd/agent-cofold
 ahpd plugin enable @ahpd/agent-cofold
 ```
@@ -439,7 +444,7 @@ Inside an object or array a number must read back exactly as typed too, and sinc
 It is checked against the plugin's `optionsSchema` by importing the plugin as a start would, and a value the schema refuses is not written.
 A plugin that cannot be imported is written anyway, and its options are checked at the next start.
 A plugin switched off with `enabled: false` is never imported, here or over the API: a value set for it is written unchecked and checked when it is enabled and loads, and one read over the API answers `<set>` for each of its values.
-`--unset` of an option the entry does not set leaves the file as it is and says so.
+An `unset` of an option the entry does not set leaves the file as it is and says so.
 Nothing a running daemon loaded changes until it is restarted, and each of these says so when a daemon is running.
 
 `--plugin-option` sets one option for one run, over the file's:
@@ -721,7 +726,7 @@ the grants their roles resolve to:
 | `vault set`, `vault delete` | `config:write` for `host:` names; a team's own with `team:write`; a person's own |
 | `plugin install`, `plugin remove` | the deployment's token only |
 | `plugin update` | the deployment's token only |
-| `plugin config`, `plugin enable`, `plugin disable` | the deployment's token only |
+| `plugin config` (reading or setting one), `plugin config unset`, `plugin enable`, `plugin disable` | the deployment's token only |
 | `restart` | the deployment's token only |
 
 `user:write` manages people at or below the caller: `user add` refuses a role,
@@ -748,7 +753,10 @@ read or change settings carries neither the root credential nor a plugin's own
 secrets.
 `GET /api/plugin/list` reports each plugin's `options` and every string that may
 quote its spec the same way.
-`POST /api/plugin/config` with `{ "name": ..., "key": ... }` answers a plugin's options, and `POST /api/plugin/config/set` with a `value` sets one; an option its schema marks `writeOnly` is answered as `<set>`, and every option is when the plugin cannot be imported to read its schema.
+A row carries `name`, the key every other `plugin` verb takes - the spec as the configuration wrote it, so a path, a git URL and a package name each answer their own - beside `module`, the name the package declares itself by; a client acts on a row by passing `name` back and names nothing itself.
+A spec whose URL carries userinfo is the exception: a served row masks it in `name` as in `spec`, and that masked name matches no plugin, so such a plugin is changed from the terminal.
+Every list answers the same way: a row carries the field the kind's keyed commands take, `id` for a person, a team and a project, `pool` for a pool and `name` for a secret.
+`POST /api/plugin/config` with `{ "name": ... }` answers a plugin's options, `POST /api/plugin/config/set` with a `value` sets one and `POST /api/plugin/config/unset` with a `key` takes one away; an option its schema marks `writeOnly` is answered as `<set>`, and every option is when the plugin cannot be imported to read its schema.
 `POST /api/plugin/enable` and `/api/plugin/disable` take `{ "name": ... }`.
 
 The vault is served the same way, at `POST /api/vault/set/<name>`, `POST /api/vault/delete/<name>` and `GET /api/vault/list`. A name holds colons and a slash, so it is one encoded path segment - `team%3Abackend%2Forders` is `team:backend/orders` - and only the HTTP body carries a value, `{ "value": "..." }`, for the same reason the terminal reads standard input: nowhere else is a value echoed into a log. `GET /api/vault/set/<name>` is not a route, so it is answered 404 like any other path the API does not have: a value can be set and can never be read back.

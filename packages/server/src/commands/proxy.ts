@@ -68,6 +68,10 @@ export const declareProxy = (registry: Registry<object>, served?: ServedFacts): 
   summary: 'The providers this proxy would call, and the model names that point at them',
   description: 'The built-in providers and any the configuration adds or replaces, then every model name with the providers serving it. A provider\'s key is never printed: only whether the variable holding it is set.',
   surfaces: { cli: { pattern: ['proxy', 'list'] }, http: { method: 'GET', path: '/proxy/list' } },
+  // No key: this is the listing, and each row carries the `id` a provider is
+  // named by.
+  effect: 'read',
+  resource: { kind: 'provider' },
   scopes: ['config:read'],
   // Served, the list is the daemon's own, so no field could name another.
   ...(served === undefined ? { input: flagFields } : {}),

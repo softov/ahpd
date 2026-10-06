@@ -1,6 +1,6 @@
 ---
 title: plugin config shows, and plugin config unset removes
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -31,3 +31,6 @@ refs:
 - `pnpm test` green.
 
 ## Resume
+
+Implemented 2026-10-06. `plugin.config` is `ahpd plugin config <name>` at `POST /plugin/config` and shows every option, with `name` required; `plugin.config.unset` is new, at `ahpd plugin config unset <name> <key>` and `POST /plugin/config/unset`, with `name` and `key` required and the removal branch of `configure` behind it; `plugin.config.set` is unchanged but now requires its three fields, so a request with no value is refused rather than read as an unset. `configure` takes which of the three it is and keeps the one lock, the `config:write` scope and the `deploymentTokenOnly` sentence on all three.
+`packages/server/test/plugin-config.test.ts` drives one line through `@cofold/terminal`'s `Program` over the registry and globals `main.ts` builds, which pins the refusal `ahpd plugin config <name> <key>` gets - `ahpd: unknown command "plugin config <name> <key>". Try ahpd --help`, exit 2 - and that `plugin config unset <name> <key>` reaches the removal rather than a set of the option on a plugin named `unset`, since the literal outscores the slot. `docs/DAEMON.md`'s command list, its `plugin config` section and its API paragraph follow.

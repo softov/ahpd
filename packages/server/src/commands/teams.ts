@@ -46,6 +46,10 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       id: `${what}.list`,
       summary: `What this install names as a ${what}`,
       surfaces: { cli: { pattern: [what, 'list'] }, http: { method: 'GET', path: `/${what}/list` } },
+      // No key: this is the listing, and each row carries the `id` the other
+      // verbs here take.
+      effect: 'read',
+      resource: { kind: what },
       input: at,
       // Reading the names is not managing them, so it is that subject's read.
       scopes: [`${what}:read`],
@@ -61,6 +65,10 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       summary: `Name a ${what}`,
       description: 'Naming one that is already there sets its title and moves nothing.',
       surfaces: { cli: { pattern: [what, 'add', ':id'] }, http: { method: 'POST', path: `/${what}/add/{id}` } },
+      // A create: naming one that is already there sets its title, and either
+      // way there is no row yet for an id to key.
+      effect: 'add',
+      resource: { kind: what },
       input: { ...naming, id: { type: 'string', description: `The id a membership is written with.` } },
       scopes: [`${what}:write`],
       run: async (context) => {
@@ -82,6 +90,9 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       summary: `Take a ${what} out of the file`,
       description: 'Refused while a membership still names it, saying who holds it.',
       surfaces: { cli: { pattern: [what, 'rm', ':id'] }, http: { method: 'POST', path: `/${what}/rm/{id}` } },
+      // The id names the row, so the confirm a removal asks for can say which.
+      effect: 'remove',
+      resource: { kind: what, key: 'id' },
       input: { ...at, id: { type: 'string', description: 'The id to take out.' } },
       scopes: [`${what}:write`],
       run: async (context) => {

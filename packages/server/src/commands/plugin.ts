@@ -31,6 +31,10 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     summary: 'What the configuration names, and what a run would load',
     description: 'Resolves every spec and reads its manifest, without importing any of it.',
     surfaces: { cli: { pattern: ['plugin', 'list'] }, http: { method: 'GET', path: '/plugin/list' } },
+    // No key: this is the listing, and each row carries the `spec` the other
+    // verbs here take a name from.
+    effect: 'read',
+    resource: { kind: 'plugin' },
     scopes: ['config:read'],
     // Served, the list is the daemon's own, so no field could name another.
     ...(served === undefined ? { input: flagFields } : {}),
@@ -52,9 +56,12 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
         rows.push(served === undefined ? row : {
           ...row,
           spec: withoutSpecSecrets(row.spec, schemas?.get(key)),
+          // `name` is the spec read as a name, so a spec that is a URL carries
+          // that URL's userinfo here exactly as it does in `spec`.
+          name: withoutUserinfoIn(row.name),
+          ...(row.module === undefined ? {} : { module: withoutUserinfoIn(row.module) }),
           ...(row.url === undefined ? {} : { url: withoutUserinfoIn(row.url) }),
           ...(row.path === undefined ? {} : { path: withoutUserinfoIn(row.path) }),
-          ...(row.name === undefined ? {} : { name: withoutUserinfoIn(row.name) }),
           ...(row.title === undefined ? {} : { title: withoutUserinfoIn(row.title) }),
           ...(row.problem === undefined ? {} : { problem: withoutUserinfoIn(row.problem) }),
         });
@@ -79,6 +86,9 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       ? 'Install a backend or another plugin into the configuration directory'
       : 'Take a plugin out of the configuration, and uninstall it unless --keep',
     surfaces: { cli: { pattern: ['plugin', sub, ':name...'] }, http: { method: 'POST', path: `/plugin/${sub}` } },
+    // An install adds an entry this names; a remove takes the named ones out.
+    effect: sub === 'install' ? 'add' : 'remove',
+    resource: { kind: 'plugin', ...(sub === 'install' ? {} : { key: 'name' }) },
     input: {
       ...(served === undefined ? pluginWriteFields : servedPluginWriteFields),
       name: { type: 'array', items: { type: 'string' }, description: 'A package name. One or more.' },
@@ -134,6 +144,9 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     summary: 'Move every installed plugin, or the ones named, to the version that matches this daemon',
     description: 'One npm call in the configuration directory: every @ahpd package at the daemon\'s version, any other from the registry at latest, and one from a path, link, git or URL left as installed.',
     surfaces: { cli: { pattern: ['plugin', 'update', ':name...'] }, http: { method: 'POST', path: '/plugin/update' } },
+    // What moves is the installed package the name points at, not a row.
+    effect: 'change',
+    resource: { kind: 'plugin', key: 'name' },
     input: {
       name: { type: 'array', items: { type: 'string' }, description: 'all, or a package name. One or more.' },
     },
@@ -174,22 +187,23 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
   const restarting = (): boolean => served !== undefined || running() !== undefined;
 
   /*
-   * `plugin config` reads and writes a plugin's options. It is two
-   * declarations because a pattern holds no slot after an optional one: the
-   * first shows, or with --unset removes, and the second sets. Both run the
-   * body below, which reads whichever fields its declaration has.
+   * `plugin config` shows a plugin's options, `plugin config set` writes one
+   * and `plugin config unset` takes one away. Three declarations rather than
+   * one carrying a flag, because what a command does is read off its
+   * declaration: a read and a removal cannot be the same action, and a pattern
+   * holds no slot after an optional one. All three run the body below, which
+   * reads whichever fields its declaration has.
    */
   const configFields = {
     ...(served === undefined ? { configFile: serverFields.configFile } : {}),
     name: { type: 'string', description: 'The plugin, as plugins names it.' },
-    key: { type: 'string', description: 'One option.' },
   } as const;
-  const configure = (context: CommandContext): Promise<Output> => oneAtATime(async () => {
+  const keyField = { type: 'string', description: 'One option.' } as const;
+  const configure = (doing: 'show' | 'set' | 'unset') => (context: CommandContext): Promise<Output> => oneAtATime(async () => {
     const name = context.optional<string>('name');
     if (name === undefined) stop('Say which plugin: ahpd plugin config <name>.');
     const key = context.optional<string>('key');
-    const typed = context.optional<string>('value');
-    const unset = context.flag('unset');
+    const typed = doing === 'set' ? context.value<string>('value') : undefined;
     const file = fileOf(context.optional<string>('configFile'));
     const payload = context.globals['json'] === true || context.globals['quiet'] === true;
     const say = (line: string): void => {
@@ -198,7 +212,6 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     };
     const entry = pluginEntry(file, name);
     if (entry === undefined) stop(`${name} is not in plugins in ${file}.`);
-    if (unset && (key === undefined || typed !== undefined)) stop('--unset takes a key and no value: ahpd plugin config <name> <key> --unset.');
 
     /*
      * The plugin's schema, from the module a load would import. Needed to
@@ -230,21 +243,16 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       served === undefined ? value : maskOption(mask, option, value);
     const options = typeof entry === 'string' ? {} : entry.options ?? {};
 
-    if (typed === undefined && !unset) {
-      if (key === undefined) {
-        const rows = Object.entries(options).map(([option, value]) => [option, shown(option, value)] as const);
-        const text = rows.length === 0
-          ? `${name}\n  (no options set)\n`
-          : `${name}\n${rows.map(([option, value]) => `  ${option}: ${JSON.stringify(value)}`).join('\n')}\n`;
-        return output({ name, options: Object.fromEntries(rows) }, text);
-      }
-      if (!Object.hasOwn(options, key)) stop(`${name} sets no ${key} in ${file}.`);
-      const value = shown(key, options[key]);
-      return output({ name, key, value }, `${JSON.stringify(value)}\n`);
+    if (doing === 'show') {
+      const rows = Object.entries(options).map(([option, value]) => [option, shown(option, value)] as const);
+      const text = rows.length === 0
+        ? `${name}\n  (no options set)\n`
+        : `${name}\n${rows.map(([option, value]) => `  ${option}: ${JSON.stringify(value)}`).join('\n')}\n`;
+      return output({ name, options: Object.fromEntries(rows) }, text);
     }
 
     const option = key as string;
-    if (unset) {
+    if (doing === 'unset') {
       if (!setPluginOption(file, name, option, undefined)) {
         say(`${name} sets no ${option} in ${file}.`);
         return output({ name, key: option }, '');
@@ -279,24 +287,25 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     return output({
       name,
       key: option,
-      ...(unset ? {} : { value: shown(option, typedValue(typed as string)) }),
+      ...(doing === 'unset' ? {} : { value: shown(option, typedValue(typed as string)) }),
       ...(restart ? { restart: true } : {}),
     }, '');
   });
   const config = registry.action({
     id: 'plugin.config',
-    summary: "Show a plugin's options, or remove one",
-    description: 'With a name, every option the configuration sets for it; with a key, that one; --unset removes it.',
-    surfaces: { cli: { pattern: ['plugin', 'config', ':name', ':key?'] }, http: { method: 'POST', path: '/plugin/config' } },
-    input: {
-      ...configFields,
-      unset: { type: 'boolean', description: 'Remove the option.' },
-    },
+    summary: "Show a plugin's options",
+    description: 'Every option the configuration sets for it, with a value the plugin\'s schema marks write-only answered as set. One option is written by `plugin config <name> <key> <value>` and taken away by `plugin config unset`.',
+    surfaces: { cli: { pattern: ['plugin', 'config', ':name'] }, http: { method: 'POST', path: '/plugin/config' } },
+    // The entry's own options, read by the name that keys it.
+    effect: 'read',
+    resource: { kind: 'plugin', key: 'name' },
+    input: configFields,
+    required: ['name'],
     scopes: ['config:write'],
     // A plugin's options change what its code does in this process, so over
     // HTTP this is the deployment's own token, as an install is.
     meta: { deploymentTokenOnly: "change a plugin's options" },
-    run: configure,
+    run: configure('show'),
   });
   const set = registry.action({
     id: 'plugin.config.set',
@@ -306,19 +315,48 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       cli: { pattern: ['plugin', 'config', ':name', ':key', ':value'] },
       http: { method: 'POST', path: '/plugin/config/set' },
     },
+    // One option of the entry the name keys is written; the entry stays.
+    effect: 'change',
+    resource: { kind: 'plugin', key: 'name' },
     input: {
       ...configFields,
+      key: keyField,
       value: { type: 'string', description: 'The value: JSON when it parses, otherwise text.' },
     },
+    required: ['name', 'key', 'value'],
     scopes: ['config:write'],
     meta: { deploymentTokenOnly: "change a plugin's options" },
-    run: configure,
+    run: configure('set'),
+  });
+  const unset = registry.action({
+    id: 'plugin.config.unset',
+    summary: 'Remove one of a plugin\'s options',
+    description: 'The option is taken out of the entry, so `plugin config <name>` no longer shows it. The daemon is restarted for the plugin to load without it.',
+    surfaces: {
+      cli: { pattern: ['plugin', 'config', 'unset', ':name', ':key'] },
+      http: { method: 'POST', path: '/plugin/config/unset' },
+    },
+    // One option of the entry the name keys is taken out; the entry stays, and
+    // the removal is of a key inside it rather than of the plugin.
+    effect: 'change',
+    resource: { kind: 'plugin', key: 'name' },
+    input: {
+      ...configFields,
+      key: keyField,
+    },
+    required: ['name', 'key'],
+    scopes: ['config:write'],
+    meta: { deploymentTokenOnly: "change a plugin's options" },
+    run: configure('unset'),
   });
 
   const toggle = (sub: 'enable' | 'disable') => registry.action({
     id: `plugin.${sub}`,
     summary: sub === 'enable' ? 'Turn a configured plugin on' : 'Turn a configured plugin off, keeping its entry and options',
     surfaces: { cli: { pattern: ['plugin', sub, ':name'] }, http: { method: 'POST', path: `/plugin/${sub}` } },
+    // The entry the name keys is turned on or off; nothing is added or taken out.
+    effect: 'change',
+    resource: { kind: 'plugin', key: 'name' },
     input: {
       ...(served === undefined ? { configFile: serverFields.configFile } : {}),
       name: { type: 'string', description: 'The plugin, as plugins names it.' },
@@ -348,5 +386,5 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
     }),
   });
 
-  return [list, write('install'), write('remove'), update, config, set, toggle('enable'), toggle('disable')];
+  return [list, write('install'), write('remove'), update, config, set, unset, toggle('enable'), toggle('disable')];
 };

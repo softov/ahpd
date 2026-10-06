@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin install` with no name says a name is needed"
-status: blocked
+status: done
 depends: []
 layer: "server"
 refs:
@@ -27,4 +27,4 @@ Once cofold commands/03 is released, the server depends on that `@cofold/termina
 
 ## Resume
 
-Blocked 2026-10-03: cofold commands/03 is planned, not released; `@cofold/terminal` is still 0.2.0.
+Implemented 2026-10-06, in daemon 16 task 01's bump. `@cofold/terminal` is ^0.3.0, and both commands with no name are answered by the declaration they are one argument short of, rather than by `unknown command`: `ahpd: "plugin install" needs name.` with `Usage: ahpd plugin install <name...>` on stderr, exit 2, and the same for `plugin remove`. Pinned in `packages/server/test/server-cli.test.ts`, in `refuses install, remove and update with nothing named`.

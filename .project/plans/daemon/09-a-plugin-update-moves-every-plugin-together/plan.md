@@ -75,7 +75,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | --- | --- | --- |
 | [01 - `ahpd plugin update`](task-01-plugin-update.md) | todo | - |
 | [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | implemented | - |
-| [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | blocked | cofold commands/03 released |
+| [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | done | cofold commands/03 released |
 | [04 - Docs](task-04-docs.md) | todo | 01, 02, 06, 08 |
 | [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
 | [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | implemented | - |
@@ -91,8 +91,8 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 ## Resume state
 
-- **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`.
-- **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, then [task-04-docs.md](task-04-docs.md) says it; task 03 is blocked until cofold commands/03 is released (planned in cofold, `@cofold/terminal` still 0.2.0).
+- **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`. Task 03 implemented 2026-10-06, in daemon 16 task 01's cofold bump.
+- **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, then [task-04-docs.md](task-04-docs.md) says it.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 
 ## Final verification checklist

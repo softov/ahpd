@@ -594,10 +594,11 @@ export const userTokenFields = {
 } satisfies Record<string, Field>;
 
 /**
- * The flag an unset is spelled, the way `plugin config` spells one.
+ * The flag an unset is spelled, the way `user member` and `user primary` use it.
  *
  * A verb whose argument is positional cannot say "none of those" by leaving it
- * out, so the empty case is named rather than implied.
+ * out, so the empty case is named rather than implied. A verb that can spare a
+ * word declares a removal of its own instead, as `plugin config unset` does.
  */
 export const unsetField = {
   type: 'boolean',

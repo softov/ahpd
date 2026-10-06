@@ -1,7 +1,7 @@
 ---
 title: A command says what it does to what, and the daemon serves on the cofold that checks it
 domain: daemon
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -66,11 +66,11 @@ No decision file: these are fixes and the cofold role table applied.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The server is on the cofold release that declares effects](task-01-the-server-is-on-the-cofold-release.md) | blocked | - |
-| [02 - usage lists the pools and shows one, as two commands](task-02-usage-lists-and-shows-as-two-commands.md) | todo | - |
-| [03 - plugin config shows, and plugin config unset removes](task-03-plugin-config-shows-and-unset-removes.md) | todo | - |
-| [04 - Every served command declares its effect and resource](task-04-every-served-command-declares-its-effect.md) | todo | 01, 02, 03 |
-| [05 - A list's rows carry the key its item commands take](task-05-a-lists-rows-carry-the-key.md) | todo | 04 |
+| [01 - The server is on the cofold release that declares effects](task-01-the-server-is-on-the-cofold-release.md) | done | - |
+| [02 - usage lists the pools and shows one, as two commands](task-02-usage-lists-and-shows-as-two-commands.md) | done | - |
+| [03 - plugin config shows, and plugin config unset removes](task-03-plugin-config-shows-and-unset-removes.md) | done | - |
+| [04 - Every served command declares its effect and resource](task-04-every-served-command-declares-its-effect.md) | done | 01, 02, 03 |
+| [05 - A list's rows carry the key its item commands take](task-05-a-lists-rows-carry-the-key.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -81,15 +81,15 @@ No decision file: these are fixes and the cofold role table applied.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** tasks 02 and 03 can start now, on the current cofold; task 01 waits for the cofold release of commands/03 and commands/04, which Softov validates before the tag.
+- **Done so far:** all five tasks are done, reviewed 2026-10-06. The cofold release is on npm and the server is on it (01), with `usage` split into `usage.list` and `usage.show` (02), `plugin config` split into a show, a set and an unset (03), every served command declaring its effect and resource against a pinned thirty-row manifest (04), and every list's rows carrying the key its item commands take (05, which renamed `PluginRow.name` to the configured key and moved the declared name to `module`). Daemon 09 task 03 closed in the same bump.
+- **Next action:** none; a credentialed git spec's masked row name is left to the plugin-id idea.
 - **Open questions:** none.
-- **Watch out for:** `plugin update :name...` is required on purpose (`all`, or names), so it is not a bug the new checks expose. Daemon 09 task 03 is blocked on the same `@cofold/terminal` release as task 01; close it in the same bump.
+- **Watch out for:** `plugin update :name...` is required on purpose (`all`, or names), so it is not a bug the new checks expose.
 
 ## Final verification checklist
 
-- [ ] `servedRegistry` handed to `serve()` starts; the daemon starts with `"http": true`.
-- [ ] `/api/cli-manifest` shows an effect on every served command, and a resource on every command in task 04's table that names one.
-- [ ] `ahpd user rm bob` with no terminal exits 2 naming `--yes`; with `--yes` it runs.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build` green.
-- [ ] `plans/index.md` updated.
+- [x] `servedRegistry` handed to `serve()` starts; the daemon starts with `"http": true`.
+- [x] `/api/cli-manifest` shows an effect on every served command, and a resource on every command in task 04's table that names one.
+- [x] `ahpd user rm bob` with no terminal exits 2 naming `--yes`; with `--yes` it runs.
+- [x] `npx tsc -b`, `pnpm boundary` and `pnpm build` green, and `npx vitest run` green over every package this plan touched; the two cases that time out at their 5 s default under parallel load pass alone and are recorded in `implemented.md`.
+- [x] `plans/index.md` updated.

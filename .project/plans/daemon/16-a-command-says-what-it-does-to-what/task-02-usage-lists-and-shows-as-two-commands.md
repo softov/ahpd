@@ -1,6 +1,6 @@
 ---
 title: usage lists the pools and shows one, as two commands
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -33,3 +33,6 @@ The rows and the refusals are what `usage.list` answers today for each case.
 - `pnpm test` green.
 
 ## Resume
+
+Implemented 2026-10-06. `declareUsage` returns the two actions, so `usage.list` at `GET /usage` and `usage.show` at `GET /usage/{pool}`; the store, the zone, the caller check and the sentences are the ones the single command had, the one-key show of a pool left off the listing and the `usage://<pool>/records` pointer left on the show.
+`packages/server/test/usage-command.test.ts` runs a case against whichever of the two the input names, and pins the manifest's pattern, binding and inputs of both.

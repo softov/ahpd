@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Output } from '@cofold/commands';
+import { manifestFrom } from '@cofold/remote';
 import { fileUsage, fileUsers, usageProvider } from '@ahpd/sdk';
 import type { ComputerTime, ModelUse, Usage, Users } from '@ahpd/sdk';
 import { optionsFrom } from '../src/commands/options.js';
@@ -72,13 +73,20 @@ const computerTime = (at: string, pools: string[], seconds: number): ComputerTim
   pools,
 });
 
-/** What the terminal command answered. */
+/**
+ * What the terminal command answered.
+ *
+ * `ahpd usage` and `ahpd usage <pool>` are two commands, so a case that names a
+ * pool is run against `usage.show` and one that does not against `usage.list`:
+ * the words a person types did not change, and which command they reach did.
+ */
 const run = async (input: Record<string, unknown> = {}): Promise<Output> => {
   const registry = cliRegistry();
-  const command = registry.find('usage.list');
-  if (command === undefined) throw new Error('no usage.list');
+  const id = input['pool'] === undefined ? 'usage.list' : 'usage.show';
+  const command = registry.find(id);
+  if (command === undefined) throw new Error(`no ${id}`);
   const said = await registry.execute(command, { surface: 'cli', input: { configFile: config, ...input } });
-  if (said === null) throw new Error('usage answered nothing');
+  if (said === null) throw new Error(`${id} answered nothing`);
   return said;
 };
 
@@ -151,6 +159,23 @@ const sumOf = (records: { kind: string; cost?: { amount?: number }; model?: { in
 };
 
 describe('usage at the terminal', () => {
+  it('is two commands: `usage` lists, and `usage <pool>` reads one', () => {
+    put({});
+    const manifest = manifestFrom(servedRegistry(facts()), { name: 'ahpd', version: '0.0.0' });
+    const at = (id: string) => manifest.commands.find((one) => one.id === id);
+    // The words are the two a person already types, and the routes are one
+    // segment apart, so the pool is required of the second and not of the first.
+    expect(at('usage.list')).toMatchObject({ pattern: ['usage'], http: { method: 'GET', path: '/usage' } });
+    expect(at('usage.show')).toMatchObject({ pattern: ['usage', ':pool'], http: { method: 'GET', path: '/usage/{pool}' } });
+    // What each request takes: the listing nothing, the read the pool in its path.
+    const inputs = (id: string): string[] => {
+      const command = at(id);
+      return [...(command?.options ?? []).map((one) => one.field ?? one.name), ...Object.keys(command?.arguments ?? {})].sort();
+    };
+    expect(inputs('usage.list')).toEqual([]);
+    expect(inputs('usage.show')).toEqual(['pool']);
+  });
+
   it('lists the pools this host was charged', async () => {
     put({});
     for (const one of [
@@ -246,6 +271,26 @@ describe('usage at the terminal', () => {
 });
 
 describe('usage, served', () => {
+  it('lists the pools at /usage, and reads one at /usage/<pool>', async () => {
+    put({ usage: { timezone: 'UTC' } });
+    for (const one of [
+      modelUse('2026-10-07T09:00:00.000Z', ['user:ana', 'project:backend:search'], 1.5),
+      modelUse('2026-10-07T10:00:00.000Z', ['user:beto'], 2),
+    ]) await store.record(one);
+    const { directory, ana } = await people();
+
+    // Their own pool and the project they belong to, and never somebody
+    // else's: the same rule the single-pool read answers with.
+    const listed = await get('/usage', ana, directory);
+    expect(listed.status).toBe(200);
+    expect(await listed.json()).toEqual([{ pool: 'project:backend:search' }, { pool: 'user:ana' }]);
+
+    const one = await get('/usage/user%3Aana', ana, directory);
+    expect(one.status).toBe(200);
+    expect(await one.json()).toMatchObject({ pool: 'user:ana', day: { usd: 1.5, calls: 1 } });
+    expect((await get('/usage/user%3Abeto', ana, directory)).status).toBe(403);
+  });
+
   it('shows a person their own pools with no usage:read, and refuses another person\'s', async () => {
     put({ usage: { timezone: 'UTC' } });
     for (const one of [

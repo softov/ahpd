@@ -46,7 +46,10 @@ async function open(options: HostOptions) {
 it('lists the fixture from its manifest as ready, without importing it', async () => {
   const row = await describePlugin(SPEC, { configDir: REPO, cwd: REPO });
   expect(row.state).toBe('ready');
-  expect(row.name).toBe('plugin-uri-resources');
+  // The row is keyed by the spec as written, and says what the package calls
+  // itself in `module`.
+  expect(row.name).toBe(SPEC);
+  expect(row.module).toBe('plugin-uri-resources');
   expect(row.title).toBe('Machine status plugin');
 });
 

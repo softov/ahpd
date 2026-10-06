@@ -20,6 +20,8 @@ export const declareStatus = (registry: Registry<object>, served?: ServedFacts):
   summary: 'Say whether one is running, and where',
   description: 'Reads the record a detached daemon keeps of itself; the token it holds is never printed. A served request describes the process answering.',
   surfaces: { cli: { pattern: ['status'] }, http: { method: 'GET', path: '/status' } },
+  // Reading whether one runs is done to no one thing, so it names no resource.
+  effect: 'read',
   scopes: ['config:read'],
   // Served, every fact is the process answering, so no field could name another.
   ...(served === undefined ? { input: flagFields } : {}),

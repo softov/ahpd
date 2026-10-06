@@ -990,14 +990,27 @@ export type PluginState = 'ready' | 'incompatible' | 'unconfigured' | 'disabled'
 export interface PluginRow {
   /** What was named, as it was named. */
   spec: PluginSpec;
+  /**
+   * The name the configuration holds this entry under, which is what every
+   * other `plugin` verb takes: a client reads a row and passes this back. It is
+   * `spec` read as a name, so a path, a URL and a package name each answer the
+   * one the entry is keyed by.
+   */
+  name: string;
   /** Which of the six states this spec is in. */
   state: PluginState;
+  /**
+   * The name the module or the manifest declares itself by.
+   *
+   * Not the same as `name` whenever the entry is named by something other than
+   * its package: a path, a git URL or an object spec's own name. Absent for a
+   * spec that did not resolve, so nothing said what it is.
+   */
+  module?: string;
   /** The URL a load would import, when a spec resolved. */
   url?: string;
   /** The file a load would import, when there is one. */
   path?: string;
-  /** The name the module or the manifest declares. */
-  name?: string;
   /** The title the manifest declares. */
   title?: string;
   /** The one line explaining a state that is not `ready`. */
@@ -1021,22 +1034,25 @@ export async function describePlugin(
   options: { configDir: string; cwd: string },
   version: string = sdkVersion(),
 ): Promise<PluginRow> {
-  if (typeof spec !== 'string' && spec.enabled === false) return { spec, state: 'disabled' };
+  // The key the entry is held under, which this row answers whichever state it
+  // is in, because a state is a thing to read about a name and not a name.
+  const name = nameOf(spec);
+  if (typeof spec !== 'string' && spec.enabled === false) return { spec, name, state: 'disabled' };
 
   let resolved: Resolved;
   try {
     resolved = resolvePlugin(spec, options);
   }
   catch (error) {
-    return { spec, state: 'missing', problem: messageOf(error) };
+    return { spec, name, state: 'missing', problem: messageOf(error) };
   }
 
-  const row: PluginRow = { spec, state: 'ready', url: resolved.url };
+  const row: PluginRow = { spec, name, state: 'ready', url: resolved.url };
   if (resolved.path !== undefined) row.path = resolved.path;
 
   const packageDir = resolved.packageDir ?? (resolved.path === undefined ? undefined : nearestManifest(resolved.path));
   if (packageDir === undefined) {
-    if (resolved.path !== undefined) row.name = fileNameOf(resolved.path);
+    if (resolved.path !== undefined) row.module = fileNameOf(resolved.path);
     return row;
   }
 
@@ -1044,7 +1060,7 @@ export async function describePlugin(
   if (manifest.problem !== undefined) return { ...row, state: 'error', problem: manifest.problem };
   const bad = checkManifest(manifest, packageDir);
   if (bad !== undefined) return { ...row, state: 'error', problem: bad };
-  if (manifest.name !== undefined) row.name = manifest.name;
+  if (manifest.name !== undefined) row.module = manifest.name;
   if (manifest.title !== undefined) row.title = manifest.title;
 
   if (manifest.sdkRange !== undefined) {
@@ -1081,8 +1097,10 @@ export async function describePlugin(
  */
 export const pluginLine = (row: PluginRow): string => {
   const where = row.path ?? row.url ?? '-';
-  const label = row.name !== undefined || row.title !== undefined
-    ? `(${[row.name ?? '?', ...(row.title === undefined ? [] : [row.title])].join(', ')})`
+  // What the module says it is, which is not the key the line already prints as
+  // the spec: `name` is that key, so the label reads `module`.
+  const label = row.module !== undefined || row.title !== undefined
+    ? `(${[row.module ?? '?', ...(row.title === undefined ? [] : [row.title])].join(', ')})`
     : row.state === 'disabled' ? '(turned off)'
       : row.state === 'missing' ? '(not resolved)'
         : row.state === 'error' ? '(bad manifest)'

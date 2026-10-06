@@ -17,7 +17,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRegistry } from '@cofold/commands';
 import type { AuthorizeRequest, Output } from '@cofold/commands';
 import { manifestFrom } from '@cofold/remote';
-import { fileUsers } from '@ahpd/sdk';
+import { fileUsage, fileUsers } from '@ahpd/sdk';
+import { fileVault } from '../src/vault.js';
 import type { Named, Users } from '@ahpd/sdk';
 import type { Options } from '../src/commands/options.js';
 import { optionsFrom } from '../src/commands/options.js';
@@ -77,10 +78,10 @@ describe('the command registry', () => {
     const only = (id: string): string | undefined => registry.find(id)?.meta?.deploymentTokenOnly;
     for (const id of ['plugin.install', 'plugin.remove']) expect(only(id)).toBe('install or remove a plugin');
     expect(only('plugin.update')).toBe('update a plugin');
-    for (const id of ['plugin.config', 'plugin.config.set']) expect(only(id)).toBe("change a plugin's options");
+    for (const id of ['plugin.config', 'plugin.config.set', 'plugin.config.unset']) expect(only(id)).toBe("change a plugin's options");
     for (const id of ['plugin.enable', 'plugin.disable']) expect(only(id)).toBe('enable or disable a plugin');
     expect(only('daemon.restart')).toBe('restart the daemon');
-    for (const id of ['plugin.config', 'plugin.config.set', 'plugin.enable', 'plugin.disable']) {
+    for (const id of ['plugin.config', 'plugin.config.set', 'plugin.config.unset', 'plugin.enable', 'plugin.disable']) {
       expect(scopes(id)).toEqual(['config:write']);
     }
     // Each scheme is its own subject, and a verb is gated by the one its own
@@ -711,4 +712,167 @@ describe('teams, projects and memberships', () => {
     expect(inputs('vault.delete')).toEqual(['name']);
     expect(inputs('vault.list')).toEqual([]);
   });
+});
+
+/*
+ * What every served command says it does, and to what.
+ *
+ * The manifest is what a client reads to tell which commands list a kind of
+ * thing, which create one and which act on one row, so it is pinned whole: a
+ * served declaration that is new, or that changed, has to be given a row here.
+ * The table is daemon 16 task 04's.
+ */
+describe('what a served command says it does', () => {
+  it('declares the effect and the resource of every command the daemon serves', () => {
+    const people = join(root, 'people.json');
+    writeFileSync(people, JSON.stringify({ roles: {}, teams: [], projects: [], users: [] }));
+    const facts: ServedFacts = {
+      options: { users: people } as Options,
+      configFile: config,
+      users: fileUsers({ path: people }),
+      running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    const manifest = manifestFrom(servedRegistry(facts), { name: 'ahpd', version: '0.0.0' });
+
+    // `read` with no resource is a listing, `read` with one is a read of the
+    // row it names, `add` creates and `change` or `remove` acts on one.
+    const rows = manifest.commands
+      .map((one) => [one.id, one.effect ?? null, one.resource ?? null] as const)
+      .sort((left, right) => left[0].localeCompare(right[0]));
+    expect(rows).toEqual([
+      ['daemon.config', 'read', null],
+      ['daemon.restart', 'change', null],
+      ['daemon.status', 'read', null],
+      ['plugin.config', 'read', { kind: 'plugin', key: 'name' }],
+      ['plugin.config.set', 'change', { kind: 'plugin', key: 'name' }],
+      ['plugin.config.unset', 'change', { kind: 'plugin', key: 'name' }],
+      ['plugin.disable', 'change', { kind: 'plugin', key: 'name' }],
+      ['plugin.enable', 'change', { kind: 'plugin', key: 'name' }],
+      ['plugin.install', 'add', { kind: 'plugin' }],
+      ['plugin.list', 'read', { kind: 'plugin' }],
+      ['plugin.remove', 'remove', { kind: 'plugin', key: 'name' }],
+      ['plugin.update', 'change', { kind: 'plugin', key: 'name' }],
+      ['project.add', 'add', { kind: 'project' }],
+      ['project.list', 'read', { kind: 'project' }],
+      ['project.rm', 'remove', { kind: 'project', key: 'id' }],
+      ['proxy.list', 'read', { kind: 'provider' }],
+      ['team.add', 'add', { kind: 'team' }],
+      ['team.list', 'read', { kind: 'team' }],
+      ['team.rm', 'remove', { kind: 'team', key: 'id' }],
+      ['usage.list', 'read', { kind: 'pool' }],
+      ['usage.show', 'read', { kind: 'pool', key: 'pool' }],
+      ['user.add', 'add', { kind: 'user' }],
+      ['user.list', 'read', { kind: 'user' }],
+      ['user.member', 'change', { kind: 'user', key: 'id' }],
+      ['user.primary', 'change', { kind: 'user', key: 'id' }],
+      ['user.rm', 'remove', { kind: 'user', key: 'id' }],
+      ['user.token', 'change', { kind: 'user', key: 'id' }],
+      ['vault.delete', 'remove', { kind: 'secret', key: 'name' }],
+      ['vault.list', 'read', { kind: 'secret' }],
+      ['vault.set', 'add', { kind: 'secret' }],
+    ]);
+  });
+});
+
+/*
+ * What a list's rows carry, so a client can act on one.
+ *
+ * Where task 04's table names a key, the list of that kind answers rows carrying
+ * a field of that name, holding what the keyed command takes: a client reads a
+ * row and passes the field back, naming nothing itself. For `plugin` that is the
+ * key the configuration holds the entry under, which is not the name the package
+ * declares itself by - the row's own `module` - so the two are pinned apart.
+ */
+describe('a list answers the key its item commands take', () => {
+  const fixtures = join(import.meta.dirname, 'fixtures');
+  /** One spec of each kind a person names: a path, a git URL and a package name. */
+  const specs = [join(fixtures, 'plugin-hello'), 'git+https://git.example.com/acme/orders.git', '@acme/orders'];
+
+  /** The daemon's own facts, over a file holding one of everything a list answers. */
+  const daemon = async (): Promise<ServedFacts> => {
+    const people = join(root, 'people.json');
+    const directory = fileUsers({ path: people });
+    await directory.addTeam('backend', 'Backend');
+    await directory.addProject('search');
+    await directory.add('ana', ['guest'], { memberships: ['backend:search'] });
+    // The file names the people directory as well as the plugins, which is what
+    // a served `user list` reads instead of a request.
+    writeFileSync(config, JSON.stringify({ users: people, plugins: specs }));
+    const vault = fileVault({ file: join(root, 'vault.json') });
+    await vault.set('host:orders', 'shh');
+    const usage = fileUsage({ folder: join(root, 'usage') });
+    await usage.record({
+      at: '2026-10-07T12:00:00.000Z',
+      kind: 'model',
+      source: 'proxy',
+      owner: 'user:ana',
+      model: { name: 'anthropic/opus-5' },
+      pools: ['user:ana'],
+      cost: { amount: 1, currency: 'usd', from: 'harness' },
+    });
+    return {
+      options: optionsFrom({ configFile: config }),
+      configFile: config,
+      users: directory,
+      running: () => ({ pid: process.pid, url: 'ws://127.0.0.1:9350', host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      usage: () => usage,
+      vault: () => vault,
+      restart: () => {},
+    };
+  };
+
+  /** Every row a served list answers, as the data a client reads. */
+  const rowsOf = async (facts: ServedFacts, id: string): Promise<Record<string, unknown>[]> => {
+    const served = servedRegistry(facts);
+    const command = served.find(id);
+    expect(command, id).toBeDefined();
+    const said = await served.execute(command!, {
+      surface: 'remote',
+      input: {},
+      request: { actor: { id: 'root', roles: ['admin'], can: () => true } },
+    }) as Output;
+    return said.data as Record<string, unknown>[];
+  };
+
+  it('gives every row of every list the field its item command takes', async () => {
+    const facts = await daemon();
+    // The key task 04's table names for each kind, and how many rows the one
+    // entry of each is.
+    const kinds = [
+      ['user.list', 'id', 1],
+      ['team.list', 'id', 1],
+      ['project.list', 'id', 1],
+      ['plugin.list', 'name', 3],
+      ['usage.list', 'pool', 1],
+      ['vault.list', 'name', 1],
+    ] as const;
+    for (const [id, key, count] of kinds) {
+      const rows = await rowsOf(facts, id);
+      expect(rows, id).toHaveLength(count);
+      for (const row of rows) {
+        expect(typeof row[key], `${id}: ${JSON.stringify(row)}`).toBe('string');
+        expect(row[key], id).not.toBe('');
+      }
+    }
+  }, 30000);
+
+  it('carries the name `plugin enable` finds the entry by, which is not the module\'s own', async () => {
+    const facts = await daemon();
+    const rows = await rowsOf(facts, 'plugin.list');
+    // The name is the spec as written, whichever kind it is.
+    expect(rows.map((row) => row['name'])).toEqual(specs);
+    // And the command finds the entry by it, rather than by the package name a
+    // resolved path declares: the row about the path says `plugin-hello` is what
+    // the module calls itself, and the path is what the command takes.
+    expect(rows[0]?.['module']).toBe('plugin-hello');
+    for (const row of rows) {
+      const served = registry.find('plugin.enable');
+      expect(served).toBeDefined();
+      // A name no entry carries is refused, so this throwing is the failure.
+      await registry.execute(served!, { surface: 'cli', input: { configFile: config, name: row['name'] } });
+    }
+  }, 30000);
 });

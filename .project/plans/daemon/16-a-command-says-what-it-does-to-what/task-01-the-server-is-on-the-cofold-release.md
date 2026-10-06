@@ -1,6 +1,6 @@
 ---
 title: The server is on the cofold release that declares effects
-status: blocked
+status: done
 depends: []
 layer: "server"
 refs:
@@ -34,4 +34,6 @@ The server depends on the cofold releases that carry commands/03 and commands/04
 
 ## Resume
 
-Blocked 2026-10-06: the release (tag `release-2026-10-06`) is staged on npm and waits for Softov's approval there.
+Implemented 2026-10-06. The `release-2026-10-06` tag is on npm and `packages/server/package.json` names `@cofold/commands` ^0.3.0, `@cofold/config` ^0.3.1, `@cofold/remote` ^0.5.0 and `@cofold/terminal` ^0.3.0; `pnpm install` moved `pnpm-lock.yaml` and added the four to `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`.
+Landed with tasks 02 and 03, because the new `serve()` refuses `usage.list`'s optional `{pool}` and `plugin.config`'s `:key?` at the mount: `servedRegistry` handed to `serve()` now builds every route, and `packages/server/test/usage-command.test.ts` and `packages/server/test/plugin-config.test.ts` cover the two splits.
+Daemon 09 task 03 is closed in the same bump: `ahpd plugin install` and `ahpd plugin remove` with no name each answer `ahpd: "plugin <word>" needs name.` and `Usage: ahpd plugin <word> <name...>`, exit 2, rather than `unknown command`, pinned in `packages/server/test/server-cli.test.ts`.

@@ -114,6 +114,10 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     id: 'user.list',
     summary: 'Who is in the file',
     surfaces: { cli: { pattern: ['user', 'list'] }, http: { method: 'GET', path: '/user/list' } },
+    // No key: this is the listing, and each row carries the `id` the other
+    // verbs here take.
+    effect: 'read',
+    resource: { kind: 'user' },
     input: at,
     // The two the answer is made of: who they are, and what the roles they
     // hold resolved to - decision
@@ -148,6 +152,9 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Add a person',
     description: 'With --role <name> once per role, --membership <team[:project]> for what their work may be charged to, --primary <team[:project]> for where work naming no scope of its own lands, and --issuer <name> for a provider of their own.',
     surfaces: { cli: { pattern: ['user', 'add', ':id'] }, http: { method: 'POST', path: '/user/add/{id}' } },
+    // A create: the person does not exist yet, so this names no row.
+    effect: 'add',
+    resource: { kind: 'user' },
     input: { ...whole, id: { type: 'string', description: 'The identifier their credential answers with.' } },
     scopes: ['user:write'],
     run: async (context) => {
@@ -192,6 +199,10 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     id: 'user.rm',
     summary: 'Take a person out of the file',
     surfaces: { cli: { pattern: ['user', 'rm', ':id'] }, http: { method: 'POST', path: '/user/rm/{id}' } },
+    // The id is what names the row, so the confirm a removal asks for can say
+    // which person it is about to take out.
+    effect: 'remove',
+    resource: { kind: 'user', key: 'id' },
     input: { ...at, id: { type: 'string', description: 'The identifier to take out.' } },
     scopes: ['user:write'],
     run: async (context) => {
@@ -210,6 +221,9 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Mint a credential, shown once',
     description: 'The bare secret by default, so it can be piped; --url prints the whole ws:// URL a client can be given.',
     surfaces: { cli: { pattern: ['user', 'token', ':id'] }, http: { method: 'POST', path: '/user/token/{id}' } },
+    // Their credential is replaced, which is done to the person the id names.
+    effect: 'change',
+    resource: { kind: 'user', key: 'id' },
     input: { ...showing, id: { type: 'string', description: 'Whose credential to mint.' } },
     scopes: ['user:write'],
     run: async (context) => {
@@ -238,6 +252,9 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'What their work may be charged to',
     description: 'Replaces the whole list. Each entry is team, team:* or team:project, and the teams and projects have to be named already: ahpd team add, ahpd project add. --unset takes the whole list away.',
     surfaces: { cli: { pattern: ['user', 'member', ':id', ':entries...'] }, http: { method: 'POST', path: '/user/member/{id}' } },
+    // The memberships of the person the id names, replaced rather than removed.
+    effect: 'change',
+    resource: { kind: 'user', key: 'id' },
     input: {
       ...at,
       unset: { ...unsetField, description: 'Take every membership away, rather than naming one.' },
@@ -289,6 +306,9 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Where their work that names no team and project is charged',
     description: 'One of their own memberships, or --unset to take the one they have away. A person may set their own; changing another\'s needs user:write.',
     surfaces: { cli: { pattern: ['user', 'primary', ':id', ':entry?'] }, http: { method: 'POST', path: '/user/primary/{id}' } },
+    // One of the person's own fields is set or taken away; the person stays.
+    effect: 'change',
+    resource: { kind: 'user', key: 'id' },
     input: {
       ...unsetting,
       id: { type: 'string', description: 'Whose primary to set or take away.' },

@@ -162,7 +162,9 @@ it('lists a manifest, and its title, without importing the entry', async () => {
   const row = await describePlugin(dir, { configDir: REPO, cwd: REPO });
 
   expect(row.state).toBe('ready');
-  expect(row.name).toBe('@ahpd/agent-acp');
+  // The key is the spec as written; the package's own name is `module`.
+  expect(row.name).toBe(dir);
+  expect(row.module).toBe('@ahpd/agent-acp');
   expect(row.title).toBe('ACP');
   expect(row.path).toBe(join(dir, 'entry.js'));
 });

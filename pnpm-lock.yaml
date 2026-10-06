@@ -134,17 +134,17 @@ importers:
         specifier: workspace:^
         version: link:../sdk
       '@cofold/commands':
-        specifier: ^0.2.2
-        version: 0.2.2
-      '@cofold/config':
         specifier: ^0.3.0
         version: 0.3.0
+      '@cofold/config':
+        specifier: ^0.3.1
+        version: 0.3.1
       '@cofold/remote':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.0
       '@cofold/terminal':
-        specifier: ^0.2.0
-        version: 0.2.0
+        specifier: ^0.3.0
+        version: 0.3.0
       '@microsoft/agent-host-protocol':
         specifier: ^1.0.0
         version: 1.0.0
@@ -315,12 +315,12 @@ packages:
     resolution: {integrity: sha512-5H5RvcC0EC0IbzSVgZ8UOhFdcaAegtwyWY896rrHy3K81pwlxBGI4XNFb7lcqs7l4CL0CBStLlGrUi8A0Nl9QA==}
     engines: {node: '>=22'}
 
-  '@cofold/commands@0.2.2':
-    resolution: {integrity: sha512-dmZp+tRQsB+59MkkfB1+lu+6r2a5VEUC4KxqkS3wL0wdUyXhaOwzhLzZZjR/tKjuPkkJnA9qjOgcP7iiDqh1yw==}
+  '@cofold/commands@0.3.0':
+    resolution: {integrity: sha512-519EMb9ZL679ec/hJdMuVMQo0P2yvvMDCX5W9h4jVYJPqMU1lnhQjN9hvroFSCKqawVus3fXBIJQ5oUrXfe2jQ==}
     engines: {node: '>=22'}
 
-  '@cofold/config@0.3.0':
-    resolution: {integrity: sha512-VikCUhM9iC4EHQ01bjXpXkl1g0C+kVY3kaoXLWVkP8sKoEdXEpygMEpNYM0QQeKes71vLJ+CIsZjh+ADECTuNA==}
+  '@cofold/config@0.3.1':
+    resolution: {integrity: sha512-2/kqFgagpNKIQLQoRRq4fDWbetHA7bEkQqjutAbTcQbOAK+pEsKjNN1GLVIWpQTp6sa6UB+GkwXFq8JQShDd5g==}
     engines: {node: '>=22'}
 
   '@cofold/model-openai-compat@0.1.1':
@@ -329,8 +329,8 @@ packages:
     peerDependencies:
       '@cofold/agents': ^0.1
 
-  '@cofold/remote@0.4.0':
-    resolution: {integrity: sha512-VS+qMYGqlEeUA/oX/GoyD7IB+p3tC65NurVttLc4cTwQXIfztpAg5Yes5DlcYC3k5Nl9oHZQL+qc6bvsUEaxGQ==}
+  '@cofold/remote@0.5.0':
+    resolution: {integrity: sha512-Ey2KgiuMTZouSmElVD8WmsS5quKRJMWGz1bN2bNtpdAHHl7td3AOm3Pa0DzWhXgGUtoJf4Xtlr4NFEL8wASuXQ==}
     engines: {node: '>=22'}
 
   '@cofold/sdk@0.2.0':
@@ -343,8 +343,8 @@ packages:
     peerDependencies:
       '@cofold/agents': ^0.1
 
-  '@cofold/terminal@0.2.0':
-    resolution: {integrity: sha512-tjfUc0GZ4VTCf46kjxfL8HRbkBuR1GG3wC0jrQWbfK+IvCO+avbJnBgouaq9Z99n+ecT5Eeg75rVUFlpc1YI8w==}
+  '@cofold/terminal@0.3.0':
+    resolution: {integrity: sha512-WHzZA7Dhw2glPFvxQUT/2iRlZc/w8ckjPshSMA7LHi+p2D5/lKgyaot74TIKd/HyfxJCdFI4KVACvIgXzPzDLg==}
     engines: {node: '>=22'}
 
   '@cofold/tools@0.1.1':
@@ -1864,21 +1864,21 @@ snapshots:
     dependencies:
       '@cofold/sdk': 0.2.0
 
-  '@cofold/commands@0.2.2':
+  '@cofold/commands@0.3.0':
     dependencies:
       '@cofold/sdk': 0.2.0
 
-  '@cofold/config@0.3.0':
+  '@cofold/config@0.3.1':
     dependencies:
-      '@cofold/commands': 0.2.2
+      '@cofold/commands': 0.3.0
 
   '@cofold/model-openai-compat@0.1.1(@cofold/agents@0.1.2)':
     dependencies:
       '@cofold/agents': 0.1.2
 
-  '@cofold/remote@0.4.0':
+  '@cofold/remote@0.5.0':
     dependencies:
-      '@cofold/commands': 0.2.2
+      '@cofold/commands': 0.3.0
 
   '@cofold/sdk@0.2.0': {}
 
@@ -1886,9 +1886,9 @@ snapshots:
     dependencies:
       '@cofold/agents': 0.1.2
 
-  '@cofold/terminal@0.2.0':
+  '@cofold/terminal@0.3.0':
     dependencies:
-      '@cofold/commands': 0.2.2
+      '@cofold/commands': 0.3.0
 
   '@cofold/tools@0.1.1(@cofold/agents@0.1.2)':
     dependencies:

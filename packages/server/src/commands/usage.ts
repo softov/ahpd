@@ -82,11 +82,15 @@ export interface TotalsRow {
   month: Record<string, number>;
 }
 
-export const declareUsage = (registry: Registry<object>, served?: ServedFacts): Command => registry.action({
-  id: 'usage.list',
-  summary: 'What each pool this host was charged has spent',
-  description: 'With no pool, the pools the caller may see. With one, what it spent today, this week and this month, cut in usage.timezone. The records behind them are read through the usage: scheme, at usage://<pool>/records.',
-  surfaces: { cli: { pattern: ['usage', ':pool?'] }, http: { method: 'GET', path: '/usage/{pool}' } },
+/**
+ * The listing and the single read, as two declarations.
+ *
+ * They are two rather than one because a route's `{param}` is required: one
+ * command binding an optional pool would leave `GET /usage/{pool}` unreachable,
+ * which `serve()` refuses at the mount. The words a person types - `usage`, and
+ * `usage <pool>` - are unchanged.
+ */
+export const declareUsage = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   /*
    * No grant of its own, because the question a declaration cannot answer is
    * whether the pool is the caller's own: a person reads their own, their teams'
@@ -94,32 +98,62 @@ export const declareUsage = (registry: Registry<object>, served?: ServedFacts): 
    * holds the caller instead, which is what `user primary` does for the same
    * reason.
    */
-  scopes: [],
-  input: {
+  const fields = {
     // Served, the store is the daemon's own, so no field could name another.
     ...(served === undefined ? flagFields : {}),
-    pool: { type: 'string', description: 'Which pool to read, as a record was charged to it. With none, the pools this caller may see.' },
-  },
-  run: async (context) => {
-    // There is a caller, and holding nothing further is the whole of it: which
-    // pools are theirs is the provider's question, not a declaration's.
-    bounded(context, []);
-    const { store, zone } = storeOf(context, served);
-    const provider = over(store, zone, (line) => { context.error(line); });
-    const actor = context.request?.actor as Principal | undefined;
-    const pool = context.optional<string>('pool');
+  };
 
-    if (pool === undefined) {
+  const list = registry.action({
+    id: 'usage.list',
+    summary: 'The pools this host was charged that the caller may see',
+    description: 'Every pool a record was charged to that this caller may see, which is the usage: scheme\'s own root listing. What one of them spent is `ahpd usage <pool>`.',
+    surfaces: { cli: { pattern: ['usage'] }, http: { method: 'GET', path: '/usage' } },
+    // No key: this is the listing, and each row carries the `pool` the read
+    // below takes.
+    effect: 'read',
+    resource: { kind: 'pool' },
+    scopes: [],
+    input: fields,
+    run: async (context) => {
+      // There is a caller, and holding nothing further is the whole of it: which
+      // pools are theirs is the provider's question, not a declaration's.
+      bounded(context, []);
+      const { store, zone } = storeOf(context, served);
+      const provider = over(store, zone, (line) => { context.error(line); });
+      const actor = context.request?.actor as Principal | undefined;
       const rows: PoolRow[] = (await provider.list('usage://', actor).catch(refusal)).map((one) => ({ pool: one.name }));
       return output(rows, rows.length === 0 ? 'no pools\n' : `${rows.map((one) => `${one.pool}\n`).join('')}`);
-    }
+    },
+  });
 
-    const read = await provider.read(`usage://${encodeURIComponent(pool)}`, undefined, actor).catch(refusal);
-    const totals = JSON.parse(read.data) as TotalsRow;
-    const text = `${totals.pool}\n`
-      + `  today       ${measures(totals.day)}\n`
-      + `  this week   ${measures(totals.week)}\n`
-      + `  this month  ${measures(totals.month)}\n`;
-    return output(totals, text);
-  },
-});
+  const show = registry.action({
+    id: 'usage.show',
+    summary: 'What one pool spent today, this week and this month',
+    description: 'The three periods, cut in usage.timezone. The records behind them are read through the usage: scheme, at usage://<pool>/records.',
+    surfaces: { cli: { pattern: ['usage', ':pool'] }, http: { method: 'GET', path: '/usage/{pool}' } },
+    effect: 'read',
+    resource: { kind: 'pool', key: 'pool' },
+    scopes: [],
+    input: {
+      ...fields,
+      pool: { type: 'string', description: 'Which pool to read, as a record was charged to it.' },
+    },
+    required: ['pool'],
+    run: async (context) => {
+      bounded(context, []);
+      const { store, zone } = storeOf(context, served);
+      const provider = over(store, zone, (line) => { context.error(line); });
+      const actor = context.request?.actor as Principal | undefined;
+      const pool = context.value<string>('pool');
+      const read = await provider.read(`usage://${encodeURIComponent(pool)}`, undefined, actor).catch(refusal);
+      const totals = JSON.parse(read.data) as TotalsRow;
+      const text = `${totals.pool}\n`
+        + `  today       ${measures(totals.day)}\n`
+        + `  this week   ${measures(totals.week)}\n`
+        + `  this month  ${measures(totals.month)}\n`;
+      return output(totals, text);
+    },
+  });
+
+  return [list, show];
+};

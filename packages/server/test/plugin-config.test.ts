@@ -12,7 +12,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Output } from '@cofold/commands';
+import { Program } from '@cofold/terminal';
 import type { Options } from '../src/commands/options.js';
+import { programGlobals } from '../src/commands/options.js';
 import { cliRegistry } from '../src/commands/registry.js';
 import { apiOrigins } from '../src/commands/run.js';
 import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
@@ -58,16 +60,31 @@ const run = async (id: string, input: Record<string, unknown>): Promise<{ output
   return { output, said };
 };
 
+/**
+ * One line as `ahpd` reads it, in this process.
+ *
+ * `run` names a command; this names the words a person types, so a case can ask
+ * which command those words reach. The registry and the globals are the ones
+ * `main.ts` builds its program from, and the io is captured rather than written.
+ */
+const line = async (words: string[]): Promise<{ code: number; said: string }> => {
+  let said = '';
+  const program = new Program({
+    name: 'ahpd',
+    version: '0.0.0',
+    registry: cliRegistry(),
+    globals: programGlobals,
+    io: { out: (text) => { said += text; }, err: (text) => { said += text; } },
+  });
+  return { code: await program.run(words), said };
+};
+
 describe('plugin config at the terminal', () => {
-  it('shows every option the entry sets, and one', async () => {
+  it('shows every option the entry sets', async () => {
     put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
     const all = await run('plugin.config', { name: SECRET });
     expect(all.output?.data).toEqual({ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } });
     expect(all.output?.plain).toBe(`${SECRET}\n  apiKey: "k-1"\n  region: "eu"\n`);
-
-    const one = await run('plugin.config', { name: SECRET, key: 'region' });
-    expect(one.output?.data).toEqual({ name: SECRET, key: 'region', value: 'eu' });
-    expect(one.output?.plain).toBe('"eu"\n');
   });
 
   it('says so when an entry sets nothing', async () => {
@@ -98,8 +115,8 @@ describe('plugin config at the terminal', () => {
     await run('plugin.config.set', { name: SECRET, key: 'apiKey', value: '{"$secret": "host:orders"}' });
     expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } }]);
     // And it is answered as written, so the name stays visible.
-    expect((await run('plugin.config', { name: SECRET, key: 'apiKey' })).output?.data)
-      .toEqual({ name: SECRET, key: 'apiKey', value: { $secret: 'host:orders' } });
+    expect((await run('plugin.config', { name: SECRET })).output?.data)
+      .toEqual({ name: SECRET, options: { apiKey: { $secret: 'host:orders' } } });
 
     await expect(run('plugin.config.set', { name: SECRET, key: 'apiKey', value: '{"$secret": "x"}' }))
       .rejects.toThrow('x is not a secret name');
@@ -115,18 +132,38 @@ describe('plugin config at the terminal', () => {
 
   it('unsets a value', async () => {
     put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
-    await run('plugin.config', { name: SECRET, key: 'apiKey', unset: true });
+    await run('plugin.config.unset', { name: SECRET, key: 'apiKey' });
     expect(read().plugins).toEqual([{ name: SECRET, options: { region: 'eu' } }]);
   });
 
   it('leaves the file alone and says so when the option was not set, a string entry included', async () => {
     put({ plugins: [SECRET, { name: 'other', options: { region: 'eu' } }] });
     const before = readFileSync(config, 'utf8');
-    const bare = await run('plugin.config', { name: SECRET, key: 'apiKey', unset: true });
+    const bare = await run('plugin.config.unset', { name: SECRET, key: 'apiKey' });
     expect(bare.said).toBe(`${SECRET} sets no apiKey in ${config}.\n`);
-    const other = await run('plugin.config', { name: 'other', key: 'apiKey', unset: true });
+    const other = await run('plugin.config.unset', { name: 'other', key: 'apiKey' });
     expect(other.said).toBe(`other sets no apiKey in ${config}.\n`);
     expect(readFileSync(config, 'utf8')).toBe(before);
+  });
+
+  it('refuses `plugin config <name> <key>`, which is not a read any more', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    // The words used to show one option, and then to remove one with --unset.
+    // Neither is what they reach now: `plugin config <name>` shows every
+    // option, and taking one away is `plugin config unset <name> <key>`.
+    const refused = await line(['plugin', 'config', SECRET, 'region']);
+    expect(refused.code).toBe(2);
+    expect(refused.said).toBe(`ahpd: unknown command "plugin config ${SECRET} region". Try ahpd --help\n`);
+  });
+
+  it('reads the word `unset` as the verb rather than as a plugin named unset', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    // Five words, which `plugin config <name> <key> <value>` would also take.
+    // A literal outscores a slot, so this is the removal and not a set of the
+    // option `region` on a plugin called `unset`.
+    const ran = await line(['plugin', 'config', 'unset', SECRET, 'region']);
+    expect(ran.code).toBe(0);
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: 'k-1' } }]);
   });
 
   it('refuses a plugin the file does not name', async () => {
@@ -201,8 +238,14 @@ describe('plugin config, served', () => {
     const all = await post('/plugin/config', { name: SECRET });
     expect(all.status).toBe(200);
     expect(await all.json()).toEqual({ name: SECRET, options: { apiKey: '<set>', region: 'eu' } });
-    const one = await post('/plugin/config', { name: SECRET, key: 'apiKey' });
-    expect(await one.json()).toEqual({ name: SECRET, key: 'apiKey', value: '<set>' });
+  });
+
+  it('removes one option at /plugin/config/unset, as the line does', async () => {
+    put({ plugins: [{ name: SECRET, options: { apiKey: 'k-1', region: 'eu' } }] });
+    const removed = await post('/plugin/config/unset', { name: SECRET, key: 'region' });
+    expect(removed.status).toBe(200);
+    expect(await removed.json()).toEqual({ name: SECRET, key: 'region', restart: true });
+    expect(read().plugins).toEqual([{ name: SECRET, options: { apiKey: 'k-1' } }]);
   });
 
   it('sets a write-only value without answering it, and says to restart', async () => {
@@ -338,8 +381,7 @@ describe('a plugin switched off', () => {
       expect(set.said).toContain(`${MARKER} is switched off, so level is written unchecked; it is checked when the plugin is enabled and loads.`);
       expect(read().plugins).toEqual([{ name: MARKER, options: { level: 'not a number' }, enabled: false }]);
       await run('plugin.config', { name: MARKER });
-      await run('plugin.config', { name: MARKER, key: 'level' });
-      await run('plugin.config', { name: MARKER, key: 'level', unset: true });
+      await run('plugin.config.unset', { name: MARKER, key: 'level' });
 
       const facts: ServedFacts = {
         options: {} as Options,
