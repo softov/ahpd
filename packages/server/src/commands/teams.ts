@@ -15,7 +15,7 @@
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import type { Named, Users } from '@ahpd/sdk';
-import { conflict, servedTeamFields, stop, teamFields } from './options.js';
+import { conflict, servedTeamFields, stop, teamAt, teamFields } from './options.js';
 import { idOf, people } from './user.js';
 import type { ServedFacts } from './served.js';
 
@@ -34,8 +34,10 @@ const said = (error: unknown): never => {
 };
 
 export const declareTeams = (registry: Registry<object>, served?: ServedFacts): Command[] => {
-  /** The fields the surface accepts: served, the daemon's own file is absent. */
-  const fields = served === undefined ? teamFields : servedTeamFields;
+  /** Where the file is: served, the daemon's own, so no field could name another. */
+  const at = served === undefined ? teamAt : {};
+  /** The fields naming one takes, which is where the file is and the title. */
+  const naming = served === undefined ? teamFields : servedTeamFields;
 
   /** The six verbs, one per direction a name may go. */
   const declare = (what: 'team' | 'project'): Command[] => {
@@ -44,7 +46,7 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       id: `${what}.list`,
       summary: `What this install names as a ${what}`,
       surfaces: { cli: { pattern: [what, 'list'] }, http: { method: 'GET', path: `/${what}/list` } },
-      input: fields,
+      input: at,
       // Reading the names is not managing them, so it is that subject's read.
       scopes: [`${what}:read`],
       run: async (context) => {
@@ -59,7 +61,7 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       summary: `Name a ${what}`,
       description: 'Naming one that is already there sets its title and moves nothing.',
       surfaces: { cli: { pattern: [what, 'add', ':id'] }, http: { method: 'POST', path: `/${what}/add/{id}` } },
-      input: { ...fields, id: { type: 'string', description: `The id a membership is written with.` } },
+      input: { ...naming, id: { type: 'string', description: `The id a membership is written with.` } },
       scopes: [`${what}:write`],
       run: async (context) => {
         const { directory } = people(context, served);
@@ -80,7 +82,7 @@ export const declareTeams = (registry: Registry<object>, served?: ServedFacts): 
       summary: `Take a ${what} out of the file`,
       description: 'Refused while a membership still names it, saying who holds it.',
       surfaces: { cli: { pattern: [what, 'rm', ':id'] }, http: { method: 'POST', path: `/${what}/rm/{id}` } },
-      input: { ...fields, id: { type: 'string', description: 'The id to take out.' } },
+      input: { ...at, id: { type: 'string', description: 'The id to take out.' } },
       scopes: [`${what}:write`],
       run: async (context) => {
         const { directory } = people(context, served);

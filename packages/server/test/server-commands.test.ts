@@ -16,8 +16,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createRegistry } from '@cofold/commands';
 import type { AuthorizeRequest, Output } from '@cofold/commands';
+import { manifestFrom } from '@cofold/remote';
 import { fileUsers } from '@ahpd/sdk';
-import type { Named } from '@ahpd/sdk';
+import type { Named, Users } from '@ahpd/sdk';
 import type { Options } from '../src/commands/options.js';
 import { optionsFrom } from '../src/commands/options.js';
 import { cliRegistry } from '../src/commands/registry.js';
@@ -339,19 +340,24 @@ describe('teams, projects and memberships', () => {
       input: { configFile: config, users: file, ...input },
     })) as Output;
 
+  /**
+   * The daemon's own facts, which a served declaration reads instead of a
+   * request: its file, its people and where it says it is.
+   */
+  const facts = (directory: Users): ServedFacts => ({
+    options: { users: file } as Options,
+    configFile: config,
+    users: directory,
+    running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+    turning: () => [],
+    restart: () => {},
+  });
+
   /** The same file served under `/api`, with a deployment token when one is named. */
   const api = (token?: string) => {
     const directory = fileUsers({ path: file });
-    const facts: ServedFacts = {
-      options: { users: file } as Options,
-      configFile: config,
-      users: directory,
-      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
-      turning: () => [],
-      restart: () => {},
-    };
     return apiHandler({
-      registry: servedRegistry(facts),
+      registry: servedRegistry(facts(directory)),
       ...(token === undefined ? {} : { token }),
       users: directory,
       program: { name: 'ahpd', version: '0.0.0' },
@@ -596,5 +602,58 @@ describe('teams, projects and memberships', () => {
     expect(cleared.status).toBe(200);
     expect(held().users[0]).toMatchObject({ memberships: [] });
     expect(held().users[0]?.primary).toBeUndefined();
+  });
+
+  it('offers each verb the flags it reads, and no others', () => {
+    const offered = (id: string): readonly string[] => (registry.find(id)?.options ?? []).map((one) => one.name);
+    const where = ['--config-file', '--users'];
+    // Where the file is, which every verb of a subject reads, and nothing more.
+    for (const id of ['user.list', 'user.rm', 'user.member', 'user.primary']) {
+      expect(offered(id)).toEqual(expect.arrayContaining([...where, '--host', '--port']));
+    }
+    // The record, the issuer and the roles are `user add`'s, and the URL is
+    // `user token`'s alone: no other verb reads any of them.
+    for (const id of ['user.list', 'user.rm', 'user.member', 'user.primary']) {
+      expect(offered(id)).not.toContain('--issuer');
+      expect(offered(id)).not.toContain('--role');
+      expect(offered(id)).not.toContain('--url');
+    }
+    expect(offered('user.add')).toEqual(expect.arrayContaining([...where, '--issuer', '--role', '--membership', '--primary']));
+    expect(offered('user.add')).not.toContain('--url');
+    expect(offered('user.token')).toEqual(expect.arrayContaining([...where, '--url']));
+    // The title names a team or a project, so it is the naming verb's.
+    for (const what of ['team', 'project']) {
+      expect(offered(`${what}.add`)).toEqual(expect.arrayContaining([...where, '--title']));
+      for (const id of [`${what}.list`, `${what}.rm`]) {
+        expect(offered(id)).toEqual(expect.arrayContaining(where));
+        expect(offered(id)).not.toContain('--title');
+      }
+    }
+    // The vault takes where it is and none of the other daemon flags.
+    for (const id of ['vault.set', 'vault.delete', 'vault.list']) expect(offered(id)).toEqual(['--config-file']);
+  });
+
+  it('publishes what a request may set, and never the daemon\'s own file or address', () => {
+    const manifest = manifestFrom(servedRegistry(facts(fileUsers({ path: file }))), { name: 'ahpd', version: '0.0.0' });
+    const inputs = (id: string): readonly string[] => {
+      const command = manifest.commands.find((one) => one.id === id);
+      const options = (command?.options ?? []).map((one) => one.field ?? one.name);
+      return [...options, ...Object.keys(command?.arguments ?? {})].sort();
+    };
+    // The daemon reads its own file and address, so `user rm` takes the id alone.
+    expect(inputs('user.rm')).toEqual(['id']);
+    expect(inputs('user.list')).toEqual([]);
+    expect(inputs('team.rm')).toEqual(['id']);
+    expect(inputs('project.rm')).toEqual(['id']);
+    // What a request may set is what the verb writes, and no more.
+    expect(inputs('user.add')).toEqual(['id', 'issuer', 'membership', 'primary', 'role']);
+    expect(inputs('user.token')).toEqual(['id', 'url']);
+    expect(inputs('user.member')).toEqual(['entries', 'id', 'unset']);
+    expect(inputs('team.add')).toEqual(['id', 'title']);
+    // The vault is the daemon's own, so a served verb takes the name and, where
+    // one is written, the body's value, and never where the file is.
+    expect(inputs('vault.set')).toEqual(['name', 'value']);
+    expect(inputs('vault.delete')).toEqual(['name']);
+    expect(inputs('vault.list')).toEqual([]);
   });
 });

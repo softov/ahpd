@@ -460,31 +460,16 @@ export const configSchema: { type: 'object'; properties: Record<ConfigKey, JsonS
 };
 
 /**
- * The fields a person is managed with, which every `user` sub-command accepts.
+ * Where a person is managed: the file and the address every `user` verb reads.
  *
  * What a record is written with is not here: those are on the verb that writes
  * them, so a flag is never offered where it is read by nothing.
  */
-export const userFields = {
+export const userAt = {
   configFile: serverFields.configFile,
   users: serverFields.users,
   host: serverFields.host,
   port: serverFields.port,
-  issuer: {
-    type: 'string',
-    description: "A provider of their own, rather than this host's default.",
-    cli: { value: 'NAME' },
-  },
-  role: {
-    type: 'array',
-    items: { type: 'string' },
-    description: 'A role to give them. Repeatable.',
-    cli: { value: 'NAME' },
-  },
-  url: {
-    type: 'boolean',
-    description: 'Print the whole ws:// URL a client can be given.',
-  },
 } satisfies Record<string, Field>;
 
 /** The record fields a whole person is created with, in one go. */
@@ -502,10 +487,33 @@ const recordFields = {
   },
 } satisfies Record<string, Field>;
 
-/** What `user add` takes: the whole record, in one call. */
+/**
+ * What `user add` takes: where the file is, the roles and the issuer, and the
+ * whole record, in one call.
+ */
 export const userAddFields = {
-  ...userFields,
+  ...userAt,
+  issuer: {
+    type: 'string',
+    description: "A provider of their own, rather than this host's default.",
+    cli: { value: 'NAME' },
+  },
+  role: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'A role to give them. Repeatable.',
+    cli: { value: 'NAME' },
+  },
   ...recordFields,
+} satisfies Record<string, Field>;
+
+/** What `user token` takes: where the file is, and the flag it prints the whole URL with. */
+export const userTokenFields = {
+  ...userAt,
+  url: {
+    type: 'boolean',
+    description: 'Print the whole ws:// URL a client can be given.',
+  },
 } satisfies Record<string, Field>;
 
 /**
@@ -521,14 +529,19 @@ export const unsetField = {
 
 /** What `user primary` takes, which is a flag rather than a second way to name one. */
 export const userPrimaryFields = {
-  ...userFields,
+  ...userAt,
   unset: { ...unsetField, description: 'Take their primary away, rather than setting one.' },
 } satisfies Record<string, Field>;
 
-/** The fields a team or a project is managed with, which every verb naming one accepts. */
-export const teamFields = {
+/** Where a team or a project is managed: the file every verb naming one reads. */
+export const teamAt = {
   configFile: serverFields.configFile,
   users: serverFields.users,
+} satisfies Record<string, Field>;
+
+/** What naming a team or a project takes: where the file is, and the title it is given. */
+export const teamFields = {
+  ...teamAt,
   title: {
     type: 'string',
     description: 'What a client shows for it. Without one, its id is what it shows.',
@@ -550,22 +563,33 @@ export const pluginWriteFields = {
 } satisfies Record<string, Field>;
 
 /**
- * The `user` fields a request may set.
+ * Where the vault is: the configuration the file is kept beside.
+ *
+ * The vault belongs to the configuration directory the process reads, so the
+ * configuration file is the one flag that names it, and no other daemon flag is
+ * read here.
+ */
+export const vaultAt = {
+  configFile: serverFields.configFile,
+} satisfies Record<string, Field>;
+
+/**
+ * The `user add` fields a request may set: the roles, the issuer and the whole
+ * record.
  *
  * The file and the address are the daemon's own, so they are absent here: a
  * served `user` verb reads them from the process answering, which is what keeps
  * a request from naming another file to write.
  */
-export const servedUserFields = {
-  issuer: userFields.issuer,
-  role: userFields.role,
-  url: userFields.url,
+export const servedUserAddFields = {
+  issuer: userAddFields.issuer,
+  role: userAddFields.role,
+  ...recordFields,
 } satisfies Record<string, Field>;
 
-/** The `user add` fields a request may set, which is the whole record. */
-export const servedUserAddFields = {
-  ...servedUserFields,
-  ...recordFields,
+/** The `user token` field a request may set, which is the one it prints with. */
+export const servedUserTokenFields = {
+  url: userTokenFields.url,
 } satisfies Record<string, Field>;
 
 /** The `user primary` fields a request may set, which is the unset. */

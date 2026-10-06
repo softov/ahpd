@@ -21,7 +21,7 @@ import type { Principal, Vault } from '@ahpd/sdk';
 import { loadConfig, vaultPath } from '../config.js';
 import { fileVault } from '../vault.js';
 import { isRoot } from './authorize.js';
-import { conflict, flagFields, stop } from './options.js';
+import { conflict, stop, vaultAt } from './options.js';
 import type { ServedFacts } from './served.js';
 import { bounded } from './user.js';
 
@@ -136,8 +136,9 @@ export interface SecretRow {
 }
 
 export const declareVault = (registry: Registry<object>, served?: ServedFacts): Command[] => {
-  // Served, the vault is the daemon's own, so no field could name another.
-  const fields = served === undefined ? flagFields : {};
+  // Where the vault is, and no other daemon flag; served, the daemon's own, so
+  // no field could name another.
+  const fields = served === undefined ? vaultAt : {};
 
   const set = registry.action({
     id: 'vault.set',

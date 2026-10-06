@@ -1,7 +1,7 @@
 ---
 title: A verb declares only the flags it reads
 domain: daemon
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -59,9 +59,9 @@ No decision file: this is a fix.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The user verbs declare their own flags](task-01-the-user-verbs-declare-their-own-flags.md) | todo | - |
-| [02 - The team and project verbs declare their own flags](task-02-the-team-and-project-verbs-declare-their-own-flags.md) | todo | - |
-| [03 - The vault verbs declare their own flags](task-03-the-vault-verbs-declare-their-own-flags.md) | todo | - |
+| [01 - The user verbs declare their own flags](task-01-the-user-verbs-declare-their-own-flags.md) | implemented | - |
+| [02 - The team and project verbs declare their own flags](task-02-the-team-and-project-verbs-declare-their-own-flags.md) | implemented | - |
+| [03 - The vault verbs declare their own flags](task-03-the-vault-verbs-declare-their-own-flags.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -69,13 +69,13 @@ No decision file: this is a fix.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-user-verbs-declare-their-own-flags.md](task-01-the-user-verbs-declare-their-own-flags.md); the three tasks are independent.
+- **Done so far:** the three tasks are implemented, each with its tests; see [implemented.md](implemented.md).
+- **Next action:** Softov's review.
 - **Open questions:** none.
 - **Watch out for:** the served (`/api`) sets leave the file and the address out on purpose, so a request cannot name another file; keep that when splitting.
 
 ## Final verification checklist
 
-- [ ] `/api/cli-manifest` shows `user rm` with `id` alone, and the line form with the location flags alone.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build` green.
-- [ ] `plans/index.md` updated.
+- [x] `/api/cli-manifest` shows `user rm` with `id` alone, and the line form with the location flags alone.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build` green.
+- [x] `plans/index.md` updated.

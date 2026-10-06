@@ -18,7 +18,7 @@ import { covers, fileUsers, refusalReason } from '@ahpd/sdk';
 import type { Grant, Principal, Users } from '@ahpd/sdk';
 import { loadConfig, personalUrl } from '../config.js';
 import { isRoot, SIGN_IN } from './authorize.js';
-import { conflict, servedUserAddFields, servedUserFields, servedUserPrimaryFields, stop, unsetField, userAddFields, userFields, userPrimaryFields } from './options.js';
+import { conflict, servedUserAddFields, servedUserPrimaryFields, servedUserTokenFields, stop, unsetField, userAddFields, userAt, userPrimaryFields, userTokenFields } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /**
@@ -100,10 +100,12 @@ const recordOf = async (directory: Users, id: string) => {
 };
 
 export const declareUser = (registry: Registry<object>, served?: ServedFacts): Command[] => {
-  /** The fields the surface accepts: served, the daemon's own file and address are absent. */
-  const fields = served === undefined ? userFields : servedUserFields;
+  /** Where a person is managed: served, the daemon's own file and address, so no field could name another. */
+  const at = served === undefined ? userAt : {};
   /** The whole record, which is what `user add` writes. */
   const whole = served === undefined ? userAddFields : servedUserAddFields;
+  /** The flag `user token` prints a whole URL with, which no other verb reads. */
+  const showing = served === undefined ? userTokenFields : servedUserTokenFields;
   /** The unset, which is what `user primary` writes when it is not setting one. */
   const unsetting = served === undefined ? userPrimaryFields : servedUserPrimaryFields;
 
@@ -111,7 +113,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     id: 'user.list',
     summary: 'Who is in the file',
     surfaces: { cli: { pattern: ['user', 'list'] }, http: { method: 'GET', path: '/user/list' } },
-    input: fields,
+    input: at,
     // The two the answer is made of: who they are, and what the roles they
     // hold resolved to - decision
     // `people-are-resource-schemes-with-a-grant-each`.
@@ -189,7 +191,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     id: 'user.rm',
     summary: 'Take a person out of the file',
     surfaces: { cli: { pattern: ['user', 'rm', ':id'] }, http: { method: 'POST', path: '/user/rm/{id}' } },
-    input: { ...fields, id: { type: 'string', description: 'The identifier to take out.' } },
+    input: { ...at, id: { type: 'string', description: 'The identifier to take out.' } },
     scopes: ['user:write'],
     run: async (context) => {
       const { directory } = people(context, served);
@@ -207,7 +209,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     summary: 'Mint a credential, shown once',
     description: 'The bare secret by default, so it can be piped; --url prints the whole ws:// URL a client can be given.',
     surfaces: { cli: { pattern: ['user', 'token', ':id'] }, http: { method: 'POST', path: '/user/token/{id}' } },
-    input: { ...fields, id: { type: 'string', description: 'Whose credential to mint.' } },
+    input: { ...showing, id: { type: 'string', description: 'Whose credential to mint.' } },
     scopes: ['user:write'],
     run: async (context) => {
       const { where, directory } = people(context, served);
@@ -236,7 +238,7 @@ export const declareUser = (registry: Registry<object>, served?: ServedFacts): C
     description: 'Replaces the whole list. Each entry is team, team:* or team:project, and the teams and projects have to be named already: ahpd team add, ahpd project add. --unset takes the whole list away.',
     surfaces: { cli: { pattern: ['user', 'member', ':id', ':entries...'] }, http: { method: 'POST', path: '/user/member/{id}' } },
     input: {
-      ...fields,
+      ...at,
       unset: { ...unsetField, description: 'Take every membership away, rather than naming one.' },
       id: { type: 'string', description: 'Whose memberships to replace.' },
       entries: { type: 'array', items: { type: 'string' }, description: 'A team, team:* or team:project. One or more.' },

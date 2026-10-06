@@ -998,6 +998,53 @@ describe('user', () => {
       expect(said.code).toBe(2);
     }
   });
+
+  it('refuses a flag the verb reads by nothing, naming it', async () => {
+    await cli(['user', 'add', 'ada', '--users', users, '--role', 'admin']);
+    const refused = await cli(['user', 'rm', 'ada', '--role', 'admin', '--users', users]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('Unknown option --role');
+    // Nothing ran, so the person is still in the file.
+    expect((await cli(['user', 'list', '--users', users])).stdout).toContain('ada');
+  }, 20000);
+
+  it('takes --url on the verb that prints one, and on no other', async () => {
+    await cli(['user', 'add', 'ada', '--users', users]);
+    const printed = await cli(['user', 'token', 'ada', '--url', '--users', users]);
+    expect(printed.code).toBe(0);
+    expect(printed.stdout.trim()).toMatch(/^ws:\/\/[^/]+\/\?tkn=/u);
+
+    const refused = await cli(['user', 'rm', 'ada', '--url', '--users', users]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('Unknown option --url');
+  }, 20000);
+});
+
+describe('team and project', () => {
+  it('takes --title on the verb that names one, and refuses it where it is read by nothing', async () => {
+    const named = await cli(['team', 'add', 'backend', '--title', 'Backend', '--users', users]);
+    expect(named.code).toBe(0);
+    expect(named.stdout).toContain('Named team backend (Backend).');
+
+    const refused = await cli(['team', 'rm', 'backend', '--title', 'Backend', '--users', users]);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('Unknown option --title');
+    // Nothing ran, so the team is still named.
+    expect((await cli(['team', 'list', '--users', users])).stdout).toBe('backend  Backend\n');
+  }, 20000);
+});
+
+describe('vault', () => {
+  it('takes the configuration it reads and refuses the daemon flags it does not', async () => {
+    put({ plugins: [{ name: 'orders', options: { apiKey: { $secret: 'host:orders' } } }] });
+    const listed = await cli(['vault', 'list', '--config-file', config]);
+    expect(listed.code).toBe(0);
+    expect(listed.stdout).toBe('host:orders  not set, named at plugins[0].options.apiKey\n');
+
+    const refused = await cli(['vault', 'delete', 'host:orders', '--port', '9310']);
+    expect(refused.code).toBe(2);
+    expect(refused.stderr).toContain('Unknown option --port');
+  }, 20000);
 });
 
 describe('plugin', () => {

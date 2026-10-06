@@ -1,6 +1,6 @@
 ---
 title: The vault verbs declare their own flags
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:

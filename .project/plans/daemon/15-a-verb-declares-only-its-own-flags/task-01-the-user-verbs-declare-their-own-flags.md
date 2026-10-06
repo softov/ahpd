@@ -1,6 +1,6 @@
 ---
 title: The user verbs declare their own flags
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
