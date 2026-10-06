@@ -1,6 +1,6 @@
 ---
 title: A machine mounts the git directory beside its folder
-status: todo
+status: implemented
 depends: [task-01-the-host-hands-on-the-git-directory.md]
 layer: "computer"
 refs:
@@ -44,3 +44,11 @@ Write each case first and see it fail against today's code, then build until it 
 - By hand: `git commit` inside, seen on the host, with no dubious-ownership refusal, and every new object under the host's `.git` owned by the host user.
 
 ## Resume
+
+- Built 2026-10-06 on 08f046b.
+- `MachineSpec.gitDir`, `repository` and `user`; the plugin's `withGit` carries them only where the folder reaches the machine (`sessionFolder` on a disposable profile, always on a `devcontainer://` source) and sets `user` to the host's `<uid>:<gid>` whenever `gitDir` is set.
+- Docker route: the root replaces the folder in the same-path `-v`, the git directory follows it, and `run` carries `--user <uid>:<gid>` and `--label ahpd.user=<uid>:<gid>`; the plugin's `how` and the runtime's `exec` add `--user` read from the label.
+- Dev container route: the binds go into the override config's `mounts`, `workspaceMount` and `workspaceFolder` put the tree at its own path, the labels go in `runArgs`, and `reachOf` takes the user from `ahpd.user`, so the probe, `how`, `exec` and the relay run as the host user.
+- A state volume of such a machine is seeded owned by the host user's ids.
+- Tests: `computer-disposable.test.ts` (4) and `computer-devcontainer.test.ts` (1); the machine without a git directory and the profile without `sessionFolder` are guards that passed already.
+- Fix turn 2026-10-06: `Profile.gitGuard` (`bind` default, `open`) in the schema, the check that names the field, `profilesOf` and `MachineSpec`; a git directory inside the tree gets no mount of its own; under `bind` the machine always runs as the host user, under `open` only where the git directory is mounted on its own. Tests: a root session under `bind` and under `open`, a worktree under `open`, and the option check.

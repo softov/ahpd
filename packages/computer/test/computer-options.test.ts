@@ -73,6 +73,16 @@ it('takes a profile\'s state and stateScope by their values, and refuses anythin
   expect(disk.problems.join('\n')).toContain('profiles.bots.state is volume or host, and disk is neither');
 });
 
+it('takes a profile\'s gitGuard by its values, and refuses anything else by name', async () => {
+  const both = await load({ profiles: { bound: { gitGuard: 'bind' }, open: { gitGuard: 'open' } } });
+  expect(both.problems).toEqual([]);
+  expect(both.loaded.map((one) => one.name)).toEqual([NAME]);
+
+  const loose = await load({ profiles: { bots: { gitGuard: 'loose' } } });
+  expect(loose.loaded).toEqual([]);
+  expect(loose.problems.join('\n')).toContain('profiles.bots.gitGuard is bind or open, and loose is neither');
+});
+
 it.each<[string, unknown]>([
   ['runtime', 'podman'],
   ['command', 5],

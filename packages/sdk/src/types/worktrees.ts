@@ -58,6 +58,14 @@ export interface Worktree {
   symlink?: string[];
 }
 
+/** Where a directory's repository keeps its history, and where its tree starts. */
+export interface GitDir {
+  /** The common git directory, absolute: the main repository's `.git` for every worktree of it. */
+  gitDir: string;
+  /** The root of the tree the directory is in: the worktree's own root for a linked worktree. */
+  repository: string;
+}
+
 /**
  * Making and unmaking git worktrees.
  *
@@ -79,6 +87,18 @@ export interface Worktrees {
    * Undefined means there is no repository here and no isolation to offer.
    */
   repository(dir: string): Promise<string | undefined>;
+
+  /**
+   * The repository's common git directory and its root, for a directory in one.
+   *
+   * What a machine needs beside a session's folder for git to work inside it:
+   * a linked worktree's `.git` is a file naming the main repository's git
+   * directory by absolute path, and a folder below the root finds `.git`
+   * above itself. Undefined outside a repository; a rejection, in git's own
+   * words, for a folder git refuses. Optional, so a port that makes no
+   * worktrees need not answer it.
+   */
+  gitDir?(dir: string): Promise<GitDir | undefined>;
 
   /**
    * The branches this repository has, most useful first.

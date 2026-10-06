@@ -158,6 +158,8 @@ if (verb === 'up') {
   const base = String(folderAt).split('/').filter((one) => one !== '').pop() ?? 'workspace';
   const mounting = typeof said.workspaceMount === 'string' && said.workspaceMount !== '' ? said.workspaceMount : '';
   const target = (mounting.split(',').find((one) => one.startsWith('target=')) ?? `target=/workspaces/${base}`).slice('target='.length);
+  // The host side of that mount, which a `workspaceMount` may name as a folder above the workspace.
+  const source = (mounting.split(',').find((one) => one.startsWith('source=')) ?? `source=${folderAt}`).slice('source='.length);
   made.remoteWorkspaceFolder = target;
   /*
    * The container Docker now holds.
@@ -265,7 +267,7 @@ if (verb === 'up') {
           // caller's folder can be read through; the override's own `mounts`
           // are added to it as the container's other binds.
           // A named volume's `--mount` on the command line is one more.
-          mounts: [`${folder}:${made.remoteWorkspaceFolder}`, ...mounts, ...args.flatMap((one, at) => {
+          mounts: [`${source}:${made.remoteWorkspaceFolder}`, ...mounts, ...args.flatMap((one, at) => {
             if (at === 0 || args[at - 1] !== '--mount' || !String(one).startsWith('type=volume,')) return [];
             const read = (key) => String(one).split(',').find((pair) => pair.startsWith(`${key}=`))?.slice(key.length + 1) ?? '';
             return [`${read('source')}:${read('target')}`];

@@ -83,6 +83,23 @@ export interface MachineSource {
   provider: string;
   /** The folder the session works in on this host, mounted at the same path. */
   folder?: string;
+  /**
+   * The common git directory of the repository the folder is in.
+   *
+   * Outside the folder - a linked worktree's, or a subfolder's - it is mounted
+   * beside the folder at its own path, so git works inside the machine; inside
+   * it, it comes with the folder. Either way the machine maker decides what in
+   * it stays read-only. For a `devcontainer://<folder>` source it is that
+   * folder's.
+   */
+  gitDir?: string;
+  /**
+   * The root of the tree the folder is in, when the folder is below it.
+   *
+   * Mounted in place of the folder, so the rest of the tree is not missing to
+   * git inside the machine.
+   */
+  repository?: string;
   /** What the session's agent says a machine needs, as its `machine()` answered. */
   needs?: Record<string, MachineNeed>;
   /**

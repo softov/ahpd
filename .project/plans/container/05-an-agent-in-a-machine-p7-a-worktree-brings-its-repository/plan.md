@@ -1,7 +1,7 @@
 ---
 title: A worktree reaches its machine with the repository it belongs to
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -66,7 +66,13 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 | On the dev container route, the git directory and its read-only binds go through `overrideOf`, and `gitDir` is asked for the `devcontainer://` folder | (defaulted: container/03 delivers every read-only and extra mount through its override config) | 01, 02, 03 |
 | A failed `rev-parse` logs one line and mounts nothing | (defaulted: a quiet failure looks like a folder outside a repository) | 01 |
 | When `gitDir` is mounted, the machine's commands run as the host user's uid:gid, so git accepts the repository and every file it writes stays the host user's; there is no chown step | Softov, 2026-10-04, asked "git in the machine runs as root, so it refuses the host user's repository as dubious ownership, or leaves root-owned objects in the host's `.git`: run the machine's commands as the host user's uid:gid whenever `gitDir` is mounted, or mark the directories safe with `safe.directory` and chown what the machine wrote back when the session leaves?": run them as the host user's uid:gid, with no chown step | 02, 04 |
+| `modules/` (each submodule's own `config` and `hooks/`) and the session's own entry's `commondir` and `gitdir` files are read-only too | (defaulted: the same goal as the review row above; a submodule's config is read by the host's `git status`, and a rewritten `commondir` points the host's git at a config the agent wrote) | 03 |
 | A crashed agent's `index.lock` in its own worktree entry is removed after the container is gone | same review: a stale lock stops every git command until a person removes it | 03 |
+| A profile's `gitGuard` is `bind` (the default) or `open`: with `bind`, whenever a git directory is visible in the machine, inside the folder or beside it, the read-only binds apply and commands run as the host user's uid:gid; `open` is the behaviour before, a writable `.git` and the image's user for a root session | Softov, 2026-10-06, asked "a session at the repository root has .git inside its read-write folder: close it the same way, configurable?": "configurable? default to same bind", then "Default bind" | 01, 02, 03, 04 |
+| `gitGuard` applies to worktree and subfolder sessions too, where `open` mounts the git directory read-write with no read-only binds | (defaulted: one setting for every case, so 'open' means the same everywhere) | 02, 03 |
+| Every git command ahpd runs on the host passes `-c core.fsmonitor= -c submodule.recurse=false`, and `--ignore-submodules` where the subcommand takes it, and the docs say to review a session's changes before running git on them | Softov, 2026-10-06, asked "a gitlink plus a nested `.git` the agent writes in the worktree may be run by a host git that recurses into submodules: guard it?": "Harden ahpd's git + document" | 01, 04 |
+| `modules/` is made empty when missing and always bound read-only | the review of 2026-10-06: without it an agent can create `modules/<x>/config` in the writable git directory | 03 |
+| A git directory whose `hooks`, `config`, `worktrees`, `modules`, session entry or entry files is a symbolic link is refused | (defaulted: a bind lands on what a link points at, and the link sits in the writable git directory) | 03 |
 
 ## Proposed architecture
 
@@ -77,10 +83,10 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host knows a folder's git directory and hands it on](task-01-the-host-hands-on-the-git-directory.md) | todo | - |
-| [02 - A machine mounts the git directory beside its folder](task-02-a-machine-mounts-the-git-directory.md) | todo | 01 |
-| [03 - The machine cannot change what git runs on the host](task-03-the-machine-cannot-change-what-git-runs-on-the-host.md) | todo | 02 |
-| [04 - Docs](task-04-docs.md) | todo | 03 |
+| [01 - The host knows a folder's git directory and hands it on](task-01-the-host-hands-on-the-git-directory.md) | implemented | - |
+| [02 - A machine mounts the git directory beside its folder](task-02-a-machine-mounts-the-git-directory.md) | implemented | 01 |
+| [03 - The machine cannot change what git runs on the host](task-03-the-machine-cannot-change-what-git-runs-on-the-host.md) | implemented | 02 |
+| [04 - Docs](task-04-docs.md) | implemented | 03 |
 
 ## Risks and tradeoffs
 
@@ -89,8 +95,8 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 ## Resume state
 
-- **Done so far:** nothing; revalidated against main 2026-10-02.
-- **Next action:** [task-01-the-host-hands-on-the-git-directory.md](task-01-the-host-hands-on-the-git-directory.md).
+- **Done so far:** all four tasks built 2026-10-06; see [implemented.md](implemented.md).
+- **Next action:** Softov's review, and the open questions in [implemented.md](implemented.md).
 - **Watch out for:**
   - plugin 16 task 10, not yet built, gates the folder by the profile; the git directory must go through the same gate.
   - This plan is for a machine on this host; a machine on another box gets the session's code by a clone, which is p8 to p10's.

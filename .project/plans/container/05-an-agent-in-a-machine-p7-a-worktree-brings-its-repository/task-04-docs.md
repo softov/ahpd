@@ -1,6 +1,6 @@
 ---
 title: The docs say a worktree session commits from inside
-status: todo
+status: implemented
 depends: [task-03-the-machine-cannot-change-what-git-runs-on-the-host.md]
 layer: "docs"
 refs:
@@ -25,3 +25,7 @@ It says a machine with a git directory mounted runs its commands as the host use
 - Read by hand against the code.
 
 ## Resume
+
+- Built 2026-10-06 on 08f046b.
+- `docs/COMPUTER.md`: a paragraph under Disposable machines and one under Security, read against the code.
+- Fix turn 2026-10-06: `gitGuard` in the Profiles table and the Disposable machines paragraph, and a Security paragraph saying to review a session's changes before running git on them, and why.

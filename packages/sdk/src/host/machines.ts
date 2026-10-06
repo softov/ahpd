@@ -1,8 +1,10 @@
+import { realpath } from 'node:fs/promises';
 import { computerId, computerSource, machineRefusal, openComputer } from '../computers.js';
 import { RpcError } from '../rpc.js';
 import type { Scope } from '../scopes.js';
 import type { Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
+import type { GitDir } from '../types/worktrees.js';
 import type { HostContext } from './context.js';
 
 /** The machine a session runs in, and the checks that decide it may. */
@@ -159,6 +161,32 @@ export function createMachines(ctx: HostContext): Machines {
   };
 
   /**
+   * The git directory a machine for `folder` has in it, and the tree root it
+   * needs in place of the folder where the folder is below it.
+   *
+   * The git directory is passed inside the folder too: it adds no mount there,
+   * and the machine maker still guards it. A folder that is the root needs no
+   * other root. A folder git refuses gets neither, with one line naming it and
+   * git's reason.
+   */
+  const repositoryOf = async (folder: string | undefined): Promise<{ gitDir?: string; repository?: string }> => {
+    const ask = options.worktrees?.gitDir;
+    if (folder === undefined || folder === '' || ask === undefined) return {};
+    let found: GitDir | undefined;
+    try {
+      found = await ask.call(options.worktrees, folder);
+    }
+    catch (error) {
+      ctx.log(`computers: no git directory for ${folder}: ${error instanceof Error ? error.message : String(error)}`);
+      return {};
+    }
+    if (found === undefined) return {};
+    const spellings = [folder, await realpath(folder).catch(() => folder)];
+    const atRoot = spellings.includes(found.repository);
+    return { gitDir: found.gitDir, ...(atRoot ? {} : { repository: found.repository }) };
+  };
+
+  /**
    * The machine a session should run in, made now when its setting names a source.
    *
    * A `disposable:<profile>` setting is a profile the plugin turns into a
@@ -198,6 +226,8 @@ export function createMachines(ctx: HostContext): Machines {
     }
     const agent = agents.get(provider);
     const scope = charged.get(uri)?.scope;
+    const devPrefix = 'devcontainer://';
+    const tree = await repositoryOf(said.startsWith(devPrefix) ? said.slice(devPrefix.length).trim() : where);
     const machine = await openComputer(options.computers, said, {
       session: uri,
       provider,
@@ -205,6 +235,7 @@ export function createMachines(ctx: HostContext): Machines {
       ...(scope?.team === undefined ? {} : { team: scope.team }),
       ...(scope?.project === undefined ? {} : { project: scope.project }),
       ...(where === undefined ? {} : { folder: where }),
+      ...tree,
       ...(agent?.machine === undefined ? {} : { needs: agent.machine() }),
     });
     sessionMachines.set(uri, { source: said, machine });

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { cp, lstat, mkdir, mkdtemp, readdir, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import type { Worktree, Worktrees } from '../types/worktrees.js';
+import { gitArgv } from './hardened.js';
 
 /**
  * Run git, and answer what it said. Rejects with git's own words.
@@ -18,7 +19,7 @@ import type { Worktree, Worktrees } from '../types/worktrees.js';
  */
 const git = (dir: string, args: string[], ms = 60_000, stdin?: string): Promise<string> =>
   new Promise((resolve, reject) => {
-    const child = execFile('git', ['-C', dir, ...args], { timeout: ms, maxBuffer: 8 << 20 }, (error, out, bad) => {
+    const child = execFile('git', gitArgv(dir, args), { timeout: ms, maxBuffer: 8 << 20 }, (error, out, bad) => {
       if (!error) return resolve(out.toString());
       // git's own message, not node's: "fatal: a branch named x already
       // exists" is something a person can act on and `Command failed` is not.
@@ -61,6 +62,27 @@ export function gitWorktrees(): Worktrees {
       const found = await git(dir, ['rev-parse', '--show-toplevel'], 5_000).catch(() => undefined);
       const root = found?.trim();
       return root === undefined || root === '' ? undefined : root;
+    },
+
+    gitDir: async (dir) => {
+      /*
+       * One call for both answers, under the same limit as `repository`.
+       *
+       * Outside a repository is the one refusal answered as nothing; anything
+       * else git says - a config it cannot read, an owner it does not trust -
+       * rejects in git's words, so a caller can tell the two apart.
+       */
+      let said: string;
+      try {
+        said = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], 5_000);
+      }
+      catch (error) {
+        if (/not a git repository/i.test((error as Error).message)) return undefined;
+        throw error;
+      }
+      const [common, top] = said.split('\n').map((line) => line.trim());
+      if (common === undefined || common === '' || top === undefined || top === '') return undefined;
+      return { gitDir: common, repository: top };
     },
 
     branches: async (repository) => {

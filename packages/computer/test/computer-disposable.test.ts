@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { memorySessions } from '../../sdk/src/sessions.js';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
+import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
@@ -1244,4 +1246,270 @@ it('loads the disposable example from docs/COMPUTER.md', async () => {
   const box = held(state).machines[0];
   expect(box?.mounts).toEqual([`${claudeHome}:/ahpd/claude`, `${folder}:${folder}`]);
   expect(box?.labels).toMatchObject({ 'ahpd.agents': 'echo', 'ahpd.disposable': 'scratch' });
+});
+
+/*
+ * container/05 p7: a worktree reaches its machine with its repository.
+ */
+
+/** A real repository with one commit and two linked worktrees, every path resolved. */
+const repositoryIn = (dir: string) => {
+  const repo = join(dir, 'repo');
+  mkdirSync(repo);
+  const run = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  mkdirSync(join(repo, 'src'));
+  writeFileSync(join(repo, 'src', 'tracked.txt'), 'tracked\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'first');
+  const tree = join(dir, 'tree');
+  const other = join(dir, 'other');
+  run('worktree', 'add', '-q', '-b', 'work', tree);
+  run('worktree', 'add', '-q', '-b', 'elsewhere', other);
+  const gitDir = join(repo, '.git');
+  return { repo, tree, other, gitDir, entry: join(gitDir, 'worktrees', 'tree') };
+};
+
+const ME = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
+
+/** A host with the git port and one disposable profile that brings the session's folder in. */
+const withRepository = async (state: string, profile: Record<string, unknown> = {}) => (await load(options(state, {
+  profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true, disposableDelay: 1000, ...profile } },
+}), [agentWith()], () => {}, { worktrees: gitWorktrees() })).options;
+
+const flagValue = (argv: readonly string[], flag: string): string | undefined => {
+  const at = argv.indexOf(flag);
+  return at === -1 ? undefined : argv[at + 1];
+};
+
+it('mounts a worktree session\'s git directory beside its folder, and runs the machine as the host user', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts?.slice(0, 2)).toEqual([`${tree}:${tree}`, `${gitDir}:${gitDir}`]);
+  const made = held(state).calls.find((one) => one[0] === 'run') ?? [];
+  expect(flagValue(made, '--user')).toBe(ME);
+  expect(box.labels?.['ahpd.user']).toBe(ME);
+
+  // Every command into it, by a backend and by the tool, as the same user.
+  const how = await loaded.computers?.how(box.name, { command: 'true' });
+  expect(flagValue(how?.args ?? [], '--user')).toBe(ME);
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec');
+  await tool?.run({ id: box.name, command: 'true' }, {} as never);
+  expect((held(state) as Held & { commands?: { user?: string }[] }).commands?.at(-1)?.user).toBe(ME);
+
+  // And after the plugin is loaded again, from the machine's own label.
+  const again = await withRepository(state);
+  const later = await again.computers?.how(box.name, { command: 'true' });
+  expect(flagValue(later?.args ?? [], '--user')).toBe(ME);
+});
+
+it('keeps the image\'s user for a machine with no git directory', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const folder = join(dir, 'plain');
+  mkdirSync(folder);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${folder}:${folder}`]);
+  expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
+  expect(box.labels?.['ahpd.user']).toBeUndefined();
+  const how = await loaded.computers?.how(box.name, { command: 'true' });
+  expect(how?.args).not.toContain('--user');
+});
+
+it('mounts the repository root for a session in a subfolder, and starts it in the subfolder', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, gitDir } = repositoryIn(dir);
+  const below = join(repo, 'src');
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, below);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  // The root brings the git directory, so it has no mount of its own; the
+  // read-only binds follow.
+  expect(box.mounts?.slice(0, 2)).toEqual([`${repo}:${repo}`, `${gitDir}/hooks:${gitDir}/hooks:ro`]);
+  expect(box.mounts).not.toContain(`${below}:${below}`);
+  expect(box.mounts).not.toContain(`${gitDir}:${gitDir}`);
+  expect(box.workdir).toBe(below);
+});
+
+it('brings no git directory into a machine whose profile leaves the session folder out', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree } = repositoryIn(dir);
+
+  const loaded = await withRepository(state, { sessionFolder: false, workdir: '/ahpd' });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts ?? []).toEqual([]);
+  expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
+});
+
+it('binds what git runs on the host read-only over the git directory, in order', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir, entry } = repositoryIn(dir);
+  // Neither is there: no hooks here, and no `config.worktree` in a fresh entry.
+  rmSync(join(gitDir, 'hooks'), { recursive: true, force: true });
+  expect(existsSync(join(entry, 'config.worktree'))).toBe(false);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([
+    `${tree}:${tree}`,
+    `${gitDir}:${gitDir}`,
+    `${gitDir}/hooks:${gitDir}/hooks:ro`,
+    `${gitDir}/config:${gitDir}/config:ro`,
+    `${gitDir}/worktrees:${gitDir}/worktrees:ro`,
+    `${entry}:${entry}`,
+    `${entry}/config.worktree:${entry}/config.worktree:ro`,
+    `${entry}/commondir:${entry}/commondir:ro`,
+    `${entry}/gitdir:${entry}/gitdir:ro`,
+    `${gitDir}/modules:${gitDir}/modules:ro`,
+    `${tree}/.git:${tree}/.git:ro`,
+  ]);
+  // No bind names the other worktree's entry: the read-only `worktrees/` covers it.
+  expect((box.mounts ?? []).some((one) => one.includes('/worktrees/other'))).toBe(false);
+  // Every source was there before the machine was made, made empty on the host.
+  expect(readFileSync(join(entry, 'config.worktree'), 'utf8')).toBe('');
+  expect(readdirSync(join(gitDir, 'hooks'))).toEqual([]);
+  // And `modules/`, which the repository did not have, so nothing in the
+  // machine can make one there.
+  expect(readdirSync(join(gitDir, 'modules'))).toEqual([]);
+  expect(box.labels?.['ahpd.worktree']).toBe(entry);
+});
+
+it('binds the repository\'s own modules read-only, leaving what is in them', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir, entry } = repositoryIn(dir);
+  mkdirSync(join(gitDir, 'modules', 'lib'), { recursive: true });
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const mounts = held(state).machines[0]?.mounts ?? [];
+  const modules = mounts.indexOf(`${gitDir}/modules:${gitDir}/modules:ro`);
+  expect(modules).toBeGreaterThan(0);
+  expect(modules).toBe(mounts.indexOf(`${entry}/gitdir:${entry}/gitdir:ro`) + 1);
+  expect(mounts.at(-1)).toBe(`${tree}/.git:${tree}/.git:ro`);
+});
+
+it('refuses a git directory whose hooks are a link, which the machine could replace', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, tree, gitDir } = repositoryIn(dir);
+  rmSync(join(gitDir, 'hooks'), { recursive: true, force: true });
+  mkdirSync(join(repo, 'githooks'));
+  symlinkSync(join(repo, 'githooks'), join(gitDir, 'hooks'));
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await expect(open('ahp-session:/one', { computer: 'disposable:claude' }, tree)).rejects.toThrow(/hooks is a symbolic link/);
+  expect(held(state).machines).toEqual([]);
+});
+
+it('removes the session\'s own index.lock once its machine is gone, and not before', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir, entry } = repositoryIn(dir);
+
+  const loaded = await withRepository(state);
+  const { open, dispose } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+  await until(() => held(state).machines.length === 1);
+  // A crashed agent's lock in its own entry, and one in the main index.
+  writeFileSync(join(entry, 'index.lock'), '');
+  writeFileSync(join(gitDir, 'index.lock'), '');
+
+  await dispose('ahp-session:/one');
+  await settle();
+  await vi.advanceTimersByTimeAsync(600);
+  await settle();
+  expect(held(state).machines).toHaveLength(1);
+  expect(existsSync(join(entry, 'index.lock'))).toBe(true);
+
+  await vi.advanceTimersByTimeAsync(1000);
+  await until(() => !existsSync(join(entry, 'index.lock')));
+  expect(existsSync(join(entry, 'index.lock'))).toBe(false);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(true);
+  expect(held(state).machines).toEqual([]);
+  // The main index's lock is never this machine's to take.
+  expect(existsSync(join(gitDir, 'index.lock'))).toBe(true);
+});
+
+it('guards a session at the repository root, whose git directory is inside its folder', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, gitDir } = repositoryIn(dir);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, repo);
+
+  // No second mount of the git directory, which the folder brings; the same
+  // read-only binds over it, and the host user.
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([
+    `${repo}:${repo}`,
+    `${gitDir}/hooks:${gitDir}/hooks:ro`,
+    `${gitDir}/config:${gitDir}/config:ro`,
+    `${gitDir}/worktrees:${gitDir}/worktrees:ro`,
+    `${gitDir}/modules:${gitDir}/modules:ro`,
+  ]);
+  expect(flagValue(held(state).calls.find((one) => one[0] === 'run') ?? [], '--user')).toBe(ME);
+  expect(box.labels?.['ahpd.user']).toBe(ME);
+});
+
+it('leaves a root session\'s git directory open where the profile says gitGuard open', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+
+  const loaded = await withRepository(state, { gitGuard: 'open' });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, repo);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${repo}:${repo}`]);
+  expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
+});
+
+it('mounts a worktree\'s git directory with no read-only binds where the profile says gitGuard open', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+
+  const loaded = await withRepository(state, { gitGuard: 'open' });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${tree}:${tree}`, `${gitDir}:${gitDir}`]);
+  // Mounted on its own, so still the host user's.
+  expect(flagValue(held(state).calls.find((one) => one[0] === 'run') ?? [], '--user')).toBe(ME);
+  expect(box.labels?.['ahpd.worktree']).toBeUndefined();
 });

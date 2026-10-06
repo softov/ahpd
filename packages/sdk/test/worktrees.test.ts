@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, lstatSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, existsSync, lstatSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -955,5 +955,39 @@ describe('a worktree the window holds a handle on', () => {
     await other.handle({ method: 'vscode/reconcileAgentHostDetachedWorktrees', params: { scope: project(root), activeHandles: [] } });
     expect(existsSync(elsewhere)).toBe(true);
     await expect(other.handle({ method: 'vscode/claimAgentHostDetachedWorktree', params: { handle: kept } })).resolves.toEqual({});
+  });
+});
+
+describe('the git directory a folder belongs to', () => {
+  const run = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' });
+
+  it('answers the main repository\'s .git for a linked worktree, and the worktree as its root', async () => {
+    const root = repository();
+    const tree = join(root, 'tree');
+    run(project(root), 'worktree', 'add', '-q', tree, 'release');
+    await expect(gitWorktrees().gitDir?.(tree)).resolves.toEqual({
+      gitDir: join(realpathSync(project(root)), '.git'),
+      repository: realpathSync(tree),
+    });
+  });
+
+  it('answers the repository root for a folder below it', async () => {
+    const root = repository();
+    await expect(gitWorktrees().gitDir?.(join(project(root), 'packages', 'app'))).resolves.toEqual({
+      gitDir: join(realpathSync(project(root)), '.git'),
+      repository: realpathSync(project(root)),
+    });
+  });
+
+  it('answers nothing outside a repository', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'ahpd-nogit-'));
+    made.push(outside);
+    await expect(gitWorktrees().gitDir?.(outside)).resolves.toBeUndefined();
+  });
+
+  it('rejects in git\'s own words for a folder git refuses', async () => {
+    const root = repository();
+    writeFileSync(join(project(root), '.git', 'config'), '[core\nbroken');
+    await expect(gitWorktrees().gitDir?.(project(root))).rejects.toThrow(/config/);
   });
 });

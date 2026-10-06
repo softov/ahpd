@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fileURLToPath } from 'node:url';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { echo } from '../../../examples/echo/agent.js';
+import type { ComputerPort, MachineSource } from '../src/types/computers.js';
+import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import {
   resetSdk, claude, complete, createHost, emit, hello, list, machine, open,
   peer, read, resolve, serving, sessionQueries, settle, running,
@@ -477,5 +480,94 @@ describe('more than one directory', () => {
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
     expect(refused.some((one) => one.includes('is not a working directory of'))).toBe(true);
+  });
+});
+
+describe('the repository a session\'s machine is handed', () => {
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  /** A host whose git port answers `answer` for every folder, and whose machine maker remembers what it was asked. */
+  const hosted = async (answer: (dir: string) => Promise<GitDir | undefined>) => {
+    const asked: MachineSource[] = [];
+    const questions: string[] = [];
+    const lines: string[] = [];
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-gitdir-'));
+    dirs.push(root);
+    const worktrees: Worktrees = {
+      repository: async () => undefined,
+      branches: async () => [],
+      create: async () => {},
+      dirty: async () => false,
+      remove: async () => {},
+      gitDir: async (dir) => { questions.push(dir); return answer(dir); },
+    };
+    const computers: ComputerPort = {
+      how: async () => undefined,
+      create: async (source) => { asked.push(source); return 'box'; },
+    };
+    const host = createHost({
+      path: root,
+      agents: [echo({ path: root, pace: 0 })],
+      worktrees,
+      computers,
+      onEvent: (line) => { lines.push(line); },
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const start = async (folder: string, computer = 'disposable:box') => {
+      await client.handle({
+        method: 'createSession',
+        params: { channel: 'ahp-session:/git', provider: 'echo', workingDirectories: [`file://${folder}`], config: { computer } },
+      });
+      await settle();
+    };
+    return { root, asked, questions, lines, start };
+  };
+
+  it('hands a worktree session the git directory it belongs to', async () => {
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', repository: dir }));
+    await start(root);
+    expect(asked[0]).toMatchObject({ folder: root, gitDir: '/repo/.git' });
+    expect(asked[0]?.repository).toBeUndefined();
+  });
+
+  it('hands a session at the repository root its git directory, and no root', async () => {
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '.git'), repository: dir }));
+    await start(root);
+    // Inside the folder, so it adds no mount; the machine still guards it.
+    expect(asked[0]).toMatchObject({ folder: root, gitDir: join(root, '.git') });
+    expect(asked[0]?.repository).toBeUndefined();
+  });
+
+  it('hands a session in a subfolder the repository root to mount', async () => {
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '..', '.git'), repository: join(dir, '..') }));
+    const below = join(root, 'src');
+    mkdirSync(below);
+    await start(below);
+    expect(asked[0]).toMatchObject({ folder: below, gitDir: join(root, '.git'), repository: root });
+  });
+
+  it('hands neither when git refuses the folder, and says why in one line', async () => {
+    const { root, asked, lines, start } = await hosted(async () => { throw new Error('fatal: bad config line 1'); });
+    await start(root);
+    expect(asked[0]?.folder).toBe(root);
+    expect(asked[0]?.gitDir).toBeUndefined();
+    expect(asked[0]?.repository).toBeUndefined();
+    const said = lines.filter((line) => line.includes('fatal: bad config line 1'));
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain(root);
+  });
+
+  it('asks about a dev container\'s own folder', async () => {
+    const { root, asked, questions, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', repository: dir }));
+    const other = join(root, 'other');
+    mkdirSync(other);
+    await start(root, `devcontainer://${other}`);
+    expect(questions).toEqual([other]);
+    expect(asked[0]).toMatchObject({ source: `devcontainer://${other}`, gitDir: '/repo/.git' });
   });
 });

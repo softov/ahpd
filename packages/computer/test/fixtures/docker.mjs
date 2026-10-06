@@ -774,7 +774,7 @@ if (verb === 'exec') {
   for (; at < args.length; at++) {
     const said = args[at];
     if (said === '-i' || said === '-t' || said === '-it') continue;
-    if (said === '-u') { user = args[at + 1]; at++; continue; }
+    if (said === '-u' || said === '--user') { user = args[at + 1]; at++; continue; }
     if (said === '-w') { workdir = args[at + 1]; at++; continue; }
     if (said === '-e') {
       const [key, value] = envPair(args[at + 1]);

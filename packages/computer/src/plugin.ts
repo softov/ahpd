@@ -15,6 +15,8 @@ import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableO
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
+import { hostUser, runsAsHost, userLabelOf } from './gitdir.js';
+import type { GitGuard } from './gitdir.js';
 
 /**
  * The package as a plugin.
@@ -112,6 +114,11 @@ export const optionsSchema = {
             type: 'string',
             enum: ['owner', 'shared'],
             description: 'Who shares a state volume: owner, one per owner of the machine, or shared, one for every owner of the profile. owner when absent.',
+          },
+          gitGuard: {
+            type: 'string',
+            enum: ['bind', 'open'],
+            description: "How a git directory in a session's machine is guarded: bind, what git on the host runs read-only and every command as the host user, or open, all of it writable. bind when absent.",
           },
         },
       },
@@ -214,6 +221,8 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // is `volume` and `owner`.
       ...(said.state === 'volume' || said.state === 'host' ? { state: said.state } : {}),
       ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
+      // How a git directory in its machines is guarded. Absent is `bind`.
+      ...(said.gitGuard === 'bind' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
     };
   }
   return Object.keys(held).length === 0 ? undefined : held;
@@ -366,7 +375,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     one.parts = one.parts.filter((part) => partIds.has(part));
   }
   /*
-   * A `secretUnreadable`, `state` or `stateScope` that is neither of its two
+   * A `secretUnreadable`, `state`, `stateScope` or `gitGuard` that is neither of its two
    * answers is fatal here rather than dropped: the loader's check does not
    * reach into a profile, and a value read as the default would make a machine
    * other than the one its operator asked for.
@@ -375,6 +384,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     ['secretUnreadable', ['fail', 'drop']],
     ['state', ['volume', 'host']],
     ['stateScope', ['owner', 'shared']],
+    ['gitGuard', ['bind', 'open']],
   ];
   for (const [key, one] of Object.entries(options.profiles as Record<string, unknown> | undefined ?? {})) {
     for (const [field, values] of answers) {
@@ -873,6 +883,31 @@ export const apply: Plugin['apply'] = (host, options) => {
   }));
 
   /*
+   * What a machine made for a session takes of the repository its folder is
+   * in: the git directory, the tree's root, the profile's guard, and the host
+   * user its commands run as where the guard says - so git accepts the
+   * repository as its owner's and every file it writes stays the host user's.
+   * `root` is the folder the machine is given, and nothing where the folder
+   * does not reach the machine.
+   */
+  const withGit = (
+    asked: MachineSource,
+    root: string | undefined,
+    guard: GitGuard = 'bind',
+  ): Pick<MachineSpec, 'gitDir' | 'repository' | 'user' | 'gitGuard'> => {
+    if (root === undefined) return {};
+    const tree = asked.repository ?? root;
+    if (asked.gitDir === undefined) return asked.repository === undefined ? {} : { repository: asked.repository };
+    const user = runsAsHost(asked.gitDir, tree, guard) ? hostUser() : undefined;
+    return {
+      gitDir: asked.gitDir,
+      gitGuard: guard,
+      ...(asked.repository === undefined ? {} : { repository: asked.repository }),
+      ...(user === undefined ? {} : { user }),
+    };
+  };
+
+  /*
    * How a backend reaches one of these machines.
    *
    * A descriptor rather than a running process: the backend owns the spawn and
@@ -929,11 +964,14 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
     const given = byName(values);
     const spawnEnv = spawnEnvOf(given.env);
+    // The user its label names, which a machine with a git directory carries.
+    const user = userLabelOf((typeof config.Labels === 'object' && config.Labels !== null ? config.Labels : {}) as Record<string, unknown>);
     return {
       command,
       args: [
         ...(args ?? []),
         'exec', '-i',
+        ...(user === undefined ? [] : ['--user', user]),
         ...(start === undefined ? [] : ['-w', start]),
         ...given.flags,
         at,
@@ -1127,7 +1165,7 @@ export const apply: Plugin['apply'] = (host, options) => {
           try {
             // The CLI decides the container's name, so the id is the one it made
             // rather than the one this host suggested.
-            return (await made.run({ ...spec, label })).id;
+            return (await made.run({ ...spec, label, ...withGit(asked, answer) })).id;
           }
           catch (error) {
             throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
@@ -1219,6 +1257,9 @@ export const apply: Plugin['apply'] = (host, options) => {
           await made.run({
             ...spec,
             label,
+            // The repository the session's folder belongs to, behind the same
+            // gate as the folder.
+            ...withGit(asked, profile.sessionFolder === true ? asked.folder : undefined, profile.gitGuard),
             disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
             // The session this machine is made for, which is what a daemon
             // restarting finds it by, and the daemon making it, which is what

@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
+import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -1632,4 +1633,70 @@ it('keeps a dev container made for one agent out of another agent\'s picker', as
   expect(await offered('cofold')).not.toContain(made);
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 4);
+});
+
+/*
+ * container/05 p7: a worktree's dev container gets its repository's git
+ * directory through the override config, and runs every command as the host user.
+ */
+it('mounts a worktree folder\'s git directory through the override, and runs each docker exec as the host user', async () => {
+  const dir = realpathSync(temp());
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const repo = join(dir, 'repo');
+  mkdirSync(repo);
+  const run = (...args: string[]) => spawnSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('-c', 'user.email=test@example.com', '-c', 'user.name=Test', 'commit', '-q', '--allow-empty', '-m', 'first');
+  const tree = join(dir, 'tree');
+  run('worktree', 'add', '-q', '-b', 'work', tree);
+  mkdirSync(join(tree, '.devcontainer'));
+  writeFileSync(join(tree, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
+  const gitDir = join(repo, '.git');
+  const entry = join(gitDir, 'worktrees', 'tree');
+  const me = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
+
+  const { options: loaded, problems } = await loadPlugins(
+    [{ name: SOURCE, options: optionsOf(devState, dockerState) }],
+    {
+      base: { path: '/tmp/computer-devcontainer', agents: [agentWith()], resources: fileResources(), worktrees: gitWorktrees() },
+      configDir: join(dir, 'config'),
+      cwd: REPO,
+      log: () => {},
+    },
+  );
+  expect(problems).toEqual([]);
+  const { client, open } = await room(loaded);
+  const opened = await open('ahp-session:/one', { computer: `devcontainer://${tree}` }, tree) as {
+    snapshot: { state: { config?: { values?: Record<string, unknown> } } };
+  };
+
+  const config = overrideOf(devState)?.config ?? {};
+  expect(config.mounts).toEqual([
+    `type=bind,source=${gitDir},target=${gitDir}`,
+    `type=bind,source=${gitDir}/hooks,target=${gitDir}/hooks,readonly`,
+    `type=bind,source=${gitDir}/config,target=${gitDir}/config,readonly`,
+    `type=bind,source=${gitDir}/worktrees,target=${gitDir}/worktrees,readonly`,
+    `type=bind,source=${entry},target=${entry}`,
+    `type=bind,source=${entry}/config.worktree,target=${entry}/config.worktree,readonly`,
+    `type=bind,source=${entry}/commondir,target=${entry}/commondir,readonly`,
+    `type=bind,source=${entry}/gitdir,target=${entry}/gitdir,readonly`,
+    `type=bind,source=${gitDir}/modules,target=${gitDir}/modules,readonly`,
+    `type=bind,source=${tree}/.git,target=${tree}/.git,readonly`,
+  ]);
+  // The tree at its own path, so the `.git` file's bind lands on the file.
+  expect(config.workspaceMount).toBe(`source=${tree},target=${tree},type=bind`);
+  expect(config.workspaceFolder).toBe(tree);
+  expect(config.runArgs).toEqual(expect.arrayContaining(['--label', `ahpd.user=${me}`, '--label', `ahpd.worktree=${entry}`]));
+
+  // Every `docker exec` into it as the host user: the probe at create, and a command after.
+  const id = String(opened.snapshot.state.config?.values?.computer).replace('computer://', '');
+  const how = await loaded.computers?.how(id, { command: 'true' });
+  const args = how?.args ?? [];
+  expect(args[args.indexOf('-u') + 1]).toBe(me);
+  const commands = dockerHeld(dockerState).commands;
+  expect(commands.length).toBeGreaterThan(0);
+  expect(commands.every((one) => one.user === me)).toBe(true);
+  await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await answered(dockerState, 2);
 });

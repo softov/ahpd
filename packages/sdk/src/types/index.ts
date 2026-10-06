@@ -37,7 +37,7 @@ export type { ComputerPort, MachineSource, Spawn, SpawnOptions } from './compute
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';
 export type { SessionConfigAnswerer, SessionConfigAsk } from './completions.js';
 export type { Claim, Terminal, TerminalOptions, SpawnPty, TerminalStore, OpenTerminal, OpenedTerminal, StartTerminals } from './terminals.js';
-export type { Worktree, Worktrees } from './worktrees.js';
+export type { GitDir, Worktree, Worktrees } from './worktrees.js';
 export type { NewPullRequest, PullRequest, PullRequests } from './github.js';
 export type { Automation, AutomationRun, AutomationStore, RunEnding, StartSession } from './automations.js';
 export type { Grant, Named, Principal, Role, UserFile, UserRecord, Users, Verb } from './users.js';

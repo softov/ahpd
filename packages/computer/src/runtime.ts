@@ -9,6 +9,8 @@ import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLa
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
+import { cliMountOf, guardedMounts, idsOfUser, MACHINE_USER, MACHINE_WORKTREE, releaseLock, userLabelOf, volumeFlagOf } from './gitdir.js';
+import type { GitGuard, GitMounts } from './gitdir.js';
 import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, Reach } from './devcontainer.js';
@@ -417,6 +419,23 @@ export interface MachineSpec {
    * out, and resuming on this host shows the turns written in the machine.
    */
   folder?: string;
+  /**
+   * The repository's common git directory, mounted read-write at its own path
+   * beside the folder, with what git on the host runs bound read-only over it.
+   */
+  gitDir?: string;
+  /**
+   * The root of the tree the folder is in, mounted at its own path in place of
+   * the folder, for a session in a folder below it.
+   */
+  repository?: string;
+  /** How the git directory is guarded; `bind` when absent. */
+  gitGuard?: GitGuard;
+  /**
+   * The `<uid>:<gid>` the machine's commands run as, recorded as the
+   * `ahpd.user` label: the host user's, on a machine with a git directory.
+   */
+  user?: string;
   /** Where a command starts inside the machine. */
   workdir?: string;
   /**
@@ -1024,13 +1043,15 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  * the folder a second container - decision
  * `a-dev-container-owner-is-kept-beside-the-config`.
  */
-const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: PartRoute): Record<string, unknown> => {
+const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: PartRoute, git?: GitMounts): Record<string, unknown> => {
   const held: Record<string, unknown> = { ...config };
   const readOnly = (spec.mounts ?? []).filter(readOnlyMount);
   // A part from its volume is a read-only mount like any other, and the CLI's
   // `--mount` has no word for read-only either.
   const volumes = route === 'volume' ? spec.parts ?? [] : [];
-  if (readOnly.length > 0 || volumes.length > 0) {
+  // The git directory and its read-only binds, in their order, after the rest.
+  const binds = git?.binds ?? [];
+  if (readOnly.length > 0 || volumes.length > 0 || binds.length > 0) {
     held.mounts = [
       ...(Array.isArray(held.mounts) ? (held.mounts as unknown[]) : []),
       ...readOnly.map((mount) => {
@@ -1040,6 +1061,7 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
         return `type=bind,source=${source},target=${target},readonly`;
       }),
       ...volumes.map((part) => `type=volume,source=${volumeOf(part)},target=${partTarget(part.id)},readonly`),
+      ...binds.map(cliMountOf),
     ];
   }
   const plain = madeWith(spec);
@@ -1053,8 +1075,21 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
     held.workspaceFolder = spec.workdir;
     held.workspaceMount = `source=${spec.devcontainer ?? ''},target=${spec.workdir},type=bind`;
   }
+  /*
+   * With a git directory, the tree at its own path, as on the Docker route: the
+   * worktree's `.git` file names the git directory by its host path, and its
+   * read-only bind has to land where the file is.
+   */
+  if (git !== undefined && spec.devcontainer !== undefined) {
+    const root = spec.repository ?? spec.devcontainer;
+    held.workspaceMount = `source=${root},target=${root},type=bind`;
+    held.workspaceFolder = spec.devcontainer;
+  }
   const runArgs = [...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : [])];
   runArgs.push('--label', `${MACHINE_NAME}=${spec.name}`);
+  // The user every command runs as, and the entry whose lock goes with it.
+  if (spec.user !== undefined) runArgs.push('--label', `${MACHINE_USER}=${spec.user}`);
+  if (git?.entry !== undefined) runArgs.push('--label', `${MACHINE_WORKTREE}=${git.entry}`);
   const agents = spec.agents ?? [];
   if (agents.length > 0) {
     runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
@@ -1852,16 +1887,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * nothing behind.
          */
         const config = configOf(spec.devcontainer);
+        // The git directory's binds, every source made on the host first.
+        const git = spec.gitDir === undefined ? undefined : guardedMounts(spec.gitDir, spec.repository ?? spec.devcontainer, spec.gitGuard);
         /*
          * Each state volume seeded before `up`, from the definition's own image
-         * and owned by its `remoteUser`, else its `containerUser`, else the
-         * image's user. A definition that builds its image has no image before
-         * `up`, so its volumes are seeded once the container is up.
+         * and owned by the machine's own user where it has one, else by its
+         * `remoteUser`, else its `containerUser`, else the image's user. A
+         * definition that builds its image has no image before `up`, so its
+         * volumes are seeded once the container is up.
          */
         const base = typeof config.image === 'string' && config.image !== '' ? config.image : undefined;
         const asUser = [config.remoteUser, config.containerUser].find((one): one is string => typeof one === 'string' && one !== '');
         if (base !== undefined && (spec.states ?? []).length > 0) {
-          const ids = await ownerIds(spec.name, base, asUser ?? await imageUser(base));
+          const ids = idsOfUser(spec.user) ?? await ownerIds(spec.name, base, asUser ?? await imageUser(base));
           for (const one of spec.states ?? []) await seedState(spec.name, one, { image: base }, ids);
         }
         /*
@@ -1875,7 +1913,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         const override = join(scratch, 'override.json');
         let ran: { code: number; stdout: string; stderr: string };
         try {
-          writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route), undefined, 2), { mode: 0o600 });
+          writeFileSync(override, JSON.stringify(overrideOf(withParts, config, reached.route, git), undefined, 2), { mode: 0o600 });
           argv.push('--override-config', override);
           ran = await runCli(cli, argv).catch((error: unknown) => {
             throw new Error(`The Dev Container CLI (${cli.command}) could not be run, so ${spec.devcontainer} was not made a computer: ${error instanceof Error ? error.message : String(error)}. Install @devcontainers/cli, or name it under the plugin's devcontainer.command`);
@@ -1905,8 +1943,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
           const as = asUser === undefined ? [] : ['-u', asUser];
           const id = async (flag: string): Promise<string> =>
             (await must(['exec', ...as, made.containerId, 'id', flag])).trim();
-          const [uid, gid] = [await id('-u'), await id('-g')];
-          if (!/^\d+$/.test(uid) || !/^\d+$/.test(gid)) {
+          const [uid, gid] = spec.user === undefined ? [await id('-u'), await id('-g')] : spec.user.split(':');
+          if (uid === undefined || gid === undefined || !/^\d+$/.test(uid) || !/^\d+$/.test(gid)) {
             throw new Error(`${spec.name} could not read the ids of ${asUser ?? 'its user'} inside ${made.containerId}`);
           }
           const ids = { uid: Number(uid), gid: Number(gid) };
@@ -1955,6 +1993,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (image === undefined) {
         throw new Error(`${spec.name} names neither an image nor a folder's devcontainer.json, so there is nothing to make it from`);
       }
+      // The git directory's binds, every source made on the host first, so a
+      // refusal leaves nothing made.
+      const git = spec.gitDir === undefined || spec.folder === undefined
+        ? undefined
+        : guardedMounts(spec.gitDir, spec.repository ?? spec.folder, spec.gitGuard);
       const flags = ['--name', spec.name, '--label', spec.label];
       if (spec.agents !== undefined && spec.agents.length > 0) {
         flags.push('--label', `${MACHINE_AGENTS}=${spec.agents.join(',')}`);
@@ -2010,9 +2053,20 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // The folder a session works in, at the same path, so an agent that
         // keys its own record by the working directory finds the same key
         // inside and out - Claude's history is one such record.
-        ...(spec.folder === undefined ? [] : [`${spec.folder}:${spec.folder}`]),
+        // A folder below a repository's root brings the whole tree instead, so
+        // the rest of it is not missing to git in there.
+        ...(spec.folder === undefined ? [] : [`${spec.repository ?? spec.folder}:${spec.repository ?? spec.folder}`]),
+        // Then the git directory and what git on the host runs, read-only over it.
+        ...(git?.binds ?? []).map(volumeFlagOf),
       ])];
       for (const mount of mounted) flags.push('-v', mount);
+      /*
+       * The host user, on a machine with a git directory: git accepts the
+       * repository as its owner's, and every file it writes stays the host
+       * user's. The label is what each later `docker exec` reads it back from.
+       */
+      if (spec.user !== undefined) flags.push('--user', spec.user, '--label', `${MACHINE_USER}=${spec.user}`);
+      if (git?.entry !== undefined) flags.push('--label', `${MACHINE_WORKTREE}=${git.entry}`);
       /*
        * Each state volume at its state directory, after the binds, and the label
        * that says the machine has them.
@@ -2044,7 +2098,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // waits for work.
       // Each state volume seeded before the machine exists, for the image's user.
       if ((spec.states ?? []).length > 0) {
-        const ids = await ownerIds(spec.name, image, await imageUser(image));
+        const ids = idsOfUser(spec.user) ?? await ownerIds(spec.name, image, await imageUser(image));
         for (const one of spec.states ?? []) await seedState(spec.name, one, { image }, ids);
       }
       const keeps = [image, 'sleep', 'infinity'];
@@ -2082,6 +2136,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       const found = await recordOf(at);
       const labels = labelsOf(found);
       await must(['rm', '-f', at]);
+      // The session's own worktree lock, which nothing can hold once the container is gone.
+      const entry = labels[MACHINE_WORKTREE];
+      if (typeof entry === 'string' && entry !== '') await releaseLock(entry, options.log);
       if (labels[MACHINE_STATE] !== 'volume' || profileOf(found) !== undefined) return;
       const named = namedOf(found) ?? id;
       for (const provider of preparedFor(found)) {
@@ -2111,7 +2168,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // working, and its exit code is what the caller asked for.
         return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
       }
-      const held = await ran(options, ['exec', '-i', ...given.flags, at, ...command], undefined, given.env);
+      const user = userLabelOf(labelsOf(found));
+      const held = await ran(options, ['exec', '-i', ...(user === undefined ? [] : ['--user', user]), ...given.flags, at, ...command], undefined, given.env);
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };

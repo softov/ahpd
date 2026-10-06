@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink, PluginSpec } from '@ahpd/sdk';
 import { byName } from './byname.js';
+import { userLabelOf } from './gitdir.js';
 import { IMAGE_PATH, MACHINE_PARTS, partsSaid, pathWith } from './parts.js';
 
 /**
@@ -355,8 +356,9 @@ export const probeKept = (found: Record<string, unknown>, container: string, env
 /**
  * How one dev container is reached, from its own label and a kept probe.
  *
- * The user is the last `remoteUser` in the label, else the last `containerUser`,
- * else the image's own, else `root`. The environment is the probe's as the shell
+ * The user is the one the machine's `ahpd.user` label names, set where a git
+ * directory is mounted, else the last `remoteUser` in the label, else the last
+ * `containerUser`, else the image's own, else `root`. The environment is the probe's as the shell
  * printed it, with every entry's `remoteEnv` laid over it in the order the
  * entries are in - which is what makes a `remoteEnv` key replace the probe's
  * value where it stands rather than append beside it.
@@ -375,7 +377,7 @@ export const reachOf = (
 ): Reach => {
   const entries = entriesOf(found);
   const config = held(found, 'Config');
-  const user = last(entries, 'remoteUser') ?? last(entries, 'containerUser')
+  const user = userLabelOf(labelsOf(found)) ?? last(entries, 'remoteUser') ?? last(entries, 'containerUser')
     ?? (typeof config.User === 'string' && config.User !== '' ? config.User : undefined) ?? 'root';
   const containerEnv = containerEnvOf(found);
   const env: Record<string, string> = { ...probe?.env };

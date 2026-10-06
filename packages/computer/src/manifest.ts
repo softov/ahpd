@@ -159,6 +159,12 @@ export interface Profile {
    * team that wants one shared bot state.
    */
   stateScope?: 'owner' | 'shared';
+  /**
+   * How a git directory in a session's machine is guarded: `bind`, the
+   * default, puts what git on the host runs read-only and runs every command
+   * as the host user; `open` leaves it all writable.
+   */
+  gitGuard?: 'bind' | 'open';
 }
 
 /** What the provider holds, and what a manifest may leave out. */

@@ -1,6 +1,6 @@
 ---
 title: The host knows a folder's git directory and hands it on
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -37,3 +37,11 @@ refs:
 - A `rev-parse` that fails (a folder git refuses) logs one line and passes neither.
 
 ## Resume
+
+- Built 2026-10-06 on 08f046b.
+- `Worktrees.gitDir?(dir)` answers `{ gitDir, repository }` from one `rev-parse --path-format=absolute --git-common-dir --show-toplevel` under five seconds; outside a repository it answers nothing, and any other refusal rejects in git's words.
+- `placedIn` asks it through `repositoryOf` in `machines.ts`, for the `devcontainer://` folder when that is the source and the session's folder otherwise, compares against the folder as given and resolved, and spreads `gitDir` and `repository` beside `folder`.
+- A rejection logs one line, `computers: no git directory for <folder>: <git's words>`, and passes neither.
+- Tests: `packages/sdk/test/worktrees.test.ts` (4) and `packages/sdk/test/host-files.test.ts` (5), each failing first.
+- Fix turn 2026-10-06: `gitDir` is passed inside the folder too, for `gitGuard: "bind"` to guard a root session; `repository` is still passed only below the root.
+- Fix turn 2026-10-06: `repo/hardened.ts` `gitArgv` gives every host git run `-c core.fsmonitor= -c submodule.recurse=false` and `--ignore-submodules` where taken; `changes.ts`, `repo/git.ts` and `repo/worktrees.ts` use it; `packages/sdk/test/git-hardened.test.ts` (4) checks the argv through a fake `git` on `PATH`.

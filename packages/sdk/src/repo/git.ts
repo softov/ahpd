@@ -2,6 +2,7 @@
 
 import { execFile } from 'node:child_process';
 import type { DirectoryFacts } from '../types/host.js';
+import { gitArgv } from './hardened.js';
 
 /**
  * The environment every `git` here runs with: the inherited one, with
@@ -35,7 +36,7 @@ export function gitBranches(): DirectoryFacts {
   /** Run git in a directory and answer what it said, or nothing at all. */
   const git = (dir: string, args: string[]): Promise<string | undefined> =>
     new Promise((answer) => {
-      execFile('git', ['-C', dir, ...args], { timeout: 2000, env: quiet() }, (error, out) => {
+      execFile('git', gitArgv(dir, args), { timeout: 2000, env: quiet() }, (error, out) => {
         answer(error ? undefined : out.toString().trim());
       });
     });
