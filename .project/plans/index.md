@@ -237,7 +237,7 @@ Reference: [00-container.md](container/00-container.md)
 | [01 - A session in a dev container, with its whole host inside it](container/01-a-session-in-a-dev-container/plan.md) | high | built 2026-09-24, except its `ahpapp` half ([implemented.md](container/01-a-session-in-a-dev-container/implemented.md)) | plugin 11, plugin 12 | an ahpapp plan, which drives the same four methods |
 | [02 - VS Code offers a dev container on a folder served by ahpd](container/02-vscode-offers-our-dev-container/plan.md) | high | planned 2026-10-02; tasks 01-04 todo | container 01; task 04 also container 03, plugin 16 | - |
 | [03 - A dev container is a computer, listed and reachable without the connection that made it](container/03-a-dev-container-is-a-computer/plan.md) | medium | built 2026-10-05 ([implemented.md](container/03-a-dev-container-is-a-computer/implemented.md)); tasks implemented, awaiting review | container 01, plugin 15 | - |
-| [04 - A cofold session in a computer runs in an ahpd started inside it](container/04-a-cofold-session-in-a-computer/plan.md) | medium | active 2026-10-02; tasks 01-06 implemented; 07-17 todo | plugin 14, plugin 15 | - |
+| [04 - A cofold session in a computer runs in an ahpd started inside it](container/04-a-cofold-session-in-a-computer/plan.md) | medium | built 2026-10-06 ([implemented.md](container/04-a-cofold-session-in-a-computer/implemented.md)); tasks implemented, awaiting review | plugin 14, plugin 15 | - |
 | [05 - An agent in a machine is built once, started fast, and reached from anywhere](container/05-an-agent-in-a-machine/plan.md) | high | planned 2026-10-03, a parent of twelve child plans | plugin 15, plugin 16, container 04, container 03, claude 15 | the next agent and plugin plans |
 | [05 p1 - A secret reaches a machine in its environment, never in its argv](container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) | high | built 2026-10-05 ([implemented.md](container/05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/implemented.md)); tasks implemented, awaiting review | container 05, container 03 | 05 p2 |
 | [05 p2 - An ACP preset says what its machine needs](container/05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md) | high | built 2026-10-05 ([implemented.md](container/05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/implemented.md)); tasks 01, 04, 05 implemented, awaiting review; 02, 03 dropped | container 05 p1, acp 05 | 05 p5 |
@@ -250,7 +250,7 @@ Reference: [00-container.md](container/00-container.md)
 | [05 p9 - An ssh machine runs a nested host](container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md) | medium | planned 2026-10-03; tasks 01-07 todo | container 04 (tasks 11, 14, 15, 17) | 05 p10 |
 | [05 p10 - A host joins another, which lists it as a computer and relays its sessions](container/05-an-agent-in-a-machine-p10-a-host-joins-a-hub/plan.md) | medium | planned 2026-10-03; tasks 01-06 todo | container 05 p9, container 05 p12, daemon 13 | - |
 | [05 p11 - A virtual machine is made for a computer, by libvirt and then by Proxmox](container/05-an-agent-in-a-machine-p11-a-vm-is-made-for-a-machine/plan.md) | medium | planned 2026-10-03; tasks 01-07 todo | container 05 p9, container 05 p12, container 05 p8, container 05 p3, container 05 p5 | - |
-| [05 p12 - A machine off this host reaches its models through this host's proxy](container/05-an-agent-in-a-machine-p12-a-machine-off-this-host-reaches-models-through-the-proxy/plan.md) | high | planned 2026-10-03; tasks 01, 02 blocked on the proxy listener plan; 03, 04 todo | container 05 p9, proxy 01, claude 16, the proxy listener plan (not written) | - |
+| [05 p12 - A machine off this host reaches its models through this host's proxy](container/05-an-agent-in-a-machine-p12-a-machine-off-this-host-reaches-models-through-the-proxy/plan.md) | high | planned 2026-10-03; tasks 01, 02 blocked on proxy 02 (planned 2026-10-06, its task 02 names the `whose` hook); 03, 04 todo | container 05 p9, proxy 01, claude 16, proxy 02 | - |
 
 Next free number in `container`: `06`.
 
@@ -333,9 +333,10 @@ Reference: [00-proxy.md](proxy/00-proxy.md)
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
-| [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | built 2026-10-01 ([implemented.md](proxy/01-the-proxy-knows-its-providers-and-models/implemented.md)) | - | the proxy listener |
+| [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | built 2026-10-01 ([implemented.md](proxy/01-the-proxy-knows-its-providers-and-models/implemented.md)) | - | proxy 02 |
+| [02 - The proxy serves a person's chat completions and messages, streamed back unchanged](proxy/02-the-proxy-serves-a-persons-model-calls/plan.md) | high | planned 2026-10-06; tasks 01-08 todo | proxy 01, policy 01, usage 01, host 35 | container 05 p12 |
 
-Next free number in `proxy`: `02`.
+Next free number in `proxy`: `03`.
 
 ## vault
 
