@@ -32,8 +32,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented, 04 todo | - | - |
 | [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | built 2026-10-02 ([implemented.md](daemon/14-the-daemon-log-rotates-at-start/implemented.md)) | - | - |
 | [15 - A verb declares only the flags it reads](daemon/15-a-verb-declares-only-its-own-flags/plan.md) | medium | planned 2026-10-06 | - | - |
+| [16 - A command says what it does to what, and the daemon serves on the cofold that checks it](daemon/16-a-command-says-what-it-does-to-what/plan.md) | high | planned 2026-10-06; task 01 blocked on the cofold release, 02 and 03 can start | cofold commands/03, commands/04 | ahpd-web resource screens |
 
-Next free number in `daemon`: `16`.
+Next free number in `daemon`: `17`.
 
 ## host
 
