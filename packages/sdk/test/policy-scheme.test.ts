@@ -1,10 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Ajv } from 'ajv';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
 import { fileResources } from '../src/resources.js';
-import { filePolicies } from '../src/policies.js';
+import { EFFECTS, filePolicies, KINDS, LIMIT_POOLS, MATCHES, MEASURES, PERIODS } from '../src/policies.js';
 import { policyProviders } from '../src/policy.js';
 import { fileUsers } from '../src/users.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -183,6 +184,97 @@ it('advertises the manifest a client draws the form from', async () => {
   expect(properties['match']?.['type']).toBe('object');
   expect(Object.keys(properties['match']?.['properties'] as object)).toEqual(['model', 'proxy', 'agent', 'computer']);
   expect((properties['limits']?.['items'] as Record<string, unknown>)['type']).toBe('object');
+});
+
+/*
+ * The choices the form offers, which are read from the manifest rather than
+ * written into a client.
+ *
+ * The values are the tables `checkPolicy` refuses by, so a host that adds a
+ * measure adds it in one place and a client that draws the form asks for
+ * nothing: what is under test is that the manifest and the check cannot come
+ * to disagree, and that a validator reading the manifest the way a client's
+ * does reaches the same answers the check does.
+ */
+
+/** One manifest field, as a schema a validator reads rather than as `unknown`. */
+type Field = Record<string, unknown>;
+
+/** The manifest, as the shape that holds the choices, for a test to walk. */
+const manifest = (): { properties: Record<string, Field>; allOf?: { if: { properties: { kind: { const: string } } }; then: Field }[] } =>
+  served().policy.describe().manifest as unknown as ReturnType<typeof manifest>;
+
+/** The four fields of one limit, which is where the measure, the period and the pool live. */
+const limit = (schema: ReturnType<typeof manifest>): Record<string, Field> =>
+  (schema.properties['limits']?.['items'] as { properties: Record<string, Field> }).properties;
+
+it('carries the choices as enums equal to the tables the check uses', () => {
+  const schema = manifest();
+
+  expect(schema.properties['kind']?.['enum']).toEqual([...KINDS]);
+  expect(schema.properties['effect']?.['enum']).toEqual([...EFFECTS]);
+  // Every measure there is, in the order the kinds name them, which is the
+  // order a form offers them in.
+  expect(limit(schema)['measure']?.['enum']).toEqual([...new Set(KINDS.flatMap((kind) => MEASURES[kind]))]);
+  expect(limit(schema)['period']?.['enum']).toEqual([...PERIODS]);
+  expect(limit(schema)['pool']?.['enum']).toEqual([...LIMIT_POOLS]);
+});
+
+it('narrows each kind to its own measures and match types, as standard schema', () => {
+  const allOf = manifest().allOf ?? [];
+
+  expect(allOf).toHaveLength(KINDS.length);
+  for (const [index, kind] of KINDS.entries()) {
+    const entry = allOf[index]!;
+    // The condition names the one kind, so only that kind's `then` applies.
+    expect(entry.if.properties.kind.const).toBe(kind);
+
+    const then = entry.then as {
+      properties: {
+        limits: { items: { properties: Record<string, Field> } };
+        match: { propertyNames: { enum: string[] } };
+      };
+    };
+    expect(then.properties.limits.items.properties['measure']?.['enum']).toEqual([...MEASURES[kind]]);
+    expect(then.properties.match.propertyNames.enum).toEqual([...MATCHES[kind]]);
+  }
+});
+
+it('accepts each kind\'s own body and refuses a choice the kind does not take', () => {
+  const validate = new Ajv({ strict: false, allErrors: true }).compile(manifest() as object);
+
+  // One body of each kind, written the way a form drawn from the manifest
+  // would write it.
+  const bodies = [
+    {
+      scope: 'all',
+      kind: 'model',
+      effect: 'allow',
+      match: { model: ['deepseek/*'], proxy: ['local-vllm'] },
+      limits: [{ amount: 500, measure: 'usd', period: 'week', pool: 'shared' }],
+    },
+    {
+      scope: 'team:backend',
+      kind: 'agent',
+      effect: 'deny',
+      match: { agent: ['claude'], computer: ['sandbox-alice'] },
+      limits: [{ amount: 40, measure: 'turns', period: 'day', pool: 'each' }],
+    },
+    {
+      scope: 'user:ana',
+      kind: 'computer',
+      effect: 'allow',
+      match: { computer: ['kvm-shared'] },
+      limits: [{ amount: 12, measure: 'sessions', period: 'month', pool: 'each' }],
+    },
+  ];
+  for (const body of bodies) expect(validate(body), JSON.stringify(validate.errors)).toBe(true);
+
+  // A computer is not counted in dollars, and a model row does not name
+  // agents - the two refusals `checkPolicy` writes, reached by the schema
+  // rather than by the check.
+  expect(validate({ ...bodies[2], limits: [{ amount: 1, measure: 'usd', period: 'day', pool: 'shared' }] })).toBe(false);
+  expect(validate({ ...bodies[0], match: { model: ['deepseek/*'], agent: ['claude'] } })).toBe(false);
 });
 
 /*

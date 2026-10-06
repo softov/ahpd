@@ -18,15 +18,24 @@ import type {
   Measure, Period, Policies, Policy, PolicyKind, PolicyLimit, PolicyMatch, PolicyValueType,
 } from './types/policies.js';
 
+/*
+ * The tables every value a policy may carry comes from.
+ *
+ * They are exported because `policy.ts` builds the manifest's choices out of
+ * them: the values a form offers and the values a check refuses by have to be
+ * one list, or a host that adds a measure offers a form that the check then
+ * refuses.
+ */
+
 /** What a row's limits may be counted in, by the kind the row is about. */
-const MEASURES: Record<PolicyKind, readonly Measure[]> = {
+export const MEASURES: Record<PolicyKind, readonly Measure[]> = {
   model: ['usd', 'tokens', 'calls'],
   agent: ['usd', 'tokens', 'turns', 'hours'],
   computer: ['hours', 'sessions'],
 };
 
 /** The value types a row's `match` may name, by the kind the row is about. */
-const MATCHES: Record<PolicyKind, readonly PolicyValueType[]> = {
+export const MATCHES: Record<PolicyKind, readonly PolicyValueType[]> = {
   model: ['model', 'proxy'],
   agent: ['agent', 'model', 'computer'],
   computer: ['computer'],
@@ -35,13 +44,13 @@ const MATCHES: Record<PolicyKind, readonly PolicyValueType[]> = {
 /** Every value type there is, in the order a refusal names them. */
 const VALUES = ['model', 'proxy', 'agent', 'computer'] as const;
 
-const PERIODS = ['day', 'week', 'month', 'total'] as const;
+export const PERIODS = ['day', 'week', 'month', 'total'] as const;
 
-const KINDS = ['model', 'agent', 'computer'] as const;
+export const KINDS = ['model', 'agent', 'computer'] as const;
 
-const EFFECTS = ['allow', 'deny'] as const;
+export const EFFECTS = ['allow', 'deny'] as const;
 
-const LIMIT_POOLS = ['shared', 'each'] as const;
+export const LIMIT_POOLS = ['shared', 'each'] as const;
 
 /** A bare `YYYY-MM-DD` day, which a window is written as when no hour matters. */
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;

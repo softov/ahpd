@@ -1,7 +1,7 @@
 ---
 title: The policy form reads its choices from the manifest
 domain: policy
-status: planned
+status: built
 priority: medium
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -11,9 +11,9 @@ changes: []
 creates: []
 decisions: []
 refs:
-  - "[code://packages/sdk/src/policies.ts#L22-L44](../../../../packages/sdk/src/policies.ts#L22-L44) - `MEASURES` and `MATCHES` by kind, `PERIODS`, `KINDS`, `EFFECTS`, `LIMIT_POOLS`: the values `checkPolicy` accepts"
-  - "[code://packages/sdk/src/policy.ts#L64-L110](../../../../packages/sdk/src/policy.ts#L64-L110) - the manifest today, where those values are written again as prose in each field's description"
-  - "[code://packages/sdk/test/policy-scheme.test.ts#L175-L186](../../../../packages/sdk/test/policy-scheme.test.ts#L175-L186) - the manifest test this extends"
+  - "[code://packages/sdk/src/policies.ts#L21-L53](../../../../packages/sdk/src/policies.ts#L21-L53) - `MEASURES` and `MATCHES` by kind, `PERIODS`, `KINDS`, `EFFECTS`, `LIMIT_POOLS`: the values `checkPolicy` accepts"
+  - "[code://packages/sdk/src/policy.ts#L71-L150](../../../../packages/sdk/src/policy.ts#L71-L150) - the manifest, built from those tables"
+  - "[code://packages/sdk/test/policy-scheme.test.ts#L175-L278](../../../../packages/sdk/test/policy-scheme.test.ts#L175-L278) - the manifest test and the choices it carries"
   - "[code://docs/POLICY.md](../../../../docs/POLICY.md) - the row, its match types and measures by kind, for a person"
   - npm://ajv@^8.20.0 - already a dev dependency; validates a body against the manifest in the test
   - file:///github/ahpapp/.project/plans/policy/01-a-host-shows-its-policies/plan.md - the client that draws pickers from this
@@ -67,8 +67,8 @@ policy.ts manifest -> describe() -> initialize _meta['ahpd.resourceProviders'].p
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The manifest says its choices](task-01-the-manifest-says-its-choices.md) | todo | - |
-| [02 - The docs say where a client reads them](task-02-the-docs-say-where-a-client-reads-them.md) | todo | 01 |
+| [01 - The manifest says its choices](task-01-the-manifest-says-its-choices.md) | done | - |
+| [02 - The docs say where a client reads them](task-02-the-docs-say-where-a-client-reads-them.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -77,15 +77,14 @@ policy.ts manifest -> describe() -> initialize _meta['ahpd.resourceProviders'].p
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-04.
-- **Next action:** [task-01-the-manifest-says-its-choices.md](task-01-the-manifest-says-its-choices.md).
-- **Open questions:**
-  1. `allOf` with `if`/`then`, or a flat map such as `kinds: { model: { measures, matches } }` beside the schema - proposed: `if`/`then`, standard schema.
-- **Watch out for:** `MATCHES.agent` names `model`, so an agent row may match a model; keep the per-kind lists exactly as `checkPolicy` has them.
+- **Done so far:** both tasks implemented 2026-10-06.
+- **Next action:** none; Softov's review.
+- **Open questions:** none. The fork the plan named - `if`/`then` against a flat map beside the schema - is settled by the *Decisions locked in* table and built that way.
+- **Watch out for:** `MATCHES.agent` names `model`, so an agent row may match a model; the per-kind lists are `checkPolicy`'s own, read from its tables rather than written again.
 
 ## Final verification checklist
 
-- [ ] The manifest's `kind`, `effect`, `measure`, `period` and limit `pool` carry `enum`, equal to the tables.
-- [ ] ajv, compiling the manifest, accepts each kind's valid body and refuses a measure or match type that kind does not take.
-- [ ] `docs/POLICY.md` names the manifest as where the choices are.
-- [ ] `plans/index.md` updated.
+- [x] The manifest's `kind`, `effect`, `measure`, `period` and limit `pool` carry `enum`, equal to the tables.
+- [x] ajv, compiling the manifest, accepts each kind's valid body and refuses a measure or match type that kind does not take.
+- [x] `docs/POLICY.md` names the manifest as where the choices are.
+- [x] `plans/index.md` updated.

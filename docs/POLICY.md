@@ -62,6 +62,8 @@ A host with a policies store serves one scheme of its own, the way it serves `co
 
 A write to `policy://<id>` makes the row or edits the one there. **A row is written whole**: a field the body does not name is the one the row already had, and the id in the URI wins over any the body carries, so a client that reads a row and writes the same JSON back has changed nothing. `createOnly` refuses an id that is already held, and `resourceDelete` takes a row away.
 
+The choices a form offers are the scheme's manifest rather than this page. `describe` answers a JSON Schema whose `kind`, `effect`, and a limit's `measure`, `period` and `pool` each carry an `enum` of the values accepted, and whose `allOf` holds one `if`/`then` per kind, narrowing a row to the measures and the match types that kind takes. A client draws its pickers from there, so a host that adds a value offers it without the client changing, and a body this host would refuse is one the form does not offer. The lists below are the same values written out for a person to read.
+
 The daemon keeps the rows in `policies.json` beside its configuration.
 
 ## The switch

@@ -14,7 +14,7 @@
  * through `policiesCheck`, and `decide` does the checking.
  */
 
-import { checkPolicy } from './policies.js';
+import { checkPolicy, EFFECTS, KINDS, LIMIT_POOLS, MATCHES, MEASURES, PERIODS } from './policies.js';
 import { RpcError } from './rpc.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from './types/resources.js';
 import type { Policies } from './types/policies.js';
@@ -67,6 +67,41 @@ const line = (title: string, description: string): Record<string, unknown> =>
 const lines = (title: string, description: string): Record<string, unknown> =>
   ({ type: 'array', title, description, items: { type: 'string' } });
 
+/** The values a field may take, as the schema keyword that says so. */
+const enums = (values: readonly string[]): Record<string, unknown> => ({ enum: [...values] });
+
+/**
+ * One manifest field that is a line of text out of a table, which is what a
+ * form draws a picker from rather than a box to type into.
+ *
+ * The values are `checkPolicy`'s own, so what a form offers is what the check
+ * takes: the description carries no list of them, because a list in prose is
+ * the copy that goes stale the day a host adds one.
+ */
+const choice = (title: string, description: string, values: readonly string[]): Record<string, unknown> =>
+  ({ type: 'string', title, description, ...enums(values) });
+
+/** Every measure there is, in the order the kinds name them. */
+const ALL_MEASURES = [...new Set(KINDS.flatMap((kind) => MEASURES[kind]))];
+
+/**
+ * Which measures and which match types a kind takes, as one `allOf` entry per
+ * kind.
+ *
+ * JSON Schema says "only for this kind" with `if`/`then`, so a validator such
+ * as ajv reads it and a client that knows nothing beyond `properties` sees the
+ * union and is no worse off than it was.
+ */
+const narrowed = KINDS.map((kind) => ({
+  if: { properties: { kind: { const: kind } }, required: ['kind'] },
+  then: {
+    properties: {
+      limits: { items: { properties: { measure: enums(MEASURES[kind]) } } },
+      match: { propertyNames: enums(MATCHES[kind]) },
+    },
+  },
+}));
+
 /** The row a read answers with: its JSON, indented, as every other scheme writes one. */
 const asFile = (data: string): Read =>
   ({ data, encoding: 'utf-8', contentType: 'application/json' });
@@ -78,8 +113,8 @@ const manifest: Record<string, unknown> = {
   type: 'object',
   properties: {
     scope: line('Scope', 'Who the row is about: `all`, `user:<id>`, `team:<id>` or `project:<team>:<project>`.'),
-    kind: line('Kind', 'What it is about: `model` for a proxy call, `agent` for a harness this host runs, `computer` for a machine.'),
-    effect: line('Effect', '`allow` or `deny`. Any matching deny wins over any allow.'),
+    kind: choice('Kind', 'What it is about: a proxy call, a harness this host runs, or a machine.', KINDS),
+    effect: choice('Effect', 'Any matching deny wins over any allow.', EFFECTS),
     match: {
       title: 'Match',
       description: 'What it applies to. Values of one type are alternatives and values of different types must all hold. A type left out allows any value of it.',
@@ -99,9 +134,9 @@ const manifest: Record<string, unknown> = {
         type: 'object',
         properties: {
           amount: { type: 'number', minimum: 0, title: 'Amount', description: 'How much, in the measure. Never negative.' },
-          measure: line('Measure', '`usd`, `tokens`, `calls`, `turns`, `hours` or `sessions`, of the ones the kind takes.'),
-          period: line('Period', '`day`, `week`, `month` or `total`.'),
-          pool: line('Pool', '`shared` for one total for the group, `each` for one per member.'),
+          measure: choice('Measure', 'What the limit is counted in, of the ones the kind takes.', ALL_MEASURES),
+          period: choice('Period', 'The window the limit is counted over.', PERIODS),
+          pool: choice('Pool', 'Whether the group shares this total or every member has their own.', LIMIT_POOLS),
         },
       },
     },
@@ -111,6 +146,7 @@ const manifest: Record<string, unknown> = {
     until: line('Until', 'When the row ends, as an ISO 8601 instant or a `YYYY-MM-DD` day. A bare day includes all of it.'),
   },
   required: ['scope', 'kind', 'effect', 'match'],
+  allOf: narrowed,
 };
 
 const description: SchemeDescription = { title: TITLE, description: ABOUT, manifest };
