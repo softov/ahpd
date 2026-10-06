@@ -4,64 +4,47 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only. [plans/index.md](../plans/index.md) is the backlog; what merged is in `git log` since `9e21f7e`.
+Current progress and pending items only, as of 2026-10-06. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
 
-## In flight (2026-10-03, evening)
+## How builds run now
 
-Builds run as sessions on Softov's daemon, at most three at once, in worktrees under `/github/ahpd.worktrees/`; each is reviewed against its plan with probes before it is closed and merged. Never push.
+Builds run as Agent subagents in worktrees under `.claude/worktrees/`, not as daemon sessions (the free build model is gone).
+Each one: build, review the diff and the security paths, rerun the four gates (`pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build`), Softov's answers become plan rows, a fix turn, close-out (`implemented.md`, plan `built`, index row "tasks implemented, awaiting review"), show Softov, and on his approval commit on the branch, rebase on main, fast-forward main, remove the worktree.
+Never push; Softov pushes.
 
-- **Merged today, unpushed:** plans review fixes (`b5c3992`), [host/42](../plans/host/42-an-automation-owner-rides-in-meta/plan.md) (`08371ca`), [host/40](../plans/host/40-a-connection-is-told-who-it-is/plan.md) (`d640a11`), [claude/16](../plans/claude/16-a-preset-that-fails-skips-only-itself/plan.md) and [host/41](../plans/host/41-a-failure-belongs-to-the-item-that-failed/plan.md) (`a603dc9`), plans host/43 (`22c08e0`).
-- **Building:** [plugin/16](../plans/plugin/16-a-disposable-machine/plan.md) in `build-agents-4f6063dd` (session `claude-openrouter-build:/464c648a-...`, base e168711, uncommitted), on its third fix turn: owner check at session creation, host-id read errors, UUID-only id, `wx` create. After it: re-review, rebase onto main (only `host.ts` overlaps), close, merge.
-- **Restart owed:** once plugin/16 merges, Softov restarts his daemon to wire in host/40, 41, 42, claude/16 and plugin/16. After it the daemon keeps `claude` without `OPENROUTER_API_KEY`; the build preset still needs the key.
-- **Plans being written (uncommitted on main when they land):** host/44 (move to AHP 1.0.0, p1 speak 1.0.0 and 0.9.0; p2 automation `disableConditions`, `runCount`; p3 `SessionSummary.chats`), with host/43 retargeted to 1.0.0; host/45 (root config declares the ~40 keys VS Code pushes, as upstream); host/46 (built-in surfaces advertised, roles grant `subject:operation`). Review them, then commit, then build host/44 p1 first.
-- **AHP 1.0.0:** additive over 0.9.0. ahpd accepts 1.0.0 and 0.9.0, highest compatible wins (Softov). ahpd must ship host/44 p1 before ahpapp bumps its protocol package; ahpc needs `'1.0.0'` at `src/ahp/live.ts:207`. Softov migrates the clients himself; the ahpapp session (softov-c6) waits for word that host/44 p1 merged.
-- **host/43** (wire follows the protocol): written, waits on host/44 p1. Client hand-off draft for it is in the build session's scratch `client-changes-for-protocol.md`, on hold.
-- **Old worktree** `build-agents-a6e38512`: another session's earlier copy of host/40, now merged from its own worktree; Softov decides whether to remove it.
-- **Flaky:** `agent-acp-ports.test.ts` ("reads and writes a file through the host's own store") fails under full load and passes alone.
+## In flight
 
-## Queue after that
+- **Merged 2026-10-06, unpushed:** `f76e948` (plans) and container/05 p7 (`b677360`).
+- **Restart owed:** Softov restarts his daemon to wire in container/05 p6 (`7cd7117`), the acp model fix (`08f046b`) and p7 (`b677360`); p7 brings the profile setting `gitGuard`, default `bind`.
+- **Known limit after p7:** ahpd's own `git worktree add` and changes-view commit run the repository's hooks on the host; under `gitGuard: "open"` an agent could have written them.
 
-host/44 p1, then host/43 p1-p4 (p4's renames after ahpapp and ahpc read both names), host/44 p2-p3, host/45, host/46; the container line: container/03 (rebase after plugin/16; listing labels and vault values in clear are known defects in its worktree `build-agents-74c74a74`), then 05 p1, container/02 task 04, 05 p3-p7, p12 (needs a proxy listener plan), p9, p11 (libvirt on dev86 first). Usage and policy plans (usage/05, policy/02, proxy/02, policy/03) belong to the other session, as do the ten records there that cite ahp-review.
+## Queue
 
-## Open questions recorded in plans
+1. [container/04](../plans/container/04-a-cofold-session-in-a-computer/plan.md) tasks 07-17; task 17 now follows [the host records which plugin registered each agent](../decisions/the-host-records-which-plugin-registered-each-agent.md).
+2. [container/05 p5](../plans/container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md), whole.
+3. daemon/09 with daemon/13, host/57 and plugin/18, then plugin/20, then plugin/33.
 
-About thirty, in each plan's Resume state, asked when the plan comes up for building: container/02, 04, 05 p1, p3, p5, p6, p7, p8, p9, p10, p12; plugin/18, 20, 21, 22, 29 p4, 33; daemon/09, 12, 13; host/33, 43 p3 (`http` sent as `object`, `true` as `{}`, explained, awaiting a yes); claude/11.
+Planned 2026-10-05 and 2026-10-06, no open questions, not yet placed in that order:
+- [host/58](../plans/host/58-private-files-refused-cursors-and-decoded-file-uris/plan.md) (bugs, high), then [host/59](../plans/host/59-one-record-store-provider-and-shared-value-helpers/plan.md), [host/60](../plans/host/60-one-json-file-reader-and-writer-and-a-session-is-one-row/plan.md), [host/61](../plans/host/61-agents-share-their-session-kit-presets-and-input-checks/plan.md): code reduction.
+- [host/62](../plans/host/62-every-backend-calls-a-clients-tool/plan.md) p1-p4: every backend calls a client's tool.
+- [daemon/15](../plans/daemon/15-a-verb-declares-only-its-own-flags/plan.md): a verb declares only its own flags.
+- In cofold: [commands/04](../../../cofold/.project/plans/commands/04-an-action-declares-what-it-does-to-what/plan.md) (effect and resource on an action); ahpd declares them on its commands in a later plan, after that cofold release.
 
 ## Waiting on Softov
 
-- The claude/08 check in ahpapp; daemon/09's final check; checks 6-21 of 0.8.0; by-hand checks for host/30 task 05, daemon/13 and claude/10 task 03.
-- host/30 task 06: the upstream issue's text, shown before it is posted.
-- cofold commands/03 and the `@cofold/terminal` range bump.
-- ahpapp chat/02's two open questions.
-- Removing the redundant worktrees `/github/.worktrees/ahpd-server`, `ahpd-sdk`, `ahpd-sdk-2`, and `build-agents-a6e38512`.
-- A rule he may want to write: a failure belongs to the item that failed (one bad preset, profile, part, runtime or secret fails alone).
+- host/56 task 05: his measurement with the probes in `/github/ahpapp/.scratch/org/`.
+- host/30 task 05: his VS Code test by hand.
+- The VS Code test host (`code agent host`, 127.0.0.1:37600) may still be running from 2026-10-05; stop it when he is done.
+- Flaky tests: `computer-devcontainer.test.ts` "offers the session folder's dev container" under full load, `ENOTEMPTY` in afterEach cleanup, and once a `computer-needs.test.ts` vault restart case; a problem file or a fix plan was offered, no answer yet.
+- Fork PR workflows run without approval for returning contributors (`first_time_contributors`); he may change it.
 
-## Must ship in 0.8.1
+## Carried from 2026-10-03, not rechecked since
 
-- Four gate holes on main and in 0.8.0: a session driven by a `file:read` guest through `file:///<id>`; a terminal under a foreign scheme driven with `file:read`; automations created by a `file:read` guest; a changeset operation run with `file:write` alone.
-- daemon/09 reaches the registry only in 0.8.1, since the published 0.8.0 sdk still peers the protocol package.
-
-## Checks nobody has made
-
-- VS Code with the seeded `computer` picker: the chip reads `This host` or a machine's name, once.
-- ahpapp against the published packages: the computer picker, and the dev container relay with `devcontainer.plugins` in a real container.
-- Session state written by 0.6 read by 0.8.
-- An MCP tool call on each agent: listed, runs, result shown.
-- In ahpapp or VS Code: an approval's options (host/24), a fork shown as a fork (host/25), the list while a worker runs (host/27), a restored Claude session (claude/05), Stop inside a subagent (claude/06), a re-subscribe after an open call (claude/07), tool call titles (pi/12).
-- daemon/11 in ahpapp: editing a plugin's options and a credential answered `<set>`.
-
-## Next after the release
-
-- The `docs/` prose pass.
-- README and manifest mismatches: the computer README lists 9 of 18 options; the `ahpd.options` manifests disagree with the code in tunnel-devtunnel, agent-acp, agent-pi and computer; agent-cofold has none; cofold's README says `apiKey` may be a function.
+- Must ship in 0.8.1: four gate holes (a session driven by a `file:read` guest through `file:///<id>`; a terminal under a foreign scheme driven with `file:read`; automations created by a `file:read` guest; a changeset operation run with `file:write` alone), and daemon/09 on the registry.
+- Checks nobody has made: VS Code's `computer` picker chip; ahpapp against the published packages; 0.6 session state read by 0.8; an MCP tool call on each agent; host/24, 25, 27, claude/05, 06, 07, pi/12 in a client; daemon/11 in ahpapp.
+- After the release: the `docs/` prose pass; README and manifest mismatches in computer, tunnel-devtunnel, agent-acp, agent-pi and agent-cofold.
 
 ## Environment notes written nowhere else
 
 - CI runs `pnpm test` before `pnpm build`, so the suite must pass with no `packages/*/dist`.
-- A manifest change needs `pnpm install --no-frozen-lockfile` once; a package committed without its importer in `pnpm-lock.yaml` breaks `--frozen-lockfile` for everybody.
-- A plugin whose `ahpd.entry` is under `dist` must be rebuilt after its source moves.
-- The daemon runs out of heap at about 2 GB with six build sessions; three at once holds.
-- An OpenRouter Claude session cannot be resumed after a daemon restart (`400 previous_message_id`); start a new one in the same worktree. Its first request sometimes fails with an empty response; retry once.
-- `packages/computer/test/computer-disposable.test.ts` ("loads the disposable example") fails about one full run in three under load and passes alone.
-- `agent-acp-ports.test.ts` flakes the same way.
-- `ahpc watch --until idle` returns early; poll `session list --json` instead (status bit 8 is in progress).
+- `pnpm test` generates `tools/ahp.strict.schema.json` first; running vitest alone in a fresh checkout fails the acp ports tests for want of it.
