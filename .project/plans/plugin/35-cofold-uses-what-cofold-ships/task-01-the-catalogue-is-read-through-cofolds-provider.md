@@ -1,6 +1,6 @@
 ---
 title: The catalogue is read through cofold's provider
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

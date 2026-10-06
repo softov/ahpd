@@ -124,6 +124,19 @@ const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag =>
   };
 };
 
+/**
+ * What a compaction is said as, in a live turn and in a transcript alike.
+ *
+ * The Claude backend words its own compaction this way, and a person reading
+ * two hosts should read one sentence for one thing. The numbers are cofold's
+ * own estimate of the history before the summary and after it, and a call with
+ * neither says the compaction happened rather than nothing about it.
+ */
+export const compactionNotice = (tokens?: { before: number; after: number }): string =>
+  tokens === undefined
+    ? 'Context compacted automatically.'
+    : `Context compacted automatically: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
+
 /** The part that ends a turn which failed, in the shape `chat/error` carries. */
 const failurePart = (message: string): Bag => ({
   kind: 'error',
@@ -220,6 +233,28 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const open = new Map<string, OpenCall>();
   /** Requests a client is being asked about, by the run's request id. */
   const requests = new Map<string, OpenRequest>();
+  /**
+   * The reasoning and text the last `model.completed` has not written yet.
+   *
+   * A step that did not stream its reply is only known whole at
+   * `model.completed`, and what that reply *is* is not known there either: a
+   * compaction step's reply is the summary, which is the model's own working
+   * text rather than its answer, and cofold says so one event later with
+   * `context.compacted`. Holding the writes for one event is what lets the two
+   * be told apart without guessing. Nothing is held for a step that streamed,
+   * because its deltas are already on the wire.
+   */
+  let held: { kind: 'reasoning' | 'text'; text: string }[] = [];
+  /** How many compactions this turn has reported, which numbers the parts. */
+  let compactions = 0;
+
+  /** Write what the last step's reply was held for, if anything. */
+  const flush = (): Bag[] => {
+    const actions: Bag[] = [];
+    for (const piece of held) actions.push(...write(piece.kind, piece.text));
+    held = [];
+    return actions;
+  };
 
   /**
    * The part a step's reasoning or its text is written into, and the action
@@ -291,10 +326,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
   /** The actions one event means, with nothing else. */
   const only = (actions: Bag[]): MappedEvent => ({ actions });
 
-  return {
-    settle,
-
-    actions(event: RunEvent): MappedEvent {
+  /**
+   * What one event means, on its own.
+   *
+   * `actions` below leads a mapped event with what the step before it held,
+   * so this is the translation without that prefix - which is why every return
+   * here is a `MappedEvent` and not a decision about the turn as a whole.
+   */
+  const translate = (event: RunEvent): MappedEvent => {
       switch (event.type) {
         /*
          * `run.started` is already said: the session emits `chat/turnStarted`
@@ -332,29 +371,52 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
          * sends the total as it stands. The protocol replaces the active turn's
          * usage on each `chat/usage`, so a client watching the number sees it
          * grow rather than being handed deltas it has to add up itself.
+         *
+         * What it wrote is held rather than sent: the next event decides
+         * whether this reply was the model's answer or a summary, and a step
+         * that streamed wrote its parts as deltas and holds nothing.
          */
         case 'model.completed': {
-          const actions: Bag[] = [];
+          const pieces: { kind: 'reasoning' | 'text'; text: string }[] = [];
           for (const piece of event.message.parts) {
             if (piece.type === 'reasoning' && !reasoningStreamed && piece.text !== '') {
-              actions.push(...write('reasoning', piece.text));
+              pieces.push({ kind: 'reasoning', text: piece.text });
             }
             else if (piece.type === 'text' && !textStreamed && piece.text !== '') {
-              actions.push(...write('text', piece.text));
+              pieces.push({ kind: 'text', text: piece.text });
             }
           }
+          held = pieces;
           // The step is told, so a later step that did not stream is not
           // mistaken for this one having been silent.
           textStreamed = true;
           reasoningStreamed = true;
           spent = addUsage(spent, event.usage);
-          actions.push({ type: 'chat/usage', turnId, usage: usageOf(spent, options.model) });
-          return only(actions);
+          return only([{ type: 'chat/usage', turnId, usage: usageOf(spent, options.model) }]);
+        }
+        /*
+         * The turn folded its own history into a summary.
+         *
+         * What the summary step wrote is the summary, so the writes held above
+         * are dropped rather than shown as the model's answer, and a notice
+         * takes their place: somebody watching an answer change character
+         * half-way through deserves to know why. The notice is a part of the
+         * turn rather than a `chat/truncated`, because nothing was dropped from
+         * the conversation - every message it stands for is still in the
+         * transcript the client can read.
+         */
+        case 'context.compacted': {
+          compactions += 1;
+          const part: Bag = {
+            id: `${turnId}:compact:${compactions}`,
+            kind: 'systemNotification',
+            content: compactionNotice({ before: event.estimatedTokens, after: event.afterTokens }),
+          };
+          parts.push(part);
+          return only([{ type: 'chat/responsePart', turnId, part: { ...part } }]);
         }
         /* A steer is already in the transcript the client typed it into. */
         case 'run.steered':
-        /* Compaction changes the stored history, which the transcript reads. */
-        case 'context.compacted':
         /*
          * `run.paused` is the marker that the run is waiting on a person, and
          * the request itself already told the client what was wanted. There is
@@ -647,6 +709,24 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           throw new Error(`cofold event is not mapped: ${(unhandled as { type?: string }).type ?? 'unknown'}`);
         }
       }
+  };
+
+  return {
+    settle,
+
+    actions(event: RunEvent): MappedEvent {
+      /*
+       * What the step before this one held leads, whatever this event is: the
+       * text belongs before whatever comes next, and the one event that shows
+       * it was not an answer - a compaction - drops it instead. Flushing here
+       * is also what keeps a non-streaming adapter's reply from being lost
+       * when the run ends on the step that wrote it.
+       */
+      let lead: Bag[] = [];
+      if (event.type === 'context.compacted') held = [];
+      else lead = flush();
+      const mapped = translate(event);
+      return lead.length === 0 ? mapped : { ...mapped, actions: [...lead, ...mapped.actions] };
     },
   };
 }

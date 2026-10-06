@@ -1,12 +1,14 @@
 import { resolve } from 'node:path';
-import { createAgent, policyOf } from '@cofold/agents';
+import { createAgent, createAskUserTool, policyOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, Tool } from '@cofold/agents';
 import { resolveWithin } from '@cofold/tools';
 import type { Bag, Session } from '@ahpd/sdk';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
-import { PERMISSION_MODES, defaultStoreRoot, modelOf } from './agent.js';
+import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
+import type { CofoldOptions, Held } from './agent.js';
 import { cofoldTools } from './tools.js';
 import type { ClientToolRelay } from './tools.js';
+import type { HarnessConfig } from './config.js';
 import type { SessionContext } from './context.js';
 
 /**
@@ -42,6 +44,43 @@ const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): st
   if (tool.effects.writes !== true || !EDITS.has(tool.name)) return undefined;
   const path = (input as { path?: unknown } | undefined)?.path;
   return typeof path === 'string' && path !== '' ? resolve(workspace, path) : undefined;
+};
+
+/**
+ * The share of a model's window a session folds its history at.
+ *
+ * The same 80% papo keeps. A summary is written by asking the model, so the
+ * step that writes it needs room of its own, and a point at the window itself
+ * would fold a history the summary step could not fit either.
+ */
+export const AUTO_COMPACT_AT = 0.8;
+
+/**
+ * The window a model cofold was told no number for is sized by.
+ *
+ * This is cofold's own default `ContextOptions.maxTokens`, repeated so a
+ * session with nothing to read a window from - no catalogue, or an adapter a
+ * caller passed - is built against the same number cofold would have used.
+ */
+export const DEFAULT_CONTEXT_TOKENS = 32000;
+
+/**
+ * The window the model in force was listed with, or cofold's own default.
+ *
+ * `modelReferenceOf` is the same reference `modelOf` resolves, so a model
+ * chosen from the catalogue is sized by the row it was chosen from. A
+ * caller-passed adapter names no endpoint to ask, and a model the list said
+ * nothing about has no window to read, so both take the default.
+ */
+const windowOf = (
+  options: CofoldOptions,
+  values: Record<string, unknown>,
+  harness: HarnessConfig,
+  held: Held | undefined,
+): number => {
+  if (options.adapter !== undefined) return DEFAULT_CONTEXT_TOKENS;
+  const listed = held?.infoOf(modelReferenceOf(options, values, harness))?.contextTokens;
+  return typeof listed === 'number' && listed > 0 ? listed : DEFAULT_CONTEXT_TOKENS;
 };
 
 /** The mode a session's settings name, or this backend's own default when they name none. */
@@ -175,51 +214,92 @@ export const createTurnAgent = (
    * it writes - this host's tools are the daemon's and a client's, so their
    * names are not a list this backend can keep.
    */
-  const agentOf = (values: Record<string, unknown>): CofoldAgent => createAgent({
-    id: AGENT_ID,
-    instructions: instructionsOf(values),
-    model: modelOf(options, values, start.credentials ?? {}, harness),
-    tools: cofoldTools(ctx.offered, relay),
+  const agentOf = (values: Record<string, unknown>): CofoldAgent => {
     /*
-     * The four capabilities cofold runs itself, in cofold's own process.
+     * The names the host's own tools answer to.
      *
-     * Memory goes under the store root, beside the sessions; a session whose
-     * store is deliberately in memory has no directory to keep memory files
-     * in, so it gets the other three rather than files under somebody's home.
-     * A tool the host already offers keeps its name, because cofold refuses a
-     * run two contributors give one name to.
+     * One name has to map to one tool, so this is what decides the two
+     * collisions: a capability's tool of a taken name is dropped, and so is
+     * cofold's ask tool when a host or client tool is already called
+     * `ask_user`. A host tool is the more specific contribution - it was named
+     * for this deployment - so it wins the name.
      */
-    capabilities: capabilitiesOf(options.tools ?? DEFAULT_TOOLS, {
-      storeRoot: options.memory === true ? undefined : options.store ?? defaultStoreRoot(),
-      workspace: where,
-    }, ctx.offered.map((one) => one.definition.name)),
+    const taken = new Set(ctx.offered.map((one) => one.definition.name));
     /*
-     * The edits a cofold tool makes, on their way to the changeset.
+     * cofold's own question primitive, which every session offers the model.
      *
-     * The hooks are where a call is known before and after it runs, which is
-     * what the `before`/`after` pair needs: the path is resolved against the
-     * run's workspace the way the files capability resolves it, so the two
-     * halves name one file even when the model wrote a relative path.
+     * It is what a model reaches for when it needs a person rather than a
+     * file: the run pauses, `mapping.ts` turns the pause into the same
+     * `chatInput` entry a host tool's pause becomes, and the answer goes back
+     * into the run the same way. The name is read off the tool rather than
+     * repeated, because that is the name the collision above is about.
      */
-    hooks: {
-      beforeTool: ({ call, tool }) => {
-        const path = editPathOf(where, tool, call.input);
-        if (path !== undefined) announceEdit(call.callId, path);
-        return { decision: 'allow' };
+    const ask = createAskUserTool();
+    /*
+     * How much a step may carry, and when cofold folds the history instead.
+     *
+     * The window is what the endpoint published for the model in force. The
+     * point is the configured one, never above `AUTO_COMPACT_AT` of that
+     * window: a session that folded at the window itself would write a summary
+     * whose own step no longer fits. Unset, the point is that share, so a
+     * session nobody configured still folds its history rather than running
+     * into the model's ceiling part-way through a turn.
+     */
+    const maxTokens = windowOf(options, values, harness, ctx.held);
+    const cap = Math.floor(maxTokens * AUTO_COMPACT_AT);
+    const autoCompactTokens = options.autoCompactTokens === undefined
+      ? cap
+      : Math.min(options.autoCompactTokens, cap);
+    return createAgent({
+      id: AGENT_ID,
+      instructions: instructionsOf(values),
+      model: modelOf(options, values, start.credentials ?? {}, harness, ctx.held),
+      context: { maxTokens, autoCompactTokens },
+      tools: [
+        ...(taken.has(ask.name) ? [] : [ask]),
+        ...cofoldTools(ctx.offered, relay),
+      ],
+      /*
+       * The four capabilities cofold runs itself, in cofold's own process.
+       *
+       * Memory goes under the store root, beside the sessions; a session whose
+       * store is deliberately in memory has no directory to keep memory files
+       * in, so it gets the other three rather than files under somebody's home.
+       * A tool the host already offers keeps its name, because cofold refuses a
+       * run two contributors give one name to.
+       */
+      capabilities: capabilitiesOf(options.tools ?? DEFAULT_TOOLS, {
+        storeRoot: options.memory === true ? undefined : options.store ?? defaultStoreRoot(),
+        workspace: where,
+      }, taken),
+      /*
+       * The edits a cofold tool makes, on their way to the changeset.
+       *
+       * The hooks are where a call is known before and after it runs, which is
+       * what the `before`/`after` pair needs: the path is resolved against the
+       * run's workspace the way the files capability resolves it, so the two
+       * halves name one file even when the model wrote a relative path.
+       */
+      hooks: {
+        beforeTool: ({ call, tool }) => {
+          const path = editPathOf(where, tool, call.input);
+          if (path !== undefined) announceEdit(call.callId, path);
+          return { decision: 'allow' };
+        },
+        afterTool: ({ call, output }) => {
+          settleEdit(call.callId);
+          return { output };
+        },
       },
-      afterTool: ({ call, output }) => {
-        settleEdit(call.callId);
-        return { output };
+      store,
+      policy: options.policy ?? {
+        decide: policyOf(modeOf(values), {
+          inside: (path) => insideDirectory(where, path),
+          isEdit: (tool) => tool.effects.writes === true,
+        }),
       },
-    },
-    store,
-    policy: options.policy ?? {
-      decide: policyOf(modeOf(values), {
-        inside: (path) => insideDirectory(where, path),
-        isEdit: (tool) => tool.effects.writes === true,
-      }),
-    },
-  });
+    });
+  };
 
   return {
     agentOf,

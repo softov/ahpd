@@ -84,6 +84,11 @@ export const optionsSchema = {
     apiKey: { type: 'string', writeOnly: true, description: "The daemon's own key." },
     resource: { type: 'string', description: 'The protected resource a client authenticates against.' },
     adapter: { type: 'object', description: 'A cofold ModelAdapter used instead of the HTTP one.' },
+    autoCompactTokens: {
+      type: 'integer',
+      minimum: 1,
+      description: 'The estimated history size at which a session compacts, never above 80% of the model\'s listed context, or of 32000. That 80% by default.',
+    },
     policy: { type: 'object', description: 'The run-level policy a pause comes from.' },
   },
 };

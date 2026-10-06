@@ -11,8 +11,19 @@ export interface Offered {
    * model rather than as a session-wide control, which matters because
    * different models take different options. A model that takes none omits
    * it, and a client then draws no form for that one.
+   *
+   * `maxContextWindow` and `maxOutputTokens` are what the harness knows the
+   * model can hold and answer, when it knows: a client sizes a conversation
+   * against the first and caps a request with the second. Absent means nothing
+   * was published, which is not the same as a limit of zero.
    */
-  models: { id: string; name: string; configSchema?: Record<string, unknown> }[];
+  models: {
+    id: string;
+    name: string;
+    maxContextWindow?: number;
+    maxOutputTokens?: number;
+    configSchema?: Record<string, unknown>;
+  }[];
   /**
    * Skills, commands, subagents and MCP servers the harness offers here.
    *

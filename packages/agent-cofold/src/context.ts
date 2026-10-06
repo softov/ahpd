@@ -1,6 +1,6 @@
 import type { Store, Agent as CofoldAgent, RunHandle } from '@cofold/agents';
 import type { Bag, BoundTool, Start } from '@ahpd/sdk';
-import type { CofoldOptions } from './agent.js';
+import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
 import type { TurnAgent } from './turnagent.js';
@@ -25,6 +25,15 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   sessionId: string;
   where: string;
   store: Store;
+  /**
+   * The backend's catalogue and the transport it was read through, when a
+   * backend built this session.
+   *
+   * A turn's model is built through the same provider the catalogue came from,
+   * with the price the list published; a session built by a caller that named
+   * none has nothing here and its turns build an adapter of their own.
+   */
+  held: Held | undefined;
   turns: Bag[];
   editing: Map<string, string>;
   pending: Map<string, OpenRequest>;

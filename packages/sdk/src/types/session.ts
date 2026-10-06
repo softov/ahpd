@@ -235,8 +235,13 @@ export interface Session {
   /** The chat channel URI. */
   readonly chatUri: string;
 
-  /** Models this session can run a turn on. Empty until the agent has answered. */
-  models(): { id: string; name: string }[];
+  /**
+   * Models this session can run a turn on. Empty until the agent has answered.
+   *
+   * The two limits are the ones the backend published, and are absent for a
+   * model nothing is known about rather than zero.
+   */
+  models(): { id: string; name: string; maxContextWindow?: number; maxOutputTokens?: number }[];
   /**
    * The id the agent gave this session, if it has said one yet.
    *

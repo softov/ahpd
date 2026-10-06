@@ -1,6 +1,6 @@
 ---
 title: A long session compacts itself before it fills the model
-status: todo
+status: done
 depends: [task-02-a-turn-runs-on-the-providers-model-with-its-price.md]
 layer: "agent-cofold, docs"
 refs:

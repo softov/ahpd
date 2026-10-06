@@ -54,6 +54,21 @@ const LISTED = [
   { id: 'qwen/qwen3-8b' },
 ];
 
+/** An entry as OpenRouter publishes one: its limits, its price and what it takes. */
+const PUBLISHED = {
+  data: [
+    {
+      id: 'deepseek/deepseek-chat',
+      name: 'DeepSeek V3',
+      context_length: 65536,
+      top_provider: { max_completion_tokens: 8192 },
+      pricing: { prompt: '0.000003', completion: '0.000015' },
+      supported_parameters: ['tools', 'reasoning'],
+    },
+    { id: 'qwen/qwen3-8b', name: 'Qwen3 8B' },
+  ],
+};
+
 /** Stand in for the endpoint, recording what it was asked. */
 const answering = (body: unknown, status = 200): { seen: { url: unknown; authorization: unknown; calls: number } } => {
   const seen = { url: undefined as unknown, authorization: undefined as unknown, calls: 0 };
@@ -72,6 +87,18 @@ const refusing = (): { calls: () => number } => {
     calls += 1;
     throw new Error('connection refused');
   }) as typeof fetch;
+  return { calls: () => calls };
+};
+
+/** Stand in for an endpoint that takes the connection and never answers it. */
+const hanging = (): { calls: () => number } => {
+  let calls = 0;
+  globalThis.fetch = ((_input: unknown, init?: { signal?: AbortSignal }) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => { reject(new Error('aborted')); });
+    });
+  }) as unknown as typeof fetch;
   return { calls: () => calls };
 };
 
@@ -131,6 +158,32 @@ it('answers the configured model alone for a status or a shape that is not a cat
     expect(offered?.models).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
   }
 });
+
+it('offers the limits the endpoint published, and neither its price nor its features', async () => {
+  put(CONFIG);
+  answering(PUBLISHED);
+  const offered = await cofoldAgent({}).probe?.();
+
+  /*
+   * `toEqual` is exact, so a row carrying a `pricing` or a `features` key would
+   * not match. Only the two limits travel beside the id and the name: a row is
+   * what a picker draws, and the price is what a turn is built from.
+   */
+  expect(offered?.models).toEqual([
+    { id: 'open_router/deepseek/deepseek-chat', name: 'DeepSeek V3', maxContextWindow: 65536, maxOutputTokens: 8192 },
+    // A row the endpoint published neither limit for carries neither.
+    { id: 'open_router/qwen/qwen3-8b', name: 'Qwen3 8B' },
+  ]);
+});
+
+it('offers the configured model alone when the endpoint never answers', async () => {
+  put(CONFIG);
+  const hung = hanging();
+  const offered = await cofoldAgent({}).probe?.();
+  expect(offered?.models).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
+  expect(hung.calls()).toBe(1);
+  // The catalogue limit is five seconds, and this case waits for it.
+}, 20000);
 
 it('offers ids that resolve back to the endpoint they were read from', async () => {
   put(CONFIG);
@@ -200,6 +253,9 @@ it('answers a session with the same catalogue, and its own model until then', as
     emit: () => {},
   } as unknown as Start);
   expect(silent.models()).toEqual([{ id: 'open_router/deepseek/deepseek-chat', name: 'open_router/deepseek/deepseek-chat' }]);
+  // The ask is in the background, so it lands a tick after `models()` answered;
+  // cofold's provider reads its headers before it fetches.
+  await untilAsync(async () => refused.calls() >= 1);
   expect(refused.calls()).toBeGreaterThanOrEqual(1);
 });
 

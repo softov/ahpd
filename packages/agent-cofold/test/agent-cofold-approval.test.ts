@@ -498,6 +498,118 @@ it('declines a question as a deny rather than an empty answer', async () => {
   expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
 });
 
+/*
+ * cofold's own ask tool, which a session offers the model whether or not the
+ * host does. Its questions are the same `chatInput` entry a host tool's are,
+ * because the run's own `input.requested` is what a pause becomes either way;
+ * a host tool already named `ask_user` keeps the name and cofold's is left out,
+ * because cofold refuses a run two contributors give one name to.
+ */
+it('raises a chatInput entry for cofold\'s own ask tool and answers it back', async () => {
+  const questions: AskQuestion[] = [
+    { id: 'which', question: 'Which note?', header: 'Note', options: [{ label: 'monday' }, { label: 'tuesday' }] },
+  ];
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'ask_user', input: { questions }, callId: 'call-q' }] },
+      { text: 'noted' },
+    ],
+    stream: true,
+  });
+  // No host tool of that name: the tool the model calls is cofold's own.
+  const { client, peer: p } = await talking(model, [], asksFor([]));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'ask me');
+  await until(() => needed(p, uri, 'chatInput') !== undefined);
+
+  const entry = needed(p, uri, 'chatInput') as {
+    id: string;
+    request: { id: string; questions: { id: string; kind: string; message: string; options: { label: string }[] }[] };
+  };
+  expect(entry.request.questions[0]).toMatchObject({ id: 'which', kind: 'single-select', message: 'Which note?' });
+  expect(entry.request.questions[0]?.options.map((one) => one.label)).toEqual(['monday', 'tuesday']);
+  await settle();
+  expect(ended(p, chatUri)).toBe(false);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: {
+        type: 'chat/inputCompleted',
+        requestId: entry.request.id,
+        response: 'accept',
+        answers: { which: { state: 'submitted', value: { kind: 'selected', value: 'monday' } } },
+      },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  // The answer reached the run as the tool's result, and the entry came down.
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('monday');
+  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
+it('declines cofold\'s own ask tool as a denial the model reads', async () => {
+  const questions: AskQuestion[] = [{ id: 'which', question: 'Which note?' }];
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'ask_user', input: { questions }, callId: 'call-q' }] },
+      { text: 'noted' },
+    ],
+    stream: true,
+  });
+  const { client, peer: p } = await talking(model, [], asksFor([]));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'ask me');
+  await until(() => needed(p, uri, 'chatInput') !== undefined);
+  const entry = needed(p, uri, 'chatInput') as { id: string; request: { id: string } };
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/inputCompleted', requestId: entry.request.id, response: 'decline' },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  expect((done?.action.result as { success: boolean } | undefined)?.success).toBe(false);
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
+});
+
+it('leaves cofold\'s ask tool out when a host tool already answers to that name', async () => {
+  const mine: unknown[] = [];
+  const recording: HostTool = {
+    ...asker,
+    run: (input) => {
+      mine.push(input);
+      return 'the host answered';
+    },
+  };
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'ask_user', input: { questions: [{ id: 'q', question: 'Why?' }] }, callId: 'call-q' }] },
+      { text: 'noted' },
+    ],
+    stream: true,
+  });
+  const { client, peer: p } = await talking(model, [recording], asksFor([]));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'ask me');
+  await until(() => ended(p, chatUri));
+
+  // A duplicate name is what cofold refuses a run over, so a turn that ends is
+  // one that offered a single `ask_user` - the host's.
+  expect(mine).toHaveLength(1);
+  expect(needed(p, uri, 'chatInput')).toBeUndefined();
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('the host answered');
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
 it('asks about a destructive host tool with no policy configured', async () => {
   const ran: string[] = [];
   const model = createFakeModel({ script: writeScript('c1', 'note'), stream: true });

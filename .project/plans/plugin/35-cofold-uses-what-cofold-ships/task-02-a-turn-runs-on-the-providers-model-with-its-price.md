@@ -1,6 +1,6 @@
 ---
 title: A turn runs on the provider's model, with the listed price
-status: todo
+status: done
 depends: [task-01-the-catalogue-is-read-through-cofolds-provider.md]
 layer: "agent-cofold"
 refs:

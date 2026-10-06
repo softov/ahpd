@@ -201,6 +201,22 @@ it('contributes one backend, and refuses a second spec of the same name', async 
   expect(opened.snapshot.state.turns[0]?.responseParts[0]?.content).toBe('answered by a');
 });
 
+it('refuses an autoCompactTokens the loader\'s options check rejects', async () => {
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  // The schema says a positive integer, and the loader holds the options to
+  // it: a point of zero is a session that folds before it has said anything.
+  for (const value of [0, 'x']) {
+    const { loaded, problems } = await load([{ name: SOURCE, options: { adapter: model, memory: true, autoCompactTokens: value } }]);
+    expect(loaded).toEqual([]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('autoCompactTokens');
+  }
+
+  const fine = await load([{ name: SOURCE, options: { adapter: model, memory: true, autoCompactTokens: 4000 } }]);
+  expect(fine.problems).toEqual([]);
+  expect(fine.loaded).toHaveLength(1);
+});
+
 it('refuses the package when its @ahpd/sdk peer range is not satisfied', async () => {
   /*
    * A temporary copy of the manifest, not of the sources: the range check runs

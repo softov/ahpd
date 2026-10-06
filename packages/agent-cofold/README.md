@@ -72,6 +72,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 | `apiKey` | the cofold file's | The daemon's own key, or a function asked once per request so an expired one is not cached |
 | `resource` | the endpoint's origin when it is `https` | The protected resource a client authenticates against |
 | `adapter` | | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
+| `autoCompactTokens` | 80% of the model's listed context, or of 32000 | The estimated history size at which a session compacts, never above that 80% |
 | `policy` | cofold's own default | The run-level policy a pause comes from, which turns the approvals mode control off |
 
 ## The tools a session runs

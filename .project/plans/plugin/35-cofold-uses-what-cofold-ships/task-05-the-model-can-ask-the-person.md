@@ -1,6 +1,6 @@
 ---
 title: The model can ask the person a question
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

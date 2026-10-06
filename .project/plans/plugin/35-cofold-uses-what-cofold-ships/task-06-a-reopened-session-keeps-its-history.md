@@ -1,6 +1,6 @@
 ---
 title: A reopened session keeps its history and shows the same notice
-status: todo
+status: done
 depends: [task-04-a-live-compaction-reads-as-a-notice.md]
 layer: "agent-cofold"
 refs:

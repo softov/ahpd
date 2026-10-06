@@ -1,7 +1,7 @@
 ---
 title: A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -113,12 +113,12 @@ transcript() -> turnsOf -> every message kept; a summary message -> the same com
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The catalogue is read through cofold's provider](task-01-the-catalogue-is-read-through-cofolds-provider.md) | todo | - |
-| [02 - A turn runs on the provider's model, with the listed price](task-02-a-turn-runs-on-the-providers-model-with-its-price.md) | todo | 01 |
-| [03 - A long session compacts itself before it fills the model](task-03-a-long-session-compacts-itself.md) | todo | 02 |
-| [04 - A live compaction reads as a notice, not as the model's answer](task-04-a-live-compaction-reads-as-a-notice.md) | todo | 03 |
-| [05 - The model can ask the person a question](task-05-the-model-can-ask-the-person.md) | todo | - |
-| [06 - A reopened session keeps its history and shows the same notice](task-06-a-reopened-session-keeps-its-history.md) | todo | 04 |
+| [01 - The catalogue is read through cofold's provider](task-01-the-catalogue-is-read-through-cofolds-provider.md) | done | - |
+| [02 - A turn runs on the provider's model, with the listed price](task-02-a-turn-runs-on-the-providers-model-with-its-price.md) | done | 01 |
+| [03 - A long session compacts itself before it fills the model](task-03-a-long-session-compacts-itself.md) | done | 02 |
+| [04 - A live compaction reads as a notice, not as the model's answer](task-04-a-live-compaction-reads-as-a-notice.md) | done | 03 |
+| [05 - The model can ask the person a question](task-05-the-model-can-ask-the-person.md) | done | - |
+| [06 - A reopened session keeps its history and shows the same notice](task-06-a-reopened-session-keeps-its-history.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -132,17 +132,17 @@ transcript() -> turnsOf -> every message kept; a summary message -> the same com
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-catalogue-is-read-through-cofolds-provider.md](task-01-the-catalogue-is-read-through-cofolds-provider.md); task 05 can run beside it.
+- **Done so far:** all six tasks. `agent.ts` holds one `ModelProvider` per endpoint and key and the whole `ModelInfo[]` per endpoint and key, `rowOf` is what leaves the package, and `modelOf` takes a `held` and builds the turn's model through the provider with the listed price; `turnagent.ts` gives every agent a `context` capped at 80% of the window and cofold's own `ask_user` tool unless a host tool holds that name; `mapping.ts` sends one `systemNotification` per `context.compacted` and holds a non-streamed step's text one event; `transcript.ts` reads the same notice from the run log.
+- **Next action:** none - the plan is built, reviewed and merged 2026-10-06.
 - **Open questions:** none.
 - **Watch out for:** the cache must keep `ModelInfo` but `models()` and `probe` must send only protocol fields, because the root state is checked against the strict schema; the listed id is the endpoint's bare id and the row's is `<provider>/<id>` per the decision; the auto-compaction summary step is a `complete()` call, never streamed, so its text arrives only on `model.completed`; the live and transcript notices must come from one function, or they drift.
 
 ## Final verification checklist
 
-- [ ] A turn on a priced listed model ends with `chat/usage` carrying `_meta.cost`.
-- [ ] An endpoint that refuses, answers garbage or hangs past 5 s still offers the configured model alone.
-- [ ] A session over the compaction point compacts; live it shows one notice and no summary text; reopened it shows every earlier turn and the same notice in the same place.
-- [ ] `autoCompactTokens` is in `optionsSchema`, the README options table and `docs/PLUGINS.md`, and a value above the cap is capped.
-- [ ] A model's `ask_user` call raises a `chatInput` entry and the person's answer reaches the run; a host tool named `ask_user` still wins the name.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build` pass.
-- [ ] `plans/index.md` updated.
+- [x] A turn on a priced listed model ends with `chat/usage` carrying `_meta.cost` - `agent-cofold-usage.test.ts`, "prices a real endpoint's turn from the price its catalogue published"; a listed model with no price ends with none, "sends no cost for a listed model the endpoint published no price for".
+- [x] An endpoint that refuses, answers garbage or hangs past 5 s still offers the configured model alone - `agent-cofold-models.test.ts`, the existing refusal and wrong-shape cases, and "offers the configured model alone when the endpoint never answers".
+- [x] A session over the compaction point compacts; live it shows one notice and no summary text; reopened it shows every earlier turn and the same notice in the same place - `agent-cofold-compact.test.ts`, "says a compaction as one notice rather than as the model's answer" and "summarizes a history past the point, and leaves it in the conversation"; `agent-cofold-store.test.ts`, "reads a compacted session's summary as the notice the live turn sent".
+- [x] `autoCompactTokens` is in `optionsSchema`, the README options table and `docs/PLUGINS.md`, and a value above the cap is capped - `agent-cofold-compact.test.ts`, "caps a configured point at 80% of the window" and "holds a session with no catalogue at cofold's own default, capped"; `agent-cofold-plugin.test.ts`, "refuses an autoCompactTokens the loader's options check rejects".
+- [x] A model's `ask_user` call raises a `chatInput` entry and the person's answer reaches the run; a host tool named `ask_user` still wins the name - `agent-cofold-approval.test.ts`, "raises a chatInput entry for cofold's own ask tool and answers it back" and "leaves cofold's ask tool out when a host tool already answers to that name".
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build` pass - 217 files, 3079 tests.
+- [x] `plans/index.md` updated.

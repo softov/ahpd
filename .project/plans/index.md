@@ -226,7 +226,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
 | [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](plugin/34-cofold-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
-| [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | planned 2026-10-06; tasks 01-06 todo, no open questions; some items in [deferred.md](plugin/35-cofold-uses-what-cofold-ships/deferred.md) | plugin 05, plugin 32 p3 | - |
+| [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | built 2026-10-06 ([implemented.md](plugin/35-cofold-uses-what-cofold-ships/implemented.md)); reviewed and merged 2026-10-06 | plugin 05, plugin 32 p3 | - |
 
 Next free number in `plugin`: `36`.
 

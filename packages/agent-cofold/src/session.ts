@@ -18,11 +18,11 @@
  *   `responseParts` is what the agent answered.
  */
 
-import type { Store } from '@cofold/agents';
+import type { ModelInfo, Store } from '@cofold/agents';
 import { idOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
-import { storeOf } from './agent.js';
-import type { CofoldOptions } from './agent.js';
+import { rowOf, storeOf } from './agent.js';
+import type { CofoldOptions, Held } from './agent.js';
 import { harnessConfig } from './config.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest } from './mapping.js';
@@ -64,8 +64,15 @@ export function cofoldSession(
    * catalogue. The backend shares one cache across its sessions, so a session
    * answers the same list a picker was drawn from rather than a second one.
    */
-  catalogue: (settings: Record<string, unknown>, credentials: Record<string, string>) => { id: string; name: string }[] =
+  catalogue: (settings: Record<string, unknown>, credentials: Record<string, string>) => ModelInfo[] =
     () => [],
+  /*
+   * What the backend holds for a turn's model: the provider it read the
+   * catalogue through and what that catalogue said. A session built by a
+   * caller that named none has nothing, and its turns build an adapter of
+   * their own.
+   */
+  held?: Held,
 ): Session {
   const provider = options.provider ?? 'cofold';
   /**
@@ -146,6 +153,7 @@ export function cofoldSession(
     sessionId,
     where,
     store,
+    held,
     turns,
     editing,
     pending,
@@ -215,7 +223,7 @@ export function cofoldSession(
      * answer a turn, and an empty list is the form of that.
      */
     models: () => {
-      const listed = catalogue(settings, start.credentials ?? {});
+      const listed = catalogue(settings, start.credentials ?? {}).map(rowOf);
       if (listed.length > 0) return listed;
       const id = str(settings.model) ?? options.model ?? options.adapter?.modelId;
       return id === undefined ? [] : [{ id, name: id }];

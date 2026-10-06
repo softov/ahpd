@@ -627,6 +627,7 @@ every session it serves:
 | `apiKey` | The daemon's own key, or a function asked once per request so an expired one is not cached |
 | `resource` | The protected resource a client authenticates against; the endpoint's origin when it is `https`, a constant otherwise |
 | `adapter` | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
+| `autoCompactTokens` | The estimated history size at which a session compacts, never above 80% of the model's listed context, or of 32000 when the list gave none. That 80% when absent |
 | `policy` | The run-level policy a pause comes from, cofold's own default when absent |
 
 ### The tools a session runs

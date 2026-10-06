@@ -1,6 +1,6 @@
 ---
 title: A live compaction reads as a notice, not as the model's answer
-status: todo
+status: done
 depends: [task-03-a-long-session-compacts-itself.md]
 layer: "agent-cofold"
 refs:

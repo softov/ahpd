@@ -28,7 +28,7 @@ export type { SearchConfig, ToolsConfig } from './capabilities.js';
 export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 export type { HarnessConfig, HarnessProvider } from './config.js';
 export { cofoldSession, sessionIdOf } from './session.js';
-export { mapTurn } from './mapping.js';
+export { compactionNotice, mapTurn } from './mapping.js';
 export type { MappedEvent, OpenRequest, TurnMapping, TurnMappingOptions } from './mapping.js';
 export { cofoldTool, cofoldTools } from './tools.js';
 export type { ClientToolCall, ClientToolRelay } from './tools.js';

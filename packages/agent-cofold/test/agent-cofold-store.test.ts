@@ -3,13 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { textOf } from '@cofold/agents';
-import { createFakeModel } from '@cofold/agents/testing';
+import { createFakeModel, createMemoryStore } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
-import type { Message, ModelAdapter, ModelReply, ModelStreamEvent, Policy } from '@cofold/agents';
+import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent, Policy, RunEvent, Store } from '@cofold/agents';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
-import { cofoldAgent } from '../src/index.js';
+import { cofoldAgent, turnsOf } from '../src/index.js';
 
 /*
  * The catalogue, the transcript and a resume, over a file store.
@@ -562,6 +562,120 @@ it('rebuilds a turn with no model when its run recorded none', async () => {
   expect((turn?.message as { model?: unknown } | undefined)?.model).toBeUndefined();
   expect(turn?.usage).toBeDefined();
   expect(turn?.usage?.model).toBeUndefined();
+});
+
+/*
+ * A compaction as a reopened session reads it.
+ *
+ * The messages are written straight into a memory store rather than run
+ * through a turn: what a summary looks like on the way back is a fact about
+ * the transcript, and one turn of a scripted model is a longer way to say the
+ * same store. What the numbers are checked against is the event cofold
+ * recorded them on, which is where the live turn read them too.
+ */
+
+const AT = '2026-01-01T00:00:00.000Z';
+
+/** One message as cofold wrote it, with the one text part these cases need. */
+const wrote = (id: string, role: 'user' | 'assistant', source: MessageSource, text: string): Message => ({
+  id, role, source, createdAt: AT, parts: [{ type: 'text', text }],
+});
+
+/** A summary cofold wrote, standing for the messages it names. */
+const summed = (id: string, text: string, summarizes: string[]): Message => ({
+  id, role: 'user', source: 'summary', createdAt: AT, parts: [{ type: 'text', text }], summarizes,
+});
+
+/** The event a compaction is recorded as, which the transcript reads its numbers from. */
+const compactedAt = (messageId: string, before: number, after: number): RunEvent => ({
+  seq: 1,
+  runId: 'r1',
+  sessionId: 'one',
+  agentId: 'cofold',
+  at: AT,
+  type: 'context.compacted',
+  messageId,
+  summarized: 2,
+  kept: 0,
+  estimatedTokens: before,
+  afterTokens: after,
+});
+
+/** A memory store holding one finished session: the messages, and the events written after them. */
+const stored = async (messages: Message[], events: RunEvent[] = []): Promise<Store> => {
+  const store = createMemoryStore();
+  await store.sessions.create({ sessionId: 'one', agentId: 'cofold' });
+  await store.runs.create({
+    runId: 'r1',
+    sessionId: 'one',
+    agentId: 'cofold',
+    status: 'completed',
+    createdAt: AT,
+    updatedAt: AT,
+    usage: { inputTokens: 1, outputTokens: 1 },
+    steps: 1,
+    denials: [],
+  });
+  await store.sessions.claimWriter({ sessionId: 'one', runId: 'r1' });
+  await store.sessions.appendMessages({ sessionId: 'one', runId: 'r1', messages });
+  for (const event of events) await store.runs.appendEvent(event);
+  return store;
+};
+
+it('reads a compacted session\'s summary as the notice the live turn sent', async () => {
+  const store = await stored(
+    [
+      wrote('u1', 'user', 'input', 'the first thing'),
+      wrote('a1', 'assistant', 'model', 'answer one'),
+      wrote('u2', 'user', 'input', 'the second thing'),
+      summed('s1', 'Summary of the conversation so far:\neverything so far', ['u1', 'a1']),
+      wrote('a2', 'assistant', 'model', 'answer two'),
+    ],
+    [compactedAt('s1', 9000, 2000)],
+  );
+
+  const turns = await turnsOf(store, 'one');
+  // Every message keeps its turn: what the summary stands for is what a
+  // request no longer carries, not what the conversation has lost.
+  expect(turns.map((one) => one.id)).toEqual(['u1', 'u2']);
+  const parts = (turns[1]?.responseParts ?? []) as Bag[];
+  expect(parts[0]).toMatchObject({
+    kind: 'systemNotification',
+    content: 'Context compacted automatically: 9000 tokens to 2000.',
+  });
+  // The notice is where the summary was written, before the answer that follows it.
+  expect(parts[1]).toMatchObject({ kind: 'markdown', content: 'answer two' });
+  // The summary was written for the model, so its text is nowhere a client reads.
+  expect(JSON.stringify(turns)).not.toContain('everything so far');
+});
+
+it('says a compaction happened when the store kept no numbers for it', async () => {
+  const store = await stored([
+    wrote('u1', 'user', 'input', 'the first thing'),
+    summed('s1', 'Summary of the conversation so far:\neverything so far', ['u1']),
+    wrote('a1', 'assistant', 'model', 'answer one'),
+  ]);
+
+  const turns = await turnsOf(store, 'one');
+  const parts = (turns[0]?.responseParts ?? []) as Bag[];
+  expect(parts[0]).toMatchObject({ kind: 'systemNotification', content: 'Context compacted automatically.' });
+  expect(JSON.stringify(turns)).not.toContain('everything so far');
+});
+
+it('reads a session with no summary as the conversation it was', async () => {
+  const store = await stored([
+    wrote('u1', 'user', 'input', 'the first thing'),
+    wrote('a1', 'assistant', 'model', 'answer one'),
+    wrote('u2', 'user', 'input', 'the second thing'),
+    wrote('a2', 'assistant', 'model', 'answer two'),
+  ]);
+
+  const turns = await turnsOf(store, 'one');
+  expect(turns.map((one) => one.id)).toEqual(['u1', 'u2']);
+  expect(((turns[0]?.responseParts ?? []) as Bag[]).map((part) => [part.kind, part.content]))
+    .toEqual([['markdown', 'answer one']]);
+  expect(((turns[1]?.responseParts ?? []) as Bag[]).map((part) => [part.kind, part.content]))
+    .toEqual([['markdown', 'answer two']]);
 });
 
 it('stops listing a session that the store no longer has', async () => {

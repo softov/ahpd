@@ -22,6 +22,7 @@ import { textOf } from '@cofold/agents';
 import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
 import { callTimes } from '@ahpd/sdk';
+import { compactionNotice } from './mapping.js';
 import { describe, toolMetaOf } from './tools.js';
 
 /**
@@ -194,6 +195,16 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
   const timing = new Map<string, Timing>();
   /** The request a paused run is waiting on, by the call it is about. */
   const waiting = new Map<string, Waiting>();
+  /**
+   * What each compaction had folded, by the summary message it wrote.
+   *
+   * The numbers live on the `context.compacted` event and nowhere in the
+   * message, so a transcript that wants the sentence a live turn showed reads
+   * them from the run log. A summary whose event is not here - one written by
+   * a store that has been trimmed, or by a version that wrote no event - is
+   * still a compaction and still says so, without the numbers.
+   */
+  const compacted = new Map<string, { before: number; after: number }>();
   /** What each turn cost, how it ended and how long it took, by its first message. */
   const usage = new Map<string, WireUsage>();
   const ending = new Map<string, WireState>();
@@ -223,6 +234,9 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     const started = new Map<string, string>();
     for (const event of events) {
       if (event.type === 'tool.started') started.set(event.callId, event.at);
+      if (event.type === 'context.compacted') {
+        compacted.set(event.messageId, { before: event.estimatedTokens, after: event.afterTokens });
+      }
       if (event.type !== 'tool.completed') continue;
       const at = started.get(event.callId);
       timing.set(event.callId, {
@@ -299,13 +313,19 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
      * not the person's. They are kept as a system notification rather than
      * dropped, because a transcript that reads as if nothing happened between
      * two turns is a conversation read wrong.
+     *
+     * A summary is the one of those whose text is not what a person reads: it
+     * was written for the model, and the sentence that says a compaction
+     * happened is the same one the live turn sent. Every message it stands for
+     * stays a turn of its own - `summarizes` says what a request no longer
+     * carries, not what the conversation has lost.
      */
     if (message.role === 'user' || message.role === 'system') {
       // A harness message before anything was asked opens the turn, and the
       // notification below carries its words: the message text stays empty so
       // the same sentence is not in two places.
       if (open === undefined) begin({ ...message, parts: [] }, 'agent');
-      const said = textOf(message);
+      const said = message.source === 'summary' ? compactionNotice(compacted.get(message.id)) : textOf(message);
       if (said !== '' && open !== undefined) open.parts.push({ kind: 'systemNotification', content: said });
       continue;
     }

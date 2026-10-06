@@ -165,7 +165,7 @@ afterEach(() => {
   globalThis.fetch = realFetch;
 });
 
-it('turns all four capabilities on by default, so the model is offered their nine tools', async () => {
+it('turns all four capabilities on by default, so the model is offered their nine tools and cofold\'s own', async () => {
   const dir = place();
   const { model, session, v } = await open({ script: [{ text: 'ok' }], workspace: dir, store: dir });
   session.begin('t1', 'hello');
@@ -173,7 +173,7 @@ it('turns all four capabilities on by default, so the model is offered their nin
 
   expect(DEFAULT_TOOLS).toEqual({ files: true, shell: true, web: true, memory: true });
   expect(offeredNames(model)).toEqual([
-    'edit_file', 'list_files', 'memory_read', 'memory_write',
+    'ask_user', 'edit_file', 'list_files', 'memory_read', 'memory_write',
     'read_file', 'search_files', 'shell_exec', 'web_fetch', 'write_file',
   ]);
   rmSync(dir, { recursive: true, force: true });
@@ -216,8 +216,8 @@ it('offers web_search only when a search provider is configured', async () => {
   await when(() => ended(searching.v));
   const names = offeredNames(searching.model);
   expect(names).toContain('web_search');
-  // The full ten only once a provider is there to answer one.
-  expect(names).toHaveLength(10);
+  // The full eleven, `ask_user` among them, only once a provider answers one.
+  expect(names).toHaveLength(11);
   rmSync(dir, { recursive: true, force: true });
 });
 

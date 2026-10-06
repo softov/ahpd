@@ -14,8 +14,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore, textOf } from '@cofold/agents';
-import type { ModelAdapter, Policy, ReasoningEffort, Store } from '@cofold/agents';
-import { openaiCompat } from '@cofold/model-openai-compat';
+import type { ModelAdapter, ModelInfo, ModelProvider, Policy, ReasoningEffort, Store } from '@cofold/agents';
+import { openaiCompat, openaiCompatProvider } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath, splitModel } from './config.js';
@@ -74,6 +74,15 @@ export interface CofoldOptions {
   tools?: ToolsConfig;
   /** A model adapter to use instead of `openaiCompat`; for a test or an embedder. */
   adapter?: ModelAdapter;
+  /**
+   * The estimated history size at which a session folds itself into a summary.
+   *
+   * Never above 80% of the model's listed `contextTokens`, or of 32000 when the
+   * list gave none, and that 80% is what an absent value means: a point at the
+   * window itself would make the summary step ask for more than the model can
+   * take.
+   */
+  autoCompactTokens?: number;
   /**
    * The run-level policy an approval decision comes from.
    *
@@ -209,7 +218,7 @@ const endpointOf = (
  * a model offered by the list is selected through the same provider, base URL,
  * key and headers the list was read from.
  */
-interface Connection {
+export interface Connection {
   /** The model as it was spelled: a reference, or a bare id. */
   reference?: string;
   /** The model id the endpoint is asked for, without any provider prefix. */
@@ -293,48 +302,38 @@ const connectionOf = (
 const CATALOGUE_TIMEOUT_MS = 5000;
 
 /**
- * Every model the endpoint says it serves.
+ * One catalogue entry as a client is offered it.
  *
- * An OpenAI-compatible `GET /models`, which is where OpenRouter publishes the
- * models it routes to and what LM Studio answers with what it has loaded. Each
- * id is offered as `<provider>/<model id>`, the spelling the harness itself
- * writes, because OpenRouter's ids contain slashes and a bare one would be read
- * as a provider reference.
+ * The id is already the reference the endpoint's own id was read into. The two
+ * limits travel only when the endpoint published a positive number for them,
+ * the way pi's offered rows do, so a model nothing is known about gets no
+ * number rather than a made-up one and a client sizes the conversation against
+ * what the endpoint actually said.
  *
- * Anything that goes wrong - a refused connection, a wrong shape, a timeout - is
- * an empty list: an endpoint that cannot be asked offers the configured model
- * alone, rather than a picker with no rows.
+ * Nothing else of `ModelInfo` travels: a row is what a picker draws, and the
+ * catalogue's `features` and `pricing` are what a turn is built from.
  */
-const listModels = async (connection: Connection): Promise<{ id: string; name: string }[]> => {
-  try {
-    // A key written as a function is asked here too, so a catalogue read after
-    // a rotation is not sent the token the last one used.
-    const key = typeof connection.apiKey === 'function' ? await connection.apiKey() : connection.apiKey;
-    const response = await fetch(`${connection.baseUrl.replace(/\/+$/, '')}/models`, {
-      headers: {
-        accept: 'application/json',
-        ...(key === undefined ? {} : { authorization: `Bearer ${key}` }),
-        ...connection.headers,
-      },
-      signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS),
-    });
-    if (!response.ok) return [];
-    const body = await response.json() as { data?: unknown };
-    if (!Array.isArray(body.data)) return [];
-    const models: { id: string; name: string }[] = [];
-    for (const raw of body.data) {
-      if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) continue;
-      const held = raw as Record<string, unknown>;
-      const id = text(held.id);
-      if (id === undefined) continue;
-      models.push({ id: `${connection.prefix}/${id}`, name: text(held.name) ?? id });
-    }
-    return models;
-  }
-  catch {
-    return [];
-  }
-};
+export const rowOf = (info: ModelInfo): Offered['models'][number] => ({
+  id: info.id,
+  name: info.name,
+  ...(typeof info.contextTokens === 'number' && info.contextTokens > 0 ? { maxContextWindow: info.contextTokens } : {}),
+  ...(typeof info.maxOutputTokens === 'number' && info.maxOutputTokens > 0 ? { maxOutputTokens: info.maxOutputTokens } : {}),
+});
+
+/**
+ * What the backend already holds for a turn's model.
+ *
+ * A session `cofoldAgent` built is handed this, so its turn is built from the
+ * transport the catalogue was read through and with the price that catalogue
+ * listed for the model; a session built by a caller that named none has
+ * nothing here, and `modelOf` builds an adapter of its own.
+ */
+export interface Held {
+  /** The transport one endpoint is asked through, built once per endpoint and key. */
+  providerOf(connection: Connection): ModelProvider;
+  /** What the catalogue said about a model reference, read from the cache. */
+  infoOf(reference: string | undefined): ModelInfo | undefined;
+}
 
 /**
  * The model a session runs on.
@@ -346,6 +345,13 @@ const listModels = async (connection: Connection): Promise<{ id: string; name: s
  * has already pointed cofold at a provider does not say it again here, and no
  * token has to be lent for the common case.
  *
+ * `held` is how the backend's own catalogue reaches the turn: the model is
+ * built through the provider that catalogue was read from, carrying the price
+ * the list published, so a real endpoint's turn ends costing what its own
+ * catalogue says (cofold decision 108, `pricing-on-adapter`). Nothing held
+ * means a provider of this call's own, which is what an embedder that passed
+ * neither an adapter nor a backend gets.
+ *
  * The key is the one a client lent through `authenticate` for this backend's
  * protected resource, then the package's own, then the named provider's. It is
  * deliberately not a session setting: a credential in configuration is a
@@ -356,22 +362,38 @@ export const modelOf = (
   settings: Record<string, unknown> = {},
   credentials: Record<string, string> = {},
   harness: HarnessConfig = harnessConfig(),
+  held?: Held,
 ): ModelAdapter => {
   if (options.adapter !== undefined) return options.adapter;
   const connection = connectionOf(options, settings, credentials, harness, true);
   const effort = effortOf(settings.effortLevel);
+  /*
+   * A chosen level turns reasoning on for the request, because the adapter
+   * sends nothing while `features.reasoning` is false - its default - and
+   * off, missing or unrecognised sends nothing at all.
+   */
+  const chosen = effort === undefined ? {} : { params: { reasoning: { effort } }, features: { reasoning: true } };
+  if (held !== undefined) {
+    /*
+     * The listed price, read from the cache and not waited for: the first turns
+     * of a session run before the endpoint has answered, and a turn that waited
+     * on a catalogue would be a turn that starts late.
+     */
+    const pricing = held.infoOf(connection.reference)?.pricing;
+    // Strict resolution has answered that a model was chosen.
+    return held.providerOf(connection).model({
+      id: connection.model as string,
+      ...(pricing === undefined ? {} : { pricing }),
+      ...chosen,
+    });
+  }
   // Strict resolution has answered that a model was chosen.
   return openaiCompat({
     baseUrl: connection.baseUrl,
     model: connection.model as string,
     ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
     ...(connection.headers === undefined ? {} : { headers: connection.headers }),
-    /*
-     * A chosen level turns reasoning on for the request, because the adapter
-     * sends nothing while `features.reasoning` is false - its default - and
-     * off, missing or unrecognised sends nothing at all.
-     */
-    ...(effort === undefined ? {} : { params: { reasoning: { effort } }, features: { reasoning: true } }),
+    ...chosen,
   });
 };
 
@@ -507,11 +529,66 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
    * on the same endpoint and key would ask the same question. An empty answer is
    * not kept, so an endpoint that was down at startup is asked again rather than
    * remembered as one with no models.
+   *
+   * The whole entry is kept, and not only the row a picker draws: the price the
+   * list published is what the turn's model is built with.
    */
-  const catalogues = new Map<string, { id: string; name: string }[]>();
+  const catalogues = new Map<string, ModelInfo[]>();
+
+  /**
+   * The transport one endpoint is asked through, by the endpoint and the key.
+   *
+   * One per endpoint and key rather than one per turn: a turn's model is built
+   * from the provider the catalogue was read from, so the two cannot disagree
+   * about which endpoint is in force, and the price the list gave reaches
+   * `.model()` by cofold's own route.
+   */
+  const providers = new Map<string, ModelProvider>();
   const cacheKey = (connection: Connection): string => `${connection.baseUrl}\n${connection.apiKey ?? ''}`;
 
-  const catalogueOf = async (connection: Connection): Promise<{ id: string; name: string }[]> => {
+  const providerOf = (connection: Connection): ModelProvider => {
+    const key = cacheKey(connection);
+    const held = providers.get(key);
+    if (held !== undefined) return held;
+    const built = openaiCompatProvider({
+      baseUrl: connection.baseUrl,
+      ...(connection.apiKey === undefined ? {} : { apiKey: connection.apiKey }),
+      ...(connection.headers === undefined ? {} : { headers: connection.headers }),
+    });
+    providers.set(key, built);
+    return built;
+  };
+
+  /**
+   * Every model the endpoint says it serves, in this backend's spelling.
+   *
+   * cofold's own `GET /models`, which is where OpenRouter publishes the models
+   * it routes to and what LM Studio answers with what it has loaded. Each id is
+   * offered as `<provider>/<model id>`, the spelling the harness itself writes,
+   * because OpenRouter's ids contain slashes and a bare one would be read as a
+   * provider reference.
+   *
+   * Anything that goes wrong - a refused connection, a wrong shape, a timeout -
+   * is an empty list: an endpoint that cannot be asked offers the configured
+   * model alone, rather than a picker with no rows.
+   */
+  const listModels = async (connection: Connection): Promise<ModelInfo[]> => {
+    try {
+      const found = await providerOf(connection).listModels({ signal: AbortSignal.timeout(CATALOGUE_TIMEOUT_MS) });
+      const models: ModelInfo[] = [];
+      for (const info of found) {
+        const id = text(info.id);
+        if (id === undefined) continue;
+        models.push({ ...info, id: `${connection.prefix}/${id}`, name: text(info.name) ?? id });
+      }
+      return models;
+    }
+    catch {
+      return [];
+    }
+  };
+
+  const catalogueOf = async (connection: Connection): Promise<ModelInfo[]> => {
     const key = cacheKey(connection);
     const held = catalogues.get(key);
     if (held !== undefined) return held;
@@ -527,11 +604,38 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
    * asked answers nothing on this call and is asked in the background; the
    * configured model stands in until it lands.
    */
-  const knownCatalogue = (connection: Connection): { id: string; name: string }[] => {
+  const knownCatalogue = (connection: Connection): ModelInfo[] => {
     const held = catalogues.get(cacheKey(connection));
     if (held !== undefined) return held;
     void catalogueOf(connection);
     return [];
+  };
+
+  /**
+   * The two maps above, as a turn reaches them.
+   *
+   * A turn's model is built through the provider its catalogue was read from,
+   * with the price that catalogue listed, which is cofold's own route for a
+   * cost rather than a second one invented here.
+   */
+  const held: Held = {
+    providerOf,
+    /*
+     * Searched by reference rather than by endpoint, because the reference is
+     * what a turn's settings name and the catalogue it came from is the one
+     * whose ids were written that way. Read from the cache and not waited for:
+     * the first turns of a session run before the endpoint has answered, and
+     * waiting would be a turn that starts late rather than one that starts
+     * unpriced.
+     */
+    infoOf: (reference) => {
+      if (reference === undefined) return undefined;
+      for (const listed of catalogues.values()) {
+        const found = listed.find((one) => one.id === reference);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    },
   };
 
   return {
@@ -608,7 +712,7 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      */
     probe: async (): Promise<Offered> => {
       const connection = connectionOf(options, {}, {}, harness, false);
-      const listed = options.adapter === undefined ? await catalogueOf(connection) : [];
+      const listed = options.adapter === undefined ? (await catalogueOf(connection)).map(rowOf) : [];
       const models = connection.reference === undefined || listed.some((model) => model.id === connection.reference)
         ? listed
         : [{ id: connection.reference, name: connection.reference }, ...listed];
@@ -696,8 +800,14 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      */
     runsNested: true,
     create: (start) => {
-      return cofoldSession(options, start, store, harness, (settings, credentials) =>
-        knownCatalogue(connectionOf(options, settings, credentials, harness, false)));
+      return cofoldSession(
+        options,
+        start,
+        store,
+        harness,
+        (settings, credentials) => knownCatalogue(connectionOf(options, settings, credentials, harness, false)),
+        held,
+      );
     },
   };
 }
