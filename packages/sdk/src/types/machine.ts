@@ -113,6 +113,14 @@ export interface CopyNeed extends Need {
 export interface PartNeed extends Need {
   /** The part's id in the host's versions file, such as `codex`. */
   part: string;
+  /**
+   * A host mount made in the part's place, and only when the part is left out
+   * because it, or a part it requires, could not be built.
+   *
+   * Absent, a part that cannot be built is left out and a session needing it
+   * is refused. A fallback whose host path is not there is no fallback.
+   */
+  fallback?: FileNeed | DirectoryNeed;
 }
 
 /**
@@ -191,6 +199,8 @@ export interface ResolvedNeed {
   provider?: string;
   /** A mount delivered read-only. */
   readOnly?: boolean;
+  /** On a part need: the mount made in its place when the part cannot be built. */
+  fallback?: ResolvedNeed;
   /**
    * An environment variable whose value was read from the vault.
    *

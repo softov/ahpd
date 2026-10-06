@@ -1,6 +1,9 @@
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
+import { resolveNeeds } from '../../sdk/src/machine.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
 import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
@@ -658,5 +661,96 @@ it('needs no option, because pi resolves its own directory and credentials', () 
 
 it('takes the options the schema checked as they are', () => {
   expect(optionsOf({ provider: 'pi-two', projectTrust: 'deny' })).toEqual({ provider: 'pi-two', projectTrust: 'deny' });
+});
+
+// A machine ---------------------------------------------------------------
+
+/** The daemon's `HOME` and `PI_CODING_AGENT_DIR` for one case, put back after it. */
+const withHome = <T>(home: string, agentDir: string | undefined, run: () => T): T => {
+  const before = { HOME: process.env.HOME, PI_CODING_AGENT_DIR: process.env.PI_CODING_AGENT_DIR };
+  process.env.HOME = home;
+  if (agentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = agentDir;
+  try { return run(); }
+  finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
+/** The key variables pi's own provider list reads, from the pi-ai it runs on. */
+const piKeyVariables = (): string[] => {
+  const file = join(import.meta.dirname, '../node_modules/@earendil-works/pi-ai/dist/env-api-keys.js');
+  const source = readFileSync(file, 'utf8');
+  const listed = source.slice(source.indexOf('function getApiKeyEnvVars'), source.indexOf('export function findEnvKeys'));
+  const named = [...listed.matchAll(/"([A-Z][A-Z0-9_]*)"/g)].map((one) => one[1] as string);
+  const constants = ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+  return [...new Set([...named, ...constants])].sort();
+};
+
+it('runs nested, from the ahpd part', () => {
+  const agent = piAgent({}, ['/tmp/pi-machine']);
+  expect(agent.runsNested).toBe(true);
+  expect(agent.machine?.().ahpdPart).toMatchObject({ part: 'ahpd', required: true });
+});
+
+it('keeps its agent directory in a state volume, seeded without auth.json, and declares its keys by name', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  const needs = withHome(home, undefined, () => piAgent({}, ['/tmp/pi-machine']).machine?.() ?? {});
+  expect(needs.piState).toEqual({
+    state: '/ahpd/pi',
+    seed: [{ source: join(home, '.pi', 'agent', 'settings.json') }, { source: join(home, '.pi', 'agent', 'models.json') }],
+    description: expect.stringMatching(/pi/),
+  });
+  expect(needs.piAgentDir).toMatchObject({ name: 'PI_CODING_AGENT_DIR', default: '/ahpd/pi' });
+  expect(JSON.stringify(needs)).not.toContain('auth.json');
+  // A key need is the profile's to fill: it has no default of the daemon's.
+  const keys = Object.values(needs).filter((one) => 'name' in one && one.name !== 'PI_CODING_AGENT_DIR');
+  expect(keys.map((one) => (one as { name: string }).name).sort()).toEqual(piKeyVariables());
+  expect(keys.every((one) => one.default === undefined && one.required !== true)).toBe(true);
+
+  const volume = resolveNeeds(needs, {}, home, 'volume');
+  expect(volume.map((one) => one.kind).sort()).toEqual(['env', 'part', 'state']);
+  expect(volume.find((one) => one.kind === 'env')).toMatchObject({ target: 'PI_CODING_AGENT_DIR', source: '/ahpd/pi' });
+});
+
+it('declares only the provider list\'s keys, whatever variable the host settings name', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  mkdirSync(join(home, '.pi', 'agent'), { recursive: true });
+  writeFileSync(join(home, '.pi', 'agent', 'models.json'), JSON.stringify({ providers: { mine: { apiKey: 'MY_CUSTOM_KEY' } } }));
+  const needs = withHome(home, undefined, () => piAgent({}, ['/tmp/pi-machine']).machine?.() ?? {});
+  expect(JSON.stringify(needs)).not.toContain('MY_CUSTOM_KEY');
+});
+
+it('mounts the host agent directory read-write for state host', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  const dir = join(home, '.pi', 'agent');
+  mkdirSync(dir, { recursive: true });
+  const needs = withHome(home, undefined, () => piAgent({}, ['/tmp/pi-machine']).machine?.() ?? {});
+  expect(needs.piAgentDirectory).toEqual({
+    directory: dir,
+    target: '/ahpd/pi',
+    required: true,
+    when: 'host',
+    description: expect.stringMatching(/pi/),
+  });
+  const host = resolveNeeds(needs, {}, home, 'host');
+  // A key with no value from the profile is left out, so these are all of it.
+  expect(host.map((one) => [one.kind, one.target])).toEqual([
+    ['part', '/opt/ahpd/ahpd'],
+    ['directory', '/ahpd/pi'],
+    ['env', 'PI_CODING_AGENT_DIR'],
+  ]);
+  expect(host.find((one) => one.kind === 'directory')?.readOnly).toBeUndefined();
+});
+
+it('seeds from PI_CODING_AGENT_DIR when the daemon has it', () => {
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-pi-home-'));
+  const needs = withHome(home, '/srv/pi', () => piAgent({}, ['/tmp/pi-machine']).machine?.() ?? {});
+  expect((needs.piState as { seed: { source: string }[] }).seed.map((one) => one.source))
+    .toEqual(['/srv/pi/settings.json', '/srv/pi/models.json']);
+  expect(needs.piAgentDirectory).toMatchObject({ directory: '/srv/pi' });
 });
 

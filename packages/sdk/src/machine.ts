@@ -102,6 +102,24 @@ const from = (source: 'profile' | 'option' | 'default'): string =>
   (source === 'default' ? "the agent's default" : `the ${source}`);
 
 /**
+ * A part need's fallback mount, resolved as a need of its own, or nothing.
+ *
+ * Nothing as well when its host path is not there: a fallback is used only
+ * when the part could not be built, so a missing one leaves the part's own
+ * refusal standing rather than refusing a machine whose part builds.
+ */
+const fallbackOf = (name: string, need: { fallback?: MachineNeed }, home: string, mode: StateMode): { fallback?: ResolvedNeed } => {
+  if (need.fallback === undefined) return {};
+  try {
+    const [one] = resolveNeeds({ [`${name}.fallback`]: need.fallback }, {}, home, mode);
+    return one === undefined ? {} : { fallback: one };
+  }
+  catch {
+    return {};
+  }
+};
+
+/**
  * One agent's needs, with every value settled.
  *
  * The order is the profile's value, then the plugin option's, then the need's
@@ -150,7 +168,7 @@ export function resolveNeeds(
       if (!PART_ID.test(said)) {
         throw new Error(`machine need ${name} names the part ${said} (from ${from(where)}), and a part is named by its id in the versions file`);
       }
-      resolved.push({ name, kind: 'part', source: said, target: partTarget(said), ...about });
+      resolved.push({ name, kind: 'part', source: said, target: partTarget(said), ...about, ...fallbackOf(name, need, home, mode) });
       continue;
     }
     // A state directory is a place inside the machine, so it is never looked

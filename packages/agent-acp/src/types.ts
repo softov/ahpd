@@ -40,7 +40,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Bag, MessageFrom, SecretRef } from '@ahpd/sdk';
+import type { Bag, MessageFrom, SecretRef, Seed } from '@ahpd/sdk';
 
 /**
  * What a machine needs for one agent to run in it, as the agent declares it.
@@ -57,6 +57,12 @@ export interface AcpMachine {
   env?: Record<string, string | SecretRef>;
   /** Host paths copied into the machine, each to an absolute path there. */
   copy?: { source: string; target: string }[];
+  /** The part the agent's CLI comes from, by its id in the host's versions file. */
+  part?: string;
+  /** The directory inside the machine the agent keeps its configuration in, as a state volume. */
+  state?: string;
+  /** The host files and directories that state directory is seeded from; never a login file. */
+  seed?: Seed[];
 }
 
 /** What an embedder, or a plugin's options, may set. */

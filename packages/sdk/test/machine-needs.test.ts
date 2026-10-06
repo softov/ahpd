@@ -143,6 +143,24 @@ it('resolves a part to its place under /opt/ahpd, and a profile value names anot
     .toThrow(/^machine need codex names the part \.\.\/etc \(from the profile\), and a part is named by its id in the versions file$/);
 });
 
+it('resolves a part need\'s fallback mount with it, and drops one whose host path is not there', () => {
+  const dir = temp();
+  const binary = join(dir, 'claude');
+  writeFileSync(binary, '');
+  const needs = (file: string): Record<string, MachineNeed> => ({
+    claudePart: { part: 'claude', fallback: { file, target: '/usr/local/bin/claude', readOnly: true, required: true } },
+  });
+  expect(resolveNeeds(needs(binary))).toEqual([{
+    name: 'claudePart',
+    kind: 'part',
+    source: 'claude',
+    target: '/opt/ahpd/claude',
+    fallback: { name: 'claudePart.fallback', kind: 'file', source: binary, target: '/usr/local/bin/claude', readOnly: true },
+  }]);
+  // A fallback is used only when the part fails, so a missing one refuses nothing.
+  expect(resolveNeeds(needs(join(dir, 'gone')))).toEqual([{ name: 'claudePart', kind: 'part', source: 'claude', target: '/opt/ahpd/claude' }]);
+});
+
 it('keeps the needs of the mode a machine is made in, and a need without `when` in both', () => {
   const dir = temp();
   const needs: Record<string, MachineNeed> = {

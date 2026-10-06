@@ -260,6 +260,20 @@ const ownedArchive = (files: Tarball[], ids: { uid: number; gid: number }, dir: 
 /** Whether a container user is root, which owns whatever `docker cp` wrote. */
 const isRoot = (user: string): boolean => user === '' || /^(?:root|0)(?::|$)/.test(user);
 
+/** A host mount that stands in for a part a machine could not have built. */
+export interface PartFallback {
+  /** The part it stands in for. */
+  part: string;
+  /** The need that declared it, for the line that says it was used. */
+  need: string;
+  /** The host path mounted. */
+  source: string;
+  /** Where it is mounted in the machine. */
+  target: string;
+  /** The mount as the runtime is handed it, `<source>:<target>[:ro]`. */
+  mount: string;
+}
+
 /** What to make. */
 export interface MachineSpec {
   /**
@@ -352,6 +366,20 @@ export interface MachineSpec {
    * one's `bin` in front.
    */
   parts?: MadePart[];
+  /**
+   * The host mount each asked part is replaced by when it cannot be built, by
+   * part id, as the agent that needs the part declared it.
+   *
+   * What a manifest answers; the plugin adds a fallback's mount to `mounts`
+   * and its part to `hostParts` only for a part whose build failed.
+   */
+  partFallbacks?: PartFallback[];
+  /**
+   * The parts this machine has from this host rather than from their image,
+   * each a fallback mount made in place of a part that could not be built.
+   * The `ahpd.parts` label names each as `<id>@host`.
+   */
+  hostParts?: string[];
   /**
    * The state directories this machine asks for, each by the agent that
    * declared it; the plugin names each one's volume into `states`.
@@ -483,9 +511,11 @@ export interface ComputerRuntime {
    * Run a command inside one, and answer what it printed and what it exited with.
    *
    * `env` is set for the command alone, each variable by name with its value in
-   * the environment the runtime's program is spawned with.
+   * the environment the runtime's program is spawned with. `provider` is the
+   * agent whose session asked for the command, which the computer plugin gives
+   * only that agent's vault-read variables; a runtime itself ignores it.
    */
-  exec(id: string, command: string[], env?: Record<string, string>): Promise<ExecResult>;
+  exec(id: string, command: string[], env?: Record<string, string>, provider?: string): Promise<ExecResult>;
   /** Start one that is stopped. */
   start(id: string): Promise<void>;
   /** Stop and start one, whichever it was. */
@@ -1108,7 +1138,7 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
   }
   // The parts it was made with, which is what a session needing one is
   // checked against and what puts each part's `bin` on every command's `PATH`.
-  if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts)}`);
+  if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts, spec.hostParts)}`);
   // Whether its agents' state lives in volumes, which a remove reads back.
   if ((spec.states ?? []).length > 0) runArgs.push('--label', `${MACHINE_STATE}=volume`);
   held.runArgs = runArgs;
@@ -2084,7 +2114,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         if (route === 'image') flags.push('--mount', imageMountOf(part));
         else flags.push('-v', `${volumeOf(part)}:${partTarget(part.id)}:ro`);
       }
-      if (spec.parts !== undefined) flags.push('--label', `${MACHINE_PARTS}=${partsLabel(parts)}`);
+      if (spec.parts !== undefined) flags.push('--label', `${MACHINE_PARTS}=${partsLabel(parts, spec.hostParts)}`);
       const variables = madeWith(spec);
       if (parts.length > 0) {
         variables.PATH = pathWith(parts.map((one) => one.id), spec.env?.PATH ?? await imagePath(image));

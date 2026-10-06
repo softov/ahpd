@@ -21,6 +21,7 @@ import type { RuntimeModels } from './backend.js';
 import { catalogue, forgetSession, stateFile, watchedSession } from './catalog.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
+import { piMachine } from './machine.js';
 import { piSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { PiOptions } from './types.js';
@@ -157,6 +158,20 @@ export function piAgent(
      * offers the row again.
      */
     delete: (id, directory) => forgetSession(options, provider, id, directory),
+
+    /*
+     * The machine half. pi is a library in this process, so no command can
+     * run it in a machine: a session on one runs in an `ahpd` started inside
+     * it, which loads this plugin, and the session is the SDK's proxy to it -
+     * decision `a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent`.
+     */
+    runsNested: true,
+
+    /*
+     * What that machine needs: the `ahpd` part the nested host runs from, pi's
+     * agent directory, and the provider keys a profile names.
+     */
+    machine: () => piMachine(provider),
 
     create: (start) => piSession(options, start),
   };

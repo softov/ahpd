@@ -683,15 +683,37 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
      *
      * The source path is read here rather than at construction, so a profile
      * that points the variable elsewhere is followed.
+     *
+     * In a state volume, the default, `computerConfigDir` is the volume, seeded
+     * with that file at the same relative path; the read-only mount of the
+     * host's file is for a profile that keeps state on the host.
+     *
+     * The nested host this backend runs in is `ahpd` from the `ahpd` part,
+     * which carries this plugin and puts `ahpd` on the machine's `PATH`, so the
+     * image needs nothing installed.
      */
     machine: (): Record<string, MachineNeed> => {
-      if (configDir === false) return {};
+      const ahpd: Record<string, MachineNeed> = {
+        ahpdPart: {
+          part: 'ahpd',
+          required: true,
+          description: 'ahpd with its plugins, which the nested host this backend runs in is started from.',
+        },
+      };
+      if (configDir === false) return ahpd;
+      const read = harnessConfigPath();
       return {
+        cofoldState: {
+          state: configDir,
+          seed: [{ source: read, target: 'cofold/config.json' }],
+          description: 'The cofold configuration, which holds the provider endpoints and their keys, kept in a volume.',
+        },
         cofoldConfig: {
-          file: harnessConfigPath(),
+          file: read,
           target: `${configDir}/cofold/config.json`,
           readOnly: true,
           required: true,
+          when: 'host',
           description: 'The cofold configuration, which holds the provider endpoints and their keys.',
         },
         cofoldConfigPath: {
@@ -699,6 +721,7 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
           default: `${configDir}/cofold/config.json`,
           description: 'Where the harness looks for its configuration inside the machine.',
         },
+        ...ahpd,
       };
     },
     /*

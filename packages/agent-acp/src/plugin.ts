@@ -14,7 +14,7 @@
  * once.
  */
 
-import type { Plugin, PluginHost, SecretRef } from '@ahpd/sdk';
+import type { Plugin, PluginHost, SecretRef, Seed } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { presets as shipped } from './presets.js';
@@ -142,7 +142,7 @@ const machineOf = (said: unknown, by: string): AcpMachine => {
   if (typeof said !== 'object' || said === null || Array.isArray(said)) throw new Error(`${at} is not an object`);
   const block = said as Record<string, unknown>;
   for (const key of Object.keys(block)) {
-    if (key !== 'env' && key !== 'copy') throw new Error(`${at}.${key} is not a field; a machine takes env and copy`);
+    if (!MACHINE_KEYS.includes(key)) throw new Error(`${at}.${key} is not a field; a machine takes env, copy, part, state and seed`);
   }
   const env: Record<string, string | SecretRef> = {};
   if (block.env !== undefined) {
@@ -178,10 +178,57 @@ const machineOf = (said: unknown, by: string): AcpMachine => {
       copy.push({ source, target });
     });
   }
+  if (block.part !== undefined && (typeof block.part !== 'string' || !PART_ID.test(block.part))) throw new Error(`${at}.part is not a part id`);
+  if (block.state !== undefined && (typeof block.state !== 'string' || !block.state.startsWith('/'))) throw new Error(`${at}.state is not an absolute path`);
+  const seed = block.seed === undefined ? undefined : seedsOf(block.seed, `${at}.seed`);
   return {
     ...(Object.keys(env).length === 0 ? {} : { env }),
     ...(copy.length === 0 ? {} : { copy }),
+    ...(block.part === undefined ? {} : { part: block.part as string }),
+    ...(block.state === undefined ? {} : { state: block.state as string }),
+    ...(seed === undefined ? {} : { seed }),
   };
+};
+
+/** The fields a preset's `machine` takes. */
+const MACHINE_KEYS = ['env', 'copy', 'part', 'state', 'seed'];
+
+/** A part id, as the versions file names one. */
+const PART_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+/** A `machine.seed` list, each entry a host `source` with an optional `target`, `keep` and `drop`. */
+const seedsOf = (said: unknown, at: string): Seed[] => {
+  if (!Array.isArray(said)) throw new Error(`${at} is not a list`);
+  return said.map((one: unknown, index): Seed => {
+    const { source, target, keep, drop } = bagOf(one);
+    const where = `${at}[${String(index)}]`;
+    if (typeof source !== 'string' || source === '') throw new Error(`${where} needs a source`);
+    if (target !== undefined && typeof target !== 'string') throw new Error(`${where}.target is not a string`);
+    const words = (value: unknown, key: string): string[] | undefined => {
+      if (value === undefined) return undefined;
+      if (!Array.isArray(value) || value.some((word) => typeof word !== 'string')) throw new Error(`${where}.${key} is not a list of strings`);
+      return value as string[];
+    };
+    const kept = words(keep, 'keep');
+    const dropped = words(drop, 'drop');
+    return {
+      source,
+      ...(target === undefined ? {} : { target: target as string }),
+      ...(kept === undefined ? {} : { keep: kept }),
+      ...(dropped === undefined ? {} : { drop: dropped }),
+    };
+  });
+};
+
+/**
+ * A preset's machine: its row's, with the preset's own laid over it by key, and
+ * each variable of `env` by name.
+ */
+const machineUnder = (row: AcpMachine | undefined, own: AcpMachine | undefined): AcpMachine | undefined => {
+  if (row === undefined) return own;
+  if (own === undefined) return row;
+  const env = { ...row.env, ...own.env };
+  return { ...row, ...own, ...(Object.keys(env).length === 0 ? {} : { env }) };
 };
 
 /**
@@ -205,7 +252,7 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
 
   // Read before the preset's own `env`, which asks the vault: a block that
   // cannot be used refuses the preset without a secret being read for it.
-  const machine = said.machine === undefined ? undefined : machineOf(said.machine, by);
+  const machine = machineUnder(taken?.machine, said.machine === undefined ? undefined : machineOf(said.machine, by));
   const env = { ...(taken?.env ?? {}), ...await secretsOf(host, said.env, `${by}.env`) };
   // Checked here rather than by the schema, which says this key is an object
   // and cannot say the id inside it is the sign-in to a method of no name.

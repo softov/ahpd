@@ -5,13 +5,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
-import { machineRefusal } from '../../sdk/src/computers.js';
-import { readParts } from '../src/parts.js';
+import { computersFor, machineRefusal } from '../../sdk/src/computers.js';
+import { pinnedOf, readParts } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
-import type { HostOptions } from '../../sdk/src/types/host.js';
+import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
 import type { Vault } from '../../sdk/src/types/vault.js';
 
@@ -833,6 +833,104 @@ it('reads an agent need whose default names a secret, for the machine\'s owner a
   expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines.map((one) => one.name)).not.toContain('bo');
 });
 
+/*
+ * A value the vault filled reaches only the agent whose need declared it: a
+ * machine for pi and a Claude variant on another endpoint gives pi's keys to
+ * pi's nested host and none of them to the variant's CLI, which signs in with
+ * its own env.
+ */
+const PI_KEYS: Record<string, MachineNeed> = {
+  'pi.ANTHROPIC_API_KEY': { name: 'ANTHROPIC_API_KEY' },
+  'pi.OPENAI_API_KEY': { name: 'OPENAI_API_KEY' },
+};
+const OPENROUTER: Record<string, MachineNeed> = { claudeConfig: { name: 'CLAUDE_CONFIG_DIR', default: '/ahpd/claude-openrouter' } };
+
+it('gives a vault-filled key only to the agent whose need declared it', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const store = holding({ 'user:ada/anthropic': 'pi-anthropic', 'user:ada/openai': 'pi-openai' });
+  const pluginOptions = {
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: {
+      mixed: {
+        agents: ['pi', 'claude-openrouter'],
+        needs: { 'pi.ANTHROPIC_API_KEY': { $secret: 'user:ada/anthropic' }, 'pi.OPENAI_API_KEY': { $secret: 'user:ada/openai' } },
+      },
+    },
+  };
+  const agents = [agent('pi', PI_KEYS), agent('claude-openrouter', OPENROUTER)];
+  const loaded = async () => {
+    const { options, problems } = await load(pluginOptions, agents, store);
+    expect(problems).toEqual([]);
+    return options;
+  };
+  const options = await loaded();
+  expect(await written(options, 'box', { profile: 'mixed' }, 'user:ada')).toBeUndefined();
+
+  /** What a session of `provider` is given in the machine, through the port the host hands its backend. */
+  const given = async (from: HostOptions, provider: string) => {
+    const port = computersFor(from.computers as NonNullable<HostOptions['computers']>, provider, `${provider}:/one`);
+    const how = provider === 'pi'
+      ? await port.nested?.('box', { plugins: ['@ahpd/agent-pi'] })
+      : await port.how('box', { command: 'claude', env: { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'or-token' } });
+    const args = how?.args ?? [];
+    return { names: args.flatMap((one, at) => (args[at - 1] === '-e' ? [one] : [])), env: how?.env ?? {} };
+  };
+
+  const claude = await given(options, 'claude-openrouter');
+  expect(claude.names.sort()).toEqual(['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL']);
+  expect(claude.env.ANTHROPIC_API_KEY).toBeUndefined();
+  expect(claude.env.OPENAI_API_KEY).toBeUndefined();
+  expect(JSON.stringify(claude.env)).not.toMatch(/pi-anthropic|pi-openai/);
+
+  const pi = await given(options, 'pi');
+  expect(pi.names.sort()).toEqual(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']);
+  expect(pi.env).toMatchObject({ ANTHROPIC_API_KEY: 'pi-anthropic', OPENAI_API_KEY: 'pi-openai' });
+
+  // The owners are recorded with the references, so a daemon started
+  // afterwards reads them again and scopes them the same way.
+  expect(JSON.parse(readFileSync(join(dir, 'computers.json'), 'utf8'))).toMatchObject({
+    box: { needs: expect.arrayContaining([expect.objectContaining({ variable: 'ANTHROPIC_API_KEY', providers: ['pi'] })]) },
+  });
+  const again = await loaded();
+  expect((await given(again, 'claude-openrouter')).env.ANTHROPIC_API_KEY).toBeUndefined();
+  expect((await given(again, 'pi')).env.ANTHROPIC_API_KEY).toBe('pi-anthropic');
+
+});
+
+it('gives computer_exec the calling session agent\'s vault-filled keys, and every one to a call with no agent', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/anthropic': 'pi-anthropic', 'user:ada/openai': 'pi-openai' });
+  const { options, problems } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: {
+      mixed: {
+        agents: ['pi', 'claude-openrouter'],
+        needs: { 'pi.ANTHROPIC_API_KEY': { $secret: 'user:ada/anthropic' }, 'pi.OPENAI_API_KEY': { $secret: 'user:ada/openai' } },
+      },
+    },
+  }, [agent('pi', PI_KEYS), agent('claude-openrouter', OPENROUTER)], store);
+  expect(problems).toEqual([]);
+  expect(await written(options, 'box', { profile: 'mixed' }, 'user:ada')).toBeUndefined();
+
+  const tool = (options.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  /** The variables the last command was given by name, after a call from `provider`'s session. */
+  const ranWith = async (provider?: string): Promise<string[]> => {
+    await tool.run({ id: 'box', command: 'env' }, (provider === undefined ? {} : { provider }) as never);
+    const held = JSON.parse(readFileSync(state, 'utf8')) as { commands?: { env: Record<string, string> }[] };
+    return Object.keys(held.commands?.at(-1)?.env ?? {}).sort();
+  };
+  expect(await ranWith('claude-openrouter')).toEqual([]);
+  expect(await ranWith('pi')).toEqual(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']);
+  expect(await ranWith()).toEqual(['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']);
+});
+
 it('refuses only the create whose agent default names a secret the vault does not hold', async () => {
   const state = join(temp(), 'docker.json');
   const { options } = await load({
@@ -1059,7 +1157,7 @@ it('reads a machine with no recorded needs again from the needs its agents decla
  * it has. A part that will not build is left out, and only a session whose
  * agent needs it is refused.
  */
-const PARTS = new Map(readParts().map((one) => [one.id, one.version]));
+const PARTS = new Map(readParts().map((one) => [one.id, one.kind === 'ahpd' ? one.version : pinnedOf(one)]));
 const at = (id: string): string => `${id}@${PARTS.get(id) ?? ''}`;
 const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
@@ -1197,6 +1295,97 @@ it('makes a session\'s machine when the part that fails is one its agent does no
   // The profile's gemini asked for node first, then the session's codex.
   expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(`${at('node')},${at('codex')}`);
   expect(lines.filter((one) => one.includes('without the part gemini'))).toHaveLength(1);
+});
+
+/*
+ * A part need may carry a fallback mount, made in the part's place when the
+ * part cannot be built: Claude's host binary, where `computerCliFallback` says
+ * `host`. Without one, the part is left out and the session refused.
+ */
+const CLAUDE_FAILS = { failBuild: [`ahpd-part/claude:${PARTS.get('claude') ?? ''}`] };
+
+/** A Claude-like agent whose part need carries the host binary as its fallback, or none. */
+const clauder = (binary?: string): Agent => agent('clauder', {
+  claudePart: {
+    part: 'claude',
+    required: true,
+    ...(binary === undefined ? {} : { fallback: { file: binary, target: '/usr/local/bin/claude', readOnly: true, required: true } }),
+  },
+});
+
+it('makes the machine without a part that will not build and has no fallback, and refuses its session', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options, lines } = await loadParts(state, { agents: ['clauder'] }, [clauder()], CLAUDE_FAILS);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
+
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  expect(held.machines.find((one) => one.name === 'box')?.labels?.['ahpd.parts']).toBe(at('node'));
+  expect(lines.filter((one) => one.includes('without the part claude'))).toHaveLength(1);
+  expect(await machineRefusal(options.computers, 'box', 'clauder', 'clauder:/one')).toMatch(/made without the part claude, which clauder needs/);
+});
+
+it('mounts a part need\'s fallback when the part will not build, labelled as the host\'s, and runs its session', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const binary = join(dir, 'claude');
+  writeFileSync(binary, '#!/bin/sh\n');
+  const { options, lines } = await loadParts(state, { agents: ['clauder'] }, [clauder(binary)], CLAUDE_FAILS);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
+
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  const box = held.machines.find((one) => one.name === 'box');
+  expect(box?.mounts).toContain(`${binary}:/usr/local/bin/claude:ro`);
+  expect(box?.labels?.['ahpd.parts']).toBe(`${at('node')},claude@host`);
+  const said = lines.filter((one) => one.includes('the part claude'));
+  expect(said).toHaveLength(1);
+  expect(said[0]).toMatch(new RegExp(`box is made with ${binary} mounted at /usr/local/bin/claude in place of the part claude, which could not be built: .*failed to solve`));
+  expect(await machineRefusal(options.computers, 'box', 'clauder', 'clauder:/one')).toBeUndefined();
+});
+
+it('leaves a part need\'s fallback off a machine whose part builds', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const binary = join(dir, 'claude');
+  writeFileSync(binary, '#!/bin/sh\n');
+  const { options } = await loadParts(state, { agents: ['clauder'] }, [clauder(binary)]);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' });
+
+  const box = (JSON.parse(readFileSync(state, 'utf8')) as Held).machines.find((one) => one.name === 'box');
+  expect(box?.mounts ?? []).not.toContain(`${binary}:/usr/local/bin/claude:ro`);
+  expect(box?.labels?.['ahpd.parts']).toBe(`${at('claude')},${at('node')}`);
+});
+
+it('refuses a machine whose part fallback lands where another mount does, naming both', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const binary = join(dir, 'claude');
+  const other = join(dir, 'other');
+  writeFileSync(binary, '#!/bin/sh\n');
+  writeFileSync(other, '#!/bin/sh\n');
+  // The part builds, and the clash is refused all the same: the fallback is
+  // checked where it would land, before anything is built.
+  const { options } = await loadParts(state, { agents: ['clauder'], mounts: [`${other}:/usr/local/bin/claude:ro`] }, [clauder(binary)]);
+  await expect(providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' }))
+    .rejects.toThrow(`the profile's mount ${other}:/usr/local/bin/claude:ro and the fallback of need claudePart both land at /usr/local/bin/claude`);
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held & { builds: unknown[] };
+  expect(held.machines).toEqual([]);
+  expect(held.builds).toEqual([]);
+});
+
+it('makes a disposable machine for a session whose part falls back, and refuses one whose part has none', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const binary = join(dir, 'claude');
+  writeFileSync(binary, '#!/bin/sh\n');
+  const { options } = await loadParts(state, { disposable: true }, [clauder(binary)], CLAUDE_FAILS);
+  const id = await options.computers?.create?.({ source: 'disposable:box', session: 'clauder:/one', provider: 'clauder', owner: 'user:ada' }) as string;
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  expect(held.machines.find((one) => one.name === id)?.labels?.['ahpd.parts']).toBe(`${at('node')},claude@host`);
+
+  const again = join(dir, 'again.json');
+  const { options: strict } = await loadParts(again, { disposable: true }, [clauder()], CLAUDE_FAILS);
+  await expect(strict.computers?.create?.({ source: 'disposable:box', session: 'clauder:/one', provider: 'clauder', owner: 'user:ada' }))
+    .rejects.toThrow(/the part claude this session's agent needs could not be built/);
 });
 
 it('leaves out a profile part the versions file does not name, and keeps the rest of the profile', async () => {

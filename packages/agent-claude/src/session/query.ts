@@ -3,7 +3,7 @@ import { idOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
-import { queryOptionsOf } from '../options.js';
+import { ownEnvOf, queryOptionsOf } from '../options.js';
 import { agentNameOf } from './customizations.js';
 
 /** What the SDK will accept as a session id of our choosing. */
@@ -31,6 +31,26 @@ export function createQuery(ctx: SessionContext): Query {
    * laid over their `env`, so a preset never replaces a signed-in token.
    */
   const fromPreset = queryOptionsOf(ctx.values);
+
+  /**
+   * What a CLI in a machine is started with: the variant's own `env`, a pushed
+   * credential over it, and `CLAUDE_CONFIG_DIR` last.
+   *
+   * Nothing of the daemon's environment: its `HOME` and `PATH` are this host's,
+   * and a key it holds is the one variant's that names it with `{ fromEnv }`,
+   * not every variant's on the machine. Each value travels by name on the one
+   * `docker exec` that starts this CLI, never as the container's own, so a key
+   * one variant signs in with is not in another's process.
+   */
+  const inMachine = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    for (const [name, value] of Object.entries({ ...ownEnvOf(ctx.values), ...ctx.options.env })) {
+      if (typeof value === 'string') out[name] = value;
+    }
+    const dir = ctx.options.spawnConfigDir;
+    if (typeof dir === 'string') out.CLAUDE_CONFIG_DIR = dir;
+    return out;
+  };
 
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session a session rather than a series of them.
@@ -86,22 +106,6 @@ export function createQuery(ctx: SessionContext): Query {
       ...(ctx.options.spawn === undefined ? {} : {
         pathToClaudeCodeExecutable: ctx.options.spawnExecutable ?? 'claude',
         spawnClaudeCodeProcess: ctx.options.spawn as never,
-        /*
-         * Only what the CLI reads crosses into the machine.
-         *
-         * The SDK's env is this process's, and `HOME`, `PATH` and `PWD` in
-         * there are this host's: forwarded, they send the CLI looking for a
-         * home the machine does not have and a PATH that may not find it.
-         * `CLAUDE_CONFIG_DIR` is set last so a machine mounting this host's
-         * `~/.claude` is one the CLI is already signed in on.
-         */
-        env: {
-          ...Object.fromEntries(Object.entries(process.env)
-            .filter(([key]) => key.startsWith('CLAUDE_') || key.startsWith('ANTHROPIC_'))),
-          ...(ctx.options.spawnConfigDir === false || ctx.options.spawnConfigDir === undefined
-            ? {}
-            : { CLAUDE_CONFIG_DIR: ctx.options.spawnConfigDir }),
-        },
       }),
       // The peers of `cwd`, which the SDK takes at startup. The first entry is
       // the process root and is not one of these.
@@ -148,6 +152,8 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...fromPreset,
       ...(ctx.options.env ? { env: { ...(fromPreset.env as Bag | undefined ?? process.env), ...ctx.options.env } } : {}),
+      // In a machine, the env above is replaced by the variant's own alone.
+      ...(ctx.options.spawn === undefined ? {} : { env: inMachine() }),
       // From the settings, which is where it lives: it is a config key like
       // the others, and a second way in was a second thing to keep in step.
       ...(typeof ctx.settings.permissionMode === 'string' ? { permissionMode: ctx.settings.permissionMode } : {}),

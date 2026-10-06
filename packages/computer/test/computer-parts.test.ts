@@ -219,8 +219,64 @@ it('builds an npm part on the node part, at the version the file pins', () => {
   expect(file).toContain('ENV PATH="/opt/ahpd/node/bin:${PATH}"');
   expect(file).toContain('npm install --prefix /opt/ahpd/codex');
   expect(file).toContain('@agentclientprotocol/codex-acp@2.1.1');
-  expect(file).toContain(`printf 'exec %s "$@"\\n' "/opt/ahpd/node/bin/node /opt/ahpd/codex/node_modules/.bin/codex-acp" >> /opt/ahpd/codex/bin/codex-acp`);
+  // A script bin runs on the part's Node; the launcher holds what the build found.
+  expect(file).toContain(`run=/opt/ahpd/codex/node_modules/.bin/codex-acp; case "$(head -c 2 /opt/ahpd/codex/node_modules/.bin/codex-acp)" in '#!') run="/opt/ahpd/node/bin/node /opt/ahpd/codex/node_modules/.bin/codex-acp";; esac`);
+  expect(file).toContain(`printf 'exec %s "$@"\\n' "$run" >> /opt/ahpd/codex/bin/codex-acp`);
   expect(file).toMatch(/FROM scratch\nCOPY --from=fetch \/opt\/ahpd\/codex \/opt\/ahpd\/codex$/);
+});
+
+it('installs a package pinned at its own version, and moves the tag with it', () => {
+  const part = read([node(), npm({
+    id: 'claude',
+    name: 'Claude',
+    version: '0.85.1',
+    packages: ['@agentclientprotocol/claude-agent-acp', '@anthropic-ai/claude-code@2.1.291'],
+    bin: ['claude-agent-acp', 'claude'],
+  })])[1] as Part;
+  const file = dockerfileOf(part);
+
+  expect(file).toContain('@agentclientprotocol/claude-agent-acp@0.85.1 @anthropic-ai/claude-code@2.1.291');
+  expect(file).not.toContain('claude-code@2.1.291@');
+  // Each bin gets its launcher, the native `claude` included.
+  expect(file).toContain('> /opt/ahpd/claude/bin/claude-agent-acp');
+  expect(file).toContain('> /opt/ahpd/claude/bin/claude;');
+  expect(tagOf(part)).toBe('ahpd-part/claude:0.85.1-2.1.291');
+
+  expect(() => read([node(), npm({ packages: ['@anthropic-ai/claude-code@^2.1.291'] })]))
+    .toThrow(/the package @anthropic-ai\/claude-code@\^2.1.291, whose version is a range/);
+});
+
+it('installs an archive part\'s npm packages beside its download, each at its own version', () => {
+  const part = read([node(), archive({
+    id: 'amp',
+    name: 'Amp',
+    version: '0.9.0',
+    requires: ['node'],
+    packages: ['@ampcode/cli@0.0.1791273659-g33d612'],
+    archives: {
+      'linux-x64': { url: 'https://example.test/amp-acp.tar.gz', sha256: 'ab'.repeat(32) },
+      'linux-arm64': { url: 'https://example.test/amp-acp-arm64.tar.gz', sha256: 'cd'.repeat(32) },
+    },
+    bin: ['amp-acp', 'amp'],
+  })])[1] as Part;
+  const file = dockerfileOf(part);
+
+  expect(file).toContain('COPY --from=ahpd-part/node:24.21.0 /opt/ahpd/node /opt/ahpd/node');
+  expect(file).toContain('RUN npm install --prefix /opt/ahpd/amp --no-audit --no-fund --loglevel=error @ampcode/cli@0.0.1791273659-g33d612');
+  // A bin npm installed is written from `node_modules/.bin`, and the rest found in the archive.
+  expect(file).toContain('elif test -e /opt/ahpd/amp/node_modules/.bin/amp; then run=/opt/ahpd/amp/node_modules/.bin/amp;');
+  expect(file).toContain('found=$(find /opt/ahpd/amp -name amp-acp');
+  expect(tagOf(part)).toBe('ahpd-part/amp:0.9.0-0.0.1791273659-g33d612');
+
+  expect(() => read([node(), archive({ requires: ['node'], packages: ['@ampcode/cli'] })]))
+    .toThrow(/the package @ampcode\/cli with no version of its own/);
+  expect(() => read([node(), archive({ packages: ['@ampcode/cli@1.0.0'] })])).toThrow(/installs npm packages and does not require node/);
+});
+
+it('ships a claude part that holds the claude command next to the ACP adapter', () => {
+  const claude = readParts(versionsPath()).find((one) => one.id === 'claude');
+  expect(claude?.bin).toEqual(['claude-agent-acp', 'claude']);
+  expect(claude?.packages?.[1]).toMatch(/^@anthropic-ai\/claude-code@\d+\.\d+\.\d+$/);
 });
 
 it('turns a CLI own update off in the launcher, not in the machine', () => {

@@ -1,6 +1,6 @@
 ---
 title: Claude keeps its state in a volume
-status: todo
+status: done
 depends: [task-01-claude-runs-from-its-part.md]
 layer: "agent-claude"
 refs:

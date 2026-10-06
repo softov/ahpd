@@ -1,6 +1,6 @@
 ---
 title: ACP presets carry their machine
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

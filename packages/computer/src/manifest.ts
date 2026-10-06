@@ -8,7 +8,7 @@ import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
 import type { MachineNeed, Owner, ResolvedNeed, SecretRef, StateMode } from '@ahpd/sdk';
-import type { MachineSpec } from './runtime.js';
+import type { MachineSpec, PartFallback } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
 
 /**
@@ -894,6 +894,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(defaults.for === undefined ? [] : [defaults.for]),
   ])];
   const declared: ResolvedNeed[] = [];
+  // The agents that declared each variable, which a vault-filled value reaches.
+  const variableOwners = new Map<string, Set<string>>();
   // The parts the session's own agent needs, for a machine made for a session.
   const sessionParts: string[] = [];
   for (const provider of agents) {
@@ -912,6 +914,9 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
       }, homedir(), profile.state ?? 'volume');
       // A state need's volume is named by the agent that declared it.
       declared.push(...own.map((one) => (one.kind === 'state' ? { ...one, provider } : one)));
+      for (const one of own.filter((need) => need.kind === 'env')) {
+        variableOwners.set(one.target, (variableOwners.get(one.target) ?? new Set()).add(provider));
+      }
       if (provider === defaults.for) sessionParts.push(...own.filter((one) => one.kind === 'part').map((one) => one.source));
     }
     catch (error) {
@@ -926,7 +931,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
   }
   const named = [...new Map(resolved.flatMap((one) => {
     const secret = one.named === true ? defaults.named?.get(one.name) : undefined;
-    return secret === undefined ? [] : [[one.target, { need: one.name, variable: one.target, secret }] as const];
+    const providers = [...variableOwners.get(one.target) ?? []];
+    return secret === undefined ? [] : [[one.target, { need: one.name, variable: one.target, secret, providers }] as const];
   })).values()];
   /*
    * The mounts each need becomes, and the two deliveries that are not mounts
@@ -961,6 +967,18 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...resolved.filter((one) => one.kind === 'part').map((one) => one.source),
   ]);
   /*
+   * The host mount a part need names in its place, for a part that will not
+   * build: the first need to name one for a part is the one used.
+   */
+  const partFallbacks: PartFallback[] = [];
+  for (const one of resolved) {
+    const stand = one.kind === 'part' ? one.fallback : undefined;
+    if (stand === undefined || (stand.kind !== 'file' && stand.kind !== 'directory')) continue;
+    if (partFallbacks.some((held) => held.part === one.source)) continue;
+    const mount = `${stand.source}:${stand.target}${stand.readOnly === true ? ':ro' : ''}`;
+    partFallbacks.push({ part: one.source, need: one.name, source: stand.source, target: stand.target, mount });
+  }
+  /*
    * Every mount this machine will carry, in the order the runtime is given
    * them: the deployment's, the profile's, the body's, then what the agents
    * declared. The same mount is one entry however many say it, since a runtime
@@ -994,6 +1012,9 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...parts.map((id) => ({ mount: `part:${id}`, target: partTarget(id), said: `the part ${id}` })),
     // And each state volume, already one per directory.
     ...states.map((one) => ({ mount: `state:${one.provider}`, target: one.target, said: `need ${one.need}` })),
+    // And each part's fallback, which lands only when its part is left out
+    // but is checked as if it always did, so a clash is refused at create.
+    ...partFallbacks.map((one) => ({ mount: one.mount, target: one.target, said: `the fallback of need ${one.need}` })),
   ]);
   // A machine with a folder starts a session in it, so a host path inside the
   // folder is the same path in there.
@@ -1016,6 +1037,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(named.length === 0 ? {} : { named }),
     ...(copies.length === 0 ? {} : { copies }),
     ...(parts.length === 0 ? {} : { partsAsked: parts }),
+    ...(partFallbacks.length === 0 ? {} : { partFallbacks }),
     ...(states.length === 0 ? {} : { statesAsked: states }),
     ...(states.length === 0 || profile.stateScope === undefined ? {} : { stateScope: profile.stateScope }),
     ...(defaults.for === undefined ? {} : { sessionParts: [...new Set(sessionParts)] }),

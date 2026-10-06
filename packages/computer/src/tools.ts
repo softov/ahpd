@@ -142,7 +142,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
       },
       effects: { writes: true, network: true, destructive: true },
       advancedPermission: true,
-      run: async (input) => {
+      run: async (input, at) => {
         const asked = object(input);
         const id = said(asked.id);
         const command = said(asked.command);
@@ -150,7 +150,9 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         if (command === undefined) return 'What command? Give a command line to run inside it.';
         const held = await find(id);
         if ('said' in held) return held.said;
-        const ran = await runtime.exec(held.machine, ['sh', '-lc', command]);
+        // The calling session's agent, so the command gets only that agent's
+        // vault-read variables.
+        const ran = await runtime.exec(held.machine, ['sh', '-lc', command], undefined, at?.provider);
         // A command that failed is the tool working: the exit code is the
         // answer, and it is said rather than thrown.
         return ran.output === '' ? `exit ${ran.code}` : `${ran.output}\n\nexit ${ran.code}`;

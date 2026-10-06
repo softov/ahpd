@@ -31,6 +31,8 @@ It takes no options in the ordinary install: it catalogues whatever directories 
 | --- | --- |
 | `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
+| `computerCli` | where the CLI a machine runs comes from. `part` by default, the `claude` part this host builds at its pinned version; `host` mounts this host's own installed CLI |
+| `computerCliFallback` | with `computerCli: "part"`, what a machine gets when the `claude` part cannot be built. `refuse` by default, which refuses a Claude session there naming the part; `host` mounts this host's own CLI instead and logs that it did |
 | `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/<variant>` by default, `/ahpd/claude` for the built-in; `false` leaves the image's own |
 | `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
 | `presets` | the variants of this package, by the id clients name. Each key registers an agent of its own, with its own name, models and options |
@@ -66,7 +68,7 @@ A preset holds eight fields, and each is checked when the plugin loads. A preset
 | `sandbox` | the CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
 | `thinking` | extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
 | `outputStyle` | the name of a style from the CLI's own settings |
-| `env` | variables for the CLI's process, laid over the daemon's own environment. A value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A variable that is not there when the plugin loads skips the preset that names it |
+| `env` | variables for the CLI's process, laid over the daemon's own environment on this host, and the whole of it in a machine. A value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A variable that is not there when the plugin loads skips the preset that names it |
 | `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none. A value that is not a string reaches the CLI as its JSON text, so `"settings": { "permissions": { "allow": ["Read"] } }` is started as `--settings '{"permissions":{"allow":["Read"]}}'` |
 
 With nothing written the built-in runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer.
@@ -156,6 +158,12 @@ A session is not tied to an agent: nothing is stored per session, because the ne
 ## Credentials
 
 Sessions use whatever the Claude CLI is signed in with. A client can push a token instead. Pushed tokens are held per connection and are not used for other clients' sessions.
+
+### In a machine
+
+A session in a machine runs the CLI from the `claude` part at its pinned version, not this host's: `computerCli: "host"` mounts this host's binary instead, and `computerCliFallback: "host"` mounts it only when the part cannot be built. Its configuration is a state volume at `/ahpd/<variant>`, seeded from this host's settings, instructions, skills, agents, commands and the MCP servers of `~/.claude.json`, never the sign-in. A profile with `state: "host"` mounts this host's `~/.claude` instead, sign-in included.
+
+The CLI there runs with the variant's own `env`, a pushed token and `CLAUDE_CONFIG_DIR`, and nothing of the daemon's environment: the daemon's `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the variant names them with `{ "fromEnv" }`. So a variant signs in with `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, or `ANTHROPIC_API_KEY` in its `env`, and a machine that used to share this host's sign-in needs one of those or a sign-in made once inside it. See [Claude Code in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#claude-code-in-a-machine).
 
 ## Documentation
 

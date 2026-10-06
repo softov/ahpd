@@ -1,6 +1,6 @@
 ---
 title: The docs say agents run from their parts
-status: todo
+status: done
 depends: [task-04-claude-keeps-its-state-in-a-volume.md, task-05-acp-and-cofold-declare-their-state.md, task-07-pi-declares-its-state.md, task-09-a-claude-variants-env-reaches-its-machine.md]
 layer: "docs"
 refs:

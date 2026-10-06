@@ -86,14 +86,34 @@ export interface ClaudeOptions {
    */
   computerExecutable?: string;
   /**
+   * Where the CLI a machine runs comes from.
+   *
+   * `part`, the default, is the `claude` part this host builds at its pinned
+   * version and mounts at `/opt/ahpd/claude`, with its `bin` on the machine's
+   * `PATH`. `host` mounts this host's own installed CLI instead, at
+   * `computerExecutable` when that is a path and `/usr/local/bin/claude`
+   * otherwise.
+   */
+  computerCli?: 'part' | 'host';
+  /**
+   * What a machine gets when the `claude` part cannot be built, read only with
+   * `computerCli: "part"`.
+   *
+   * `refuse`, the default, makes the machine without the part, and a Claude
+   * session on it is refused naming the part. `host` mounts this host's own CLI
+   * in the part's place, and the computer plugin logs that it did.
+   */
+  computerCliFallback?: 'refuse' | 'host';
+  /**
    * The configuration directory the CLI reads *inside a machine*.
    *
    * `/ahpd/<provider>` by default, `/ahpd/claude` for the built-in, so two
-   * variants in one machine read two directories. `machine()` mounts this
-   * host's `~/.claude` there, and the CLI runs with `CLAUDE_CONFIG_DIR`
-   * pointing at it, so a machine made for this backend is one the CLI is
-   * already signed in on. `false` declares no configuration need at all and
-   * leaves the image's own.
+   * variants in one machine read two directories. The CLI runs with
+   * `CLAUDE_CONFIG_DIR` pointing at it. A machine whose profile keeps state in
+   * volumes has it as a state volume seeded from this host's `~/.claude`
+   * without the sign-in; one whose profile says `state: "host"` mounts this
+   * host's `~/.claude` and `~/.claude.json` there, sign-in included. `false`
+   * declares no configuration need at all and leaves the image's own.
    */
   computerConfigDir?: string | false;
   /**
@@ -376,36 +396,65 @@ export function claude(options: ClaudeOptions): Agent {
     /*
      * What a machine needs for this CLI to run in it.
      *
-     * The configuration directory and the file beside it are what the CLI
-     * signs in from, and the executable is what runs. The executable is
-     * resolved here so an update on this host is followed rather than a pinned
-     * version that stops existing. `computerConfigDir: false` leaves the
-     * image's own configuration alone, and a machine for this backend then
-     * carries the executable alone.
+     * The configuration, then the CLI. In a state volume the configuration is
+     * seeded from this host's settings, instructions, skills, agents, commands
+     * and the MCP servers of `.claude.json`, and never its sign-in: a variant
+     * signs in with the key its own `env` names, passed on each exec. A profile
+     * in `state: "host"` mounts this host's `~/.claude` and `~/.claude.json`
+     * instead. The state need is the same for every variant but its directory,
+     * which is the variant's own.
+     *
+     * The CLI is the `claude` part, or this host's own binary with
+     * `computerCli: "host"`, resolved here so an update on this host is
+     * followed. `computerCliFallback: "host"` carries that binary as the part
+     * need's fallback, made only when the part cannot be built.
+     * `computerConfigDir: false` leaves the image's own configuration alone,
+     * and a machine for this backend then carries the CLI alone.
      */
     machine: (): Record<string, MachineNeed> => {
-      const config = configDir === false ? {} : {
+      const config: Record<string, MachineNeed> = configDir === false ? {} : {
+        claudeState: {
+          state: configDir,
+          seed: [
+            { source: '~/.claude/settings.json' },
+            { source: '~/.claude/CLAUDE.md' },
+            { source: '~/.claude/skills' },
+            { source: '~/.claude/agents' },
+            { source: '~/.claude/commands' },
+            { source: '~/.claude.json', target: '.claude.json', keep: ['mcpServers'] },
+          ],
+          description: 'The Claude Code configuration, kept in a volume and seeded from this host without its sign-in.',
+        },
         claudeConfigDirectory: {
           directory: '~/.claude',
           target: configDir,
           required: true,
+          when: 'host',
           description: 'The Claude Code configuration directory, which holds the sign-in and the settings.',
         },
         claudeConfigJson: {
           file: '~/.claude.json',
           target: `${configDir}/.claude.json`,
           required: true,
+          when: 'host',
           description: 'The Claude Code configuration file beside that directory.',
         },
       };
+      const hostBinary = {
+        file: claudeExecutablePath(),
+        target: executable.startsWith('/') ? executable : '/usr/local/bin/claude',
+        readOnly: true,
+        required: true,
+        description: 'The Claude Code CLI, as this host has it installed.',
+      };
+      if (options.computerCli === 'host') return { ...config, claudeExecutable: hostBinary };
       return {
         ...config,
-        claudeExecutable: {
-          file: claudeExecutablePath(),
-          target: executable.startsWith('/') ? executable : '/usr/local/bin/claude',
-          readOnly: true,
+        claudePart: {
+          part: 'claude',
           required: true,
-          description: 'The Claude Code CLI, as this host has it installed.',
+          description: 'The Claude Code CLI, built by this host at its pinned version.',
+          ...(options.computerCliFallback === 'host' ? { fallback: hostBinary } : {}),
         },
       };
     },

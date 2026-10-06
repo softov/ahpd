@@ -42,15 +42,18 @@ export interface Tooling {
   /** Give a chat a title, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
-  toolContext(uri: string, chatUri: string): ToolCall;
+  toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
   /** The MCP servers this session is offered, read now rather than held. */
   mcpFor(): Record<string, McpServer>;
   /** The endpoints opened for a session, by the session that opened them. */
   served: Map<string, ToolsEndpoint[]>;
   /** Take back every endpoint a session opened. */
   toolsServersGone(uri: string): void;
-  /** The tools as one session runs them, with the host's own view bound in. */
-  boundTools(uri: string, chatUri: string): BoundTool[];
+  /**
+   * The tools as one session runs them, with the host's own view bound in.
+   * `provider` is the agent they are bound for, which each call carries.
+   */
+  boundTools(uri: string, chatUri: string, provider?: string): BoundTool[];
   /** What the host's tools want the model told, in the order the tools are offered. */
   instructions(uri: string): string[];
 }
@@ -227,9 +230,19 @@ export function createTooling(ctx: HostContext): Tooling {
    * what `createSession` comes to. Nothing is reachable from here that is not
    * reachable from a client, and the reverse is nearly true.
    */
-  const toolContext = (uri: string, chatUri: string): ToolCall => ({
+  /**
+   * The agent a session runs, as `ToolCall.provider`: the one its tools were
+   * bound for, else the held session's.
+   */
+  const providerOf = (uri: string, bound?: string): { provider?: string } => {
+    const provider = bound ?? sessions.get(heldAs(uri))?.agent.provider;
+    return provider === undefined ? {} : { provider };
+  };
+
+  const toolContext = (uri: string, chatUri: string, provider?: string): ToolCall => ({
     session: uri,
     chat: chatUri,
+    ...providerOf(uri, provider),
     turn: () => {
       const chat = byChat.get(chatUri)?.chat;
       const active = chat === undefined ? undefined : (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
@@ -381,7 +394,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * asked, and what this host knows about the sessions and terminals beside
    * it, are answered here because they are the host's to answer.
    */
-  const boundTools = (uri: string, chatUri: string): BoundTool[] => [
+  const boundTools = (uri: string, chatUri: string, provider?: string): BoundTool[] => [
     ...clientTools(uri),
     ...ctx.contributing.flatMap((one): BoundTool[] => {
       const definition = shapedDefinition(one, uri);
@@ -392,7 +405,7 @@ export function createTooling(ctx: HostContext): Tooling {
         // ran. Raising it before would report an attempt as a result.
         run: async (input: Record<string, unknown>): Promise<string> => {
           try {
-            const answer = await one.run(input, toolContext(uri, chatUri));
+            const answer = await one.run(input, toolContext(uri, chatUri, provider));
             void fire({ type: 'tool_call', session: uri, chat: chatUri, tool: definition.name, ok: true });
             return answer;
           }

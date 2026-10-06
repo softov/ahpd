@@ -126,9 +126,10 @@ A machine is also kept to the agents it was prepared for. A profile with `agents
 
 | Backend | In a machine |
 | --- | --- |
-| `@ahpd/agent-acp` | Its command runs under `docker exec`, with the dev container's own user and environment when that is the machine. A preset may declare what its machine needs with [`machine`](PLUGINS.md#a-second-worked-example-ahpdagent-acp) |
-| `@ahpd/agent-claude` | The Claude Code CLI runs under `docker exec`, with the dev container's own user and environment when that is the machine |
-| `@ahpd/agent-cofold` | A whole `ahpd` with the plugin runs inside the machine, and its frames are carried out as the session's - see below |
+| `@ahpd/agent-acp` | Its command runs from its part under `docker exec`, with the dev container's own user and environment when that is the machine. Each shipped preset brings its machine, and a preset may lay its own over it with [`machine`](PLUGINS.md#a-second-worked-example-ahpdagent-acp) - see [ACP agents in a machine](#acp-agents-in-a-machine) |
+| `@ahpd/agent-claude` | The Claude Code CLI runs from the `claude` part under `docker exec`, with the dev container's own user and environment when that is the machine - see [Claude Code in a machine](#claude-code-in-a-machine) |
+| `@ahpd/agent-cofold` | A whole `ahpd` from the `ahpd` part runs inside the machine with the plugin, and its frames are carried out as the session's - see below |
+| `@ahpd/agent-pi` | Runs nested the same way as cofold - see [pi in a machine](#pi-in-a-machine) |
 
 Clients get a picker for free: the key is marked `enumDynamic`, and `sessionConfigCompletions` answers with "This host" first, then each running machine with its image or folder and status. When the client says which agent the session would run, the machines not prepared for it are left out. A [disposable profile](#disposable-machines) is offered too, as `disposable:<profile>`, and once the session has made one it is an ordinary `computer://<id>`. A `devcontainer://<folder>` row is offered when the session's folder has a `devcontainer.json` and no computer is labelled with it.
 
@@ -157,27 +158,17 @@ An agent handed to the host directly rather than through a plugin cannot run nes
 A plugin loaded from a path names a file on this host, so the machine has to have it at that path.
 
 **The inner host takes nothing from the outer plugin's options.**
-It loads the plugin with its defaults, and what holds inside a machine is its profile and what that mounts: for cofold, its configuration file at the [fixed target](#cofold-in-a-machine).
+It loads the plugin with its defaults, and what holds inside a machine is its profile and what that mounts: for cofold, its configuration file at the [fixed target](#cofold-in-a-machine), and for pi, its [agent directory](#pi-in-a-machine) at `/ahpd/pi`.
 
-**The image carries the host and the plugin.**
-There is no install step: a machine whose image has neither is a session that ends with a sentence carrying what the inner host last wrote to stderr.
-The host resolves a bare plugin name from its configuration directory and nowhere else, so the image installs ahpd with npm and each plugin with `ahpd plugin install --no-enable`, the way the [dev container launcher](CONTAINERS.md) does:
-
-```dockerfile
-FROM node:22-bookworm-slim
-RUN npm i -g @ahpd/server
-RUN mkdir -p /home/node/.config && chown -R node:node /home/node
-USER node
-ENV HOME=/home/node XDG_CONFIG_HOME=/home/node/.config
-RUN ahpd plugin install --no-enable @ahpd/agent-cofold
-```
-
-Until `@ahpd/agent-cofold` is published, `ahpd plugin install` is given a packed tarball copied into the image, or a path to a checkout, instead of the name.
+**The host comes from the `ahpd` part.**
+cofold and pi each declare the `ahpd` part as a need, so the machine has `/opt/ahpd/ahpd` mounted and `ahpd` on its `PATH`, run by the Node of the `node` part. The part holds `@ahpd/agent-cofold` and `@ahpd/agent-pi` in `/opt/ahpd/ahpd/plugins`, and its launcher sets `AHPD_PLUGIN_ROOT` to that directory, so the inner host finds both plugins with nothing in its configuration directory.
+Any glibc image runs it with nothing installed, `debian:bookworm-slim`, the default, among them. A checkout builds the part from its own packed packages and an installed daemon from npm at its own version; see [Parts](#parts).
+A machine whose part could not be built is refused for these sessions by name, like any part an agent needs.
 
 **The image's user owns a writable `HOME` and `XDG_CONFIG_HOME`, with no mount under either.**
 The nested ahpd makes `$XDG_CONFIG_HOME/ahpd` when it starts, and exits with `EACCES` when it cannot.
 Docker makes the parent directories of a bind target as root, so a mount under `~/.config` leaves `~/.config/ahpd` unwritable, and the session ends with the inner host's `EACCES` line as its sentence.
-The example runs as the image's `node` user and gives it its home.
+The default image runs as root, which owns both; an image with a user of its own gives that user its home.
 
 **A session whose inner host ended stays ended.**
 Its end is a sentence: the process's exit code or the signal that killed it, and the last lines it wrote to stderr.
@@ -215,38 +206,105 @@ The profile's `agents` is what shares cofold's configuration and provider key in
 
 ### Claude Code in a machine
 
-A machine made from a profile that names `claude` carries what the agent says it needs, so the CLI and its configuration come from the host without a person listing them by hand:
+A machine made from a profile that names `claude`, or for a Claude session, carries what the agent says it needs, so the CLI and its configuration arrive without a person listing them by hand:
 
-| Need | What it is on the host | Where it goes |
+| Need | What it is | Where it goes |
 | --- | --- | --- |
-| `claudeConfigDirectory` | `~/.claude` | `/ahpd/claude` |
-| `claudeConfigJson` | `~/.claude.json` | `/ahpd/claude/.claude.json` |
-| `claudeExecutable` | what `~/.local/bin/claude` points at, read-only | `/usr/local/bin/claude` |
+| `claudePart` | the `claude` part: the Claude Code CLI at the version the versions file pins, beside the ACP adapter | `/opt/ahpd/claude`, with `claude` on the machine's `PATH` |
+| `claudeState` | a state volume seeded from this host's `~/.claude/settings.json`, `CLAUDE.md`, `skills/`, `agents/` and `commands/`, and `~/.claude.json` with only its `mcpServers` | `/ahpd/claude` |
+| `claudeConfigDirectory` | `~/.claude`, only in a profile with `state: "host"` | `/ahpd/claude` |
+| `claudeConfigJson` | `~/.claude.json`, only in a profile with `state: "host"` | `/ahpd/claude/.claude.json` |
 
-The executable is resolved at the moment the machine is made, so an update on the host is followed rather than a version pinned in a path. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
+The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the built-in Claude, `/ahpd/claude-openrouter` for a variant whose key is `claude-openrouter`, so two variants in one machine read two directories, each its own state volume, and the table's targets move with it. `computerConfigDir` in the `@ahpd/agent-claude` options names another path inside the machine for every variant, and `false` leaves the image's own configuration alone and brings only the CLI. Two variants given one `computerConfigDir` in a profile with `state: "volume"` would be two state volumes at one directory, and a machine with both is refused at create, naming the directory.
 
-The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the built-in Claude, `/ahpd/claude-openrouter` for a variant whose key is `claude-openrouter`, so two variants in one machine read two directories, and the table's targets move with it. `computerConfigDir` in the `@ahpd/agent-claude` options names another path inside the machine for every variant, and `false` leaves the image's own configuration alone and mounts only the executable. Two variants given one `computerConfigDir` in a profile with `state: "volume"` would be two state volumes at one directory, and a machine with both is refused at create, naming the directory.
+**The CLI comes from the part.** `computerCli` in the `@ahpd/agent-claude` options says where, for every variant of the load:
 
-Only `CLAUDE_*` and `ANTHROPIC_*` variables are passed into the machine. The host's `HOME`, `PATH` and `PWD` are not.
+| Value | What the machine gets |
+| --- | --- |
+| `part` | The default. The `claude` part, so a session in a machine runs the pinned version and not the one installed on this host |
+| `host` | `claudeExecutable` in place of the part: what `~/.local/bin/claude` points at on this host, read-only, at `computerExecutable` when that is a path and `/usr/local/bin/claude` otherwise. It is resolved when the machine is made, so an update on this host is followed |
 
-**One `~/.claude` is one sign-in.** Every machine that mounts this host's configuration uses the same subscription, and anything running in one can read it. Use a profile to decide which machines get it, and treat the folder as shared for now.
+`computerCliFallback` says what happens when the `claude` part cannot be built, offline or with a build that fails. It is read only with `computerCli: "part"`:
+
+| Value | What happens |
+| --- | --- |
+| `refuse` | The default. The machine is made without the part, and a Claude session on it is refused with a sentence naming `claude`. A machine made for that one session is not made at all |
+| `host` | This host's binary is mounted where `computerCli: "host"` puts it, the daemon logs one line naming the part and the mount, and the machine is labelled `claude@host` in `ahpd.parts`, so the session runs |
+
+```json
+{ "plugins": [{ "name": "@ahpd/agent-claude", "options": { "computerCli": "part", "computerCliFallback": "host" } }] }
+```
+
+The fallback mount is checked with every other mount when the machine is made, whether the part builds or not, so a mount at the same target is refused naming both. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
+
+**A variant takes its own `env` into the machine, and nothing of the daemon's.** The CLI in a machine runs with the variant's preset `env`, a credential a client pushed laid over it, and `CLAUDE_CONFIG_DIR` last. The daemon's `HOME`, `PATH` and `PWD` never cross, and its `ANTHROPIC_*` and `CLAUDE_CODE_OAUTH_TOKEN` cross only when the variant's `env` names them, as `{ "fromEnv": "ANTHROPIC_API_KEY" }`. A variable the variant unsets with `null` is absent inside too. These travel by name on the one `docker exec` that starts the CLI, never as the container's own environment, because `docker exec` cannot unset a variable the container holds: so the built-in Claude and an OpenRouter variant on one machine each get only their own keys.
+
+**No sign-in is seeded.** `.credentials.json` never reaches a state volume. A variant signs in with `CLAUDE_CODE_OAUTH_TOKEN`, the token `claude setup-token` prints, which does not need refreshing, or with `ANTHROPIC_API_KEY`, written in its own `env` as `{ "$secret": "<scope>:<name>" }` or `{ "fromEnv": "NAME" }`. A `$secret` there is read when the plugin loads, and a preset whose secret cannot be read is skipped with a line naming it. A machine whose variant names neither is still made, and the CLI's own sign-in refusal is what the session says.
+
+```json
+{ "plugins": [{ "name": "@ahpd/agent-claude", "options": {
+  "presets": { "claude": { "env": { "CLAUDE_CODE_OAUTH_TOKEN": { "$secret": "host:claude-token" } } } }
+} }] }
+```
+
+**Upgrading from the host's sign-in.** A machine used to mount this host's `~/.claude`, sign-in included. In a state volume it no longer does, so a person signs in again: once inside the machine, with `docker exec -it -e CLAUDE_CONFIG_DIR=/ahpd/claude <id> claude` and `/login`, which the state volume then keeps for that profile and owner, or with a token in the variant's `env` as above. A profile with `state: "host"` keeps the old shared sign-in instead; every machine that mounts it uses the same subscription, and anything running in one can read it.
 
 ### Cofold in a machine
 
-A profile that names `cofold` carries the harness's own configuration, the file holding its provider endpoints and keys, at a path inside the machine rather than at the host's:
+A profile that names `cofold` carries the `ahpd` part its nested host runs from, and the harness's own configuration, the file holding its provider endpoints and keys, at a path inside the machine rather than at the host's:
 
 | Need | What it is on the host | Where it goes |
 | --- | --- | --- |
-| `cofoldConfig` | the harness's `config.json`, read-only | `/ahpd/cofold/cofold/config.json` |
+| `ahpdPart` | the `ahpd` part, with `@ahpd/agent-cofold` among its plugins | `/opt/ahpd/ahpd`, with `ahpd` on the machine's `PATH` |
+| `cofoldState` | a state volume seeded with the harness's `config.json` | `/ahpd/cofold`, the file at `/ahpd/cofold/cofold/config.json` |
+| `cofoldConfig` | the harness's `config.json`, read-only, only in a profile with `state: "host"` | `/ahpd/cofold/cofold/config.json` |
 | `cofoldConfigPath` | - | `COFOLD_CONFIG=/ahpd/cofold/cofold/config.json` |
 
-`computerConfigDir` in the `@ahpd/agent-cofold` options names that directory, `/ahpd/cofold` by default, and `false` leaves the image's own configuration alone and declares no need at all.
+`computerConfigDir` in the `@ahpd/agent-cofold` options names that directory, `/ahpd/cofold` by default, and `false` leaves the image's own configuration alone and declares only the part.
 
 The path inside the machine is fixed and `COFOLD_CONFIG` points at the file, so the configuration is found whichever user the image runs as - a container whose home is `/home/app` reads it the same as one running as root. A profile that mounts the configuration at some other path of its own gets a machine where the harness does not look.
 
 `XDG_CONFIG_HOME` is not touched, and that is the point: it is the nested `ahpd`'s own folder as well, and a machine's mount point is root-owned, so pointing it at `/ahpd/cofold` stops any image that does not run as root from starting at all - `EACCES: permission denied, mkdir '/ahpd/cofold/ahpd/usage'` on the way in. Every other program in the machine keeps its own XDG configuration.
 
-**The configuration holds keys.** Anything running in a machine that carries this one can read the provider keys inside it, so the same warning as for `~/.claude` applies: use a profile to decide which machines get it, and treat the file as shared for now.
+**The configuration holds keys.** Unlike Claude's sign-in, cofold's keys are in the file it seeds, so anything running in a machine that carries it can read them. Use a profile to decide which machines get it, and treat the file as shared for now.
+
+### pi in a machine
+
+`@ahpd/agent-pi` runs pi as a library in the daemon's own process, so no command can run it in a machine: it runs nested, in an `ahpd` from the `ahpd` part, as cofold does. A profile that names `pi`, or a pi session's own machine, carries:
+
+| Need | What it is on the host | Where it goes |
+| --- | --- | --- |
+| `ahpdPart` | the `ahpd` part, with `@ahpd/agent-pi` among its plugins | `/opt/ahpd/ahpd`, with `ahpd` on the machine's `PATH` |
+| `piState` | a state volume seeded with pi's `settings.json` and `models.json` | `/ahpd/pi` |
+| `piAgentDirectory` | pi's agent directory, read-write, only in a profile with `state: "host"` | `/ahpd/pi` |
+| `piAgentDir` | - | `PI_CODING_AGENT_DIR=/ahpd/pi` |
+| `pi.<VARIABLE>` | one per key variable pi's provider list reads, such as `pi.ANTHROPIC_API_KEY` and `pi.OPENROUTER_API_KEY` | that variable, when a profile gives it a value |
+
+pi's agent directory on this host is `PI_CODING_AGENT_DIR` when the daemon has it, else `~/.pi/agent`. `auth.json` is never seeded, so a sign-in on this host does not reach a machine: a key reaches it as one of the key needs, from the profile or the plugin's `needs`, and a key nobody gave is left out. The need's prefix is the agent's provider id, so a pi registered as `pi-work` has `pi-work.ANTHROPIC_API_KEY`:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "profiles": {
+    "pi": { "agents": ["pi"], "needs": { "pi.OPENROUTER_API_KEY": { "$secret": "user:ada/openrouter" } } }
+  }
+} }] }
+```
+
+pi declares only the variables its provider list names. A variable that pi's own `models.json` names for a provider of its own is not declared, and a profile has no need to fill for it, so such a provider does not sign in inside a machine.
+
+**A key reaches only its own agent.** A value the vault fills for a need goes to the commands of the agent whose need declared it, and to no other agent on the machine: in a machine for pi and a Claude OpenRouter variant, pi's nested host gets `pi.ANTHROPIC_API_KEY`, and the variant's CLI does not. `computer_exec` gives a command the keys of the agent whose session called it, and only a command no agent runs, such as one through a dev container's relay, gets every agent's.
+
+### ACP agents in a machine
+
+Each shipped `@ahpd/agent-acp` preset brings a `machine` block: the part its CLI comes from, a state directory at `/ahpd/<id>` seeded from the agent's own host files, never its login file, and the variables that point the CLI at that directory. Codex is `CODEX_HOME=/ahpd/codex` seeded from `~/.codex/config.toml`, `AGENTS.md` and `skills/`; OpenCode, Kilo and Devin move `XDG_CONFIG_HOME` and `XDG_DATA_HOME` under their state directory; Cursor runs `cursor-agent`, the name its part and its host installer share; Amp's part holds `amp-acp` and the Amp CLI it runs, which `AMP_CLI_PATH` names, and Amp has no variable that moves its settings, so it has no state directory. A preset's own `machine` is laid over the shipped one by key, and its `env` by variable:
+
+```json
+{ "plugins": [{ "name": "@ahpd/agent-acp", "options": {
+  "presets": { "codex": { "machine": { "env": { "OPENAI_API_KEY": { "$secret": "user:ada/openai" } } } } }
+} }] }
+```
+
+A key is never in the shipped block: a person fills its variable in their own preset's `machine.env`, and a `$secret` there is read when the machine is made and passed by name on each command.
 
 ## Profiles
 
@@ -260,7 +318,7 @@ A profile is a named set of machine settings in the plugin options:
       "title": "Claude",
       "description": "The CLI and this host's configuration, shared in.",
       "image": "node:22", "cpus": "2", "memory": "512m", "workdir": "/work",
-      "agents": ["claude"]
+      "agents": ["claude"], "state": "host"
     },
     "plain": { "title": "Plain", "description": "Nothing shared.", "memory": "256m" }
   }
@@ -356,9 +414,8 @@ A profile that sets `disposable: true` has no machine until a session starts. It
   "profiles": {
     "scratch": {
       "title": "Scratch",
-      "description": "A machine of this session's own, with the CLI shared in.",
+      "description": "A machine of this session's own.",
       "image": "node:22",
-      "needs": { "claudeConfigDirectory": "/srv/claude-home" },
       "disposable": true,
       "disposableDelay": 300000,
       "disposableAlone": true,
@@ -435,9 +492,16 @@ A seed is written before the machine starts, through a helper container that is 
 - Every entry of the seed is written with the numeric ids of the machine's user, the volume's root included, by `docker cp -a`, so an image whose user is not root can write its state. The ids are read once from the image. A dev container uses its `remoteUser`, else its `containerUser`, else its image's user.
 - A dev container that builds its own image reads its user's ids inside the running container before its seeds are written there.
 
-A login file is never a seed. A credential reaches a machine as an env need, from the vault or the daemon's environment, and a Claude variant's key reaches the CLI on each exec rather than through the machine: it is never in a state volume or the container's environment, so a variant's key is not left in a machine another variant runs in.
+A login file is never a seed, so a machine starts signed out and an upgrading user signs in again inside it, where the state volume keeps the sign-in, or opts into `state: "host"`. A credential reaches a machine as an env need, from the vault or the daemon's environment, and only the agent whose need declared it is given it. A Claude variant's key reaches the CLI on each exec rather than through the machine: it is never in a state volume or the container's environment, so a variant's key is not left in a machine another variant runs in.
 
-`state: "host"` is the old shared sign-in: the machine mounts this host's `~/.claude` and every machine that mounts it uses the same subscription.
+`state: "host"` is the old shared sign-in: the machine mounts this host's `~/.claude`, pi's agent directory or cofold's file, and every machine that mounts it uses the same subscription.
+
+| Agent | State directory | Seeded from this host |
+| --- | --- | --- |
+| Claude, and each variant | `/ahpd/<variant>` | `~/.claude/settings.json`, `CLAUDE.md`, `skills/`, `agents/`, `commands/`, and `~/.claude.json` keeping `mcpServers` |
+| cofold | `/ahpd/cofold` | its `config.json` |
+| pi | `/ahpd/pi` | `settings.json` and `models.json` |
+| An ACP preset | `/ahpd/<id>` | what its [shipped `machine`](#acp-agents-in-a-machine) names |
 
 ## Stats
 
@@ -521,18 +585,18 @@ A value under the plugin's `needs` or a profile's `needs` answers `<set>` in `ah
 
 ## Parts
 
-Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all.
+Every agent CLI is a **part**: one image that holds one CLI at one exact version, at `/opt/ahpd/<id>`, with its launchers at `/opt/ahpd/<id>/bin`. `codex` is a part, `goose` is a part, and so is `node`, which the npm parts name as a requirement so one Node serves them all. `claude` holds both Claude Code and its ACP adapter, and `ahpd` holds ahpd with the backends that run nested. Parts are the default way an agent's CLI reaches a machine: nothing of this host's binaries is mounted unless an agent's options ask for it.
 
 The versions file is `packages/computer/images/versions.json`, and it is the only place a version is written down. Each entry names an `id`, a `version` that is one version rather than a range, and a `kind`:
 
 | Kind | Is | Holds |
 | --- | --- | --- |
 | `node` | The Node every npm part needs | One download per platform |
-| `npm` | A CLI published to npm | `packages`, installed onto the node part |
-| `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform |
+| `npm` | A CLI published to npm | `packages`, installed onto the node part, each at the part's `version` or at its own when written `<package>@<version>` |
+| `archive` | A CLI published as a tarball | `archives`, one url and sha256 per platform, and any `packages` installed onto the node part beside it, each written `<package>@<version>` |
 | `ahpd` | ahpd itself | From npm, or from a checkout's own tarballs |
 
-A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A part whose build fails is refused by name and every other part still builds.
+A part is built the first time it is asked for and never again for that version: the tag is the version, so `ahpd-part/codex:2.1.1` that is already there is answered from the daemon rather than rebuilt. A package pinned at its own version adds that version to the tag, so `ahpd-part/claude:0.85.1-2.1.291` moves when either moves. A part whose build fails is refused by name and every other part still builds.
 
 ### Parts in a machine
 
@@ -573,13 +637,13 @@ A machine made from a profile that names no image runs `debian:bookworm-slim` wi
 
 ### Adding a part
 
-Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a range, an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout.
+Add the entry to `packages/computer/images/versions.json` and nothing else: the reader refuses a range, an archive with no checksum for a platform, a `requires` naming a part the file does not have, and two parts of one id. `requires` names the parts this one is built on, and `bin` names the commands it puts on the PATH - for an `npm` part the matching entry in its `node_modules/.bin`, run by the part's Node when it is a script and as it is when the package installed an executable, for an `archive` part whatever the publisher's tarball holds, which the build finds by name and does not assume a layout, or what its own `packages` put in `node_modules/.bin`. An archive part with `packages` requires `node`, and each package names its own version, since the part's is the download's.
 
 The kinds it will not build are named in the error a missing or unknown `kind` gives, rather than guessed at. A CLI that is neither npm nor a tarball needs a kind of its own before the file will accept it.
 
 ### Bumps
 
-Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and on demand, compares the file with the ACP registry and with npm, computes each archive's new sha256, and opens one pull request carrying every newer version. A part no feed carries is skipped and named in the log, so it is bumped by hand:
+Bumps come by pull request. `.github/workflows/parts-bump.yml` runs weekly and on demand, compares the file with the ACP registry and with npm, computes each archive's new sha256, and opens one pull request carrying every newer version. A part no feed carries is skipped and named in the log, so it is bumped by hand, as is a package pinned at its own version, such as Claude Code in the `claude` part:
 
 ```sh
 node scripts/parts-bump.mjs --dry-run

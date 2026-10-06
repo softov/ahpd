@@ -48,6 +48,12 @@ export interface MadeNeed {
   variable: string;
   /** The secret it names, never the value read. */
   secret: string;
+  /**
+   * The agents whose own need it is, which are the only ones whose commands
+   * are given it. Absent on a record written before it was kept, whose value
+   * every command is given.
+   */
+  providers?: string[];
 }
 
 /** What one machine's entry holds, any part of which may be absent. */
@@ -96,9 +102,10 @@ const entry = (said: unknown): Entry | undefined => {
   const needs = Array.isArray(one.needs)
     ? one.needs.flatMap((held: unknown): MadeNeed[] => {
       if (typeof held !== 'object' || held === null) return [];
-      const { need, variable, secret } = held as Record<string, unknown>;
+      const { need, variable, secret, providers } = held as Record<string, unknown>;
+      const owners = Array.isArray(providers) && providers.every((one) => typeof one === 'string') ? providers as string[] : undefined;
       return typeof need === 'string' && typeof variable === 'string' && typeof secret === 'string'
-        ? [{ need, variable, secret }]
+        ? [{ need, variable, secret, ...(owners === undefined ? {} : { providers: owners }) }]
         : [];
     })
     : undefined;
@@ -264,8 +271,9 @@ export const madeNeedsOf = (configDir: string, id: string, log: (line: string) =
   read(configDir, log)[id]?.needs;
 
 /**
- * Record the vault-named needs a machine was made with, by need, variable and
- * the secret each names. The values read are never written here.
+ * Record the vault-named needs a machine was made with, by need, variable, the
+ * secret each names and the agents it belongs to. The values read are never
+ * written here.
  */
 export const keepMadeNeeds = (
   configDir: string,
@@ -274,7 +282,12 @@ export const keepMadeNeeds = (
   log: (line: string) => void,
 ): void => {
   const held = read(configDir, log);
-  write(configDir, { ...held, [id]: { ...held[id], needs: needs.map(({ need, variable, secret }) => ({ need, variable, secret })) } }, log);
+  write(configDir, { ...held, [id]: { ...held[id], needs: needs.map(({ need, variable, secret, providers }) => ({
+    need,
+    variable,
+    secret,
+    ...(providers === undefined ? {} : { providers }),
+  })) } }, log);
 };
 
 /** Forget a machine, which is what its being removed means. */

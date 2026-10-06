@@ -170,7 +170,7 @@ export const computersFor = (computers: ComputerPort, provider: string, session:
     ...computers,
     how: async (id, options) => {
       await prepared(id);
-      return computers.how(id, options);
+      return computers.how(id, { ...options, provider });
     },
     /*
      * The same check for the whole host one is started inside a machine: a
@@ -181,7 +181,7 @@ export const computersFor = (computers: ComputerPort, provider: string, session:
     ...(computers.nested === undefined ? {} : {
       nested: async (id: string, asked: NestedStart) => {
         await prepared(id);
-        return (computers.nested as NonNullable<ComputerPort['nested']>)(id, asked);
+        return (computers.nested as NonNullable<ComputerPort['nested']>)(id, { ...asked, provider });
       },
     }),
   };

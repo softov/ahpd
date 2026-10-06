@@ -7,7 +7,8 @@ import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcon
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
-import { madeAgain, namedAgain, revealed, vaultNamed, withDefaults } from './secrets.js';
+import { madeAgain, namedAgain, revealed, scopedTo, vaultNamed, withDefaults } from './secrets.js';
+import type { VaultRead } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import { ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
@@ -562,13 +563,15 @@ export const apply: Plugin['apply'] = (host, options) => {
   };
 
   /*
-   * The variables each machine holds whose values were read from the vault.
+   * The variables each machine holds whose values were read from the vault,
+   * with the agents each belongs to.
    *
    * Never given when the machine was made, so they are not in its own record,
    * and never written to a file: they live here for as long as this daemon
-   * does, and are passed by name on every command run in the machine.
+   * does, and are passed by name on each command run in the machine, an
+   * agent's command given only the ones its own needs declared.
    */
-  const vaulted = new Map<string, Record<string, string>>();
+  const vaulted = new Map<string, Pick<VaultRead, 'env' | 'owners'>>();
 
   /**
    * A machine's vault-named variables, held or read again.
@@ -585,10 +588,14 @@ export const apply: Plugin['apply'] = (host, options) => {
    * profile, refuses the command naming the need, and nothing is held so the
    * next command reads again; `drop` answers without that variable and logs a
    * line naming the need, once per command.
+   *
+   * `provider` is the agent the command runs for, which is given only the
+   * variables its own needs declared; absent, for a command no agent runs,
+   * every one is given.
    */
-  const namedFor = async (id: string, found?: Record<string, unknown>): Promise<Record<string, string>> => {
+  const namedFor = async (id: string, found?: Record<string, unknown>, provider?: string): Promise<Record<string, string>> => {
     const known = vaulted.get(id);
-    if (known !== undefined) return known;
+    if (known !== undefined) return scopedTo(known, provider);
     const held = found ?? await dockered.inspect(id);
     if (held === undefined) return {};
     const key = profileOf(held);
@@ -600,14 +607,14 @@ export const apply: Plugin['apply'] = (host, options) => {
       ? await namedAgain(profile?.needs, needValues, preparedFor(held), (provider) => host.machineNeeds(provider), work, secret)
       : await madeAgain(recorded, work, secret);
     if (read.unread.length === 0) {
-      vaulted.set(id, read.env);
-      return read.env;
+      vaulted.set(id, read);
+      return scopedTo(read, provider);
     }
     if (profile?.secretUnreadable !== 'drop') {
       throw new Error(`${id} is not reached without what its vault-named needs give it: ${read.unread.map((one) => one.said).join('; ')}`);
     }
     for (const one of read.unread) noted(`${id} is reached without ${one.variable}: ${one.said}`);
-    return read.env;
+    return scopedTo(read, provider);
   };
 
   /**
@@ -664,13 +671,31 @@ export const apply: Plugin['apply'] = (host, options) => {
       let spec = asked;
       if (asked.partsAsked !== undefined && asked.partsAsked.length > 0) {
         const built = await ensureParts(asked.partsAsked, { runtime: dockered });
-        const refused = refusedWithout(asked, built.failed.map((one) => one.id));
+        /*
+         * A failed part whose need names a fallback has that host mount in its
+         * place, and the machine counts it as had: it is labelled `<id>@host`
+         * and no session needing it is refused.
+         */
+        const standIns = built.failed.flatMap((one) => {
+          const stand = asked.partFallbacks?.find((held) => held.part === one.id);
+          return stand === undefined ? [] : [{ ...stand, reason: one.reason }];
+        });
+        const failed = built.failed.filter((one) => !standIns.some((held) => held.part === one.id));
+        const refused = refusedWithout(asked, failed.map((one) => one.id));
         if (refused.length > 0) {
-          const said = built.failed.filter((one) => refused.includes(one.id)).map((one) => `${one.id}: ${one.reason}`).join('; ');
+          const said = failed.filter((one) => refused.includes(one.id)).map((one) => `${one.id}: ${one.reason}`).join('; ');
           throw new Error(`${asked.name} is not made, because ${refused.length === 1 ? 'the part' : 'the parts'} ${refused.join(', ')} this session's agent needs could not be built (${said})`);
         }
-        for (const one of built.failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
-        spec = { ...asked, parts: built.made };
+        for (const one of failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
+        for (const one of standIns) noted(`${asked.name} is made with ${one.source} mounted at ${one.target} in place of the part ${one.part}, which could not be built: ${one.reason}`);
+        spec = {
+          ...asked,
+          parts: built.made,
+          ...(standIns.length === 0 ? {} : {
+            mounts: [...asked.mounts ?? [], ...standIns.map((one) => one.mount)],
+            hostParts: standIns.map((one) => one.part),
+          }),
+        };
       }
       /*
        * Each state directory's volume, named by the machine's profile, its
@@ -696,7 +721,10 @@ export const apply: Plugin['apply'] = (host, options) => {
       // every command into the machine from now on, and its references
       // recorded beside the configuration for a daemon started afterwards.
       const named = new Set((spec.named ?? []).map((one) => one.variable));
-      vaulted.set(machine.id, Object.fromEntries(Object.entries(spec.env ?? {}).filter(([key]) => named.has(key))));
+      vaulted.set(machine.id, {
+        env: Object.fromEntries(Object.entries(spec.env ?? {}).filter(([key]) => named.has(key))),
+        owners: Object.fromEntries((spec.named ?? []).flatMap((one) => (one.providers === undefined ? [] : [[one.variable, one.providers]]))),
+      });
       if (spec.named !== undefined && spec.named.length > 0) keepMadeNeeds(host.configDir, machine.id, spec.named, noted);
       /*
        * Whose a machine the Dev Container CLI made belongs to, in the file.
@@ -730,8 +758,9 @@ export const apply: Plugin['apply'] = (host, options) => {
       await close(id, await claimOf(id));
     },
     // A command a tool runs is a command in the machine like any other, so it
-    // is given the machine's vault-named variables too, under its own.
-    exec: async (id, command, env) => dockered.exec(id, command, { ...await namedFor(id), ...(env ?? {}) }),
+    // is given the machine's vault-named variables too, under its own: the
+    // calling session's agent's alone, and every agent's for a caller with none.
+    exec: async (id, command, env, provider) => dockered.exec(id, command, { ...await namedFor(id, undefined, provider), ...(env ?? {}) }),
     remove: async (id) => {
       const claimed = await claimOf(id);
       await dockered.remove(id);
@@ -921,7 +950,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const reach: ComputerPort['how'] = async (id, asked) => {
     const held = await made.inspect(id);
     if (held === undefined) return undefined;
-    const values = { ...await namedFor(id, held), ...(asked.env ?? {}) };
+    const values = { ...await namedFor(id, held, asked.provider), ...(asked.env ?? {}) };
     /** The docker program's own environment, with the values `-e NAME` reads laid over it. */
     const spawnEnvOf = (over: Record<string, string>): Record<string, string> | undefined =>
       (env === undefined && Object.keys(over).length === 0 ? undefined : { ...(env ?? {}), ...over });
@@ -1005,6 +1034,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       // One `--plugin` per spec, which is how the daemon's own flag repeats.
       args: [...before, '--stdio', ...asked.plugins.flatMap((plugin) => ['--plugin', plugin])],
       ...(asked.cwd === undefined ? {} : { cwd: asked.cwd }),
+      ...(asked.provider === undefined ? {} : { provider: asked.provider }),
     });
     if (spawn === undefined) return undefined;
     /*

@@ -1,6 +1,6 @@
 ---
 title: pi runs nested from the ahpd part
-status: todo
+status: done
 depends: [task-03-a-cofold-machine-runs-ahpd-from-its-part.md]
 layer: "agent-pi, computer"
 refs:

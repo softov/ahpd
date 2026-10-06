@@ -1,6 +1,6 @@
 ---
 title: pi declares its state
-status: todo
+status: done
 depends: [task-06-pi-runs-nested.md]
 layer: "agent-pi"
 refs:

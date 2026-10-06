@@ -45,6 +45,11 @@ export interface NestedStart {
   plugins: string[];
   /** Where inside the machine it starts, when the caller names one. */
   cwd?: string;
+  /**
+   * The agent the host inside runs for, which `computersFor` fills: the
+   * machine's vault-read variables it is given are that agent's own.
+   */
+  provider?: string;
 }
 
 /** The command that starts a nested host, and where its session works. */
@@ -69,6 +74,11 @@ export interface SpawnOptions {
   cwd?: string;
   /** Variables to set inside the machine, as `-e` flags in the descriptor. */
   env?: Record<string, string>;
+  /**
+   * The agent the command runs for, which `computersFor` fills: the machine's
+   * vault-read variables it is given are that agent's own.
+   */
+  provider?: string;
 }
 
 /**

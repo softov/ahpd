@@ -515,6 +515,8 @@ export interface ToolCall {
   session: string;
   /** The chat channel URI it was made from. */
   chat: string;
+  /** The agent the calling session runs, by its provider id, when the host holds the session. */
+  provider?: string;
   /** The turn the call is running in, when the chat has one running. */
   turn(): string | undefined;
   /**

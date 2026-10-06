@@ -1,7 +1,7 @@
 ---
 title: Agents run from their parts and keep their own state, and the host's binary and home become opt-ins
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -102,6 +102,11 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 | pi declares only the provider list's key variables; a custom variable name in pi's settings is the profile's to add as a need | Softov, 2026-10-04, asked "pi's settings may name a provider key variable of their own, beyond pi's provider list: declare only the provider list's variables, and a custom name is the profile's to add as a need, or read the host's pi settings at load and declare each variable they name as well?": declare only the provider list's variables, and a custom name is the profile's to add; later: [pi declares the variables its settings name](../../../ideas/pi-declares-the-variables-its-settings-name.md) | 07 |
 | For now every Claude variant of one load shares one state at `computerConfigDir` (`/ahpd/claude`), and identical needs collapse to one at create | Softov, 2026-10-03, asked in `container/05-p6` "where does each variant's state go?": "Share; dedupe identical needs" | 04 |
 | For now the ACP presets plan (acp/05, once rewritten) ships presets for the known agents, so a part's name and config dir are written once; task 02 fills a `machine` block per shipped preset | Softov, 2026-10-03, asked "does the ACP presets plan ship presets for the known agents, or document examples?": "shipped presets" | 02 |
+| The `claude` part ships `@anthropic-ai/claude-code`, bin `claude`, next to `claude-agent-acp`, pinned at its own exact version in the versions file, so `computerCli: "part"` has a `claude` command | Softov, 2026-10-06, review of the p5 build | 01 |
+| A key filled from the vault reaches only the agent whose need declared it, so pi's keys never reach a Claude variant's exec on the same machine | Softov, 2026-10-06, review of the p5 build | 07, 09 |
+| `computer_exec` gives a command only the vault keys of the agent whose session called it; a caller with no agent, such as the dev container relay, keeps every key | Softov, 2026-10-06, review of the p5 build: "Scope to the calling agent" | 07, 09 |
+| The `amp` part ships the Amp CLI, `@ampcode/cli` at its own pinned version with bin `amp`, beside `amp-acp`, so the preset's `AMP_CLI_PATH: "amp"` runs in a machine | Softov, 2026-10-06, review of the p5 build: "Fix in p5" | 02 |
+| The shipped Cursor preset runs `cursor-agent`, the name its part ships and its installer puts on the host, rather than `agent` | Softov, 2026-10-06, asked "Cursor's preset runs `agent`, but the Cursor archive ships only `cursor-agent`. How should a machine run Cursor?": "Preset runs cursor-agent" | 02 |
 
 ## Proposed architecture
 
@@ -111,15 +116,15 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude runs from its part](task-01-claude-runs-from-its-part.md) | todo | p4 tasks 01 and 02 |
-| [02 - ACP presets carry their machine](task-02-acp-presets-name-their-parts.md) | todo | acp 05 (the ACP presets plan) |
-| [03 - A cofold machine runs ahpd from its part](task-03-a-cofold-machine-runs-ahpd-from-its-part.md) | todo | p3 task 02 |
-| [04 - Claude keeps its state in a volume](task-04-claude-keeps-its-state-in-a-volume.md) | todo | 01, container/05-p6 task 05 |
-| [05 - ACP presets and cofold declare their state](task-05-acp-and-cofold-declare-their-state.md) | todo | 02, 03 |
-| [06 - pi runs nested from the ahpd part](task-06-pi-runs-nested.md) | todo | 03, p3 task 02, container 04 task 17 |
-| [07 - pi declares its state](task-07-pi-declares-its-state.md) | todo | 06 |
-| [08 - Docs](task-08-docs.md) | todo | 04, 05, 07, 09 |
-| [09 - A Claude variant's env reaches its machine without the daemon's](task-09-a-claude-variants-env-reaches-its-machine.md) | todo | - |
+| [01 - Claude runs from its part](task-01-claude-runs-from-its-part.md) | done | p4 tasks 01 and 02 |
+| [02 - ACP presets carry their machine](task-02-acp-presets-name-their-parts.md) | done | acp 05 (the ACP presets plan) |
+| [03 - A cofold machine runs ahpd from its part](task-03-a-cofold-machine-runs-ahpd-from-its-part.md) | done | p3 task 02 |
+| [04 - Claude keeps its state in a volume](task-04-claude-keeps-its-state-in-a-volume.md) | done | 01, container/05-p6 task 05 |
+| [05 - ACP presets and cofold declare their state](task-05-acp-and-cofold-declare-their-state.md) | done | 02, 03 |
+| [06 - pi runs nested from the ahpd part](task-06-pi-runs-nested.md) | done | 03, p3 task 02, container 04 task 17 |
+| [07 - pi declares its state](task-07-pi-declares-its-state.md) | done | 06 |
+| [08 - Docs](task-08-docs.md) | done | 04, 05, 07, 09 |
+| [09 - A Claude variant's env reaches its machine without the daemon's](task-09-a-claude-variants-env-reaches-its-machine.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -128,8 +133,8 @@ claude / presets / cofold / pi -> [new] a state need with seeds, host mounts mar
 
 ## Resume state
 
-- **Done so far:** nothing; revalidated against main 2026-10-02, after claude/15 landed.
-- **Next action:** task 09, which needs nothing else; then 01 after p4 tasks 01 and 02, and 03 after p3 task 02; then 04, 06 and 07; 02 and 05 wait for acp/05, rewritten as the ACP presets plan.
+- **Done so far:** all nine tasks built 2026-10-06, with the review's fixes; see [implemented.md](implemented.md).
+- **Next action:** the by-hand runs in `debian:bookworm-slim` listed under Left for later in [implemented.md](implemented.md); the code is reviewed and merged 2026-10-06.
 - **Watch out for:**
   - container 04's fix tasks change the nested start; land them first.
   - Two Claude variants on one profile share one state volume; main already makes one mount of identical mounts (`oneMountEach`), and `container/05-p6` task 05 collapses the identical state and env needs.

@@ -31,8 +31,8 @@
     "kind": "npm",
     "version": "0.85.1",
     "requires": ["node"],
-    "packages": ["@agentclientprotocol/claude-agent-acp"],
-    "bin": ["claude-agent-acp"]
+    "packages": ["@agentclientprotocol/claude-agent-acp", "@anthropic-ai/claude-code@2.1.291"],
+    "bin": ["claude-agent-acp", "claude"]
   },
   {
     "id": "codex",
@@ -164,6 +164,8 @@
     "name": "Amp",
     "kind": "archive",
     "version": "0.9.0",
+    "requires": ["node"],
+    "packages": ["@ampcode/cli@0.0.1791273659-g33d612"],
     "archives": {
       "linux-x64": {
         "url": "https://github.com/tao12345666333/amp-acp/releases/download/v0.9.0/amp-acp-linux-x86_64.tar.gz",
@@ -174,7 +176,7 @@
         "sha256": "b9e365221838b1a6e177c2fcd8f25a30086c3630e0330f1f6f74b25d2d4126c2"
       }
     },
-    "bin": ["amp-acp"]
+    "bin": ["amp-acp", "amp"]
   },
   {
     "id": "qwen",

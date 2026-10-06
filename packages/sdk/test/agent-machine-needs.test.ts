@@ -17,19 +17,25 @@ import { cofoldAgent } from '../../agent-cofold/src/agent.js';
 
 const temp = (): string => mkdtempSync(join(tmpdir(), 'ahpd-agent-needs-'));
 
-it('Claude declares its configuration directory, its configuration file and its CLI', () => {
+it('Claude declares its state, its host configuration for state host, and its part', () => {
   const agent = claude({ paths: [temp()] });
   const needs = agent.machine?.() ?? {};
-  expect(Object.keys(needs)).toEqual(['claudeConfigDirectory', 'claudeConfigJson', 'claudeExecutable']);
+  expect(Object.keys(needs)).toEqual(['claudeState', 'claudeConfigDirectory', 'claudeConfigJson', 'claudePart']);
+  expect(needs.claudeState).toMatchObject({ state: '/ahpd/claude' });
   // `~` is the agent's default, expanded when a machine is made, so the same
-  // declaration works for whoever runs the daemon.
+  // declaration works for whoever runs the daemon. The host's own home is
+  // mounted only for a profile that keeps state on the host.
   expect(needs.claudeConfigDirectory).toMatchObject({
-    directory: '~/.claude', target: '/ahpd/claude', required: true,
+    directory: '~/.claude', target: '/ahpd/claude', required: true, when: 'host',
   });
   expect(needs.claudeConfigJson).toMatchObject({
-    file: '~/.claude.json', target: '/ahpd/claude/.claude.json', required: true,
+    file: '~/.claude.json', target: '/ahpd/claude/.claude.json', required: true, when: 'host',
   });
-  // The CLI goes where the docs always put it, and into the image read-only.
+  expect(needs.claudePart).toMatchObject({ part: 'claude', required: true });
+});
+
+it('Claude mounts the host CLI where the docs always put it, when asked for', () => {
+  const needs = claude({ paths: [temp()], computerCli: 'host' }).machine?.() ?? {};
   expect(needs.claudeExecutable).toMatchObject({
     target: '/usr/local/bin/claude', readOnly: true, required: true,
   });
@@ -56,7 +62,7 @@ it('Claude follows the CLI symlink when asked, so a host update is picked up', (
 it('Claude leaves the configuration alone when the image carries it', () => {
   const agent = claude({ paths: [temp()], computerConfigDir: false });
   const needs = agent.machine?.() ?? {};
-  expect(Object.keys(needs)).toEqual(['claudeExecutable']);
+  expect(Object.keys(needs)).toEqual(['claudePart']);
 });
 
 it('cofold declares its harness configuration, wherever it is read from', () => {
@@ -66,14 +72,23 @@ it('cofold declares its harness configuration, wherever it is read from', () => 
     delete process.env['COFOLD_CONFIG'];
     process.env['XDG_CONFIG_HOME'] = '/srv/config';
     let needs = cofoldAgent({ memory: true }).machine?.() ?? {};
+    // In a state volume, seeded from the file the host reads, at the path the
+    // file has under `~/.config`.
+    expect(needs.cofoldState).toEqual({
+      state: '/ahpd/cofold',
+      seed: [{ source: '/srv/config/cofold/config.json', target: 'cofold/config.json' }],
+      description: expect.stringMatching(/provider/),
+    });
     expect(needs.cofoldConfig).toMatchObject({
       file: '/srv/config/cofold/config.json',
-      // Mounted at a fixed target, which `COFOLD_CONFIG` then points at, so
-      // a cofold host inside the machine finds the same provider keys whatever
-      // user the image runs as.
+      // Mounted for a profile that keeps state on the host, at the same fixed
+      // target, which `COFOLD_CONFIG` then points at, so a cofold host inside
+      // the machine finds the same provider keys whatever user the image runs
+      // as.
       target: '/ahpd/cofold/cofold/config.json',
       readOnly: true,
       required: true,
+      when: 'host',
     });
     expect(needs.cofoldConfig?.description).toMatch(/provider/);
     // The variable names the file, not a directory, and `XDG_CONFIG_HOME` is
@@ -81,7 +96,9 @@ it('cofold declares its harness configuration, wherever it is read from', () => 
     // mount point is root-owned, so pointing it there stops any image that
     // does not run as root from starting.
     expect(needs.cofoldConfigPath).toMatchObject({ name: 'COFOLD_CONFIG', default: '/ahpd/cofold/cofold/config.json' });
-    expect(Object.keys(needs)).toEqual(['cofoldConfig', 'cofoldConfigPath']);
+    // The nested host runs from the ahpd part.
+    expect(needs.ahpdPart).toMatchObject({ part: 'ahpd', required: true });
+    expect(Object.keys(needs)).toEqual(['cofoldState', 'cofoldConfig', 'cofoldConfigPath', 'ahpdPart']);
 
     // Inside a machine the source is the mounted one, so the file the host
     // carries is read from the path its own variable names.
@@ -107,6 +124,7 @@ it('cofold reads the configuration at a directory it is given, and at none when 
   expect(needs.cofoldConfig).toMatchObject({ target: '/srv/cofold-home/cofold/config.json' });
   expect(needs.cofoldConfigPath).toMatchObject({ default: '/srv/cofold-home/cofold/config.json' });
 
-  // `false` is the image's own configuration, which this agent has no needs for.
-  expect(cofoldAgent({ memory: true, computerConfigDir: false }).machine?.() ?? {}).toEqual({});
+  // `false` is the image's own configuration, and the machine needs only the
+  // part its nested host runs from.
+  expect(Object.keys(cofoldAgent({ memory: true, computerConfigDir: false }).machine?.() ?? {})).toEqual(['ahpdPart']);
 });

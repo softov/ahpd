@@ -382,7 +382,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * handed to and nothing else.
      */
     const toolsServer = (): ToolsEndpoint | undefined => {
-      const opened = options.toolsServers?.open(ctx.boundTools(uri, chatUri));
+      const opened = options.toolsServers?.open(ctx.boundTools(uri, chatUri, agent.provider));
       if (opened === undefined) return undefined;
       const held = ctx.served.get(uri) ?? [];
       held.push(opened);
@@ -402,7 +402,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * breath would otherwise have been offered nothing until the next
        * announcement moved the list.
        */
-      ...(ctx.boundTools(uri, chatUri).length > 0 ? { tools: ctx.boundTools(uri, chatUri) } : {}),
+      ...(ctx.boundTools(uri, chatUri, agent.provider).length > 0 ? { tools: ctx.boundTools(uri, chatUri, agent.provider) } : {}),
       ...(ctx.instructions(uri).length > 0 ? { instructions: ctx.instructions(uri) } : {}),
       /*
        * The stores a backend may need for itself, handed down only when the

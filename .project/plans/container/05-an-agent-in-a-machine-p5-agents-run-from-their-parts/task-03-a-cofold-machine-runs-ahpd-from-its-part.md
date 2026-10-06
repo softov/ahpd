@@ -1,6 +1,6 @@
 ---
 title: A cofold machine runs ahpd from its part
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

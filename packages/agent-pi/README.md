@@ -27,6 +27,20 @@ Or in the configuration file:
 
 pi reads its model providers and credentials from its own settings, so nothing here needs configuring. Set up at least one provider for pi first; running `pi` by hand in the same directory is the quickest check.
 
+### In a machine
+
+A pi session whose `computer` setting names a machine runs nested: pi is a library in the daemon's process, so an `ahpd` from the `ahpd` part, which carries this plugin, is started inside the machine and runs the session there. Any glibc image runs it with nothing installed.
+
+pi's agent directory inside is `/ahpd/pi`, set as `PI_CODING_AGENT_DIR`: a state volume seeded with this host's `settings.json` and `models.json`, or this host's directory mounted read-write in a profile with `state: "host"`. `auth.json` is never seeded, so a key reaches the machine as a need the profile fills, one per variable pi's provider list reads, named `<provider>.<VARIABLE>`:
+
+```json
+{ "plugins": [{ "name": "@ahpd/computer", "options": {
+  "profiles": { "pi": { "agents": ["pi"], "needs": { "pi.ANTHROPIC_API_KEY": { "$secret": "user:ada/anthropic" } } } }
+} }] }
+```
+
+Such a key reaches pi's nested host and no other agent in the machine. A variable only pi's own `models.json` names is not declared, and does not reach a machine. See [pi in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#pi-in-a-machine).
+
 ## In your own host
 
 ```bash

@@ -40,6 +40,16 @@ export const optionsSchema = {
   properties: {
     paths: { type: 'array', items: { type: 'string' }, description: "The directories it catalogues, and where a session goes by default. Defaults to the host's." },
     computerExecutable: { type: 'string', description: "Where the CLI is inside a machine. claude on the image's PATH by default." },
+    computerCli: {
+      type: 'string',
+      enum: ['part', 'host'],
+      description: "Where the CLI a machine runs comes from: part, the claude part this host builds, by default; host mounts this host's own installed CLI.",
+    },
+    computerCliFallback: {
+      type: 'string',
+      enum: ['refuse', 'host'],
+      description: "With computerCli part, what a machine gets when the claude part cannot be built: refuse, by default, refuses the Claude session naming the part; host mounts this host's own CLI instead and logs it.",
+    },
     computerConfigDir: {
       anyOf: [{ type: 'string' }, { const: false }],
       description: "The configuration directory the CLI reads inside a machine. /ahpd/<variant> by default, /ahpd/claude for the built-in; false leaves the image's own.",
@@ -197,6 +207,8 @@ const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Pro
     sharedCatalogue: oneListing(paths),
     ...(said.computerExecutable === undefined ? {} : { computerExecutable: said.computerExecutable }),
     ...(said.computerConfigDir === undefined ? {} : { computerConfigDir: said.computerConfigDir }),
+    ...(said.computerCli === undefined ? {} : { computerCli: said.computerCli }),
+    ...(said.computerCliFallback === undefined ? {} : { computerCliFallback: said.computerCliFallback }),
     ...(said.workerStop === undefined ? {} : { workerStop: said.workerStop }),
   };
   return variants.map(({ id, name, models, keepCliModels, ...preset }) => ({

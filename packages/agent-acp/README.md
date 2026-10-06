@@ -33,7 +33,7 @@ Then add one entry to `plugins` in the daemon's `config.json`, and one key per A
 
 Each key registers an agent of its own, under that key as the provider id, so `copilot` and `codex` are two entries in the picker out of one load.
 
-The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`. A key that names none of them writes a `command` of its own, and a key that names one takes its command, its arguments and its environment. The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. A command that is missing fails that provider's turns with a message and leaves the daemon running.
+The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`. A key that names none of them writes a `command` of its own, and a key that names one takes its command, its arguments and its environment. The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. `cursor` runs `cursor-agent acp`, the name Cursor's installer puts on the host and its part ships. A command that is missing fails that provider's turns with a message and leaves the daemon running.
 
 ## In your own host
 
@@ -78,7 +78,9 @@ Under `presets.<id>`:
 | `model` | | the model a session that names none runs on |
 | `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
 | `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
-| `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; and `copy`, a list of `{ "source", "target" }` host paths copied in |
+| `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; `copy`, a list of `{ "source", "target" }` host paths copied in; `part`, the part the CLI comes from; `state`, the absolute directory the agent keeps its configuration in, as a state volume; and `seed`, the host files that directory is seeded from, each `{ "source", "target", "keep", "drop" }`. A shipped preset brings its own, and this one is laid over it by key, `env` by variable |
+
+Every shipped preset brings a `machine`: its CLI's part, a state directory at `/ahpd/<id>` seeded from the agent's own host files and never its login file, and the variables that point the CLI there. So a preset in a machine runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. See [ACP agents in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#acp-agents-in-a-machine).
 
 A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved - a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, a `$secret` the vault does not hold, or a `machine` that is wrongly written or reads a variable the daemon does not have - is skipped with one line naming it, and the rest register. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable, and for a session placed in a machine also when the preset's `machine.env` sets it.
 

@@ -36,6 +36,16 @@ const needsOf = (provider: string, machine: AcpMachine): Record<string, MachineN
     `${provider}.copy.${String(at)}`,
     { source: one.source, target: one.target, description: `Copied in for ${provider}.` },
   ])),
+  ...(machine.part === undefined ? {} : {
+    [`${provider}.part`]: { part: machine.part, required: true, description: `The ${provider} CLI, built by this host at its pinned version.` },
+  }),
+  ...(machine.state === undefined ? {} : {
+    [`${provider}.state`]: {
+      state: machine.state,
+      ...(machine.seed === undefined ? {} : { seed: machine.seed }),
+      description: `The ${provider} configuration, kept in a volume and seeded from this host.`,
+    },
+  }),
 });
 
 /**

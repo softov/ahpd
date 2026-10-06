@@ -148,6 +148,33 @@ export interface Unread {
 }
 
 /**
+ * A machine's vault-named variables as read: each value by variable, the agents
+ * each belongs to where that is known, and what could not be read.
+ *
+ * A variable with no owners listed is one every command in the machine is
+ * given, which is how a machine recorded before owners were kept reads.
+ */
+export interface VaultRead {
+  /** Each value read, by the variable it sets. */
+  env: Record<string, string>;
+  /** The agents whose need set each variable, where that is known. */
+  owners: Record<string, string[]>;
+  /** Each reference that could not be read. */
+  unread: Unread[];
+}
+
+/**
+ * The vault-read variables one agent's commands are given: those it owns, and
+ * those whose owners are not known. `provider` absent, for a command no agent
+ * runs, is every one of them.
+ */
+export const scopedTo = (read: Pick<VaultRead, 'env' | 'owners'>, provider?: string): Record<string, string> =>
+  Object.fromEntries(Object.entries(read.env).filter(([variable]) => {
+    const owners = read.owners[variable];
+    return provider === undefined || owners === undefined || owners.includes(provider);
+  }));
+
+/**
  * A machine's vault-named variables, read again from the references it was
  * made with, for the owner and team it was made for.
  *
@@ -158,10 +185,12 @@ export const madeAgain = async (
   needs: readonly MadeNeed[],
   work: SecretWork,
   secret: PluginHost['secret'],
-): Promise<{ env: Record<string, string>; unread: Unread[] }> => {
+): Promise<VaultRead> => {
   const env: Record<string, string> = {};
+  const owners: Record<string, string[]> = {};
   const failed: Unread[] = [];
-  for (const { need, variable, secret: name } of needs) {
+  for (const { need, variable, secret: name, providers } of needs) {
+    if (providers !== undefined) owners[variable] = providers;
     try {
       env[variable] = await secret(name, work);
     }
@@ -169,7 +198,7 @@ export const madeAgain = async (
       failed.push({ need, name, variable, said: unread(need, name, error) });
     }
   }
-  return { env, unread: failed };
+  return { env, owners, unread: failed };
 };
 
 /**
@@ -194,13 +223,16 @@ export const namedAgain = async (
   needsOf: NeedsOf,
   work: SecretWork,
   secret: PluginHost['secret'],
-): Promise<{ env: Record<string, string>; unread: Unread[] }> => {
+): Promise<VaultRead> => {
   const env: Record<string, string> = {};
+  const owners: Record<string, string[]> = {};
   const failed: Unread[] = [];
   const seen = new Set<string>();
   for (const agent of agents) {
     for (const [need, declaredNeed] of Object.entries(needsOf(agent) ?? {})) {
-      if (seen.has(need) || !('name' in declaredNeed)) continue;
+      if (!('name' in declaredNeed)) continue;
+      owners[declaredNeed.name] = [...new Set([...owners[declaredNeed.name] ?? [], agent])];
+      if (seen.has(need)) continue;
       seen.add(need);
       const winning = profile?.[need] ?? option?.[need] ?? declaredNeed.default;
       const name = winning === undefined ? undefined : secretRef(winning);
@@ -213,5 +245,8 @@ export const namedAgain = async (
       }
     }
   }
-  return { env, unread: failed };
+  for (const variable of Object.keys(owners)) {
+    if (env[variable] === undefined) delete owners[variable];
+  }
+  return { env, owners, unread: failed };
 };

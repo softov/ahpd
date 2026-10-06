@@ -1,6 +1,6 @@
 ---
 title: A Claude variant's env reaches its machine without the daemon's
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

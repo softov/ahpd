@@ -31,7 +31,11 @@ export interface Part {
   kind: 'npm' | 'archive' | 'ahpd' | 'node';
   /** The exact version, never a range - decision `an-agent-cli-is-pinned-in-one-versions-file`. */
   version: string;
-  /** The npm packages it is, all at this part's version. */
+  /**
+   * The npm packages it is, each at this part's version, or at its own exact
+   * version where the entry is written `<package>@<version>`. An archive part
+   * may carry them beside its download, each with its own version.
+   */
   packages?: string[];
   /** One download per platform, each checked by sha256. */
   archives?: Record<string, { url: string; sha256: string }>;
@@ -65,6 +69,18 @@ const URL_SAFE = /^https:\/\/[A-Za-z0-9._~\/%+-]+$/;
 
 /** A sha256 as `sha256sum` prints it. */
 const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * A package of an npm part as its name and the exact version it names of its
+ * own, or no version where it is installed at the part's.
+ *
+ * The `@` of a scope is the first character, so the version is what follows an
+ * `@` after it.
+ */
+export const packageOf = (spec: string): { name: string; version?: string } => {
+  const at = spec.lastIndexOf('@');
+  return at > 0 ? { name: spec.slice(0, at), version: spec.slice(at + 1) } : { name: spec };
+};
 
 /** One error, as the one line a person reads. */
 const said = (problem: string): never => { throw new Error(`${versionsPath()}: ${problem}`); };
@@ -107,6 +123,19 @@ const entryOf = (value: unknown, where: string): Part => {
       ? held[key] as string[]
       : undefined);
   const bin = list('bin') ?? said(`${where} names no command`);
+  for (const spec of list('packages') ?? []) {
+    const own = packageOf(spec).version;
+    if (own !== undefined && !EXACT.test(own)) {
+      return said(`${where} has the package ${spec}, whose version is a range rather than one version`);
+    }
+    // An archive's version is its download's, so a package in one names its own.
+    if (kind === 'archive' && own === undefined) {
+      return said(`${where} has the package ${spec} with no version of its own, which an archive part has to give`);
+    }
+  }
+  if (kind === 'archive' && list('packages') !== undefined && !(list('requires') ?? []).includes('node')) {
+    return said(`${where} installs npm packages and does not require node`);
+  }
   return {
     id: text('id'),
     name: text('name'),
@@ -155,6 +184,16 @@ export const readParts = (path: string = versionsPath()): Part[] => {
 };
 
 /**
+ * What the tag of a part other than `ahpd` says after its name: its version,
+ * then the version of each package that pins its own, each after a `-`.
+ *
+ * So moving a package pinned apart from its part moves the part's image and
+ * its fill volume, as moving the part's own version does.
+ */
+export const pinnedOf = (part: Part): string =>
+  [part.version, ...(part.packages ?? []).flatMap((spec) => packageOf(spec).version ?? [])].join('-');
+
+/**
  * The image a part is built as, and the one place that is spelled.
  *
  * The tag is the version, so whether a part is built is one `docker image
@@ -164,7 +203,7 @@ export const readParts = (path: string = versionsPath()): Part[] => {
  * the thing that hash is there for.
  */
 export const tagOf = (part: Part, sourceHash?: string): string => {
-  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${part.version}`;
+  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${pinnedOf(part)}`;
   if (sourceHash === undefined || sourceHash === '') {
     throw new Error('the tag of the ahpd part carries a hash of its own source, and none was given to tag it with');
   }
@@ -403,11 +442,18 @@ const writes = (path: string, part: Part, command: string, extra: Record<string,
  *
  * Written rather than symlinked, because the `updates` the entry gives and, for
  * the ahpd part, the root its plugins live in have to be set before the command
- * runs and a symlink sets nothing.
+ * runs and a symlink sets nothing. `before` is shell run ahead of each
+ * launcher's write, for a command `exec` names by a variable it sets.
  */
-const launchers = (part: Part, exec: (bin: string) => string, extra: Record<string, string> = {}): string => {
+const launchers = (
+  part: Part,
+  exec: (bin: string) => string,
+  extra: Record<string, string> = {},
+  before?: (bin: string) => string,
+): string => {
   const steps = [`mkdir -p /opt/ahpd/${part.id}/bin`];
   for (const bin of part.bin) {
+    if (before !== undefined) steps.push(before(bin));
     steps.push(writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, exec(bin), extra));
     steps.push(`chmod +x /opt/ahpd/${part.id}/bin/${bin}`);
   }
@@ -443,6 +489,9 @@ const download = (part: Part, after: string[]): string => [
  * root, one under `bin`, one under `dist-package` - so the build finds the
  * executable of the name the entry gives and writes its path into the launcher,
  * rather than this file having to know three layouts.
+ *
+ * A bin the part's npm packages installed, in `node_modules/.bin`, is written
+ * as an npm part's is, ahead of looking in the archive.
  */
 const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bin`, ...part.bin.map((bin) => {
   // A symlink counts: `npm` and `npx` are symlinks in a Node tarball, and some
@@ -452,7 +501,10 @@ const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bi
   // launcher is four statements. A publisher that already put the command where
   // a launcher goes has written the launcher itself - devin ships `bin/devin` -
   // and one written over it would exec itself, so it is left alone.
-  return `if test -x /opt/ahpd/${part.id}/bin/${bin}; then :; else ${found} `
+  const npm = `/opt/ahpd/${part.id}/node_modules/.bin/${bin}`;
+  const fromNpm = part.packages === undefined ? '' : `elif test -e ${npm}; then ${scriptOrNative(npm)}; `
+    + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$run')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; `;
+  return `if test -x /opt/ahpd/${part.id}/bin/${bin}; then :; ${fromNpm}else ${found} `
     + `test -n "$found" || { echo "the ${part.id} archive holds no ${bin} to run" >&2; exit 1; }; `
     + `${writes(`/opt/ahpd/${part.id}/bin/${bin}`, part, '$found')}; chmod +x /opt/ahpd/${part.id}/bin/${bin}; fi`;
 })];
@@ -461,14 +513,28 @@ const launchersIn = (part: Part): string[] => [`mkdir -p /opt/ahpd/${part.id}/bi
 const byNpm = (part: Part): string => [
   fetching(true, 'ca-certificates'),
   `RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${
-    (part.packages ?? []).map((one) => `${one}@${part.version}`).join(' ')}`,
-  launchers(part, (bin) => `/opt/ahpd/node/bin/node /opt/ahpd/${part.id}/node_modules/.bin/${bin}`),
+    (part.packages ?? []).map((one) => (packageOf(one).version === undefined ? `${one}@${part.version}` : one)).join(' ')}`,
+  launchers(part, () => '$run', {}, (bin) => scriptOrNative(`/opt/ahpd/${part.id}/node_modules/.bin/${bin}`)),
   only(part.id),
 ].join('\n\n');
 
+/**
+ * The shell that sets `run` to the command a launcher execs for an npm bin.
+ *
+ * A bin that starts with `#!` is a script and is run by the part's Node, since
+ * the machine has no `node` of its own for its shebang to find; anything else is
+ * an executable the package installed for the platform, `claude` among them,
+ * and is run as it is.
+ */
+const scriptOrNative = (path: string): string =>
+  `run=${path}; case "$(head -c 2 ${path})" in '#!') run="/opt/ahpd/node/bin/node ${path}";; esac`;
+
 /** The download a part made of one tarball fetches, unpacked into the part. */
 const byDownload = (part: Part): string => [
-  fetching(false, 'ca-certificates curl bzip2 xz-utils'),
+  fetching(part.packages !== undefined, 'ca-certificates curl bzip2 xz-utils'),
+  // An archive part's npm packages, each at the version it pins of its own,
+  // installed before the download unpacks beside them.
+  ...(part.packages === undefined ? [] : [`RUN npm install --prefix /opt/ahpd/${part.id} --no-audit --no-fund --loglevel=error ${part.packages.join(' ')}`]),
   download(part, launchersIn(part)),
   only(part.id),
 ].join('\n\n');
@@ -677,9 +743,12 @@ export interface MadePart {
  */
 export const MACHINE_PARTS = 'ahpd.parts';
 
-/** The label value for a machine made with these parts. */
-export const partsLabel = (parts: readonly MadePart[]): string =>
-  parts.map((one) => `${one.id}@${one.version}`).join(',');
+/**
+ * The label value for a machine made with these parts, and with `host` mounted
+ * from this host in place of parts that could not be built, each `<id>@host`.
+ */
+export const partsLabel = (parts: readonly MadePart[], host: readonly string[] = []): string =>
+  [...parts.map((one) => `${one.id}@${one.version}`), ...host.map((id) => `${id}@host`)].join(',');
 
 /** The part ids a label value names, with any version dropped. */
 export const partsSaid = (value: unknown): string[] =>

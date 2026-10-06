@@ -1,6 +1,6 @@
 ---
 title: ACP presets and cofold declare their state
-status: todo
+status: done
 depends: [task-02-acp-presets-name-their-parts.md, task-03-a-cofold-machine-runs-ahpd-from-its-part.md]
 layer: "agent-acp, agent-cofold"
 refs:

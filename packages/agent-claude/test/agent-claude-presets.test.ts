@@ -367,3 +367,100 @@ it('offers the models the harness names once a session has started', async () =>
   await settle();
   expect(session.models?.()).toEqual([{ id: 'stealth/space-bunny-alpha', name: 'Space Bunny' }]);
 });
+
+/** One session's `query()` options in a machine, on a variant holding the given values. */
+const queriedInside = async (preset: Record<string, unknown> | undefined, env?: Record<string, string>): Promise<Record<string, unknown>> => {
+  sdk.options = [];
+  createSession({
+    uri: 'ahp-session:/inside',
+    chatUri: 'ahp-chat:/inside',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-inside-')),
+    emit: () => {},
+    settings: {},
+    spawn: () => { throw new Error('not spawned in this test'); },
+    spawnExecutable: 'claude',
+    spawnConfigDir: '/ahpd/claude',
+    ...(preset === undefined ? {} : { preset }),
+    ...(env === undefined ? {} : { env }),
+  });
+  await settle();
+  const one = sdk.options.at(0);
+  if (one === undefined) throw new Error('no query was built');
+  return one;
+};
+
+/** The daemon variables a case sets, put back after it. */
+const withDaemon = async <T>(held: Record<string, string>, run: () => Promise<T>): Promise<T> => {
+  const before = Object.fromEntries(Object.keys(held).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, held);
+  try { return await run(); }
+  finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+};
+
+it("hands a variant's own env to the CLI in a machine, and nothing of the daemon's", async () => {
+  const env = await withDaemon({ T: 'sk-or', ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () =>
+    (await queriedInside({ env: { ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: { fromEnv: 'T' } } })).env as Record<string, string>);
+  expect(env).toEqual({ ANTHROPIC_BASE_URL: 'https://x', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+});
+
+it('hands the built-in no daemon key in a machine unless its env names one', async () => {
+  await withDaemon({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CODE_OAUTH_TOKEN: 'oauth-daemon' }, async () => {
+    expect((await queriedInside(undefined)).env).toEqual({ CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+    expect((await queriedInside({ env: { ANTHROPIC_API_KEY: { fromEnv: 'ANTHROPIC_API_KEY' } } })).env)
+      .toEqual({ ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+  });
+});
+
+it('lays a pushed credential over the variant env in a machine, and leaves out an unset key', async () => {
+  const env = await withDaemon({ ANTHROPIC_BASE_URL: 'https://daemon' }, async () =>
+    (await queriedInside({ env: { ANTHROPIC_API_KEY: 'from-preset', ANTHROPIC_BASE_URL: null } }, { ANTHROPIC_API_KEY: 'signed-in' })).env);
+  expect(env).toEqual({ ANTHROPIC_API_KEY: 'signed-in', CLAUDE_CONFIG_DIR: '/ahpd/claude' });
+});
+
+it('keeps the daemon environment under a variant env off a machine', async () => {
+  const env = await withDaemon({ ANTHROPIC_API_KEY: 'sk-daemon' }, async () =>
+    (await queried({ env: { ANTHROPIC_BASE_URL: 'https://x' } })).env as Record<string, string>);
+  expect(env.ANTHROPIC_API_KEY).toBe('sk-daemon');
+  expect(env.PATH).toBe(process.env.PATH);
+});
+
+it('gives two variants on one machine only their own keys on their docker exec', async () => {
+  const asked: Record<string, string>[] = [];
+  const computers = {
+    how: async (_id: string, options: { env?: Record<string, string> }) => {
+      asked.push(options.env ?? {});
+      return { command: 'true' };
+    },
+  };
+  await withDaemon({ ANTHROPIC_API_KEY: 'sk-daemon' }, async () => {
+    const agents = await agentsOf({
+      presets: {
+        claude: { env: { ANTHROPIC_API_KEY: { fromEnv: 'ANTHROPIC_API_KEY' } } },
+        openrouter: { env: { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or' } },
+      },
+    });
+    for (const agent of agents) {
+      sdk.options = [];
+      agent.create({
+        uri: `ahp-session:/${agent.provider}`,
+        chatUri: `ahp-chat:/${agent.provider}`,
+        settings: { computer: 'computer://box' },
+        computers: computers as never,
+        emit: () => {},
+      } as never);
+      await settle();
+      const options = sdk.options.at(0) as { spawnClaudeCodeProcess: (asked: unknown) => unknown; env: Record<string, string> };
+      options.spawnClaudeCodeProcess({ command: 'claude', args: [], env: options.env });
+      await settle();
+    }
+  });
+  expect(asked).toEqual([
+    { ANTHROPIC_API_KEY: 'sk-daemon', CLAUDE_CONFIG_DIR: '/ahpd/claude' },
+    { ANTHROPIC_BASE_URL: 'https://openrouter.ai/api', ANTHROPIC_AUTH_TOKEN: 'sk-or', CLAUDE_CONFIG_DIR: '/ahpd/openrouter' },
+  ]);
+});

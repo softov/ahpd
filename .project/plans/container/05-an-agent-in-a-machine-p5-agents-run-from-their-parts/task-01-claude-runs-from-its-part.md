@@ -1,6 +1,6 @@
 ---
 title: Claude runs from its part
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

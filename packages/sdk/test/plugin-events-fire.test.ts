@@ -357,6 +357,19 @@ it('fires tool_call once, after a host tool answered', async () => {
   expect(calls[0]).toMatchObject({ session: 'tooler:/tool', tool: 'probe_tool', ok: true });
 });
 
+it('tells a host tool which agent the calling session runs', async () => {
+  const providers: (string | undefined)[] = [];
+  const asking: HostTool = {
+    definition: { name: 'probe_tool', description: 'A tool the test calls.', inputSchema: { type: 'object', properties: {} } },
+    run: (_input, at) => { providers.push(at.provider); return 'fine'; },
+  };
+  const { client } = watched({ agents: [tooler(() => {})], tools: [asking] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/which', provider: 'tooler' } });
+  await settle();
+  expect(providers).toEqual(['tooler']);
+});
+
 it('fires tool_call with the failure when a host tool throws', async () => {
   const outcomes: string[] = [];
   const { seen, client } = watched({

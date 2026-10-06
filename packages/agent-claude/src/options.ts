@@ -174,6 +174,15 @@ export const optionDefaults = (): Bag => Object.fromEntries(
 /** The `query()` options a set of declared values produces. */
 export const queryOptionsOf = (values: Bag): Bag => through(values, 'toQuery');
 
+/**
+ * A variant's own `env`, each `{ fromEnv }` read, and `null` for a variable it
+ * unsets; none of the daemon's environment under it.
+ *
+ * What a CLI in a machine is started with, where the daemon's `HOME`, `PATH`
+ * and keys are this host's and not the variant's to hand on.
+ */
+export const ownEnvOf = (values: Bag): Record<string, string | null> => variablesOf(values['env'], true);
+
 /** The flag settings a set of declared values produces. */
 export const flagSettingsOf = (values: Bag): Bag => through(values, 'toFlags');
 
