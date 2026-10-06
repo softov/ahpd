@@ -1,7 +1,7 @@
 ---
 title: A secret reaches a machine in its environment, never in its argv
 domain: container
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-03
@@ -84,6 +84,9 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 | On a reach after a restart, a vault-named value is read again for the machine's owner and team from `claimOf` | (defaulted: the owner and team the machine was made for are the scope its secret was read in) | 01 |
 | Vault-named values are kept off `docker run` for every runtime and passed by name on each `docker exec`, as for a dev container, so nothing lands in `docker inspect`'s `Config.Env` | Softov, 2026-10-04, asked "a vault-named value given to a plain Docker machine at create goes as `docker run -e NAME`, so `docker inspect` keeps it in `Config.Env`: keep vault-named values off `docker run` for every runtime and pass them on each `docker exec`, or accept `docker inspect` for plain Docker?": keep them off `docker run` for every runtime and pass them on each `docker exec`, as task 02 does for a dev container | 01, 02 |
 | When a vault-named value cannot be read again after a restart, the behaviour is a setting: by default every exec into that machine fails with a line naming the need, and the other setting drops only that variable from the exec and logs the line | Softov, 2026-10-04, asked "a vault-named value read again when a machine is reached after a restart cannot be read; does every exec into that machine fail with a line naming the need, or is only that variable dropped from the exec and the line logged?": configurable, failing every exec by default, and dropping only that variable with a logged line as the other setting | 01, 03 |
+| Every `DOCKER_*` name, with `PATH` and `HOME`, is the `docker` program's own: it goes `-e NAME=VALUE` and never into docker's environment, so no need can change which daemon or configuration docker uses | Softov, 2026-10-05, asked "a need named `DOCKER_CONTEXT`, `DOCKER_CONFIG` and so on lands in the docker program's own environment and changes which daemon or config docker uses: does every `DOCKER_*` name count as docker's own, or is a `DOCKER_*` need refused?": every `DOCKER_*` is docker's | 01 |
+| A dev container's `remoteEnv` and probe values reach `docker exec` by name too, through `byName`, so a host value a definition pulls in with `${localEnv:NAME}` is not in `ps` | Softov, 2026-10-05, asked "a dev container's `remoteEnv` and probe values still go `-e NAME=VALUE`, so a host secret pulled in with `${localEnv:NAME}` is visible in `ps`: send those by name too?": by name too | 02 |
+| The needs a machine was made with (names and `$secret` references, never values) are recorded in its `computers.json` entry, and a re-read after a restart uses those rather than the agent's registered needs | Softov, 2026-10-05, asked "after a restart, a session-time machine's vault values are re-read with the agent's registered needs, not the needs the session asked with: record the session's needs with the machine?": record them | 01 |
 | The setting is the profile's `secretUnreadable: "fail" \| "drop"`, `"fail"` when absent, and a machine made without a profile always fails | (defaulted: a profile is the machine's recipe, and its other per-machine choices, `disposable`, `sessionFolder` and `host`, are flat fields of `Profile` in [code://packages/computer/src/manifest.ts#L34-L100](../../../../packages/computer/src/manifest.ts#L34-L100) read by `profilesOf` in [code://packages/computer/src/plugin.ts#L142-L178](../../../../packages/computer/src/plugin.ts#L142-L178)) | 01, 03 |
 | The fake Docker fails on an absent `-e NAME`, stricter than Docker, which drops it silently | (defaulted: a dropped `Spawn.env` must fail a test rather than leave a variable missing) | 01 |
 | A `$secret` is resolved by the vault before it reaches this plan; this plan only delivers | [Secrets live in a vault port, and the host's own vault is a plain file until it is encrypted](../../../decisions/the-local-vault-is-a-plain-file-until-it-is-encrypted.md) | - |
@@ -94,17 +97,17 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 ## Proposed architecture
 
 - **Data flow** - the flags carry names; the answered `Spawn.env` (for `how()`) or the runner's spawn env (for create) carries the values.
-- **State flow** - a vault-named value is held with its machine in the plugin's memory, never in `computers.json` or the container's env, and is read again for the machine's owner and team on the first reach after a restart.
+- **State flow** - a vault-named value is held with its machine in the plugin's memory, never in `computers.json` or the container's env; the machine's `computers.json` entry records the need, variable and secret name, and the value is read again from that for the machine's owner and team on the first reach after a restart.
 - **Layer responsibilities** - `@ahpd/computer` only.
 
 ## Tasks
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Docker takes every value by name, and a vault-named value only on each exec](task-01-docker-takes-every-value-by-name.md) | todo | - |
-| [02 - A vault-named value reaches a dev container on each docker exec, by name](task-02-the-dev-container-cli-takes-every-value-by-name.md) | todo | 01, container/03 tasks 09 and 18, rebased onto vault/01 p2 |
-| [03 - Docs](task-03-docs.md) | todo | 01, 02, 04 |
-| [04 - A need value answers set](task-04-a-need-value-answers-set.md) | todo | - |
+| [01 - Docker takes every value by name, and a vault-named value only on each exec](task-01-docker-takes-every-value-by-name.md) | implemented | - |
+| [02 - A vault-named value reaches a dev container on each docker exec, by name](task-02-the-dev-container-cli-takes-every-value-by-name.md) | implemented | 01, container/03 tasks 09 and 18, rebased onto vault/01 p2 |
+| [03 - Docs](task-03-docs.md) | implemented | 01, 02, 04 |
+| [04 - A need value answers set](task-04-a-need-value-answers-set.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -113,21 +116,23 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-docker-takes-every-value-by-name.md](task-01-docker-takes-every-value-by-name.md).
+- **Done so far:** tasks 04, 01, 02 and 03 implemented on 2026-10-05, on main after container/03 (`52f98f6`). Every asked value reaches `docker run` and `docker exec` as `-e NAME` with the value in the spawned `docker` process's environment, except `PATH`, `HOME` and every `DOCKER_*` name, which stay `-e NAME=VALUE` and never enter docker's spawn env; a dev container's `remoteEnv` and probe values go by name too, as `execArgv` answers `{ argv, env }` to every caller; a vault-named value is left out of `docker run`, the override config and so `Config.Env` on both recipes, held in the plugin's memory per machine, and passed by name on every `docker exec` - `how`, the nested host, `computer_exec` and the relay's `connect`; the needs it was made with are recorded by need, variable and secret name in the machine's `computers.json` entry, and after a restart they are read again for `claimOf(id)` from that record, or, for a machine with none recorded, from the machine's `ahpd.agents` and its `ahpd.profile`; `secretUnreadable` decides a failed read. [implemented.md](implemented.md) sums it up. Each task's Resume lists its files, tests and differences from its steps.
+- **Next action:** Softov's review.
+- **Ran on 2026-10-05:** against Docker 29.6.2 with the built runtime: `Config.Env` held the plain variable and not the vault-named one, an `exec` given the vault-named one by name printed it, and `ps -ww` during `docker exec -e ANTHROPIC_API_KEY` showed only the name.
 - **Watch out for:**
-  - The fake Docker must refuse `-e NAME` when `NAME` is not in its environment, or the test proves nothing.
-  - The check that `ps` shows no value in a dev container session waits for container/03's switch to `docker exec`.
-  - The override config `container/03` task 09 writes holds environment values on disk (0600, removed after `up`); a value named from the vault goes in as a `${localEnv:NAME}` reference with the value in the CLI's spawned environment, never in clear.
-  - `PATH`, `HOME` and `DOCKER_HOST` stay in argv as `NAME=VALUE`; a secret under one of those names would show in `ps`, which the docs say.
+  - The fake Docker refuses `-e NAME` when `NAME` is not in its environment, where real Docker drops it silently; a test that spawns a descriptor must spawn it with its `env`.
+  - `PATH`, `HOME` and every `DOCKER_*` name stay in argv as `NAME=VALUE`; a secret under one of those names shows in `ps`, which the docs say.
+  - A missing `computers.json` now reads as empty without a log line, since every first reach after a restart reads it for recorded needs.
+  - A held value lives for the daemon's life under the machine id the create answered; a command that names the machine by another of its ids reads the vault again for it, which answers the same values.
+- **Open questions:** none; the three raised in the build are answered in the table above (Softov, 2026-10-05).
 
 ## Final verification checklist
 
-- [ ] No argv the fake Docker records holds a value that was asked as env, except `PATH`, `HOME` and `DOCKER_HOST`, and no argv the fake CLI records holds a vault-named value.
-- [ ] No override config the fake CLI reads holds a vault-named value in clear.
-- [ ] No `docker run` the fake Docker records, by name or by value, carries a vault-named need, and a real `docker inspect` of a machine given one shows no such variable in `Config.Env`.
-- [ ] After a restart with a secret gone, `secretUnreadable: "fail"` fails every exec naming the need, and `"drop"` runs the exec without it and logs the line.
-- [ ] A real `docker exec` session with `ANTHROPIC_API_KEY` set shows only the name in `ps -ww`.
-- [ ] `ahpd config` answers `<set>` for a value under the computer plugin's `needs` and under a profile's `needs`.
-- [ ] `pnpm test`, `pnpm typecheck` green.
-- [ ] `plans/index.md` updated.
+- [x] No argv the fake Docker records holds a value that was asked as env, except `PATH`, `HOME` and `DOCKER_*` names, and no argv the fake CLI records holds a vault-named value.
+- [x] No override config the fake CLI reads holds a vault-named value in clear.
+- [x] No `docker run` the fake Docker records, by name or by value, carries a vault-named need, and a real `docker inspect` of a machine given one shows no such variable in `Config.Env`.
+- [x] After a restart with a secret gone, `secretUnreadable: "fail"` fails every exec naming the need, and `"drop"` runs the exec without it and logs the line.
+- [x] A real `docker exec` session with `ANTHROPIC_API_KEY` set shows only the name in `ps -ww`.
+- [x] `ahpd config` answers `<set>` for a value under the computer plugin's `needs` and under a profile's `needs`.
+- [x] `pnpm test`, `pnpm typecheck` green.
+- [x] `plans/index.md` updated.

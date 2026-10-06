@@ -1,6 +1,6 @@
 ---
 title: Docker takes every value by name, and a vault-named value only on each exec
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -67,3 +67,27 @@ Write each case first and see it fail against today's code, then build until it 
 - `pnpm --filter @ahpd/computer test` and `pnpm --filter @ahpd/sdk test` green.
 
 ## Resume
+
+Implemented on 2026-10-05, on main after container/03 (`52f98f6`).
+
+Files changed:
+
+- `packages/computer/src/byname.ts` (new) - `DOCKER_OWN` (`PATH`, `HOME`), `DOCKER_OWN_PREFIX` (`DOCKER_`), `dockerOwn` and `byName`; a name `dockerOwn` answers stays `-e NAME=VALUE` and never enters the spawn env. A file of its own rather than inside `runtime.ts`, because the relay in `devcontainer.ts` uses it and `runtime.ts` already imports `devcontainer.ts`; `runtime.ts` re-exports both, so `plugin.ts` imports them from there as the plan says.
+- `packages/computer/src/runtime.ts` - `ran` and `must` take an env laid over the runtime's own; `MachineSpec.named`; `madeWith` leaves the vault-named variables out of what a machine is made with; `run` and `create` pass every other one by name; `exec` takes an optional env and passes it by name on both recipes.
+- `packages/computer/src/secrets.ts` - `revealed` answers `{ values, named }`, `named` mapping each vault-named need to the secret it named; `vaultNamed` picks the winning source per need (the profile's, else the option's); `namedAgain` reads the vault-named env needs again, one at a time, and answers what it read beside what it could not; `madeAgain` reads the needs a machine was recorded with.
+- `packages/sdk/src/types/machine.ts` - `ResolvedNeed.named`.
+- `packages/computer/src/manifest.ts` - `Profile.secretUnreadable`; `ManifestDefaults.named`; `manifestOf` marks each env `ResolvedNeed` whose need is vault-named and answers each as `{ need, variable, secret }` in `MachineSpec.named`.
+- `packages/computer/src/owners.ts` - `MadeNeed`, an entry's `needs`, `madeNeedsOf` and `keepMadeNeeds`; a missing `computers.json` reads as empty without a log line.
+- `packages/computer/src/provider.ts` - reads `values` from `revealed` and hands `vaultNamed(own, values)` to `manifestOf`.
+- `packages/computer/src/plugin.ts` - `secretUnreadable` in the profile schema and in `profilesOf`; `vaulted`, the held values per machine id, filled by `made.run` and cleared by `made.remove`; `made.run` records the needs in the machine's `computers.json` entry by need, variable and secret name; `namedFor`, which answers the held values or reads them again for `claimOf(id)` from that record, or, with none recorded, from the machine's `ahpd.agents` and its `ahpd.profile`, and applies `secretUnreadable`; `reach` passes the held values under the asked ones through `byName`; `made.exec` gives a tool's command the same.
+- `packages/computer/test/fixtures/docker.mjs` - `-e NAME` read from its own environment on `run`, `create` and `exec`, refused when absent.
+
+Tests: "passes each asked variable by name, and keeps the names docker reads as written", "keeps every DOCKER_ name out of the environment docker is spawned with" and the updated "answers how to reach a machine" in `computer-plugin.test.ts`; in `computer-needs.test.ts` the five existing secret cases now assert the machine's record lacks the value and the next exec carries it, plus "answers which needs a reference gave their value", "reads a vault-named value again after a restart", "fails every command into the machine when a vault-named value cannot be read again" and "drops only the unreadable variable and logs it", "makes a machine with a DOCKER_ need without running docker under it", "reads a session machine's own vault-named need again after a restart, from the reference it was made with" and "reads a machine with no recorded needs again from the needs its agents declare"; "takes a profile's secretUnreadable as fail or drop" in `computer-options.test.ts`. Each new or changed case was run against the tree at `HEAD` with the new tests and fixture copied in, and failed there.
+
+Differences from the steps:
+
+- The exec cases are in `computer-plugin.test.ts`, beside the existing reach test, not in `computer-spawn.test.ts`, which tests Claude's `spawnInside` and loads no plugin.
+- `MachineSpec.named` lists `{ need, variable, secret }`: the runtime works in the variables, and the plugin records all three.
+- The loader's schema check does not walk the values of an `additionalProperties` map, so a profile's `secretUnreadable: "skip"` passed it. `apply` refuses it instead, naming `profiles.<key>.secretUnreadable`, as it refuses a bad `images` pattern.
+- `secretUnreadable` applies to every command into the machine: `how`, the nested host (which goes through `how`), `computer_exec` and the relay.
+- Checked against Docker 29.6.2 on the workstation with the built runtime: a machine made with a plain and a vault-named variable had only the plain one in `Config.Env`, `exec` with the vault-named one by name printed it, and `ps -ww` during a `docker exec -e ANTHROPIC_API_KEY` showed the name and not the value.

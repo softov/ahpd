@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink, PluginSpec } from '@ahpd/sdk';
+import { byName } from './byname.js';
 
 /**
  * Dev containers, by the CLI that defines them.
@@ -104,33 +105,42 @@ export interface Reach {
 /**
  * The `docker exec` that runs one command inside a dev container.
  *
- * One function so no road spells the flags a second time, and so a value that
- * has to reach the command without ever being written down - a credential named
- * from the vault - is one `-e NAME` more in `more`.
+ * One function so no road spells the flags a second time. It answers the argv
+ * and the environment `docker` is spawned with beside it: every variable goes
+ * by name through `byName`, the probe's and the definition's `remoteEnv` as
+ * much as the caller's, since a `remoteEnv` value may be this host's own,
+ * pulled in with `${localEnv:NAME}`. A caller spawns `docker` with `env` laid
+ * over its own, or each `-e NAME` is missing in there.
  *
  * Only what the container is not already holding is put on the flags. A `docker
  * exec` inherits the container's own environment, so a variable written there -
  * a need's, as the override config's `containerEnv` - is on no argv and
  * therefore in no process list on this host.
  *
- * `more` is the caller's own `-e`, beside the machine's rather than instead of
- * it: it is how a value reaches a command without ever being kept.
+ * `more` is the caller's own variables, after the machine's and over them: it
+ * is how a value reaches a command without ever being kept.
  */
 export const execArgv = (
   into: Reach & { id: string },
   command: readonly string[],
-  more: readonly string[] = [],
-): string[] => [
-  'exec', '-i',
-  '-u', into.user,
-  ...Object.entries(into.env)
-    .filter(([key, value]) => value !== into.containerEnv[key])
-    .flatMap(([key, value]) => ['-e', `${key}=${value}`]),
-  ...(into.workdir === undefined ? [] : ['-w', into.workdir]),
-  ...more,
-  into.id,
-  ...command,
-];
+  more: Record<string, string> = {},
+): { argv: string[]; env: Record<string, string> } => {
+  const own = byName(Object.fromEntries(Object.entries(into.env)
+    .filter(([key, value]) => value !== into.containerEnv[key])));
+  const asked = byName(more);
+  return {
+    argv: [
+      'exec', '-i',
+      '-u', into.user,
+      ...own.flags,
+      ...(into.workdir === undefined ? [] : ['-w', into.workdir]),
+      ...asked.flags,
+      into.id,
+      ...command,
+    ],
+    env: { ...own.env, ...asked.env },
+  };
+};
 
 /**
  * A program's own words with every environment value taken out of them.
@@ -539,6 +549,15 @@ export interface DevContainerOptions {
    */
   onAdopted?: (connect: ContainerConnect, id: string) => void;
   /**
+   * The variables a computer holds whose values were read from the vault, by
+   * its machine id.
+   *
+   * They were never given to `up`, so the container does not hold them, and
+   * every command a connect runs in there is given them by name. A rejection
+   * refuses the connect in its own words. Absent, nothing more is given.
+   */
+  named?: (machine: string) => Promise<Record<string, string>>;
+  /**
    * How the host inside the container is started.
    *
    * The program and its arguments, before ours: `--stdio`, the workspace path
@@ -788,14 +807,22 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
     return reachOf(found, probe, where());
   };
 
-  /** One command inside the container, by `docker exec` as the CLI builds it. */
-  const inside = async (into: Reach & { id: string }, said: string, sink: ContainerSink) => {
-    const argv = execArgv(into, ['/bin/sh', '-c', said]);
+  /**
+   * One command inside the container, by `docker exec` as the CLI builds it,
+   * with `given` passed by name beside the container's own.
+   */
+  const inside = async (
+    into: Reach & { id: string },
+    said: string,
+    sink: ContainerSink,
+    given: Record<string, string>,
+  ) => {
+    const { argv, env: values } = execArgv(into, ['/bin/sh', '-c', said], given);
     sink.output(`$ ${[docker.command, ...shown(argv)].map(quote).join(' ')}\n`);
     return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
       const child = spawn(docker.command, [...docker.args, ...argv], {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, ...(docker.env ?? {}), ...env },
+        env: { ...process.env, ...(docker.env ?? {}), ...env, ...values },
       });
       let stdout = '';
       let stderr = '';
@@ -943,6 +970,9 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
        * in there now - decision `a-dev-container-is-reached-by-docker-exec`.
        */
       const reached = { ...await reachOfContainer(machine ?? made.containerId, made.containerId), id: made.containerId };
+      // The computer's vault-named variables, which no command in there has
+      // unless it is given them.
+      const given = options.named === undefined ? {} : await options.named(machine ?? made.containerId);
 
       /*
        * The host inside, put there if the image has not got one.
@@ -962,7 +992,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
          * is the program the line below starts.
          */
         const program = host[0] ?? 'ahpd';
-        const present = await inside(reached, `command -v ${quote(program)}`, sink);
+        const present = await inside(reached, `command -v ${quote(program)}`, sink, given);
         if (present.code !== 0) {
           /*
            * The published server, pinned to the daemon's version where that is
@@ -977,7 +1007,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
            */
           const version = options.version ?? 'unknown';
           const line = install ?? `npm i -g @ahpd/server${version === 'unknown' ? '' : `@${version}`} --allow-scripts=node-pty`;
-          const installed = await inside(reached, line, sink);
+          const installed = await inside(reached, line, sink, given);
           if (installed.code !== 0) {
             throw new Error(`The container has no ${program} and could not install one: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Give the image Node and npm, build it with @ahpd/server in it, or name the host it already has`);
           }
@@ -998,7 +1028,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
          */
         const named = plugins.filter(isPackageName).map(nameOf);
         if (named.length > 0) {
-          const installed = await inside(reached, pluginInstallLine(host, named), sink);
+          const installed = await inside(reached, pluginInstallLine(host, named), sink, given);
           if (installed.code !== 0) {
             throw new Error(`The container has no ${named.join(', ')} and could not install it: ${installed.stderr.trim() || `exit ${String(installed.code)}`}. Build the image with it, or name a path inside the container`);
           }
@@ -1022,7 +1052,7 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
       };
       const encoded = Buffer.from(JSON.stringify(config), 'utf8').toString('base64');
       const at = `/tmp/ahpd-nested-${randomUUID()}.json`;
-      const written = await inside(reached, `printf %s ${encoded} | base64 -d > ${quote(at)} && chmod 600 ${quote(at)}`, sink);
+      const written = await inside(reached, `printf %s ${encoded} | base64 -d > ${quote(at)} && chmod 600 ${quote(at)}`, sink, given);
       if (written.code !== 0) {
         throw new Error(`The container could not be given the host's configuration: ${written.stderr.trim() || `exit ${String(written.code)}`}`);
       }
@@ -1038,14 +1068,14 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
        * `a-dev-container-is-reached-by-docker-exec`.
        */
       const line = [...host, '--stdio', '--path', remote, '--config-file', at].map(quote).join(' ');
-      const argv = execArgv(reached, ['/bin/sh', '-c', line]);
+      const { argv, env: values } = execArgv(reached, ['/bin/sh', '-c', line], given);
       // Echoed without values: this stream goes to the connecting client, and a
       // need's value is not the client's to read.
       sink.output(`$ ${[docker.command, ...shown(argv)].map(quote).join(' ')}\n`);
       const child = spawn(
         docker.command,
         [...docker.args, ...argv],
-        { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...(docker.env ?? {}), ...env } },
+        { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, ...(docker.env ?? {}), ...env, ...values } },
       );
       live.set(one.connectionId, child);
 

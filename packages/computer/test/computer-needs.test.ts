@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
 import { dockerRuntime } from '../src/runtime.js';
+import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -75,9 +76,15 @@ interface Held {
   calls: string[][];
 }
 
+/**
+ * The daemon's configuration folder: the test's own temporary directory where
+ * it made one, so a `computers.json` it writes goes with the test.
+ */
+const configHome = (): string => loose ?? REPO;
+
 const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vault?: Vault) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
-  { base: base(agents, vault), configDir: REPO, cwd: REPO, log: () => {} },
+  { base: base(agents, vault), configDir: configHome(), cwd: REPO, log: () => {} },
 );
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
@@ -127,6 +134,11 @@ it('turns resolved needs into flags, a copy, a label and a same-path folder', as
     `${folder}:${folder}`,
   ]);
   expect(box.env).toEqual({ ANTHROPIC_API_KEY: 'from-the-agent' });
+  // The variable reached the machine by name: the value was in docker's own
+  // environment and is in no argv the scripted docker saw.
+  const made = held.calls.find((one) => one[0] === 'create') ?? [];
+  expect(made.slice(made.indexOf('-e'), made.indexOf('-e') + 2)).toEqual(['-e', 'ANTHROPIC_API_KEY']);
+  expect(held.calls.flat().filter((one) => one.includes('from-the-agent'))).toEqual([]);
   expect(box.labels).toMatchObject({ 'ahpd.computer': '1', 'ahpd.agents': 'claude' });
   expect(box.workdir).toBe(folder);
 
@@ -140,6 +152,30 @@ it('turns resolved needs into flags, a copy, a label and a same-path folder', as
   // session against before it lets one enter.
   expect(await options.computers?.agents?.('box')).toEqual(['claude']);
   expect(await options.computers?.agents?.('nope')).toBeUndefined();
+});
+
+it('makes a machine with a DOCKER_ need without running docker under it', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { claude: { agents: ['claude'] } },
+  }, [agent('claude', {
+    context: { name: 'DOCKER_CONTEXT', default: 'elsewhere' },
+    config: { name: 'DOCKER_CONFIG', default: '/tmp/other-config' },
+  })]);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'claude' }), encoding: 'utf-8' });
+
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held & { machines: { dockerEnv?: string[] }[] };
+  const box = held.machines[0];
+  expect(box?.env).toEqual({ DOCKER_CONTEXT: 'elsewhere', DOCKER_CONFIG: '/tmp/other-config' });
+  // In the machine, and not in the environment `docker run` itself ran in.
+  expect(box?.dockerEnv).not.toContain('DOCKER_CONTEXT');
+  expect(box?.dockerEnv).not.toContain('DOCKER_CONFIG');
+  const made = held.calls.find((one) => one[0] === 'run') ?? [];
+  expect(made).toContain('DOCKER_CONTEXT=elsewhere');
 });
 
 it('mounts one entry where the folder is named as a mount as well', async () => {
@@ -272,6 +308,21 @@ const KEY: Record<string, MachineNeed> = { anthropicKey: { name: 'ANTHROPIC_API_
 const envOf = (state: string, at = 0): Record<string, string> | undefined =>
   (JSON.parse(readFileSync(state, 'utf8')) as Held).machines[at]?.env;
 
+/**
+ * What a command run in a machine is given: the variables its `docker exec`
+ * names, and the environment `docker` is spawned with for them.
+ */
+const execOf = async (options: HostOptions, id: string): Promise<{ names: string[]; env: Record<string, string>; args: string[] }> => {
+  const how = await options.computers?.how(id, { command: 'true' });
+  const args = how?.args ?? [];
+  const names = args.flatMap((one, at) => (args[at - 1] === '-e' ? [one] : []));
+  return { names, env: how?.env ?? {}, args };
+};
+
+/** Every `docker run` and `docker create` the scripted docker saw. */
+const makes = (state: string): string[][] =>
+  (JSON.parse(readFileSync(state, 'utf8')) as Held).calls.filter((one) => one[0] === 'run' || one[0] === 'create');
+
 const written = async (
   options: HostOptions,
   name: string,
@@ -294,7 +345,14 @@ it('reads a profile need naming a secret, for the machine it is made for', async
   expect(problems).toEqual([]);
 
   await written(options, 'ada', { profile: 'claude' }, 'user:ada');
-  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+  // Never given at create, so the machine's own record does not hold it; it is
+  // passed by name on each command run in the machine instead.
+  expect(envOf(state)).toEqual({});
+  expect(makes(state).flat().filter((one) => one.includes('ANTHROPIC_API_KEY') || one.includes('ada-token'))).toEqual([]);
+  const ada = await execOf(options, 'ada');
+  expect(ada.names).toEqual(['ANTHROPIC_API_KEY']);
+  expect(ada.env.ANTHROPIC_API_KEY).toBe('ada-token');
+  expect(ada.args.some((one) => one.includes('ada-token'))).toBe(false);
 
   // Ada's secret is not a secret this work may read, so the machine is refused
   // naming the need and the name rather than made without the credential.
@@ -321,8 +379,10 @@ it('reads a host-scoped need in the option for any owner', async () => {
   // The deployment's value, so it lands whichever person the machine is for.
   await written(options, 'one', { profile: 'claude' }, 'user:ada');
   await written(options, 'two', { profile: 'claude' }, 'user:bo');
-  expect(envOf(state, 0)).toEqual({ ANTHROPIC_API_KEY: 'shared-value' });
-  expect(envOf(state, 1)).toEqual({ ANTHROPIC_API_KEY: 'shared-value' });
+  expect(envOf(state, 0)).toEqual({});
+  expect(envOf(state, 1)).toEqual({});
+  expect((await execOf(options, 'one')).env.ANTHROPIC_API_KEY).toBe('shared-value');
+  expect((await execOf(options, 'two')).env.ANTHROPIC_API_KEY).toBe('shared-value');
 });
 
 it('refuses a need naming a secret the vault does not hold', async () => {
@@ -356,7 +416,8 @@ it('never reads a need of a profile the body did not pick', async () => {
   expect(problems).toEqual([]);
 
   await written(options, 'box', { profile: 'ada' }, 'user:ada');
-  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+  expect(envOf(state)).toEqual({});
+  expect((await execOf(options, 'box')).env.ANTHROPIC_API_KEY).toBe('ada-token');
   // Bo's profile is not this machine's, so his token was never wanted.
   expect(store.asked).toEqual(['user:ada/token']);
 });
@@ -379,7 +440,8 @@ it('reads a plugin-wide need only where an agent on the machine declares it', as
 
   // Ada's, and Ada's machine, so it lands.
   await written(options, 'ada', { profile: 'claude' }, 'user:ada');
-  expect(envOf(state, 0)).toEqual({ ANTHROPIC_API_KEY: 'ada-x' });
+  expect(envOf(state, 0)).toEqual({});
+  expect((await execOf(options, 'ada')).env.ANTHROPIC_API_KEY).toBe('ada-x');
 
   // A machine for an agent that declares no needs: nothing under that name is
   // this machine's, so nothing was read and the machine is made rather than
@@ -413,13 +475,14 @@ it('reads a disposable machine\'s need for the session it is made for', async ()
   // The machine is made when the session starts, and its owner is the
   // session's: the profile named no agents of its own to make.
   const create = options.computers?.create as NonNullable<NonNullable<typeof options.computers>['create']>;
-  await create({
+  const id = await create({
     source: 'disposable:claude',
     session: 'ahp-session:/one',
     provider: 'claude',
     owner: 'user:ada',
   });
-  expect(envOf(state)).toEqual({ ANTHROPIC_API_KEY: 'ada-token' });
+  expect(envOf(state)).toEqual({});
+  expect((await execOf(options, String(id))).env.ANTHROPIC_API_KEY).toBe('ada-token');
 
   const refused = await create({
     source: 'disposable:claude',
@@ -689,4 +752,179 @@ it('answers a machine removed between the listing and its labels with the ones t
    * answer, which would give `stays` the labels of `gone`.
    */
   expect(await runtime.list()).toMatchObject([{ id: 'stays', session: 'echo:/stays' }]);
+});
+
+it('answers which needs a reference gave their value', async () => {
+  const read = await revealed(
+    { plain: 'as-written', fromVault: { $secret: 'host:b' }, undeclared: { $secret: 'host:c' } },
+    ['claude'],
+    () => ({ plain: { name: 'PLAIN' }, fromVault: { name: 'FROM_VAULT' } }),
+    {},
+    async (name) => `read-${name}`,
+  );
+  expect(read?.values).toEqual({ plain: 'as-written', fromVault: 'read-host:b' });
+  expect([...(read?.named ?? new Map()).entries()]).toEqual([['fromVault', 'host:b']]);
+});
+
+/*
+ * A vault-named value is held with its machine in the daemon's memory and
+ * nowhere else, so a daemon that restarted reads it again the first time the
+ * machine is reached: for the owner the machine carries, from the profile it
+ * was made from. When the read fails, the profile's `secretUnreadable` says
+ * whether the command fails or runs without that one variable.
+ */
+const VAULTED: Record<string, MachineNeed> = {
+  anthropicKey: { name: 'ANTHROPIC_API_KEY' },
+  otherKey: { name: 'OTHER_KEY' },
+};
+
+/** The plugin loaded with its log kept, as a daemon starting again would load it. */
+const loadLogged = async (pluginOptions: Record<string, unknown>, vault: Vault) => {
+  const lines: string[] = [];
+  const { options, problems } = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    { base: base([agent('claude', VAULTED)], vault), configDir: configHome(), cwd: REPO, log: (line) => { lines.push(line); } },
+  );
+  expect(problems).toEqual([]);
+  return { options, lines };
+};
+
+const vaultedOptions = (state: string, more: Record<string, unknown> = {}): Record<string, unknown> => ({
+  command: process.execPath,
+  args: [FIXTURE],
+  env: { DOCKER_FAKE_STATE: state },
+  sessionSetting: false,
+  needs: { otherKey: { $secret: 'host:other' } },
+  profiles: {
+    claude: { agents: ['claude'], needs: { anthropicKey: { $secret: 'user:ada/token' } }, ...more },
+  },
+});
+
+it('reads a vault-named value again after a restart, for the owner the machine carries', async () => {
+  const state = join(temp(), 'docker.json');
+  const store = holding({ 'user:ada/token': 'ada-token', 'host:other': 'other-token' });
+  const first = await loadLogged(vaultedOptions(state), store);
+  await written(first.options, 'ada', { profile: 'claude' }, 'user:ada');
+  expect(store.asked).toEqual(['user:ada/token', 'host:other']);
+
+  // The daemon again, with the same vault: nothing of the value was kept, so
+  // it is read again, and Ada's own secret is readable because the machine
+  // says it is Ada's.
+  const again = await loadLogged(vaultedOptions(state), store);
+  const reached = await execOf(again.options, 'ada');
+  expect(reached.names).toEqual(['ANTHROPIC_API_KEY', 'OTHER_KEY']);
+  expect(reached.env).toMatchObject({ ANTHROPIC_API_KEY: 'ada-token', OTHER_KEY: 'other-token' });
+  expect(store.asked).toEqual(['user:ada/token', 'host:other', 'user:ada/token', 'host:other']);
+  // Read once, then held: the next command asks the vault nothing.
+  await execOf(again.options, 'ada');
+  expect(store.asked).toHaveLength(4);
+  // And the values are on no argv, in no machine record and in no log line.
+  const held = readFileSync(state, 'utf8');
+  expect(held).not.toContain('ada-token');
+  expect(held).not.toContain('other-token');
+  expect([...first.lines, ...again.lines].join('\n')).not.toMatch(/ada-token|other-token/);
+});
+
+it('fails every command into the machine when a vault-named value cannot be read again', async () => {
+  const state = join(temp(), 'docker.json');
+  const first = await loadLogged(vaultedOptions(state), holding({ 'user:ada/token': 'ada-token', 'host:other': 'other-token' }));
+  await written(first.options, 'ada', { profile: 'claude' }, 'user:ada');
+
+  // Ada's token is gone from the vault, and the profile says nothing.
+  const store = holding({ 'host:other': 'other-token' });
+  const again = await loadLogged(vaultedOptions(state), store);
+  const refused = await again.options.computers?.how('ada', { command: 'true' }).catch((error: unknown) => error);
+  expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/token: the vault holds no user:ada/token');
+  // Nothing was held, so the next command reads again and fails the same way.
+  const twice = await again.options.computers?.how('ada', { command: 'true' }).catch((error: unknown) => error);
+  expect((twice as Error).message).toContain('machine need anthropicKey names user:ada/token');
+  expect(store.asked.filter((one) => one === 'user:ada/token')).toHaveLength(2);
+  expect((twice as Error).message).not.toContain('other-token');
+
+  // A tool's command is a command in the machine too.
+  const tool = (again.options.tools ?? []).find((one) => one.definition.name === 'computer_exec');
+  const said = await Promise.resolve(tool?.run({ id: 'ada', command: 'true' }, {} as never)).catch((error: unknown) => error);
+  expect(String(said instanceof Error ? said.message : said)).toContain('machine need anthropicKey');
+});
+
+it('drops only the unreadable variable and logs it, where the profile says drop', async () => {
+  const state = join(temp(), 'docker.json');
+  const first = await loadLogged(vaultedOptions(state, { secretUnreadable: 'drop' }), holding({ 'user:ada/token': 'ada-token', 'host:other': 'other-token' }));
+  await written(first.options, 'ada', { profile: 'claude' }, 'user:ada');
+
+  const again = await loadLogged(vaultedOptions(state, { secretUnreadable: 'drop' }), holding({ 'host:other': 'other-token' }));
+  const how = await again.options.computers?.how('ada', { command: 'true', env: { A: '1' } });
+  const args = how?.args ?? [];
+  expect(args.flatMap((one, at) => (args[at - 1] === '-e' ? [one] : []))).toEqual(['OTHER_KEY', 'A']);
+  expect(how?.env).toMatchObject({ OTHER_KEY: 'other-token', A: '1' });
+  expect(how?.env?.ANTHROPIC_API_KEY).toBeUndefined();
+  const said = again.lines.filter((one) => one.includes('anthropicKey'));
+  expect(said).toHaveLength(1);
+  expect(said[0]).toContain('ada is reached without ANTHROPIC_API_KEY: machine need anthropicKey names user:ada/token');
+  expect(again.lines.join('\n')).not.toContain('other-token');
+});
+
+/*
+ * A machine a session made is made for that session's harness, whose needs
+ * may be its own rather than the ones the host's agents declare. What it was
+ * made with is recorded beside the configuration as names and references, so
+ * a daemon started afterwards reads those again rather than the needs the
+ * agents declare today.
+ */
+it('reads a session machine\'s own vault-named need again after a restart, from the reference it was made with', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const store = holding({ 'host:session': 'session-token', 'user:ada/token': 'ada-token' });
+  const options = {
+    ...vaultedOptions(state),
+    needs: { sessionKey: { $secret: 'host:session' } },
+    profiles: { claude: { agents: [], disposable: true, needs: { anthropicKey: { $secret: 'user:ada/token' } } } },
+  };
+  const first = await loadLogged(options, store);
+  const create = first.options.computers?.create as NonNullable<NonNullable<typeof first.options.computers>['create']>;
+  const id = String(await create({
+    source: 'disposable:claude',
+    session: 'ahp-session:/one',
+    provider: 'claude',
+    owner: 'user:ada',
+    // The session's harness declares a need the host's agents do not.
+    needs: { ...VAULTED, sessionKey: { name: 'SESSION_KEY' } },
+  }));
+  expect((await execOf(first.options, id)).env).toMatchObject({ SESSION_KEY: 'session-token', ANTHROPIC_API_KEY: 'ada-token' });
+
+  const again = await loadLogged(options, store);
+  const reached = await execOf(again.options, id);
+  expect(reached.names).toEqual(expect.arrayContaining(['SESSION_KEY', 'ANTHROPIC_API_KEY']));
+  expect(reached.env).toMatchObject({ SESSION_KEY: 'session-token', ANTHROPIC_API_KEY: 'ada-token' });
+
+  // The record holds the references and never what they read.
+  const recorded = readFileSync(join(dir, 'computers.json'), 'utf8');
+  expect(recorded).toContain('host:session');
+  expect(recorded).toContain('user:ada/token');
+  expect(recorded).not.toMatch(/session-token|ada-token/);
+  expect(readFileSync(state, 'utf8')).not.toMatch(/session-token|ada-token/);
+  expect(reached.args.join(' ')).not.toMatch(/session-token|ada-token/);
+  expect([...first.lines, ...again.lines].join('\n')).not.toMatch(/session-token|ada-token/);
+  vi.useRealTimers();
+});
+
+/*
+ * A machine made before needs were recorded has no entry for them, so a
+ * daemon started afterwards reads its needs from what its agents declare, as
+ * it always did.
+ */
+it('reads a machine with no recorded needs again from the needs its agents declare', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const store = holding({ 'user:ada/token': 'ada-token', 'host:other': 'other-token' });
+  const first = await loadLogged(vaultedOptions(state), store);
+  await written(first.options, 'ada', { profile: 'claude' }, 'user:ada');
+  rmSync(join(dir, 'computers.json'));
+
+  const again = await loadLogged(vaultedOptions(state), store);
+  const reached = await execOf(again.options, 'ada');
+  expect(reached.names).toEqual(['ANTHROPIC_API_KEY', 'OTHER_KEY']);
+  expect(reached.env).toMatchObject({ ANTHROPIC_API_KEY: 'ada-token', OTHER_KEY: 'other-token' });
+  expect(again.lines.filter((one) => one.includes('computers.json'))).toEqual([]);
 });

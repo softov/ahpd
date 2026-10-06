@@ -13,6 +13,7 @@ import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import type { Vault } from '../../sdk/src/types/vault.js';
 
 /*
  * A dev container is a computer, made from a folder's `devcontainer.json`.
@@ -319,26 +320,30 @@ it('reaches it by docker exec, as the folder\'s own user in its own environment'
       '-u', 'vscode',
       '-e', 'PATH=/usr/bin',
       '-e', 'HOME=/root',
-      '-e', 'GREETING=hello',
+      // The folder's own `remoteEnv` by name, its value in docker's environment.
+      '-e', 'GREETING',
       // And where in the machine the workspace is mounted.
       '-w', mounted(folder),
       'abc123',
       'node', 'server.mjs',
     ],
     // The docker program's own environment, which is the program's and not the
-    // machine's.
-    env: { DOCKER_FAKE_STATE: dockerState },
+    // machine's, and the values passed by name.
+    env: { DOCKER_FAKE_STATE: dockerState, GREETING: 'hello' },
   });
   // A caller's environment is the last of the `-e` flags, beside the machine's
-  // own rather than instead of it.
-  expect((await loaded.computers?.how('box', {
+  // own rather than instead of it, by name with its value in docker's own
+  // environment.
+  const asked = await loaded.computers?.how('box', {
     command: 'node', args: ['server.mjs'], env: { A: '1' },
-  }))?.args).toEqual([
+  });
+  expect(asked?.args).toEqual([
     DOCKER, 'exec', '-i', '-u', 'vscode',
-    '-e', 'PATH=/usr/bin', '-e', 'HOME=/root', '-e', 'GREETING=hello',
-    '-w', mounted(folder), '-e', 'A=1',
+    '-e', 'PATH=/usr/bin', '-e', 'HOME=/root', '-e', 'GREETING',
+    '-w', mounted(folder), '-e', 'A',
     'abc123', 'node', 'server.mjs',
   ]);
+  expect(asked?.env).toEqual({ DOCKER_FAKE_STATE: dockerState, GREETING: 'hello', A: '1' });
 
   // And a backend spawned through that descriptor really lands there: the
   // scripted Docker records the command line, which is the proof the spawn is
@@ -346,7 +351,7 @@ it('reaches it by docker exec, as the folder\'s own user in its own environment'
   const before = dockerHeld(dockerState).calls.length;
   spawnSync(how?.command as string, how?.args as string[], {
     encoding: 'utf8',
-    env: { ...process.env, DOCKER_FAKE_STATE: dockerState },
+    env: { ...process.env, ...how?.env },
   });
   expect(dockerHeld(dockerState).calls.length).toBe(before + 1);
   expect(dockerHeld(dockerState).commands.at(-1)).toMatchObject({
@@ -1051,6 +1056,186 @@ it('gives a command run after the create a need\'s variable, as the container\'s
   expect(kept).not.toContain('ANTHROPIC_API_KEY');
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 4);
+});
+
+/*
+ * A need named from the vault never goes through `up`: the real CLI writes
+ * `containerEnv` into its own `docker run -e NAME=value`, logs that line and
+ * leaves it in `docker inspect`. It is held with the machine and given on each
+ * `docker exec`, by name, with the value in docker's own environment.
+ */
+
+/** A vault holding `values` and nothing else, which records what it was asked for. */
+const holding = (values: Record<string, string>): Vault & { asked: string[] } => {
+  const asked: string[] = [];
+  return {
+    asked,
+    get: async (name) => { asked.push(name); return values[name]; },
+    set: async () => {},
+    delete: async () => false,
+    list: async () => Object.keys(values),
+  };
+};
+
+/** The plugin with a vault and its log kept, as a daemon starting again loads it. */
+const loadVaulted = async (pluginOptions: Record<string, unknown>, agents: Agent[], configDir: string, vault: Vault) => {
+  const lines: string[] = [];
+  const { options, problems } = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    {
+      base: { path: '/tmp/computer-devcontainer', agents, resources: fileResources(), vault },
+      configDir,
+      cwd: REPO,
+      log: (line) => { lines.push(line); },
+    },
+  );
+  expect(problems).toEqual([]);
+  return { options, lines };
+};
+
+const VAULTED: Record<string, MachineNeed> = {
+  anthropicKey: { name: 'ANTHROPIC_API_KEY' },
+  region: { name: 'REGION', default: 'eu' },
+};
+
+it('keeps a vault-named need out of the override and every argv, and gives it on each docker exec', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  const { options: loaded, lines } = await loadVaulted(
+    optionsOf(devState, dockerState, { needs: { anthropicKey: { $secret: 'user:ada/token' } } }),
+    [agentWith(VAULTED)],
+    configDir,
+    holding({ 'user:ada/token': 'ada-token' }),
+  );
+  const create = loaded.computers?.create as NonNullable<NonNullable<HostOptions['computers']>['create']>;
+  const id = String(await create({ source: `devcontainer://${folder}`, session: 'ahp-session:/one', provider: 'echo', owner: 'user:ada' }));
+
+  // The plain need is the container's own environment; the vault's is not in
+  // the file the CLI read, nor in the container Docker holds.
+  const override = overrideOf(devState);
+  expect(override?.config.containerEnv).toEqual({ REGION: 'eu' });
+  expect(JSON.stringify(override?.config)).not.toContain('ANTHROPIC_API_KEY');
+  expect(JSON.stringify(override?.config)).not.toContain('ada-token');
+  const machine = dockerHeld(dockerState).machines[0] as { env?: Record<string, string> };
+  expect(machine.env).toEqual({ REGION: 'eu' });
+
+  // Each command is given it by name, and the command in the container has it.
+  const how = await loaded.computers?.how(id, { command: 'node', args: ['server.mjs'] });
+  expect(how?.args.slice(-5)).toEqual(['-e', 'ANTHROPIC_API_KEY', 'abc123', 'node', 'server.mjs']);
+  expect(how?.env?.ANTHROPIC_API_KEY).toBe('ada-token');
+  const outer: Record<string, string | undefined> = { ...process.env };
+  delete outer.ANTHROPIC_API_KEY;
+  spawnSync(how?.command as string, how?.args as string[], { encoding: 'utf8', env: { ...outer, ...how?.env } });
+  expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
+
+  // A tool's command too.
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  await tool.run({ id, command: 'true' }, {} as ToolCall);
+  expect(dockerHeld(dockerState).commands.at(-1)?.env.ANTHROPIC_API_KEY).toBe('ada-token');
+
+  // And the value is in no argv either program saw, in no file the daemon
+  // keeps and in no line it logged.
+  expect(dockerHeld(dockerState).calls.flat().filter((one) => one.includes('ada-token'))).toEqual([]);
+  expect(devHeld(devState).calls.flat().filter((one) => one.includes('ada-token'))).toEqual([]);
+  expect(readFileSync(join(configDir, 'computers.json'), 'utf8')).not.toContain('ada-token');
+  expect(lines.join('\n')).not.toContain('ada-token');
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+/*
+ * A `remoteEnv` value is the definition's and may be this host's own, pulled in
+ * with `${localEnv:NAME}`: it reaches every command by name, and the probe kept
+ * beside the config still holds only what the container's `Config.Env` does not.
+ */
+it('passes a remoteEnv value by name to every command, and keeps it out of the stored probe', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({
+    calls: [],
+    metadata: [{ remoteUser: 'vscode', remoteEnv: { FROM_HOST: '${localEnv:AHPD_TEST_SECRET}' } }],
+  }));
+  const { options: loaded } = await load({
+    ...optionsOf(devState, dockerState),
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState, AHPD_TEST_SECRET: 'local-secret' },
+    },
+  }, [], configDir);
+  await providerOf(loaded).write('computer://box', { data: JSON.stringify({ devcontainer: { folder } }), encoding: 'utf-8' });
+
+  const how = await loaded.computers?.how('box', { command: 'node' });
+  expect(how?.args).toEqual([
+    DOCKER, 'exec', '-i', '-u', 'vscode',
+    '-e', 'PATH=/usr/bin', '-e', 'HOME=/root', '-e', 'FROM_HOST',
+    '-w', mounted(folder), 'abc123', 'node',
+  ]);
+  expect(how?.env).toEqual({ DOCKER_FAKE_STATE: dockerState, FROM_HOST: 'local-secret' });
+  const outer: Record<string, string | undefined> = { ...process.env };
+  delete outer.AHPD_TEST_SECRET;
+  spawnSync(how?.command as string, how?.args as string[], { encoding: 'utf8', env: { ...outer, ...how?.env } });
+  expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
+
+  const tool = (loaded.tools ?? []).find((one) => one.definition.name === 'computer_exec') as HostTool;
+  await tool.run({ id: 'box', command: 'true' }, {} as ToolCall);
+  expect(dockerHeld(dockerState).commands.at(-1)?.env.FROM_HOST).toBe('local-secret');
+
+  expect(dockerHeld(dockerState).calls.flat().filter((one) => one.includes('local-secret'))).toEqual([]);
+  // The stored probe is what the login shell held and the container does not:
+  // the fake's two variables, and nothing the definition's `remoteEnv` adds.
+  const kept = JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8')) as Record<string, { probe?: { env: Record<string, string> } }>;
+  expect(kept.box?.probe?.env).toEqual({ PATH: '/usr/bin', HOME: '/root' });
+  expect(JSON.stringify(kept)).not.toContain('local-secret');
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+it('reads a dev container\'s vault-named need again after a restart, for the owner in its record', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  const pluginOptions = (more: Record<string, unknown>) => optionsOf(devState, dockerState, {
+    profiles: { claude: { agents: ['echo'], needs: { anthropicKey: { $secret: 'user:ada/token' } }, ...more } },
+  });
+  const first = await loadVaulted(pluginOptions({}), [agentWith(VAULTED)], configDir, holding({ 'user:ada/token': 'ada-token' }));
+  await (providerOf(first.options) as unknown as {
+    write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
+  }).write('computer://box', {
+    data: JSON.stringify({ profile: 'claude', source: 'devcontainer', devcontainer: folder }),
+    encoding: 'utf-8',
+  }, 'user:ada');
+  expect(overrideOf(devState)?.config.containerEnv).toEqual({ REGION: 'eu' });
+
+  // The daemon again, with the same vault: the value is read again, and Ada's
+  // own secret is readable because the record beside the config says the
+  // machine is hers.
+  const store = holding({ 'user:ada/token': 'ada-token' });
+  const again = await loadVaulted(pluginOptions({}), [agentWith(VAULTED)], configDir, store);
+  expect((await again.options.computers?.how('box', { command: 'true' }))?.env?.ANTHROPIC_API_KEY).toBe('ada-token');
+  expect(store.asked).toEqual(['user:ada/token']);
+
+  // With the secret gone and no say from the profile, every command fails
+  // naming the need.
+  const gone = await loadVaulted(pluginOptions({}), [agentWith(VAULTED)], configDir, holding({}));
+  for (let i = 0; i < 2; i++) {
+    const refused = await gone.options.computers?.how('box', { command: 'true' }).catch((error: unknown) => error);
+    expect((refused as Error).message).toContain('machine need anthropicKey names user:ada/token');
+  }
+
+  // With `drop`, the command runs without it and the line is logged.
+  const dropped = await loadVaulted(pluginOptions({ secretUnreadable: 'drop' }), [agentWith(VAULTED)], configDir, holding({}));
+  const how = await dropped.options.computers?.how('box', { command: 'true' });
+  expect(how?.args).not.toContain('ANTHROPIC_API_KEY');
+  expect(how?.env?.ANTHROPIC_API_KEY).toBeUndefined();
+  expect(dropped.lines.filter((one) => one.includes('box is reached without ANTHROPIC_API_KEY: machine need anthropicKey'))).toHaveLength(1);
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
 });
 
 /*

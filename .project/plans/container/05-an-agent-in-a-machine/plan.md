@@ -107,7 +107,7 @@ Child plans, each scoped to one package or two.
 
 | Plan | Package | Status | Depends on |
 | --- | --- | --- | --- |
-| [p1 - A secret reaches a machine in its environment, never in its argv](../05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) | computer | planned | container 03 |
+| [p1 - A secret reaches a machine in its environment, never in its argv](../05-an-agent-in-a-machine-p1-a-secret-reaches-a-machine-by-name/plan.md) | computer | built | container 03 |
 | [p2 - An ACP preset says what its machine needs](../05-an-agent-in-a-machine-p2-an-acp-agent-says-what-its-machine-needs/plan.md) | agent-acp | planned | p1, acp 05 (the ACP presets plan) |
 | [p3 - Parts are built from one versions file](../05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md) | computer (images) | built | - |
 | [p4 - A part is mounted into a machine](../05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md) | sdk, computer | planned | p3, plugin 15, container 03 |

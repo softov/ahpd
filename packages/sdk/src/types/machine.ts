@@ -89,6 +89,14 @@ export interface ResolvedNeed {
   target: string;
   /** A mount delivered read-only. */
   readOnly?: boolean;
+  /**
+   * An environment variable whose value was read from the vault.
+   *
+   * Such a value is never given when the machine is made, where a runtime
+   * would keep it in the machine's own record; it is held with the machine and
+   * passed on each command run in it.
+   */
+  named?: boolean;
   /** One line from the need. */
   description?: string;
 }

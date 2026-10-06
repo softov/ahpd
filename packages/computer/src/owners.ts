@@ -19,6 +19,11 @@ import { ownerSaid } from './runtime.js';
  * this, or by a daemon that lost the file, is only reachable with its user's
  * shell run in there again.
  *
+ * The vault-named needs a machine was made with are here as references, so a
+ * daemon started afterwards reads the same secrets again for it: the values
+ * are never kept, and the needs a session's harness declared are not
+ * necessarily the ones the host's agents declare now.
+ *
  * So this is where the other halves live, one file beside the daemon's own
  * configuration keyed by machine id. A machine this file has no entry for is
  * charged to the host and probed on its first reach, which is what a container
@@ -35,6 +40,16 @@ export interface Owned {
   project?: string;
 }
 
+/** One need a machine was made with whose value the vault gave, as a reference. */
+export interface MadeNeed {
+  /** The need's name. */
+  need: string;
+  /** The variable it sets in the machine. */
+  variable: string;
+  /** The secret it names, never the value read. */
+  secret: string;
+}
+
 /** What one machine's entry holds, any part of which may be absent. */
 interface Entry {
   owner?: Owner;
@@ -42,6 +57,7 @@ interface Entry {
   project?: string;
   probe?: Probe;
   adopted?: true;
+  needs?: MadeNeed[];
 }
 
 /** One line, for a file that could not be read or written. */
@@ -77,13 +93,23 @@ const entry = (said: unknown): Entry | undefined => {
     }
     return { container: held.container, env };
   })();
-  if (owner === undefined && probe === undefined && !adopted) return undefined;
+  const needs = Array.isArray(one.needs)
+    ? one.needs.flatMap((held: unknown): MadeNeed[] => {
+      if (typeof held !== 'object' || held === null) return [];
+      const { need, variable, secret } = held as Record<string, unknown>;
+      return typeof need === 'string' && typeof variable === 'string' && typeof secret === 'string'
+        ? [{ need, variable, secret }]
+        : [];
+    })
+    : undefined;
+  if (owner === undefined && probe === undefined && !adopted && needs === undefined) return undefined;
   return {
     ...(owner === undefined ? {} : { owner }),
     ...(typeof team === 'string' && team !== '' ? { team } : {}),
     ...(typeof project === 'string' && project !== '' ? { project } : {}),
     ...(probe === undefined ? {} : { probe }),
     ...(adopted ? { adopted } : {}),
+    ...(needs === undefined ? {} : { needs }),
   };
 };
 
@@ -92,6 +118,9 @@ const read = (configDir: string, log: (line: string) => void): Record<string, En
   let text: string;
   try { text = readFileSync(at(configDir), 'utf8'); }
   catch (error) {
+    // No file is a file with no entries, which is every host that has not
+    // written one yet.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
     // Said rather than thrown: a file that is missing, unreadable or is not
     // JSON leaves no owner to name, and a meter that stopped over it would
     // lose the stretches of every machine it still has.
@@ -225,6 +254,27 @@ export const keepProbe = (
 ): void => {
   const held = read(configDir, log);
   write(configDir, { ...held, [id]: { ...held[id], probe } }, log);
+};
+
+/**
+ * The vault-named needs a machine was made with, or nothing when this file has
+ * none for it: a machine made with none, or made before they were recorded.
+ */
+export const madeNeedsOf = (configDir: string, id: string, log: (line: string) => void): MadeNeed[] | undefined =>
+  read(configDir, log)[id]?.needs;
+
+/**
+ * Record the vault-named needs a machine was made with, by need, variable and
+ * the secret each names. The values read are never written here.
+ */
+export const keepMadeNeeds = (
+  configDir: string,
+  id: string,
+  needs: readonly MadeNeed[],
+  log: (line: string) => void,
+): void => {
+  const held = read(configDir, log);
+  write(configDir, { ...held, [id]: { ...held[id], needs: needs.map(({ need, variable, secret }) => ({ need, variable, secret })) } }, log);
 };
 
 /** Forget a machine, which is what its being removed means. */

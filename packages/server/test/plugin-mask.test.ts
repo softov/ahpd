@@ -76,3 +76,22 @@ describe('one option of a plugin', () => {
     expect(maskOption(undefined, 'region', { $secret: 'host:orders' })).toEqual({ $secret: 'host:orders' });
   });
 });
+
+describe('the computer plugin', () => {
+  /*
+   * A machine need's value is the same variable the plugin's `env` beside it
+   * holds, so it answers `<set>` wherever it is written: under the plugin's own
+   * `needs` and under a profile's.
+   */
+  it('answers a need value as set, a reference as written, and a profile field as it is', async () => {
+    const { optionsSchema } = await import('../../computer/src/plugin.js');
+    const schema = optionsSchema as Record<string, unknown>;
+    expect(maskOption(schema, 'needs', { anthropicKey: 'sk-1', other: { $secret: 'host:x' } }))
+      .toEqual({ anthropicKey: SET, other: { $secret: 'host:x' } });
+    expect(maskOption(schema, 'profiles', {
+      claude: { image: 'node:22', needs: { anthropicKey: 'sk-2', other: { $secret: 'host:x' } } },
+    })).toEqual({ claude: { image: 'node:22', needs: { anthropicKey: SET, other: { $secret: 'host:x' } } } });
+    // A profile with no needs is left as written.
+    expect(maskOption(schema, 'profiles', { plain: { image: 'debian' } })).toEqual({ plain: { image: 'debian' } });
+  });
+});

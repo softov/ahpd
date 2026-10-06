@@ -5,7 +5,8 @@ import type {
 } from '@ahpd/sdk';
 import { bodyText, MANIFEST_SCHEMA, manifestOf, pickedOf } from './manifest.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { revealed } from './secrets.js';
+import { revealed, vaultNamed } from './secrets.js';
+import type { Revealed } from './secrets.js';
 import type { ComputerRuntime } from './runtime.js';
 import { inTurn, roomFor } from './runtime.js';
 
@@ -221,7 +222,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     values: Record<string, string | SecretRef> | undefined,
     agents: readonly string[],
     work: SecretWork,
-  ): Promise<Record<string, string> | undefined> => {
+  ): Promise<Revealed | undefined> => {
     try {
       return await revealed(values, agents, options.needsOf, work, options.secret);
     }
@@ -363,7 +364,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       const agents = profile?.agents ?? [];
       const own = await read(profile?.needs, agents, work);
       const values = await read(options.needValues, agents, work);
-      const profiles = profilesFor(picked, profile, own);
+      const profiles = profilesFor(picked, profile, own?.values);
       const spec = manifestOf(held.id, content, {
         runtime: runtime.kind,
         image: options.image,
@@ -375,7 +376,10 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         ...(options.images === undefined ? {} : { images: options.images }),
         ...(options.folderFor === undefined ? {} : { folderFor: options.folderFor }),
         ...(options.needsOf === undefined ? {} : { needsOf: options.needsOf }),
-        ...(values === undefined ? {} : { needValues: values }),
+        ...(values === undefined ? {} : { needValues: values.values }),
+        // The needs whose winning value the vault gave, which the machine is
+        // never made with.
+        named: vaultNamed(own, values),
         ...(owner === undefined ? {} : { owner }),
       });
       if (await runtime.inspect(held.id) !== undefined) {

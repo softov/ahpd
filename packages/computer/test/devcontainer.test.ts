@@ -633,6 +633,63 @@ it('runs up for a stopped container before the first command in it, and keeps it
  * is the user's own login shell as it was holding it, with the entries'
  * `remoteEnv` laid over it in order - each value read for what it refers to.
  */
+/*
+ * A computer's vault-named variables were never given to `up`, so the container
+ * does not hold them: every command a connect runs in there is given them by
+ * name, with the value in the environment `docker` is spawned with, and none of
+ * them is in an argv or in what the client is shown.
+ */
+it('gives every command a connect runs the computer\'s vault-named variables, by name', async () => {
+  wrote({ hostPresent: true, passthrough: [] });
+  const where = sink();
+  const asked: string[] = [];
+  await launcher({
+    named: async (machine: string) => { asked.push(machine); return { ANTHROPIC_API_KEY: 'vault-value' }; },
+  }).connect({ ...connect, workspaceFolder: workspace() }, where);
+
+  const commands = ran().commands.filter((one) => !one.command.join(' ').includes('/proc/self/environ') && one.command[0] !== 'getent');
+  expect(commands.length).toBeGreaterThan(1);
+  for (const one of commands) expect(one.env.ANTHROPIC_API_KEY).toBe('vault-value');
+  expect(ran().calls.flat().filter((one) => one.includes('vault-value'))).toEqual([]);
+  expect(where.out.join('')).not.toContain('vault-value');
+  expect(where.out.join('')).toContain(`'-e' 'ANTHROPIC_API_KEY'`);
+  // Asked once per connect, for the container the connect is about.
+  expect(asked).toEqual(['abc123']);
+});
+
+/*
+ * A definition's `remoteEnv` may pull a value off this host with
+ * `${localEnv:NAME}`, so what it resolves to goes by name like any other value:
+ * in docker's environment, and in no argv and no line the client is shown.
+ */
+it('gives a remoteEnv value pulled from this host by name, on every command', async () => {
+  wrote({
+    hostPresent: true,
+    passthrough: [],
+    metadata: [{ remoteUser: 'vscode', remoteEnv: { FROM_HOST: '${localEnv:AHPD_TEST_SECRET}' } }],
+  });
+  const where = sink();
+  await launcher({
+    env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState, AHPD_TEST_SECRET: 'local-secret' },
+  }).connect({ ...connect, workspaceFolder: workspace() }, where);
+
+  const commands = ran().commands.filter((one) => !one.command.join(' ').includes('/proc/self/environ') && one.command[0] !== 'getent');
+  expect(commands.length).toBeGreaterThan(1);
+  for (const one of commands) expect(one.env.FROM_HOST).toBe('local-secret');
+  expect(ran().calls.flat().filter((one) => one.includes('local-secret'))).toEqual([]);
+  expect(where.out.join('')).not.toContain('local-secret');
+});
+
+it('refuses a connect whose computer cannot be given its vault-named variables', async () => {
+  wrote({ hostPresent: true, passthrough: [] });
+  const refused = await launcher({
+    named: async () => { throw new Error('machine need anthropicKey names host:gone: the vault holds no host:gone'); },
+  }).connect({ ...connect, workspaceFolder: workspace() }, sink()).catch((error: unknown) => error);
+  expect((refused as Error).message).toContain('machine need anthropicKey names host:gone');
+  // Nothing was run in the container once the refusal was known.
+  expect(shell()).toEqual([]);
+});
+
 it('runs each command as the folder\'s own user, in the environment its shell held', async () => {
   wrote({
     hostPresent: true,

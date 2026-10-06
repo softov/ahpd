@@ -14,6 +14,7 @@
 
 import { secretRef } from '@ahpd/sdk';
 import type { MachineNeed, PluginHost, SecretRef, SecretWork } from '@ahpd/sdk';
+import type { MadeNeed } from './owners.js';
 
 /** Read one agent's needs, as `ManifestDefaults.needsOf` does. */
 type NeedsOf = (provider: string) => Record<string, MachineNeed> | undefined;
@@ -37,6 +38,18 @@ const declared = (agents: readonly string[], needsOf: NeedsOf | undefined): Set<
   return names;
 };
 
+/** One need map with every reference read, and which of its needs were references. */
+export interface Revealed {
+  /** Every value, as the machine maker wants them, by need name. */
+  values: Record<string, string>;
+  /** The need names whose value was read from the vault, with the secret each named. */
+  named: Map<string, string>;
+}
+
+/** The sentence a reference that could not be read is refused with. */
+const unread = (need: string, name: string, error: unknown): string =>
+  `machine need ${need} names ${name}: ${error instanceof Error ? error.message : String(error)}`;
+
 /**
  * One need's values with every reference read, as the machine maker wants them.
  *
@@ -49,6 +62,9 @@ const declared = (agents: readonly string[], needsOf: NeedsOf | undefined): Set<
  * throws naming the need and the name, because a machine made quietly without
  * a credential is the failure this exists to stop, and the need's own name is
  * what says which credential was missing.
+ *
+ * `named` says which values came from the vault, which is what keeps them off
+ * the command that makes the machine.
  */
 export const revealed = async (
   values: Record<string, string | SecretRef> | undefined,
@@ -56,10 +72,11 @@ export const revealed = async (
   needsOf: NeedsOf | undefined,
   work: SecretWork,
   secret: PluginHost['secret'],
-): Promise<Record<string, string> | undefined> => {
+): Promise<Revealed | undefined> => {
   if (values === undefined) return undefined;
   const wanted = declared(agents, needsOf);
   const read: Record<string, string> = {};
+  const named = new Map<string, string>();
   for (const [need, one] of Object.entries(values)) {
     if (!wanted.has(need)) continue;
     const name = secretRef(one);
@@ -71,8 +88,102 @@ export const revealed = async (
       read[need] = await secret(name, work);
     }
     catch (error) {
-      throw new Error(`machine need ${need} names ${name}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(unread(need, name, error));
+    }
+    named.set(need, name);
+  }
+  return { values: read, named };
+};
+
+/**
+ * The need names whose winning value came from the vault, with the secret each
+ * named.
+ *
+ * A profile's value wins over the plugin option's, so a need the profile gives
+ * a value is the profile's to say, and the option's reference under the same
+ * name is not what the machine is given.
+ */
+export const vaultNamed = (profile: Revealed | undefined, option: Revealed | undefined): Map<string, string> => new Map([
+  ...[...(option?.named ?? [])].filter(([need]) => profile?.values[need] === undefined),
+  ...(profile?.named ?? []),
+]);
+
+/** A vault-named variable that could not be read again, and why. */
+export interface Unread {
+  /** The need's name. */
+  need: string;
+  /** The secret it names. */
+  name: string;
+  /** The variable it sets in the machine. */
+  variable: string;
+  /** The sentence a refusal or a log line says it in. */
+  said: string;
+}
+
+/**
+ * A machine's vault-named variables, read again from the references it was
+ * made with, for the owner and team it was made for.
+ *
+ * Each one is read on its own, so a reference that cannot be read is answered
+ * beside the ones that were rather than in place of them.
+ */
+export const madeAgain = async (
+  needs: readonly MadeNeed[],
+  work: SecretWork,
+  secret: PluginHost['secret'],
+): Promise<{ env: Record<string, string>; unread: Unread[] }> => {
+  const env: Record<string, string> = {};
+  const failed: Unread[] = [];
+  for (const { need, variable, secret: name } of needs) {
+    try {
+      env[variable] = await secret(name, work);
+    }
+    catch (error) {
+      failed.push({ need, name, variable, said: unread(need, name, error) });
     }
   }
-  return read;
+  return { env, unread: failed };
+};
+
+/**
+ * A machine's vault-named variables, read again for the owner and team it was
+ * made for, from the needs its agents declare now.
+ *
+ * What a daemon has to do for a machine with no needs recorded beside the
+ * configuration, one made before they were: the values are never kept on disk,
+ * so the reference is read again from the same place it was read at create.
+ * Only an environment need is read,
+ * and only where its winning value is a reference - the profile's value, else
+ * the option's - which is the same rule the create followed.
+ *
+ * Each one is read on its own, so a reference that cannot be read is answered
+ * beside the ones that were rather than in place of them.
+ */
+export const namedAgain = async (
+  profile: Record<string, string | SecretRef> | undefined,
+  option: Record<string, string | SecretRef> | undefined,
+  agents: readonly string[],
+  needsOf: NeedsOf,
+  work: SecretWork,
+  secret: PluginHost['secret'],
+): Promise<{ env: Record<string, string>; unread: Unread[] }> => {
+  const env: Record<string, string> = {};
+  const failed: Unread[] = [];
+  const seen = new Set<string>();
+  for (const agent of agents) {
+    for (const [need, declaredNeed] of Object.entries(needsOf(agent) ?? {})) {
+      if (seen.has(need) || !('name' in declaredNeed)) continue;
+      seen.add(need);
+      const winning = profile?.[need] ?? option?.[need];
+      const name = winning === undefined ? undefined : secretRef(winning);
+      if (name === undefined) continue;
+      try {
+        env[declaredNeed.name] = await secret(name, work);
+      }
+      catch (error) {
+        failed.push({ need, name, variable: declaredNeed.name, said: unread(need, name, error) });
+      }
+    }
+  }
+  return { env, unread: failed };
 };

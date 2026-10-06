@@ -48,6 +48,17 @@ it('declares every option its README lists', () => {
   expect(declared()).toEqual(expect.arrayContaining(documented()));
 });
 
+it('takes a profile\'s secretUnreadable as fail or drop, and refuses anything else by name', async () => {
+  const drop = await load({ profiles: { claude: { secretUnreadable: 'drop' } } });
+  expect(drop.problems).toEqual([]);
+  expect(drop.loaded.map((one) => one.name)).toEqual([NAME]);
+
+  // The loader's check does not reach into a profile, so the plugin refuses it.
+  const skip = await load({ profiles: { claude: { secretUnreadable: 'skip' } } });
+  expect(skip.loaded).toEqual([]);
+  expect(skip.problems.join('\n')).toContain('profiles.claude.secretUnreadable is fail or drop, and skip is neither');
+});
+
 it.each<[string, unknown]>([
   ['runtime', 'podman'],
   ['command', 5],

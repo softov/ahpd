@@ -7,12 +7,12 @@ import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcon
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
-import { revealed } from './secrets.js';
+import { madeAgain, namedAgain, revealed, vaultNamed } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
+import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
-import { claimAdopted, claimOwned, forgetOwned, keepProbe, ownedOf, probeOf } from './owners.js';
+import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
 
 /**
@@ -59,8 +59,12 @@ const list = { type: 'array', items: { type: 'string' } } as const;
  * `secretAtUse` leaves what was written whole, so a `team:` or a `user:` name
  * survives the loader to reach the machine it is read for. The check still runs
  * against a string, which is what the name is.
+ *
+ * `writeOnly` because a need's value is the same variable the `env` option
+ * holds: a plain value answers `<set>` wherever the options are read back, and
+ * a `$secret` reference answers as written, since it is a name and not a value.
  */
-const needValue = { type: 'string', secretAtUse: true } as const;
+const needValue = { type: 'string', secretAtUse: true, writeOnly: true } as const;
 
 /** A set of machine needs, by need name. */
 const needValues = { type: 'object', additionalProperties: needValue } as const;
@@ -88,7 +92,17 @@ export const optionsSchema = {
     mounts: { ...list, description: 'What every machine this plugin makes can see.' },
     profiles: {
       type: 'object',
-      additionalProperties: { type: 'object', properties: { needs: needValues } },
+      additionalProperties: {
+        type: 'object',
+        properties: {
+          needs: needValues,
+          secretUnreadable: {
+            type: 'string',
+            enum: ['fail', 'drop'],
+            description: 'When a need value named from the vault cannot be read again after a restart: fail every command into the machine, or drop that variable and log it. fail when absent.',
+          },
+        },
+      },
       description: 'The named sets a person picks from when making a machine.',
     },
     bodyMounts: { type: 'boolean', description: 'Whether a person making a machine may name mounts of their own.' },
@@ -177,6 +191,9 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // somewhere else - decision
       // `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
       ...(said.sessionFolder === true ? { sessionFolder: true } : {}),
+      // What a command into one of its machines does when a vault-named value
+      // cannot be read again. Absent is `fail`.
+      ...(said.secretUnreadable === 'fail' || said.secretUnreadable === 'drop' ? { secretUnreadable: said.secretUnreadable } : {}),
     };
   }
   return Object.keys(held).length === 0 ? undefined : held;
@@ -311,6 +328,18 @@ export const apply: Plugin['apply'] = (host, options) => {
    * which a person may pick is the operator saying so.
    */
   const profiles = profilesOf(options.profiles);
+  /*
+   * A `secretUnreadable` that is neither answer is fatal here rather than
+   * dropped: the loader's check does not reach into a profile, and a value read
+   * as the default would fail every command into a machine whose operator
+   * asked for something else.
+   */
+  for (const [key, one] of Object.entries(options.profiles as Record<string, unknown> | undefined ?? {})) {
+    const said = typeof one === 'object' && one !== null ? (one as Record<string, unknown>).secretUnreadable : undefined;
+    if (said !== undefined && said !== 'fail' && said !== 'drop') {
+      throw new Error(`plugin ${name}: profiles.${key}.secretUnreadable is fail or drop, and ${String(said)} is neither`);
+    }
+  }
   /*
    * Whether a person making a machine may name mounts of their own.
    *
@@ -463,10 +492,11 @@ export const apply: Plugin['apply'] = (host, options) => {
    * only label through the pairs that identify a container, so its creator is
    * in the file beside the configuration - decision
    * `a-dev-container-owner-is-kept-beside-the-config`. One made outside ahpd is
-   * in neither, and is the host's own.
+   * in neither, and is the host's own. `held` is the machine's record when the
+   * caller has already read it.
    */
-  const claimOf = async (id: string): Promise<Claim> => {
-    const found = await dockered.inspect(id);
+  const claimOf = async (id: string, held?: Record<string, unknown>): Promise<Claim> => {
+    const found = held ?? await dockered.inspect(id);
     const labels = found === undefined ? {} : claimedOf(found);
     const said = labels.owner === undefined ? ownedOf(host.configDir, id, noted) : labels;
     return {
@@ -474,6 +504,55 @@ export const apply: Plugin['apply'] = (host, options) => {
       ...(said?.team === undefined ? {} : { team: said.team }),
       ...(said?.project === undefined ? {} : { project: said.project }),
     };
+  };
+
+  /*
+   * The variables each machine holds whose values were read from the vault.
+   *
+   * Never given when the machine was made, so they are not in its own record,
+   * and never written to a file: they live here for as long as this daemon
+   * does, and are passed by name on every command run in the machine.
+   */
+  const vaulted = new Map<string, Record<string, string>>();
+
+  /**
+   * A machine's vault-named variables, held or read again.
+   *
+   * A machine this daemon made has them in `vaulted`. One it did not - made
+   * before a restart, or by another daemon - has them read again for the owner
+   * and team the machine carries: from the references recorded beside the
+   * configuration when it was made, or, for a machine with none recorded, from
+   * the needs the agents its label names declare and the profile it was made
+   * from. What was read is held, so the vault is asked once per machine.
+   *
+   * A reference that cannot be read is the profile's `secretUnreadable` to
+   * decide: `fail`, the default and the answer for a machine made from no
+   * profile, refuses the command naming the need, and nothing is held so the
+   * next command reads again; `drop` answers without that variable and logs a
+   * line naming the need, once per command.
+   */
+  const namedFor = async (id: string, found?: Record<string, unknown>): Promise<Record<string, string>> => {
+    const known = vaulted.get(id);
+    if (known !== undefined) return known;
+    const held = found ?? await dockered.inspect(id);
+    if (held === undefined) return {};
+    const key = profileOf(held);
+    const profile = key === undefined ? undefined : profiles?.[key];
+    const claimed = await claimOf(id, held);
+    const work: SecretWork = { owner: claimed.owner, ...(claimed.team === undefined ? {} : { team: claimed.team }) };
+    const recorded = madeNeedsOf(host.configDir, id, noted);
+    const read = recorded === undefined
+      ? await namedAgain(profile?.needs, needValues, preparedFor(held), (provider) => host.machineNeeds(provider), work, secret)
+      : await madeAgain(recorded, work, secret);
+    if (read.unread.length === 0) {
+      vaulted.set(id, read.env);
+      return read.env;
+    }
+    if (profile?.secretUnreadable !== 'drop') {
+      throw new Error(`${id} is not reached without what its vault-named needs give it: ${read.unread.map((one) => one.said).join('; ')}`);
+    }
+    for (const one of read.unread) noted(`${id} is reached without ${one.variable}: ${one.said}`);
+    return read.env;
   };
 
   /**
@@ -520,6 +599,12 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...dockered,
     run: async (spec: MachineSpec) => {
       const machine = await dockered.run(spec);
+      // What the vault gave, which the runtime left off the make: held for
+      // every command into the machine from now on, and its references
+      // recorded beside the configuration for a daemon started afterwards.
+      const named = new Set((spec.named ?? []).map((one) => one.variable));
+      vaulted.set(machine.id, Object.fromEntries(Object.entries(spec.env ?? {}).filter(([key]) => named.has(key))));
+      if (spec.named !== undefined && spec.named.length > 0) keepMadeNeeds(host.configDir, machine.id, spec.named, noted);
       /*
        * Whose a machine the Dev Container CLI made belongs to, in the file.
        *
@@ -551,9 +636,13 @@ export const apply: Plugin['apply'] = (host, options) => {
       await dockered.stop(id);
       await close(id, await claimOf(id));
     },
+    // A command a tool runs is a command in the machine like any other, so it
+    // is given the machine's vault-named variables too, under its own.
+    exec: async (id, command, env) => dockered.exec(id, command, { ...await namedFor(id), ...(env ?? {}) }),
     remove: async (id) => {
       const claimed = await claimOf(id);
       await dockered.remove(id);
+      vaulted.delete(id);
       // The machine is gone, and so is the record kept beside the config: an
       // entry for an id nothing holds is a claim on a machine that may be made
       // again.
@@ -705,13 +794,19 @@ export const apply: Plugin['apply'] = (host, options) => {
    *
    * A descriptor rather than a running process: the backend owns the spawn and
    * its stdio, and this only says what to spawn. The machine's own environment
-   * travels as `-e` flags, and the descriptor's `env` is the docker program's
-   * own - decision `a-backend-reaches-a-computer-through-a-port`.
+   * travels as `-e NAME` flags, and the descriptor's `env` is the docker
+   * program's own with each value laid over it, so no value is in the argv a
+   * process list shows - decision `a-backend-reaches-a-computer-through-a-port`.
+   * The machine's vault-named variables are among them, under what the caller
+   * asked for.
    */
   const reach: ComputerPort['how'] = async (id, asked) => {
     const held = await made.inspect(id);
     if (held === undefined) return undefined;
-    const into = Object.entries(asked.env ?? {}).flatMap(([key, value]) => ['-e', `${key}=${value}`]);
+    const values = { ...await namedFor(id, held), ...(asked.env ?? {}) };
+    /** The docker program's own environment, with the values `-e NAME` reads laid over it. */
+    const spawnEnvOf = (over: Record<string, string>): Record<string, string> | undefined =>
+      (env === undefined && Object.keys(over).length === 0 ? undefined : { ...(env ?? {}), ...over });
     /*
      * Where in the machine to start.
      *
@@ -741,27 +836,28 @@ export const apply: Plugin['apply'] = (host, options) => {
       // Under the machine id the caller gave, which is what a create and the
       // relay keep their probe against, not the container id `held.Id` holds.
       const reached = await reachedDevContainer(dockeredOptions, id, held);
+      const into = execArgv({ ...reached, id: at, ...(start === undefined ? {} : { workdir: start }) }, [asked.command, ...(asked.args ?? [])], values);
+      const spawnEnv = spawnEnvOf(into.env);
       return {
         command,
-        args: [
-          ...(args ?? []),
-          ...execArgv({ ...reached, id: at, ...(start === undefined ? {} : { workdir: start }) }, [asked.command, ...(asked.args ?? [])], into),
-        ],
-        ...(env === undefined ? {} : { env }),
+        args: [...(args ?? []), ...into.argv],
+        ...(spawnEnv === undefined ? {} : { env: spawnEnv }),
       };
     }
+    const given = byName(values);
+    const spawnEnv = spawnEnvOf(given.env);
     return {
       command,
       args: [
         ...(args ?? []),
         'exec', '-i',
         ...(start === undefined ? [] : ['-w', start]),
-        ...into,
+        ...given.flags,
         at,
         asked.command,
         ...(asked.args ?? []),
       ],
-      ...(env === undefined ? {} : { env }),
+      ...(spawnEnv === undefined ? {} : { env: spawnEnv }),
     };
   };
 
@@ -890,7 +986,8 @@ export const apply: Plugin['apply'] = (host, options) => {
           ...(mounts === undefined ? {} : { mounts }),
           bodyMounts,
           ...(images === undefined ? {} : { images }),
-          ...(values === undefined ? {} : { needValues: values }),
+          ...(values === undefined ? {} : { needValues: values.values }),
+          named: vaultNamed(undefined, values),
           needsOf: forSession,
           for: asked.provider,
           devcontainer: answer,
@@ -966,7 +1063,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       const chosen: Profile = {
         ...profile,
         ...(asked.folder === undefined || profile.sessionFolder !== true ? {} : { folder: asked.folder }),
-        ...(own === undefined ? {} : { needs: own }),
+        ...(own === undefined ? {} : { needs: own.values }),
       };
       const id = `${prefix}-${randomUUID().slice(0, 8)}`;
       const spec = manifestOf(id, { data: JSON.stringify({ profile: key }), encoding: 'utf-8' }, {
@@ -978,7 +1075,8 @@ export const apply: Plugin['apply'] = (host, options) => {
         profiles: { ...known, [key]: chosen },
         bodyMounts,
         ...(images === undefined ? {} : { images }),
-        ...(values === undefined ? {} : { needValues: values }),
+        ...(values === undefined ? {} : { needValues: values.values }),
+        named: vaultNamed(own, values),
         needsOf: forSession,
         for: asked.provider,
         /*
@@ -1136,6 +1234,9 @@ export const apply: Plugin['apply'] = (host, options) => {
       onAdopted: (one, id) => {
         claimAdopted(host.configDir, id, one.owner === undefined ? {} : { owner: one.owner }, noted);
       },
+      // The computer's vault-named variables, which `up` was never given, so
+      // the relay's commands carry them as every other `docker exec` does.
+      named: (machine) => namedFor(machine),
       // The probe store, which is the daemon's own file: read for the container
       // a `connect` is about, written when it is one this daemon has not seen.
       probes: {

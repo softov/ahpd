@@ -254,6 +254,25 @@ Only what the machine resolves is read. The profile picked is the only one read,
 
 `ahpd vault set host:shared` sets one. See [The vault](DAEMON.md#the-vault) for where the file is and who may write each of the three forms.
 
+A value read from the vault is never given when the machine is made, so `docker inspect` does not hold it in `Config.Env` and a dev container's override config and the Dev Container CLI's own `docker run` never see it.
+The daemon holds it in memory with the machine and passes it on each `docker exec` into the machine, by name.
+After the daemon restarts, it is read again the first time the machine is reached, for the owner and team the machine was made for.
+The secrets it reads are the ones the machine was made with, which the daemon records by need, variable and secret name in `computers.json` beside its configuration; the values are never written there.
+A machine made before that record existed is read again from the needs its agents declare now.
+
+`secretUnreadable` in a profile says what happens when that read fails:
+
+| Value | What a command into the machine does |
+| --- | --- |
+| `fail` | Fails with a sentence naming the need and the secret, and the next command reads again. The default, and the answer for a machine made from no profile. |
+| `drop` | Runs without that one variable, and the daemon logs a line naming the need. Every other variable is still given. |
+
+```json
+{ "profiles": { "claude": { "agents": ["claude"], "needs": { "anthropicKey": { "$secret": "user:ada/token" } }, "secretUnreadable": "drop" } } }
+```
+
+Any other value refuses the plugin when the options are read.
+
 `folder` names a host folder mounted at the same path inside the machine, and `workdir` defaults to it. The same path is what keeps an agent's own record consistent: Claude writes its history under the working directory it saw, so the same spelling inside and out is what makes a session written in a machine resumable on this host.
 
 A manifest picks a profile with `"profile": "claude"`, and its own fields still win. Mounts add up in order: the plugin's `mounts`, then the profile's, then the manifest's (if allowed), then what the agents declared. Other fields come from the manifest, then the profile, then the host default.
@@ -373,6 +392,14 @@ The host's default image and every profile's image are always allowed. Patterns 
 `*` is one component and `**` any number of them. `*/acme/**` matches `acme` on any registry. A star inside a component, like `node:22-*`, is rejected when the plugin loads. A pattern with no tag allows every tag, and `node:22`, `library/node:22`, `docker.io/library/node:22` and `index.docker.io/library/node:22` are the same image. When every entry is a plain name, the list is published as an `enum` for a picker.
 
 An image starting with `-` is always refused, because Docker would read it as a flag.
+
+**Values reach a machine by name.** Every environment value a machine is given goes to `docker run` and `docker exec` as `-e NAME`, with the value in the environment the `docker` program is spawned with, so the host's process list shows the name and not the value.
+`PATH`, `HOME` and every name starting `DOCKER_` are the exception: `docker` reads them itself, so they stay `-e NAME=VALUE` and are never put in the environment `docker` is spawned with, and a secret given under one of those names is visible in `ps`.
+A value named from the vault is never given when the machine is made, so `docker inspect` does not hold it; it is passed on each `docker exec` instead, as [Profiles](#profiles) says.
+A plain value given to a dev container goes into the Dev Container CLI's `containerEnv`, which the CLI writes into its own `docker run -e NAME=value`, its log and `docker inspect`.
+A dev container's `remoteEnv` and its user's probed environment go by name on each `docker exec` too, and the probe kept in `computers.json` holds only what differs from the container's own `Config.Env`.
+`computers.json` holds the vault-named needs a machine was made with as secret names, never their values.
+A value under the plugin's `needs` or a profile's `needs` answers `<set>` in `ahpd config`, `GET /api/config` and the plugin listing, as an `env` value does; a `{ "$secret": "..." }` reference answers as written, since it is a name and not a value.
 
 **What a machine is not.** The container separates processes and the filesystem, not the network, and a bind mount is the host's files. Nothing in a machine survives `resourceDelete`.
 

@@ -1,6 +1,6 @@
 ---
 title: A vault-named value reaches a dev container on each docker exec, by name
-status: todo
+status: implemented
 depends: [task-01-docker-takes-every-value-by-name.md]
 layer: "computer"
 refs:
@@ -47,3 +47,20 @@ Write each case first and see it fail against today's code, then build until it 
 
 - Checked against the real `@devcontainers/cli@0.89.0` and Docker 29.6.2 on 2026-10-03 (`container/03` task 17): `${localEnv:NAME}` in an override's `containerEnv` is resolved from the CLI's environment and stays out of the CLI's argv and the file, but the CLI then runs `docker run -e NAME=<value>`, logs that line at the default level, and `docker inspect` keeps the value in `Config.Env`.
 - So a vault-named value does not go through `up` at all; Softov, 2026-10-03, asked how a secret reaches a dev container: "Per docker exec, by name".
+
+Implemented on 2026-10-05.
+
+Files changed:
+
+- `packages/computer/src/runtime.ts` - `overrideOf` writes `madeWith(spec)` into `containerEnv`, so a vault-named variable is never in the override file, the CLI's `docker run` or `Config.Env`; it also writes `--label ahpd.profile=<profile>` into `runArgs`, so a dev container made from a profile is read again with that profile's needs and `secretUnreadable` after a restart.
+- `packages/computer/src/plugin.ts` - a dev container's `how` and `computer_exec` take the held values exactly as a Docker machine's do; `claimOf` answers from the record beside the config.
+- `packages/computer/src/devcontainer.ts` - `DevContainerOptions.named`, which the plugin fills with `namedFor`; a relay `connect` asks it once and gives every `docker exec` it runs (the probe for the host, the installs, the config write and the host itself) the values by name. `execArgv` answers `{ argv, env }`: the probe and `remoteEnv` values that differ from `Config.Env`, and the asked ones, go through `byName`, so a `${localEnv:NAME}` value is in no argv; `inside`, the relay's host, `reach` (`how`) and `runtime.exec` (`computer_exec`) spawn docker with that env. The probe kept in `computers.json` is unchanged.
+
+Tests: "keeps a vault-named need out of the override and every argv, and gives it on each docker exec" and "reads a dev container's vault-named need again after a restart, for the owner in its record" in `computer-devcontainer.test.ts`, "passes a remoteEnv value by name to every command, and keeps it out of the stored probe" and the updated "reaches it by docker exec"; "gives a remoteEnv value pulled from this host by name, on every command", "gives every command a connect runs the computer's vault-named variables, by name" and "refuses a connect whose computer cannot be given its vault-named variables" in `devcontainer.test.ts`. Each failed against `HEAD`. `claimOf` takes the record a caller already read, so a connect inspects the container once less; "finds an adopted container again" took 4.2 s on `HEAD` and timed out at its 5 s limit with one more `inspect` per connect.
+
+Differences from the plan:
+
+- The create cases are in `computer-devcontainer.test.ts`, where the plugin is loaded with both fakes; `devcontainer.test.ts` tests the relay alone and has the relay's two cases.
+- The fake CLI already replaced the folder's configuration with the override rather than merging it (container/03), so it is unchanged.
+- The relay was not in the plan's files; it is a `docker exec` into the machine like the others, and before this its host inherited the value from `containerEnv`, so leaving it out would have dropped the value from a relayed host.
+- The `secretUnreadable: "drop"` case uses a dev container made from the form with a profile, since a `devcontainer://` session has no profile and so always fails.

@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import type { Owner } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
+import type { MadeNeed } from './owners.js';
+import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
 import type { Cli, CliOptions, Reach } from './devcontainer.js';
 
 /**
@@ -125,13 +127,24 @@ export interface MachineSpec {
    */
   mounts?: string[];
   /**
-   * Variables set inside the machine, as `docker run -e` flags.
+   * Variables set inside the machine, as `docker run -e NAME` flags with the
+   * values in the environment `docker` is spawned with.
    *
    * What an agent's environment needs come to. The docker program's own
    * environment is `CommandOptions.env` and is a different thing: this is set
    * in the machine, not around the runtime that makes it.
    */
   env?: Record<string, string>;
+  /**
+   * The needs whose variable in `env` has a value read from the vault, with the
+   * secret each named.
+   *
+   * Left out of what makes the machine, on every recipe, so the value is never
+   * in the machine's own record - `docker inspect`'s `Config.Env` - nor in a
+   * dev container's override config. The caller holds them and passes them on
+   * each `docker exec` instead.
+   */
+  named?: MadeNeed[];
   /**
    * Host paths copied in, rather than made visible.
    *
@@ -238,8 +251,13 @@ export interface ComputerRuntime {
   run(spec: MachineSpec): Promise<Machine>;
   stop(id: string): Promise<void>;
   remove(id: string): Promise<void>;
-  /** Run a command inside one, and answer what it printed and what it exited with. */
-  exec(id: string, command: string[]): Promise<ExecResult>;
+  /**
+   * Run a command inside one, and answer what it printed and what it exited with.
+   *
+   * `env` is set for the command alone, each variable by name with its value in
+   * the environment the runtime's program is spawned with.
+   */
+  exec(id: string, command: string[], env?: Record<string, string>): Promise<ExecResult>;
   /** Start one that is stopped. */
   start(id: string): Promise<void>;
   /** Stop and start one, whichever it was. */
@@ -415,11 +433,16 @@ interface Ran {
   stderr: string;
 }
 
-/** Run the program once and collect what it said. */
-const ran = (options: CommandOptions, args: string[], input?: Buffer): Promise<Ran> => new Promise((resolve, reject) => {
+/**
+ * Run the program once and collect what it said.
+ *
+ * `env` is laid over the program's own, which is how a `-e NAME` flag in
+ * `args` is given its value.
+ */
+const ran = (options: CommandOptions, args: string[], input?: Buffer, env?: Record<string, string>): Promise<Ran> => new Promise((resolve, reject) => {
   const child = spawn(options.command, [...(options.args ?? []), ...args], {
     stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...(options.env ?? {}) },
+    env: { ...process.env, ...(options.env ?? {}), ...(env ?? {}) },
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   let stdout = '';
@@ -718,6 +741,18 @@ const jsoncOf = (text: string): string => {
 };
 
 /**
+ * The variables a machine is made with: its `env` less the ones the vault gave.
+ *
+ * Both recipes keep what they are made with in the container's own record, the
+ * CLI in its log and its `docker run` as well, so a vault-named value is not
+ * among them on either.
+ */
+const madeWith = (spec: MachineSpec): Record<string, string> => {
+  const named = new Set((spec.named ?? []).map((one) => one.variable));
+  return Object.fromEntries(Object.entries(spec.env ?? {}).filter(([key]) => !named.has(key)));
+};
+
+/**
  * What this host adds to a folder's own definition for one make, or nothing.
  *
  * `--override-config` replaces that file rather than merging with it, so this
@@ -729,11 +764,13 @@ const jsoncOf = (text: string): string => {
  *
  * - a read-only mount, which `--mount` cannot spell;
  * - a need's environment as `containerEnv`, which is the container's own
- *   environment and so is inherited by every `docker exec` into it;
+ *   environment and so is inherited by every `docker exec` into it, less a
+ *   value read from the vault, which the CLI would put in its own `docker run`
+ *   argv, its log and the container's record;
  * - the working directory, as `workspaceFolder` with the `workspaceMount` that
  *   puts the folder there, since the CLI mounts at `/workspaces/<basename>`
  *   without it and the path a command is given would name nothing;
- * - the name, the agents and the limits as `runArgs`, which is the one place a
+ * - the name, the agents, the profile and the limits as `runArgs`, which is the one place a
  *   plain Docker label and a limit reach a container the CLI makes.
  *
  * A read-only mount is the CLI's own string spelling and not the object form,
@@ -760,10 +797,11 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<
       }),
     ];
   }
-  if (Object.keys(spec.env ?? {}).length > 0) {
+  const plain = madeWith(spec);
+  if (Object.keys(plain).length > 0) {
     held.containerEnv = {
       ...(typeof held.containerEnv === 'object' && held.containerEnv !== null ? held.containerEnv as Record<string, string> : {}),
-      ...spec.env,
+      ...plain,
     };
   }
   if (spec.workdir !== undefined) {
@@ -775,6 +813,11 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>): Record<
   const agents = spec.agents ?? [];
   if (agents.length > 0) {
     runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
+  }
+  // The profile, so a daemon that did not make the container still reads its
+  // recipe - the needs whose vault-named values it reads again among them.
+  if (spec.profile !== undefined && spec.profile !== '') {
+    runArgs.push('--label', `${MACHINE_PROFILE}=${spec.profile}`);
   }
   if (spec.cpus !== undefined) runArgs.push('--cpus', spec.cpus);
   if (spec.memory !== undefined) runArgs.push('--memory', spec.memory);
@@ -1034,6 +1077,12 @@ export const reachedDevContainer = async (
 export { LOCAL_FOLDER };
 
 /**
+ * How a variable reaches `docker run` and `docker exec`: by name, with its value
+ * in the program's own environment. Written down beside the relay's use of it.
+ */
+export { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn };
+
+/**
  * A container the CLI made for a folder before this host labelled it.
  *
  * Asked for where the folder's own computer is not listed, which is what an
@@ -1065,8 +1114,9 @@ export const adoptedDevContainer = async (
 };
 
 export function dockerRuntime(options: DockerOptions): ComputerRuntime {
-  const must = async (args: string[]): Promise<string> => {
-    const held = await ran(options, args);
+  /** Run the program and answer what it printed, or throw; `env` gives each `-e NAME` its value. */
+  const must = async (args: string[], env?: Record<string, string>): Promise<string> => {
+    const held = await ran(options, args, undefined, env);
     if (held.code !== 0) {
       const said = held.stderr.trim() || held.stdout.trim() || 'no output';
       throw new Error(`${options.command} ${readable(args)} exited ${held.code}: ${said}`);
@@ -1275,9 +1325,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * The override config, for the length of this `up` and gone once it answers.
          *
          * It is the folder's own definition with this host's keys over it, and
-         * it holds environment values on disk while the CLI runs, a value read
-         * from the vault included - so a fresh directory and a file only its
-         * user may read, and nothing here logs what is in it.
+         * it holds environment values on disk while the CLI runs - never a
+         * value read from the vault, which `overrideOf` leaves out - so a fresh
+         * directory and a file only its user may read, and nothing here logs
+         * what is in it.
          *
          * The folder's definition is read before the directory exists, so a
          * definition that does not parse is refused in its own words and leaves
@@ -1410,17 +1461,20 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         ...(spec.folder === undefined ? [] : [`${spec.folder}:${spec.folder}`]),
       ])];
       for (const mount of mounted) flags.push('-v', mount);
-      for (const [key, value] of Object.entries(spec.env ?? {})) flags.push('-e', `${key}=${value}`);
+      // Each variable by name, with its value in docker's own environment, and
+      // none the vault gave: those would be kept in the container's record.
+      const given = byName(madeWith(spec));
+      flags.push(...given.flags);
       if (spec.workdir !== undefined) flags.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine
       // waits for work.
       const keeps = [image, 'sleep', 'infinity'];
       const copies = spec.copies ?? [];
       if (copies.length === 0) {
-        await must(['run', '-d', ...flags, ...keeps]);
+        await must(['run', '-d', ...flags, ...keeps], given.env);
       }
       else {
-        await must(['create', ...flags, ...keeps]);
+        await must(['create', ...flags, ...keeps], given.env);
         for (const copy of copies) await must(['cp', copy.source, `${spec.name}:${copy.target}`]);
         await must(['start', spec.name]);
       }
@@ -1440,8 +1494,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     restart: async (id) => { await must(['restart', await containerOf(id)]); },
     remove: async (id) => { await must(['rm', '-f', await containerOf(id)]); },
 
-    exec: async (id, command) => {
+    exec: async (id, command, env) => {
       const at = await containerOf(id);
+      const given = byName(env ?? {});
       /*
        * A dev container is reached by the same `docker exec` as any other
        * machine, with the user and environment its own definition asks for -
@@ -1455,12 +1510,13 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         const reached = await reachedDevContainer(options, id, found);
         // Against the container id, as `how` and the relay reach it.
         const container = text(found.Id) === '' ? at : text(found.Id);
-        const held = await ran(options, execArgv({ ...reached, id: container }, command));
+        const into = execArgv({ ...reached, id: container }, command, env ?? {});
+        const held = await ran(options, into.argv, undefined, into.env);
         // Not tolerated and not thrown: a command that failed is the tool
         // working, and its exit code is what the caller asked for.
         return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
       }
-      const held = await ran(options, ['exec', '-i', at, ...command]);
+      const held = await ran(options, ['exec', '-i', ...given.flags, at, ...command], undefined, given.env);
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };

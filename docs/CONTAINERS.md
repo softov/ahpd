@@ -45,7 +45,7 @@ A session may also name the source:
 ```
 
 The picker offers that row for the session's own folder, when the folder has a `devcontainer.json` and no computer is labelled with it.
-The machine is made when the session starts, with the session agent's `machine()` needs delivered as they are meant - a read-only need through the override config's `mounts`, an environment need as `containerEnv` in that same config - and what the session runs in is then the ordinary `computer://<id>`.
+The machine is made when the session starts, with the session agent's `machine()` needs delivered as they are meant - a read-only need through the override config's `mounts`, an environment need as `containerEnv` in that same config, and one whose value came from the vault on each `docker exec` by name and never through `up` - and what the session runs in is then the ordinary `computer://<id>`.
 Once the computer exists the picker offers its `computer://` row and the source row is gone, so nothing makes a second container for one folder.
 
 ## What the host needs
@@ -137,7 +137,7 @@ The grant is `container:write` and not `computer:write`, because the parameters 
    The labels are the CLI's own way of finding a container, so a second connect, or a connect after a session made one, reaches the same container rather than a second one.
    A container the CLI made before those labels were on it carries only `devcontainer.local_folder=<dir>`; one that is there is adopted instead, started with `docker start` and taken as it stands, and recorded in `computers.json` under its container id, which is the last thing that stops a folder's own container from being made twice. A later connect, or the first one after a restart, finds it again by that record and does not run `up`.
 3. The environment is derived once per container, before anything runs in it: the user is the last `remoteUser` any entry of the folder's configuration named, else `containerUser`, else the image's own `User`, else `root`; the environment is what that user's login shell was holding, read through one probe of `/proc/self/environ` inside the container, with each entry's `remoteEnv` laid over it in order.
-   A `${containerEnv:NAME}` in a `remoteEnv` resolves from the container's own environment and a `${localEnv:NAME}` from the process reaching it, so both are as the CLI's own `exec` resolves them.
+   A `${containerEnv:NAME}` in a `remoteEnv` resolves from the container's own environment and a `${localEnv:NAME}` from the process reaching it, so both are as the CLI's own `exec` resolves them. Each value but `PATH`, `HOME` and a `DOCKER_` name goes to `docker exec` as `-e NAME` with the value in the environment `docker` is spawned with, so a `${localEnv:NAME}` pulled from this host is not in the host's process list.
    The probe's answer is kept in this daemon's `computers.json`, keyed by container id, and read back for the same container next time; a container the CLI made again is a container whose shell has started afresh and is probed again.
    What is kept is what the shell was holding when the container was made, so a dotfile changed afterwards is not seen until the container is made again.
 4. Inside, `command -v <host[0]>` decides whether the image already has a host.

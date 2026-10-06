@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -205,9 +206,11 @@ it('answers how to reach a machine, and nothing for one that is not there', asyn
   });
   expect(how).toEqual({
     command: process.execPath,
-    args: [FIXTURE, 'exec', '-i', '-e', 'A=1', 'box', 'node', 'server.mjs'],
-    // The docker program's own environment, which is the plugin's and not the machine's.
-    env: { DOCKER_FAKE_STATE: state },
+    // The variable by name only, so a process list shows no value.
+    args: [FIXTURE, 'exec', '-i', '-e', 'A', 'box', 'node', 'server.mjs'],
+    // The docker program's own environment, which is the plugin's, with the
+    // asked value laid over it for `-e A` to read.
+    env: { DOCKER_FAKE_STATE: state, A: '1' },
   });
 
   // With no directory named, the machine's own is the only one that means
@@ -217,6 +220,90 @@ it('answers how to reach a machine, and nothing for one that is not there', asyn
 
   // A machine that is not there is not a spawn descriptor.
   expect(await options.computers?.how('nope', { command: 'node' })).toBeUndefined();
+});
+
+/*
+ * Every asked value reaches `docker exec` by name, with the value in the
+ * environment the descriptor says to spawn `docker` with: an argv is in every
+ * user's process list, an environment is not. The names `docker` itself reads
+ * stay `NAME=VALUE`, since in docker's own environment they would change how
+ * docker runs.
+ */
+it('passes each asked variable by name, and keeps the names docker reads as written', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-byname-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({}), encoding: 'utf-8' });
+
+  const how = await options.computers?.how('box', {
+    command: 'node', env: { PATH: '/opt/x/bin:/usr/bin', KEY: 'secret-value' },
+  });
+  expect(how?.args).toEqual([FIXTURE, 'exec', '-i', '-e', 'PATH=/opt/x/bin:/usr/bin', '-e', 'KEY', 'box', 'node']);
+  expect(how?.args.some((one) => one.includes('secret-value'))).toBe(false);
+  expect(how?.env?.KEY).toBe('secret-value');
+  // The asked PATH is the machine's, not the one docker is run with.
+  expect(how?.env?.PATH).toBeUndefined();
+
+  // Spawned as a backend spawns it, the command in the machine has the value
+  // and no argv the scripted docker saw does.
+  const outer: Record<string, string | undefined> = { ...process.env };
+  delete outer.KEY;
+  const ran = spawnSync(how?.command ?? '', how?.args ?? [], { env: { ...outer, ...how?.env }, encoding: 'utf8' });
+  expect(ran.status, ran.stderr).toBe(0);
+  const record = JSON.parse(readFileSync(state, 'utf8')) as { calls: string[][]; commands: { env: Record<string, string> }[] };
+  expect(record.commands.at(-1)?.env).toEqual({ PATH: '/opt/x/bin:/usr/bin', KEY: 'secret-value' });
+  expect(record.calls.flat().filter((one) => one.includes('secret-value'))).toEqual([]);
+
+  // A backend that spawns the args and drops the descriptor's env loses the
+  // value, and the scripted docker refuses rather than running without it.
+  const dropped = spawnSync(how?.command ?? '', how?.args ?? [], { env: { ...outer, DOCKER_FAKE_STATE: state }, encoding: 'utf8' });
+  expect(dropped.status).not.toBe(0);
+  expect(dropped.stderr).toContain('-e KEY');
+});
+
+/*
+ * Every `DOCKER_*` name is docker's own: in its environment it would choose the
+ * daemon, the context or the configuration docker uses. So a machine's variable
+ * under one of those names stays in argv and never reaches the environment
+ * docker is spawned with.
+ */
+it('keeps every DOCKER_ name out of the environment docker is spawned with', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-dockerown-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+  };
+  await provider.write('computer://box', { data: JSON.stringify({}), encoding: 'utf-8' });
+
+  const how = await options.computers?.how('box', {
+    command: 'node', env: { DOCKER_CONTEXT: 'elsewhere', DOCKER_CONFIG: '/tmp/other-config', KEY: 'v' },
+  });
+  expect(how?.args).toEqual([
+    FIXTURE, 'exec', '-i', '-e', 'DOCKER_CONTEXT=elsewhere', '-e', 'DOCKER_CONFIG=/tmp/other-config', '-e', 'KEY', 'box', 'node',
+  ]);
+  expect(how?.env).toEqual({ DOCKER_FAKE_STATE: state, KEY: 'v' });
+
+  const ran = spawnSync(how?.command ?? '', how?.args ?? [], { env: { ...process.env, ...how?.env }, encoding: 'utf8' });
+  expect(ran.status, ran.stderr).toBe(0);
+  const record = JSON.parse(readFileSync(state, 'utf8')) as { commands: { env: Record<string, string>; dockerEnv: string[] }[] };
+  // The machine has them, and docker was not run with them.
+  expect(record.commands.at(-1)?.env).toMatchObject({ DOCKER_CONTEXT: 'elsewhere', DOCKER_CONFIG: '/tmp/other-config' });
+  expect(record.commands.at(-1)?.dockerEnv).not.toContain('DOCKER_CONTEXT');
+  expect(record.commands.at(-1)?.dockerEnv).not.toContain('DOCKER_CONFIG');
 });
 
 it('reports a runtime it does not have at load, rather than failing later', async () => {

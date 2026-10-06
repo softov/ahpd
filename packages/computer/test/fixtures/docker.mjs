@@ -186,6 +186,35 @@ if (args.includes('--version')) {
  */
 const named = (id) => held.machines.find((machine) => machine.name === id || machine.id === id);
 
+/**
+ * One `-e` value as Docker reads it: `NAME=VALUE` as written, and `NAME` alone
+ * from this program's own environment.
+ *
+ * Stricter than Docker on purpose. Docker drops an unset `-e NAME` silently and
+ * the variable is simply missing inside; this refuses it, naming the variable,
+ * so a caller that spawns `docker` without the environment the flag relies on
+ * is a failing test rather than a machine quietly missing a value.
+ */
+/**
+ * The `DOCKER_*` names this program was spawned with, its own state file aside.
+ *
+ * Real Docker reads every one of them - which daemon, which context, which
+ * configuration - so a test asks this to prove none reached it from a machine.
+ */
+const dockerNames = () => Object.keys(process.env).filter((key) => key.startsWith('DOCKER_') && key !== 'DOCKER_FAKE_STATE');
+
+const envPair = (said) => {
+  const text = String(said);
+  const eq = text.indexOf('=');
+  if (eq !== -1) return [text.slice(0, eq), text.slice(eq + 1)];
+  if (process.env[text] === undefined) {
+    process.stderr.write(`the scripted docker was given -e ${text} and ${text} is not in its environment; Docker would drop it silently\n`);
+    keep();
+    process.exit(1);
+  }
+  return [text, process.env[text]];
+};
+
 if (verb === 'ps') {
   /*
    * The label filter, honoured rather than ignored.
@@ -420,7 +449,7 @@ if (verb === 'run' || verb === 'create') {
   const labels = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '-v') mounts.push(args[i + 1]);
-    if (args[i] === '-e') { const [key, value] = pair(args[i + 1]); env[key] = value; }
+    if (args[i] === '-e') { const [key, value] = envPair(args[i + 1]); env[key] = value; }
     if (args[i] === '--label') { const [key, value] = pair(args[i + 1]); labels[key] = value; }
   }
   /*
@@ -439,6 +468,8 @@ if (verb === 'run' || verb === 'create') {
   }
   held.machines.push({
     name: named === -1 ? `unnamed-${held.machines.length}` : args[named + 1],
+    // The `DOCKER_*` names the make itself was spawned with.
+    dockerEnv: dockerNames(),
     image,
     cpus: args.includes('--cpus') ? args[args.indexOf('--cpus') + 1] : undefined,
     memory: args.includes('--memory') ? args[args.indexOf('--memory') + 1] : undefined,
@@ -524,10 +555,8 @@ if (verb === 'exec') {
     if (said === '-u') { user = args[at + 1]; at++; continue; }
     if (said === '-w') { workdir = args[at + 1]; at++; continue; }
     if (said === '-e') {
-      const pair = args[at + 1];
-      const eq = String(pair).indexOf('=');
-      if (eq === -1) env[String(pair)] = '';
-      else env[String(pair).slice(0, eq)] = String(pair).slice(eq + 1);
+      const [key, value] = envPair(args[at + 1]);
+      env[key] = value;
       at++;
       continue;
     }
@@ -553,7 +582,7 @@ if (verb === 'exec') {
     process.exit(1);
   }
   const said = command.join(' ');
-  (held.commands ??= []).push({ id, ...(user === undefined ? {} : { user }), ...(workdir === undefined ? {} : { workdir }), env, command });
+  (held.commands ??= []).push({ id, ...(user === undefined ? {} : { user }), ...(workdir === undefined ? {} : { workdir }), env, command, dockerEnv: dockerNames() });
 
   // The probe the derivation runs: its markers around what the user's shell was
   // holding, NUL-separated as `/proc/self/environ` prints it.

@@ -115,6 +115,18 @@ export interface Profile {
    * profile's own `folder` is the operator's and says nothing about this.
    */
   sessionFolder?: boolean;
+  /**
+   * What a command in a machine from this profile does when a need value named
+   * from the vault cannot be read again.
+   *
+   * Such a value is never kept with the machine on disk, so a daemon that
+   * restarted reads it again the first time the machine is reached. `fail`
+   * refuses every command into the machine with a sentence naming the need,
+   * and the next command tries the read again; `drop` runs the command without
+   * that variable and logs a line naming the need. Absent is `fail`, and so is
+   * a machine made from no profile.
+   */
+  secretUnreadable?: 'fail' | 'drop';
 }
 
 /** What the provider holds, and what a manifest may leave out. */
@@ -180,6 +192,15 @@ export interface ManifestDefaults {
    * made for; see `Profile.needs` for why a value here may be a reference.
    */
   needValues?: Record<string, string | SecretRef>;
+  /**
+   * The need names whose value, the profile's or the option's, was read from
+   * the vault, with the secret each named.
+   *
+   * Such a need is marked `named` when it is resolved, and the machine's
+   * `named` lists it with its variable and secret, so the value is never given
+   * when the machine is made.
+   */
+  named?: ReadonlyMap<string, string>;
   /**
    * One agent whose needs this machine is made with, beside the profile's own.
    *
@@ -807,6 +828,15 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
       throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
     }
   }
+  // A variable whose value the vault gave, which the runtime leaves off the
+  // command that makes the machine.
+  for (const one of resolved) {
+    if (one.kind === 'env' && defaults.named?.has(one.name) === true) one.named = true;
+  }
+  const named = [...new Map(resolved.flatMap((one) => {
+    const secret = one.named === true ? defaults.named?.get(one.name) : undefined;
+    return secret === undefined ? [] : [[one.target, { need: one.name, variable: one.target, secret }] as const];
+  })).values()];
   /*
    * The mounts each need becomes, and the two deliveries that are not mounts
    * here: a variable set in the machine, and a path copied into it.
@@ -869,6 +899,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(memory === undefined ? {} : { memory }),
     ...(mounts.length === 0 ? {} : { mounts }),
     ...(Object.keys(env).length === 0 ? {} : { env }),
+    ...(named.length === 0 ? {} : { named }),
     ...(copies.length === 0 ? {} : { copies }),
     ...(agents.length === 0 ? {} : { agents }),
     ...(folder === undefined ? {} : { folder }),

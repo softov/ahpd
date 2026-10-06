@@ -1,6 +1,6 @@
 ---
 title: A need value in the computer plugin's options answers set
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -31,3 +31,10 @@ A value under the computer plugin's `needs`, and under `needs` in any of its `pr
 - `pnpm --filter @ahpd/computer test` and `pnpm --filter @ahpd/server test` green.
 
 ## Resume
+
+Implemented on 2026-10-05.
+
+- `packages/computer/src/plugin.ts` - `needValue` is `{ type: 'string', secretAtUse: true, writeOnly: true }`, with its comment saying a plain value answers `<set>` and a reference answers as written.
+- `packages/server/test/plugin-mask.test.ts` - "answers a need value as set, a reference as written, and a profile field as it is", run against the computer plugin's own `optionsSchema`: a plain value under `needs` and under a profile's `needs` answers `<set>`, a `$secret` in either answers as written, a profile's `image` and a profile with no `needs` are left as written. It failed before the change.
+
+The schema case is in the mask test rather than `computer-options.test.ts`, since the mask is what reads `writeOnly`; `computer-options.test.ts` still loads the plugin with a profile and no `needs`.
