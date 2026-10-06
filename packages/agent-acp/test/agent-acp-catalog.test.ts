@@ -171,6 +171,21 @@ it('reports the server model options once a session has opened', async () => {
   ]);
 });
 
+it('tells the host once the server has named its models', async () => {
+  const { agent } = backend();
+  const seen: { id: string; name: string }[][] = [];
+  const { session, watch } = start(agent, 'handshake', { onHandshake: () => seen.push(session.models()) });
+  expect(seen).toEqual([]);
+  await runTurn(session, watch, 't1', 'hi');
+  // Once, and only after the models are known, so the host reads a full list.
+  expect(seen).toEqual([[
+    { id: 'fast', name: 'Fast' },
+    { id: 'thorough', name: 'Thorough' },
+  ]]);
+  await runTurn(session, watch, 't2', 'again');
+  expect(seen).toHaveLength(1);
+});
+
 it('sets the model a turn chose on the server before prompting', async () => {
   const { agent, log } = backend();
   const { session, watch } = start(agent, 'chosen');
