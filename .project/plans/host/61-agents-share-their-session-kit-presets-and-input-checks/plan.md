@@ -115,6 +115,7 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 - Every agent task needs the peer range host 59 task 05 raises; an agent package that imports `titleFrom` from an sdk without it fails at load, which is what host 59 guards.
 - acp and cofold titles change for a message whose first line is short or that starts with a blank line; a session titled before this keeps its stored title.
 - Host 57 task 01 builds pi's `find` row with `firstLine`; whichever lands second uses `titleFrom`, and 57's equality test against `list` still holds because both go through the same function.
+- Host 57 task 02 moves cofold's per-record `list` mapping, `titleOf` included, into `rowOf`; whichever lands second calls `titleFrom` there.
 - `configvalues.ts` and `validate.ts` are hand validators kept on purpose (the sdk takes no runtime dependency) and are not merged with the readers here; `computer/src/manifest.ts`'s refusals and `checkPolicy` are domain rules with their own sentences and stay.
 - The watched-session registries in `agent-acp/src/catalog.ts` and `agent-pi/src/catalog.ts` look alike and are keyed differently; they stay two.
 

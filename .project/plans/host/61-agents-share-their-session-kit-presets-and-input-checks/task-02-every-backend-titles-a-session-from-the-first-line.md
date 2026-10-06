@@ -10,6 +10,7 @@ refs:
   - "[code://packages/agent-acp/src/session/queue.ts#L42-L46](../../../../packages/agent-acp/src/session/queue.ts#L42-L46) - a command's title"
   - "[code://packages/agent-acp/src/session/queue.ts#L159-L164](../../../../packages/agent-acp/src/session/queue.ts#L159-L164) - a message's title"
   - "[code://packages/agent-cofold/src/turns.ts#L49-L53](../../../../packages/agent-cofold/src/turns.ts#L49-L53) - cofold's title"
+  - "[code://packages/agent-cofold/src/agent.ts#L100-L111](../../../../packages/agent-cofold/src/agent.ts#L100-L111) - cofold's catalogue row title, `titleOf`: whitespace folded, cut at 200"
   - "[code://packages/agent-claude/src/session.ts#L56](../../../../packages/agent-claude/src/session.ts#L56) - a seeded session's title, open question 1"
 ---
 
@@ -25,6 +26,7 @@ refs:
 - `UPDATE: packages/agent-pi/src/session.ts:66-70,819-823`, `catalog.ts:192-196` - both use `titleFrom(text, UNTITLED)`; `firstLine` goes.
 - `UPDATE: packages/agent-acp/src/session/queue.ts:43,160` - `titleFrom(command, UNTITLED)` and `titleFrom(text, UNTITLED)`.
 - `UPDATE: packages/agent-cofold/src/turns.ts:50` - `titleFrom(text, 'Cofold session')`.
+- `UPDATE: packages/agent-cofold/src/agent.ts:100-111` - `titleOf` goes; `list` titles a row with `titleFrom(textOf(first), record.sessionId)`, so the catalogue row and the live title agree.
 - `UPDATE: packages/agent-acp/test/agent-acp-turn.test.ts`, `packages/agent-cofold/test/agent-cofold-turn.test.ts` - the cases below.
 
 ## Steps
@@ -38,6 +40,7 @@ refs:
 
 - `session-kit.test.ts`, a new helper's cases: `'\n  hello\nworld'` is `hello`; a 100-character line is cut at 80; `'  \n '` is the fallback.
 - Written first and seen failing (today the title is the first 60 characters with the newline): in each of acp and cofold, a first message `'Fix the build\nand the tests'` titles the session `Fix the build`, and a 70-character one-line message keeps all 70.
+- Written first: cofold's `list()` row for a session whose first message is `'Fix the build\nand the tests'` is titled `Fix the build`, the same title the live session got; today it is the whole text with the newline folded, up to 200.
 - pi's existing title tests stay green unchanged.
 - Written first where it fails today: in each backend, a title the agent gives after the first message replaces the derived one, and after a person renames the session, a title the agent gives is not applied.
 - `pnpm exec tsc --noEmit`, `pnpm test`.
