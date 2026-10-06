@@ -13,7 +13,7 @@
  * restart and the other keeps nothing at all.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -312,6 +312,15 @@ describe('the file policies are kept in', () => {
     await store.put(rows()[0] as Policy);
 
     expect(existsSync(`${file}.${process.pid}.tmp`)).toBe(false);
+  });
+
+  it('writes the file owner-only, because it names who may use what', async () => {
+    const store = filePolicies({ file });
+    await store.put(rows()[0] as Policy);
+
+    // Readable by the account the daemon runs as and by nobody else on the
+    // machine, which is what every other file the daemon keeps is.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });
 

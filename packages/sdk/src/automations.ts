@@ -1,6 +1,7 @@
 /** Automations held in memory, run when somebody asks. */
 
 import { randomUUID } from 'node:crypto';
+import { localPath } from './fileuri.js';
 import type { Automation, AutomationEntry, AutomationRun, AutomationStore, StartSession } from './types/automations.js';
 import type { Bag } from './types/common.js';
 
@@ -167,7 +168,7 @@ export function memoryAutomations(): AutomationStore {
 
       const directories = Array.isArray(template.workingDirectories) ? template.workingDirectories : [];
       const where = typeof directories[0] === 'string'
-        ? (directories[0] as string).replace(/^file:\/\//, '')
+        ? localPath(directories[0] as string)
         : undefined;
       const options: StartSession = {
         ...(typeof template.provider === 'string' ? { provider: template.provider } : {}),
@@ -259,8 +260,21 @@ export function memoryAutomations(): AutomationStore {
 
     runs: (resource, cursor) => {
       const all = history.get(resource) ?? [];
-      const from = cursor === undefined ? 0 : Number(cursor);
-      const at = Number.isFinite(from) && from >= 0 ? from : 0;
+      // An omitted cursor is the newest page.
+      if (cursor === undefined) {
+        return {
+          items: all.slice(0, PAGE).map(summary),
+          ...(PAGE < all.length ? { nextCursor: String(PAGE) } : {}),
+        };
+      }
+      // Anything else has to be one this store issued, and it issues the index
+      // of the next run: a number, not zero, and inside the history. A cursor
+      // that is none of those is answered with nothing, so the host can refuse
+      // it rather than hand back the newest runs for a question about older
+      // ones.
+      if (!/^\d+$/.test(cursor)) return undefined;
+      const at = Number(cursor);
+      if (at <= 0 || at >= all.length) return undefined;
       const page = all.slice(at, at + PAGE);
       return {
         items: page.map(summary),

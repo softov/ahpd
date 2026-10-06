@@ -315,7 +315,10 @@ export function filePolicies(options: FilePoliciesOptions): Policies {
       // Written beside and moved into place, so a daemon killed mid-write
       // leaves the last good file rather than half of this one.
       const temporary = `${file}.${process.pid}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`);
+      // 0600, as the daemon's own records are: this names who may use what,
+      // and that is not everybody's business on a host with more than one
+      // person on it.
+      writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
       renameSync(temporary, file);
     }
     catch (error) {

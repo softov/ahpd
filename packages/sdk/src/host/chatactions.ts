@@ -1,4 +1,5 @@
 import { idOf, Status } from '../catalog.js';
+import { localPath } from '../fileuri.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -177,7 +178,8 @@ export function chatAction(
       // Back where it ran. A session continued in another directory is
       // a conversation whose second half cannot see the files its
       // first half was about.
-      const ran = wheres.get(named)?.[0]?.replace(/^file:\/\//, '');
+      const first = wheres.get(named)?.[0];
+      const ran = first === undefined ? undefined : localPath(first);
       /*
        * What the work is charged to: the one this session was settled
        * with, or the one this turn's sender resolves to.
@@ -346,7 +348,7 @@ export function chatAction(
         no('a working directory cannot change while a turn is running');
         break;
       }
-      const path = (value: unknown): string => String(value ?? '').replace(/^file:\/\//, '');
+      const path = (value: unknown): string => localPath(String(value ?? ''));
       const held = owner.additional ?? [];
       let after = held;
       if (type === 'session/workingDirectorySet') {
@@ -754,7 +756,7 @@ export function chatAction(
         no('a working directory cannot change while a turn is running');
         break;
       }
-      const one = String(action.directory ?? '').replace(/^file:\/\//, '');
+      const one = localPath(String(action.directory ?? ''));
       const own = [held.workingDirectory, ...(held.additional ?? [])].filter((entry) => entry !== undefined);
       const had = beside.get(channel) ?? held.additional ?? [];
       let next = had;

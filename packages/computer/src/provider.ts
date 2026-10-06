@@ -117,7 +117,7 @@ const isDirectory = (at: At): boolean => at.leaf === '';
 
 const at = (uri: string): At => {
   const held = split(uri);
-  if (held === undefined) throw new RpcError(-32009, `${uri} is not a computer: URI`);
+  if (held === undefined) throw new RpcError(-32602, `${uri} is not a computer: URI`);
   return held;
 };
 

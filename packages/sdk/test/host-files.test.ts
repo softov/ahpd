@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { echo } from '../../../examples/echo/agent.js';
+import { uriOf } from '../src/resources.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import {
@@ -279,6 +280,27 @@ describe('completing an at-sign', () => {
     // would carry it per keystroke.
     const file = found.items.find((i) => i.insertText === '@packages/sdk/src/host.ts');
     expect(file?.attachment).toMatchObject({ type: 'resource', uri: `file://${REPO}/packages/sdk/src/host.ts` });
+  });
+
+  it('answers an encoded attachment URI, so a reader can get the path back', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd files '));
+    try {
+      writeFileSync(join(dir, 'notes.txt'), 'x');
+      const host = createHost({ path: dir, agents: [claude({ paths: [dir] })], ...machine() });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      const found = await client.handle({
+        method: 'completions',
+        params: { channel: 'ahp-root://', kind: 'userMessage', text: 'look at @not', offset: 12 },
+      }) as { items: { insertText: string; attachment: { uri: string } }[] };
+
+      const file = found.items.find((i) => i.insertText === '@notes.txt');
+      // A folder with a space in its name completes to a URI that has to name
+      // it back: unencoded, the attachment reads as a file called `ahpd%20files`.
+      expect(file?.attachment.uri).toBe(uriOf(join(dir, 'notes.txt')));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('keeps a directory\'s slash, so the next keystroke goes into it', async () => {

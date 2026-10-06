@@ -1,5 +1,6 @@
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../artifacttools.js';
 import { idOf } from '../catalog.js';
+import { localPath } from '../fileuri.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 
@@ -238,7 +239,7 @@ export function createFacts(ctx: HostContext): Facts {
 
   /** The session directory a path or a `file:` URI is inside, longest first. */
   const dirOfFile = (uri: string): string | undefined => {
-    const path = uri.startsWith('file://') ? uri.slice('file://'.length) : uri;
+    const path = localPath(uri);
     const dirs = new Set<string>();
     for (const uri_ of sessions.keys()) {
       const dir = dirOf(uri_);

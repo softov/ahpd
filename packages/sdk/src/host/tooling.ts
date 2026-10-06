@@ -1,4 +1,5 @@
 import { idOf } from '../catalog.js';
+import { localPath } from '../fileuri.js';
 import { ROOT, chatUriFor } from './channels.js';
 import { need } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -322,7 +323,7 @@ export function createTooling(ctx: HostContext): Tooling {
       await removeSession(heldAs(session), by?.principal ?? by?.owner);
     },
     setWorkspace: (directory, isolation) => {
-      moving.set(uri, { chat: chatUri, directory: directory.replace(/^file:\/\//, ''), isolation });
+      moving.set(uri, { chat: chatUri, directory: localPath(directory), isolation });
     },
     artifacts: () => [...(kept.artifacts(idOf(uri)) ?? [])],
     setArtifacts: (list) => { setArtifacts(uri, list); },

@@ -168,8 +168,8 @@ it('takes a row out, and refuses an id nothing holds', async () => {
 
 it('refuses a URI in another scheme\'s name', async () => {
   const { policy } = served();
-  await expect(policy.read('user://ana')).rejects.toMatchObject({ code: -32609 });
-  await expect(policy.list('usage://team:backend')).rejects.toMatchObject({ code: -32609 });
+  await expect(policy.read('user://ana')).rejects.toMatchObject({ code: -32602 });
+  await expect(policy.list('usage://team:backend')).rejects.toMatchObject({ code: -32602 });
 });
 
 it('advertises the manifest a client draws the form from', async () => {
@@ -272,4 +272,20 @@ it('refuses a role holding neither, on both', async () => {
     expect(await call(client, method, { channel: ROOT, ...params }))
       .toMatchObject({ code: -32009, message: expect.stringContaining(subject) });
   }
+});
+
+it('refuses a URI of its own scheme that has no //, as a bad parameter', async () => {
+  const users = directory();
+  await users.addRole('watcher', ['policy:read']);
+  await users.add('ana', ['watcher']);
+  const client = await signedIn(host(users), users, 'ana');
+
+  /*
+   * The role holds `policy:read`, so the gate is not the one answering: the
+   * scheme was found and the URI under it cannot be split, which is a bad
+   * argument. `-32601` is kept for a scheme nobody serves, so a client can
+   * tell "this host has no such scheme" from "that is not one of its URIs".
+   */
+  expect(await call(client, 'resourceRead', { channel: ROOT, uri: 'policy:M1' }))
+    .toMatchObject({ code: -32602, message: expect.stringContaining('policy:M1') });
 });

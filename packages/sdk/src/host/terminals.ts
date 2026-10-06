@@ -1,4 +1,5 @@
 import { ROOT } from './channels.js';
+import { localPath } from '../fileuri.js';
 import { INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { CLOSING, need } from './common.js';
 import { named } from './channels.js';
@@ -263,7 +264,7 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       if (terminals.has(uri))
         throw new RpcError(-32003, `${uri} already exists`);
       claimable(uri, 'terminal');
-      const asked = typeof params.cwd === 'string' ? params.cwd.replace(/^file:\/\//, '') : dir;
+      const asked = typeof params.cwd === 'string' ? localPath(params.cwd) : dir;
       /*
        * Whose terminal this is, checked rather than taken.
        *

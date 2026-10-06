@@ -1,7 +1,8 @@
 import { constants, watch as watchPath } from 'node:fs';
 import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename, rm, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { uriOf } from './fileuri.js';
 import { RpcError } from './rpc.js';
 import type { Entry, Metadata, Read, ResourceChange, ResourceStore, WatchOptions, Watcher, Write } from './types/resources.js';
 
@@ -37,8 +38,13 @@ export const pathOf = (uri: string): string => {
   catch { throw new RpcError(-32602, `${uri} is not a local file URI`); }
 };
 
-/** A path, back as the URI a client sends and receives. */
-export const uriOf = (path: string): string => pathToFileURL(path).href;
+/**
+ * A path, back as the URI a client sends and receives.
+ *
+ * The host's one writer, named here as well because this store and its callers
+ * already read it from here.
+ */
+export { uriOf };
 
 /**
  * Why this store cannot answer for a URI, in the terms of what it is.

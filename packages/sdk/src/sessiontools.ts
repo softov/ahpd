@@ -1,4 +1,5 @@
 import { Status, idOf } from './catalog.js';
+import { localPath } from './fileuri.js';
 import type { HostTool, ToolCall } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Bag } from './types/common.js';
@@ -155,7 +156,7 @@ export const filterSessions = (rows: Summary[], args: Bag, tool = 'list_sessions
   const includeArchived = flag(args.includeArchived, 'includeArchived', tool);
   const after = when(args.createdAfter, 'createdAfter', tool);
   const before = when(args.createdBefore, 'createdBefore', tool);
-  const bare = (value: string): string => value.replace(/^file:\/\//, '').replace(/\/+$/, '').toLowerCase();
+  const bare = (value: string): string => localPath(value).replace(/\/+$/, '').toLowerCase();
   return rows.filter((row) => {
     const words = statusWords(row.status);
     if (status !== undefined && !words.some((word) => status.has(word))) return false;
@@ -295,7 +296,7 @@ const modelMeant = (at: ToolCall, asked: string | undefined, tool: string, provi
 
 /** An absolute path or a `file://` URI, as a path; nothing for anything else. */
 const pathOf = (value: string): string | undefined => {
-  if (value.startsWith('file://')) return value.slice('file://'.length).replace(/\/+$/, '') || '/';
+  if (value.startsWith('file://')) return localPath(value).replace(/\/+$/, '') || '/';
   if (value.startsWith('/')) return value.replace(/\/+$/, '') || '/';
   return undefined;
 };

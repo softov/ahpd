@@ -42,7 +42,7 @@ interface At {
 
 const splitFor = (scheme: Scheme) => (uri: string): At => {
   const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-  if (match === null || match[1] !== scheme) throw new RpcError(-32609, `${uri} is not a ${scheme}: URI`);
+  if (match === null || match[1] !== scheme) throw new RpcError(-32602, `${uri} is not a ${scheme}: URI`);
   const rest = match[2] ?? '';
   const slash = rest.indexOf('/');
   return slash === -1 ? { id: rest, leaf: '' } : { id: rest.slice(0, slash), leaf: rest.slice(slash + 1) };

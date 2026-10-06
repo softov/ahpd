@@ -125,6 +125,17 @@ describe('the filters list_sessions takes', () => {
     expect(names({ workspace: '/github/ahpc/' })).toEqual(['elsewhere']);
   });
 
+  it('matches a directory with a space, however the URI was written', () => {
+    const spaced = row({ resource: 'ahp-session:/spaced', workingDirectories: ['file:///github/my%20dir'] });
+    const found = (args: Record<string, unknown>) =>
+      filterSessions([spaced], args).map((one) => one.resource);
+    // A URI the client encoded and a path somebody typed are the same place,
+    // and a workspace filter that compared their text matched neither.
+    expect(found({ workspace: 'file:///github/my dir' })).toEqual(['ahp-session:/spaced']);
+    expect(found({ workspace: 'file:///github/my%20dir' })).toEqual(['ahp-session:/spaced']);
+    expect(found({ workspace: '/github/my dir/' })).toEqual(['ahp-session:/spaced']);
+  });
+
   it('keeps the flags the reference host filters on', () => {
     expect(names({ unread: true })).toEqual(['asking']);
     expect(names({ withChanges: true })).toEqual(['elsewhere']);

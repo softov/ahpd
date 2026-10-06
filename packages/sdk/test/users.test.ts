@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -526,6 +526,19 @@ it('keeps a membership a write does not concern, even one naming nothing yet', a
   await users.addTeam('sales');
   expect(held?.memberships).toEqual(['backend', 'sales']);
   expect(held?.teams).toEqual([{ id: 'backend' }, { id: 'sales' }]);
+});
+
+it('writes through a temp file of its own, so one writer never renames another\'s bytes', async () => {
+  writeFileSync(path, JSON.stringify({ teams: [{ id: 'backend' }], users: [] }));
+  // A directory where an older writer's temp file used to go. It is not this
+  // writer's temp - the name carries the pid - so the write still lands.
+  mkdirSync(`${path}.tmp`, { recursive: true });
+  const users = open();
+
+  await users.addTeam('sales');
+
+  const after = JSON.parse(readFileSync(path, 'utf8')) as { teams: { id: string }[] };
+  expect(after.teams.map((one) => one.id)).toEqual(['backend', 'sales']);
 });
 
 it('keeps a primary a write does not concern, even one naming nothing yet', async () => {

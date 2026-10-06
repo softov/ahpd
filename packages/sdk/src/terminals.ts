@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { localPath, uriOf } from './fileuri.js';
 import type { Pty, SpawnPty, Terminal, TerminalOptions, TerminalStore } from './types/terminals.js';
 
 /**
@@ -123,10 +124,10 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
       if (kind === '7') {
         // `file://host/path`, per the convention. The host part is dropped:
         // the path is on this machine, and that is what a client opens.
-        const path = body.replace(/^file:\/\/[^/]*/, '');
+        const path = localPath(body);
         if (path !== '' && path !== where) {
           where = path;
-          emit('terminal', { type: 'terminal/cwdChanged', cwd: `file://${path}` });
+          emit('terminal', { type: 'terminal/cwdChanged', cwd: uriOf(path) });
         }
         continue;
       }

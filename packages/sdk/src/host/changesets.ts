@@ -1,5 +1,6 @@
 import type { ChangesetFile } from '@microsoft/agent-host-protocol';
 import { Status } from '../catalog.js';
+import { localPath } from '../fileuri.js';
 import type { ChangesetOperationContext, ChangesetState } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -36,7 +37,7 @@ export function createChangesets(ctx: HostContext): Changesets {
     const held = sessions.get(named);
     const lead = held && leadOf(held);
     const where = lead?.workingDirectories()[0] ?? wheres.get(named)?.[0];
-    return where?.replace(/^file:\/\//, '');
+    return where === undefined ? undefined : localPath(where);
   };
 
   /**

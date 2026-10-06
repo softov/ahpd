@@ -13,6 +13,7 @@
 import { copyFile, mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { localPath } from './fileuri.js';
 import { zip } from './zip.js';
 
 /** What the reference window reads back. */
@@ -40,7 +41,6 @@ export const CHUNK = 1024 * 1024;
 /** How long an artifact stays readable once made. */
 const LEASE = 10 * 60 * 1000;
 
-const asPath = (resource: string): string => (resource.startsWith('file://') ? decodeURIComponent(resource.slice('file://'.length)) : resource);
 
 export function debugLogs(options: { tmp?: string; lease?: number } = {}): DebugLogs {
   const tmp = options.tmp ?? tmpdir();
@@ -102,7 +102,7 @@ export function debugLogs(options: { tmp?: string; lease?: number } = {}): Debug
       }
     },
     read: async (resource, position) => {
-      const path = asPath(resource);
+      const path = localPath(resource);
       if (!readable.has(path)) throw new Error('Unknown or expired Agent Host debug-log artifact');
       if (!Number.isSafeInteger(position) || position < 0) throw new Error(`Invalid debug-log artifact position: ${position}`);
       const handle = await open(path, 'r');

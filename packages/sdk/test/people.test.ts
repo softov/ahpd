@@ -68,8 +68,10 @@ it('lists what the directory holds, under each of the four schemes', async () =>
   await expect(schemes.user!.read('user://')).rejects.toMatchObject({ code: -32008 });
   // And a record that is not there is absent, whichever scheme names it.
   await expect(schemes.team!.read('team://nobody')).rejects.toMatchObject({ code: -32008 });
-  // A URI in another scheme's name is not this provider's to answer.
-  await expect(schemes.team!.read('project://ahpd')).rejects.toMatchObject({ code: -32609 });
+  // A URI in another scheme's name is not this provider's to answer, and a
+  // URI it cannot read is a bad parameter rather than a refusal: the grant
+  // was never the question.
+  await expect(schemes.team!.read('project://ahpd')).rejects.toMatchObject({ code: -32602 });
 });
 
 it('creates and edits a person, and a body naming no field keeps what was there', async () => {

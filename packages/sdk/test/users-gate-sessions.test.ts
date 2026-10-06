@@ -313,7 +313,8 @@ it('asks an automation\'s owner for computer:write, and refuses a run it cannot 
       session: { ...session, config: { ...session.config } }, triggers: [],
     }, owner);
     await call(admin.client, 'runAutomation', { channel: 'ahp-automations://', automation: resource });
-    return store.runs(resource).items[0] as { lifecycle: { status: string; error?: { message: string } } };
+    // `!`: the run was just made, so there is a first page to read.
+    return store.runs(resource)!.items[0] as { lifecycle: { status: string; error?: { message: string } } };
   };
 
   // An owner who may not make machines, refused in the words the boundary

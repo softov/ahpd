@@ -1,5 +1,6 @@
 import { RpcError } from '../rpc.js';
 import { computerId } from '../computers.js';
+import { localPath } from '../fileuri.js';
 import { idOf } from '../catalog.js';
 import { join } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
@@ -708,7 +709,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         return undefined;
       }
       if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;
-      const where = session.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? options.path;
+      const first = session.workingDirectories()[0];
+      const where = first === undefined ? options.path : localPath(first);
       session.ran(turnId, command, (toolCallId) => ctx.commanded(command, where, {
         kind: 'session',
         session: session.uri,

@@ -1,6 +1,6 @@
 ---
 title: Every file URI the host reads is decoded
-status: todo
+status: implemented
 depends: [task-04-one-file-uri-reader-and-one-writer.md]
 layer: "sdk"
 refs:

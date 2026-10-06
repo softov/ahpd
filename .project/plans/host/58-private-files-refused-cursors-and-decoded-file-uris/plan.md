@@ -1,7 +1,7 @@
 ---
 title: Policy and automation files are private, a cursor the host did not issue is refused, and a file URI is decoded
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-05
 revalidated: 2026-10-05
@@ -83,6 +83,7 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 | A provider that cannot split a URI refuses it with `-32602`, people, policy, usage and computer alike | Softov, 2026-10-06, asked "which error code for a URI of its scheme a provider cannot split?": "-32602 InvalidParams" | 06 |
 | The agents' own `file://${path}` builders move to the sdk's `uriOf` in a later plan, after host 59 raises their peer range; this plan leaves them | Softov, 2026-10-06, asked "move the agents to the shared uriOf too?": "Yes, in a later plan" | - |
 | The runs cursor fix stays here; host 43 p2 keeps its refusal when it lands | Softov, 2026-10-06, asked "keep the small fix in 58?": "Keep it in 58" | 03 |
+| `localPath` decodes the same way with or without an authority: an encoded slash or NUL is never decoded | Softov's review of the host/58 build, 2026-10-06 | 04 |
 
 ## Proposed architecture
 
@@ -96,12 +97,12 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Policies and automations are written owner-only](task-01-policies-and-automations-are-written-owner-only.md) | todo | - |
-| [02 - The user file is written through a temp file of its own](task-02-the-user-file-is-written-through-a-temp-file-of-its-own.md) | todo | - |
-| [03 - A runs cursor the host did not issue is refused](task-03-a-runs-cursor-the-host-did-not-issue-is-refused.md) | todo | - |
-| [04 - One file URI reader and one writer](task-04-one-file-uri-reader-and-one-writer.md) | todo | - |
-| [05 - Every file URI the host reads is decoded](task-05-every-file-uri-the-host-reads-is-decoded.md) | todo | 04 |
-| [06 - A URI a provider cannot split is refused with one code](task-06-a-uri-a-provider-cannot-split-is-refused-with-one-code.md) | todo | - |
+| [01 - Policies and automations are written owner-only](task-01-policies-and-automations-are-written-owner-only.md) | implemented | - |
+| [02 - The user file is written through a temp file of its own](task-02-the-user-file-is-written-through-a-temp-file-of-its-own.md) | implemented | - |
+| [03 - A runs cursor the host did not issue is refused](task-03-a-runs-cursor-the-host-did-not-issue-is-refused.md) | implemented | - |
+| [04 - One file URI reader and one writer](task-04-one-file-uri-reader-and-one-writer.md) | implemented | - |
+| [05 - Every file URI the host reads is decoded](task-05-every-file-uri-the-host-reads-is-decoded.md) | implemented | 04 |
+| [06 - A URI a provider cannot split is refused with one code](task-06-a-uri-a-provider-cannot-split-is-refused-with-one-code.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -114,17 +115,17 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-policies-and-automations-are-written-owner-only.md](task-01-policies-and-automations-are-written-owner-only.md); 01, 02, 03, 04 and 06 are independent.
+- **Done so far:** all six tasks implemented, on 2026-10-06; [implemented.md](implemented.md) says what was built and what was verified.
+- **Next action:** Softov's review; the tasks are `implemented`, not `done`.
 - **Open questions:** none.
 - **Watch out for:** `pathOf` in `resources.ts` throws an `RpcError` and stays the file store's; `localPath` never throws, because the 18 sites it replaces never threw; `sessiontools.ts:158` lowercases for a comparison and keeps doing so after decoding; `terminals.ts:126` drops an OSC 7 host part and keeps dropping it.
 
 ## Final verification checklist
 
-- [ ] A fresh `policies.json` and `automations.json` are `0600`.
-- [ ] No writer in `packages/*/src` uses a temp name without the pid.
-- [ ] `fetchAutomationRuns` with `cursor: "x"` or `"-1"` answers `-32602`.
-- [ ] `rg -nF "replace(/^file:" packages/sdk/src` finds nothing, and `host/channels.ts` has no `uriOf`.
-- [ ] `rg -n "32609" packages` finds nothing.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] A fresh `policies.json` and `automations.json` are `0600`.
+- [x] No writer in `packages/*/src` uses a temp name without the pid.
+- [x] `fetchAutomationRuns` with `cursor: "x"` or `"-1"` answers `-32602`.
+- [x] `rg -nF "replace(/^file:" packages/sdk/src` finds nothing, and `host/channels.ts` has no `uriOf`.
+- [x] `rg -n "32609" packages` finds nothing.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

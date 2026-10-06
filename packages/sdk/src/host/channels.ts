@@ -16,9 +16,6 @@ export const AUTOMATIONS = 'ahp-automations://';
 /** What a session's annotations channel is called, under the session's own URI. */
 export const MARKS = '/annotations';
 
-/** `file://` and a path. A string, so this file needs no filesystem to say it. */
-export const uriOf = (path: string): string => `file://${path}`;
-
 /** The scheme a URI names, lowercased, or the empty string when it names none. */
 export const schemeOf = (uri: string): string => (/^([a-zA-Z][\w+.-]*):/.exec(uri)?.[1] ?? '').toLowerCase();
 

@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { INTERNAL_ERROR, METHOD_NOT_FOUND, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { hostLogPath } from '../debuglogs.js';
+import { localPath } from '../fileuri.js';
 import { need, reason } from './common.js';
 import type { LogFile } from '../debuglogs.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from '../types/containers.js';
@@ -239,7 +240,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      * own path, since the reference client's spelling of it is its own.
      */
     'vscode/reconcileAgentHostDetachedWorktrees': async (params) => {
-      const scope = String(params.scope ?? '').replace(/^file:\/\//, '').replace(/\/$/, '');
+      const scope = localPath(String(params.scope ?? '')).replace(/\/$/, '');
       const active = new Set(Array.isArray(params.activeHandles) ? params.activeHandles.map(String) : []);
       const now = Date.now();
       for (const [handle, held] of detached) {

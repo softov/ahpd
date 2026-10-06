@@ -83,6 +83,23 @@ describe('a shell under a pseudoterminal', () => {
     expect(moved?.cwd).toBe('file:///tmp/elsewhere');
   });
 
+  it('reads a directory whose name was encoded, and answers it encoded', () => {
+    const { spawn, say } = fakePty();
+    const { seen } = opened(spawn);
+    const moved = () => seen.filter((one) => one.type === 'terminal/cwdChanged').map((one) => one.cwd);
+
+    say(osc('7;file://box/tmp/my%20dir'));
+    // The same directory written the other way, then a real move. The terminal
+    // holds the path, so the second spelling is not a move - and that is the
+    // only way to see that what is held is the path rather than the URI's text.
+    say(osc('7;file:///tmp/my dir'));
+    say(osc('7;file:///tmp/elsewhere'));
+
+    // Decoded on the way in and encoded on the way out: a client sent
+    // `file:///tmp/my dir` reads a folder called `my dir` only if it decodes.
+    expect(moved()).toEqual(['file:///tmp/my%20dir', 'file:///tmp/elsewhere']);
+  });
+
   it('still passes the bytes through, because a client is drawing them', () => {
     const { spawn, say } = fakePty();
     const { seen } = opened(spawn);

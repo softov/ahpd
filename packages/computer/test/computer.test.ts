@@ -126,6 +126,14 @@ it('refuses a machine that is not there, and a directory read', async () => {
   await expect(provider.read('computer://nope')).rejects.toMatchObject({ code: -32008 });
 });
 
+it('refuses a URI of another scheme as a bad parameter, not as a denial', async () => {
+  const { runtime } = fake();
+  const provider = computerProvider(runtime, options);
+  await expect(provider.read('usage://x')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.list('usage://x')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.resolve('usage://x')).rejects.toMatchObject({ code: -32602 });
+});
+
 it('makes a machine with the configured limits, uses it and releases it', async () => {
   const { runtime, calls } = fake();
   const tools = computerTools(runtime, { ...options, label: 'ahpd.computer=1', prefix: 'ahpd-computer' });

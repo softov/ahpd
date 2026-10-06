@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, describe } from 'vitest';
@@ -187,6 +187,17 @@ describe('across a restart', () => {
     store = scheduledAutomations({ file, now: second.now, timer: second.timer });
     expect(store.get(ONE)?.definition.title).toBe('Nightly review');
     expect(store.get(ONE)?.nextRunAt).toBe('2026-09-01T09:00:00.000Z');
+  });
+
+  it('writes the file owner-only, because it names whose work an automation is', () => {
+    const clock = clockwork();
+    const one = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+    one.create(ONE, nightly());
+    one.close?.();
+
+    // Readable by the account the daemon runs as and by nobody else on the
+    // machine, which is what every other file the daemon keeps is.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 
   it('keeps whose work it is, and whose it was before it had one', () => {

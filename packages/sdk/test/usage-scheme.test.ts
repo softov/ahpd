@@ -285,7 +285,9 @@ it('says what it is for on the handshake, and makes nothing', () => {
 it('refuses a URI of another scheme, a leaf that is not one of the four, and the root itself', async () => {
   const { provider } = await over([modelUse('2026-10-02T10:00:00.000Z', ['user:ana'])], 'UTC');
 
-  await expect(provider.read('file:///etc/hosts', undefined, unchecked)).rejects.toMatchObject({ code: -32009 });
+  // Not this scheme's URI: a bad argument, not a denial - the code a client
+  // reads here is the one it fixes by sending a different URI.
+  await expect(provider.read('file:///etc/hosts', undefined, unchecked)).rejects.toMatchObject({ code: -32602 });
   await expect(provider.read('usage://')).rejects.toMatchObject({ code: -32008 });
   await expect(provider.read('usage://user%3Aana/total', undefined, unchecked)).rejects.toMatchObject({ code: -32008 });
   await expect(provider.list('usage://user%3Aana/records')).rejects.toMatchObject({ code: -32008 });

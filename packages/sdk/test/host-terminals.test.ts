@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { OpenedTerminal } from '../src/types/terminals.js';
-import {  } from 'node:path';
+import { uriOf } from '../src/resources.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine,
   peer, sdk, settle,
@@ -380,6 +383,31 @@ describe('a shell on this machine', () => {
     // And the channel is gone with it.
     await expect(client.handle({ method: 'subscribe', params: { channel: uri } }))
       .rejects.toMatchObject({ code: -32001 });
+  });
+
+  it('starts a shell where the client said, even when the folder needs encoding', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd terminals '));
+    try {
+      mkdirSync(join(dir, 'my dir'));
+      const { client, peer: p } = await opened();
+      const uri = 'ahp-terminal:/spaced';
+      await client.handle({
+        method: 'createTerminal',
+        params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(join(dir, 'my dir')) },
+      });
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'terminal/input', data: 'pwd\n' } },
+      });
+
+      // Read as text rather than decoded, the URI names a directory called
+      // `my%20dir`, which is not the one the client picked and not one that
+      // exists - so nothing starts there at all.
+      expect(await spoken(p, uri, join(dir, 'my dir'))).toContain(join(dir, 'my dir'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('opens one wherever it is asked, as the reference host does', async () => {

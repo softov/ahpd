@@ -1,6 +1,6 @@
 ---
 title: One file URI reader and one writer
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:

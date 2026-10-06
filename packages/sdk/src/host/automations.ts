@@ -304,9 +304,15 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
       return { resource: run.resource };
     },
     /** A page of what one automation has done, newest first. */
-    fetchAutomationRuns: async (params) => need(options.automations, 'fetchAutomationRuns').runs(
-      String(params.automation ?? ''),
-      typeof params.cursor === 'string' ? params.cursor : undefined,
-    ),
+    fetchAutomationRuns: async (params) => {
+      const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
+      const page = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
+      // The store says "not mine" by answering nothing, so the sentence a
+      // client reads is written here. The protocol asks for an unrecognised
+      // cursor to be refused rather than guessed at, which is the same refusal
+      // `fetchTurns` makes on an older page.
+      if (page === undefined) throw new RpcError(-32602, `Unrecognised cursor ${String(cursor)}`);
+      return page;
+    },
   };
 }

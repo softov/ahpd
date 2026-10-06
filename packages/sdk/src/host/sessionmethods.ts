@@ -2,8 +2,9 @@ import { INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { tail, older } from '../paging.js';
 import { namesOf } from '../scopes.js';
+import { localPath, uriOf } from '../fileuri.js';
 import { CLOSING } from './common.js';
-import { named, ROOT, uriOf } from './channels.js';
+import { named, ROOT } from './channels.js';
 import { SEEDS } from './sessionconfig.js';
 import type { Bag } from '../types/common.js';
 import type { Claimed, Held } from './state.js';
@@ -231,7 +232,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           ?? (sessions.get(asking) ? leadOf(sessions.get(asking) as Held) : undefined);
         // Relative to the session's own directory, which is what a person
         // means by a path while talking to an agent working there.
-        const base = chat_?.workingDirectories()[0]?.replace(/^file:\/\//, '') ?? dir;
+        const base = localPath(chat_?.workingDirectories()[0] ?? dir);
         // Nothing rather than an error: this same command serves `/`,
         // and a host with no filesystem still has commands to offer.
         if (!options.resources) return { items: [] };
@@ -487,7 +488,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          */
         const wanted = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
           .filter((entry): entry is string => typeof entry === 'string')
-          .map((entry) => entry.replace(/^file:\/\//, ''));
+          .map((entry) => localPath(entry));
         const asked = wanted[0];
         const where = asked;
         // The peers of the first, which the protocol says are equal to each
@@ -677,7 +678,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const asked = (Array.isArray(params.workingDirectories) ? params.workingDirectories : [])
         .filter((one): one is string => typeof one === 'string')
-        .map((one) => one.replace(/^file:\/\//, ''));
+        .map((one) => localPath(one));
       const own = [held.workingDirectory, ...(held.additional ?? [])].filter((one) => one !== undefined);
       const stray = asked.find((one) => !own.includes(one));
       if (stray !== undefined)
@@ -790,7 +791,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ? params.workingDirectories.find((entry) => typeof entry === 'string')
         : undefined);
       const mine = await isolating(
-        typeof asked === 'string' ? asked.replace(/^file:\/\//, '') : dir,
+        typeof asked === 'string' ? localPath(asked) : dir,
         typeof answered.isolation === 'string' ? answered.isolation : undefined,
       );
       /*
@@ -890,7 +891,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         return { items: found.map((name) => ({ value: name, label: name })) };
       }
       if (property !== 'branch' || !port) return { items: [] };
-      const where = (asked ?? `file://${dir}`).replace(/^file:\/\//, '');
+      const where = localPath(asked ?? `file://${dir}`);
       const repository = await port.repository(where).catch(() => undefined);
       if (repository === undefined) return { items: [] };
       const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';

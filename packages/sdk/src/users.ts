@@ -672,7 +672,11 @@ export function fileUsers(options: FileUserOptions): Users {
   const write = (file: UserFile): void => {
     if (read().broken) throw new Error(`${options.path} is not a user file; fix it before changing who is in it`);
     mkdirSync(dirname(options.path), { recursive: true });
-    const loose = `${options.path}.tmp`;
+    // Named by the writer's own pid, so two processes writing at once do not
+    // share one scratch file and rename each other's half-written bytes into
+    // place. The same form every other writer here uses, and the one the
+    // daemon's temp sweeper knows.
+    const loose = `${options.path}.${String(process.pid)}.tmp`;
     // 0600: the file holds hashes rather than secrets, and who may read it is
     // still nobody but the account the daemon runs as.
     writeFileSync(loose, `${JSON.stringify({

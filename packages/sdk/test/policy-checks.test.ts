@@ -270,7 +270,8 @@ describe('a session, with the switch on', () => {
       triggers: [],
     }, 'user:bob');
     await client.handle({ method: 'runAutomation', params: { channel: 'ahp-automations://', automation: 'ahp-automation:/nightly' } });
-    const run = automations.runs('ahp-automation:/nightly').items[0] as { lifecycle: { status: string; error?: { message: string } } };
+    // `!`: the run was made a line above, so there is a first page to read.
+    const run = automations.runs('ahp-automation:/nightly')!.items[0] as { lifecycle: { status: string; error?: { message: string } } };
     expect(run.lifecycle.status).toBe('failed');
     expect(run.lifecycle.error?.message).toContain('no policy allows computer disposable:s');
   });

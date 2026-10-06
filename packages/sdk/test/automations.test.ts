@@ -453,6 +453,49 @@ it('records what it has run, and pages it', async () => {
   expect(page.nextCursor).toBeUndefined();
 });
 
+it('pages a history longer than a page, on the cursor it issued', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  for (let i = 0; i < 21; i++) {
+    await client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
+    });
+  }
+  await settle();
+  const first = await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
+  }) as { items: unknown[]; nextCursor?: string };
+  expect(first.items).toHaveLength(20);
+  expect(first.nextCursor).toBe('20');
+
+  // The cursor the host issued is the one it answers: the run left over.
+  const second = await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor: first.nextCursor },
+  }) as { items: unknown[]; nextCursor?: string };
+  expect(second.items).toHaveLength(1);
+  expect(second.nextCursor).toBeUndefined();
+});
+
+it('refuses a runs cursor it did not issue, rather than answering from the start', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  for (let i = 0; i < 3; i++) {
+    await client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
+    });
+  }
+  await settle();
+
+  // A cursor out of another store's history, one that is not a number, or one
+  // past the end. Answering the newest page for any of them is a client that
+  // pages for ever without noticing it is being told the same thing twice.
+  for (const cursor of ['x', '-1', '999']) {
+    await expect(client.handle({
+      method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor },
+    })).rejects.toMatchObject({ code: -32602, message: expect.stringContaining('Unrecognised cursor') });
+  }
+});
+
 it('forgets one when the client asks and the catalogue still says it may', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
