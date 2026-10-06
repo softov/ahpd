@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Scope } from './scopes.js';
-import type { PullRequestBaseline, SessionStore } from './types/sessions.js';
+import type { NestedRecord, PullRequestBaseline, SessionStore } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
 
 /**
@@ -16,6 +16,9 @@ import type { Owner } from './types/usage.js';
 interface Held {
   chatTitlesOf(id: string): Record<string, string> | undefined;
   sendersOf(id: string): Record<string, Owner> | undefined;
+  nested(id: string): NestedRecord | undefined;
+  setNested(id: string, value: NestedRecord | undefined): void;
+  nestedSessions(): [string, NestedRecord][];
 }
 
 /**
@@ -37,9 +40,10 @@ export function memorySessions(): SessionStore & Held {
   const artifacts = new Map<string, Record<string, unknown>[]>();
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
+  const nested = new Map<string, NestedRecord>();
   const forget = (id: string): void => {
     flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id);
-    providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id);
+    providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); nested.delete(id);
   };
   return {
     flags: (id) => flags.get(id) ?? 0,
@@ -63,6 +67,9 @@ export function memorySessions(): SessionStore & Held {
     },
     provider: (id) => providers.get(id),
     setProvider: (id, value) => { if (value === undefined) providers.delete(id); else providers.set(id, value); },
+    nested: (id) => nested.get(id),
+    setNested: (id, value) => { if (value === undefined) nested.delete(id); else nested.set(id, value); },
+    nestedSessions: () => [...nested.entries()],
     artifacts: (id) => artifacts.get(id),
     setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
     pullRequests: (id) => pullRequests.get(id),
@@ -88,10 +95,11 @@ export function memorySessions(): SessionStore & Held {
     },
     forget,
     prune: (gone) => {
-      // Every id any of the nine holds, since a session is remembered under
+      // Every id any of the ten holds, since a session is remembered under
       // whichever of them was written last and nothing else names it.
       for (const id of new Set([...flags.keys(), ...config.keys(), ...scope.keys(), ...owners.keys(),
-        ...senders.keys(), ...providers.keys(), ...artifacts.keys(), ...pullRequests.keys(), ...chatTitles.keys()])) {
+        ...senders.keys(), ...providers.keys(), ...artifacts.keys(), ...pullRequests.keys(), ...chatTitles.keys(),
+        ...nested.keys()])) {
         if (gone(id)) forget(id);
       }
     },
@@ -121,6 +129,28 @@ export interface FileSessionOptions {
 const ownerOf = (value: unknown): Owner | undefined =>
   typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
 
+/**
+ * A nested session's record as the file wrote it, or nothing when it is not
+ * one: every field a listing reads must be there with its type, and anything
+ * else is ignored rather than guessed at.
+ */
+const nestedOf = (value: unknown): NestedRecord | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const held = value as Partial<Record<keyof NestedRecord, unknown>>;
+  const text = (one: unknown): one is string => typeof one === 'string' && one !== '';
+  if (!text(held.provider) || !text(held.machine) || !text(held.inner) || typeof held.title !== 'string'
+    || !text(held.createdAt) || !text(held.modifiedAt) || !Array.isArray(held.workingDirectories)) return undefined;
+  return {
+    provider: held.provider,
+    machine: held.machine,
+    inner: held.inner,
+    title: held.title,
+    createdAt: held.createdAt,
+    modifiedAt: held.modifiedAt,
+    workingDirectories: held.workingDirectories.filter((one): one is string => typeof one === 'string'),
+  };
+};
+
 /** What is persisted for one session. Versioned, so a later shape can be recognised rather than guessed at. */
 interface Saved {
   version: 1;
@@ -134,6 +164,7 @@ interface Saved {
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
   chatTitles?: Record<string, string>;
+  nested?: NestedRecord;
 }
 
 /**
@@ -201,9 +232,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     const artifacts = inner.artifacts(id);
     const pullRequests = inner.pullRequests(id);
     const chatTitles = inner.chatTitlesOf(id);
+    const nested = inner.nested(id);
     if (flags === 0 && config === undefined && scope === undefined && owner === undefined
       && senders === undefined && provider === undefined && artifacts === undefined
-      && pullRequests === undefined && chatTitles === undefined) return undefined;
+      && pullRequests === undefined && chatTitles === undefined && nested === undefined) return undefined;
     return {
       version: 1,
       id,
@@ -216,6 +248,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(artifacts === undefined ? {} : { artifacts }),
       ...(pullRequests === undefined ? {} : { pullRequests }),
       ...(chatTitles === undefined ? {} : { chatTitles }),
+      ...(nested === undefined ? {} : { nested }),
     };
   };
 
@@ -325,6 +358,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof title === 'string') inner.setChatTitle(row.id, chatUri, title);
         }
       }
+      const nested = nestedOf(row.nested);
+      if (nested !== undefined) inner.setNested(row.id, nested);
     }
   };
 
@@ -343,6 +378,9 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setSender: (id, turnId, value) => { heard.add(id); inner.setSender(id, turnId, value); dirty.add(id); later(); },
     provider: (id) => inner.provider(id),
     setProvider: (id, value) => { heard.add(id); inner.setProvider(id, value); dirty.add(id); later(); },
+    nested: (id) => inner.nested(id),
+    setNested: (id, value) => { heard.add(id); inner.setNested(id, value); dirty.add(id); later(); },
+    nestedSessions: () => inner.nestedSessions(),
     artifacts: (id) => inner.artifacts(id),
     setArtifacts: (id, values) => { heard.add(id); inner.setArtifacts(id, values); dirty.add(id); later(); },
     pullRequests: (id) => inner.pullRequests(id),

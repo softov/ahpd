@@ -1,6 +1,6 @@
 ---
 title: The proxy answers only what it knows
-status: todo
+status: implemented
 depends: [task-10-inner-chat-uris-are-rewritten.md]
 layer: "sdk | test"
 refs:
@@ -38,3 +38,7 @@ Every `Session` member the proxy has reports the inner session's real answer, th
 - `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`steer`, `resume` and `setAnswer` check the mirrored state; `setConfig` refuses an undeclared or `sessionMutable: false` key with a sentence; customization and MCP members are present only when the inner session holds them.
+The cases failed before the change.

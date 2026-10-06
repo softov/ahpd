@@ -245,6 +245,26 @@ export function createHistory(ctx: HostContext): History {
       // The held rows are what says whose session this is, so they are read
       // first, and nothing is listed to find a row that is in them.
       let row = rows.find((item) => idFor(item.resource) === id);
+      /*
+       * A nested session, opened from what this host recorded of it.
+       *
+       * Its transcript is the inner host's, in the machine, so there are no
+       * turns to read here: it opens empty, and the first turn resumes it
+       * inside, where the earlier turns are.
+       */
+      const record = ctx.kept.nested?.(id);
+      const runs = record === undefined ? undefined : ctx.agents.get(record.provider);
+      if (record !== undefined && runs !== undefined) {
+        if (!row) {
+          const { title, createdAt, modifiedAt, workingDirectories } = record;
+          const found = ctx.adopt(runs, { id, title, createdAt, modifiedAt, workingDirectories });
+          ctx.rowAdded(found);
+          rows.push(found);
+          row = found;
+        }
+        titles.set(id, row.title);
+        return [];
+      }
       if (!row) {
         const one = await findOf(id);
         if (one !== undefined) {

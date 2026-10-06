@@ -1,6 +1,6 @@
 ---
 title: The inner session works in the machine's directory
-status: todo
+status: implemented
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "computer | sdk"
 refs:
@@ -33,3 +33,7 @@ The inner session's working directory is the path inside the machine the session
 - `node_modules/.bin/vitest run packages/sdk/test/nested-start.test.ts packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`NestedSpawn.workingDirectory` is the session's folder at its mounted path, from `within(held, cwd)`, and the proxy creates the inner session there and maps the inner directory back in `sessionState()`.
+Both cases failed before the change.

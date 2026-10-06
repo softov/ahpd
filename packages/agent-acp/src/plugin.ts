@@ -236,6 +236,7 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
   return {
     command: command as string,
     provider: id,
+    variant: true,
     displayName: (typeof said.name === 'string' ? said.name : taken?.name) ?? id,
     // The log is the daemon's own - the same line `agent-claude` writes its
     // warnings to.

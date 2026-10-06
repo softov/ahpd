@@ -100,6 +100,30 @@ it('starts the host a profile names, and ahpd when it names none', async () => {
   expect(await computers.nested('gone', { plugins: ['@ahpd/agent-cofold'] })).toBeUndefined();
 });
 
+it('answers the path inside the machine the session folder is mounted at', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-nested-inside-'));
+  const state = join(loose, 'docker.json');
+  // The folder a session names on this host, mounted as /workspaces/app.
+  const app = join(loose, 'srv-app');
+  mkdirSync(join(app, 'x'), { recursive: true });
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+    profiles: { plain: { mounts: [`${app}:/workspaces/app`] } },
+  });
+  await providerOf(options).write('computer://plain', { data: JSON.stringify({ profile: 'plain' }), encoding: 'utf-8' });
+  const computers = options.computers;
+  if (computers?.nested === undefined) throw new Error('the plugin registered no nested start');
+
+  const covered = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: join(app, 'x') });
+  expect(covered?.workingDirectory).toBe('/workspaces/app/x');
+  // A folder no mount covers is the machine's own directory, or nothing when it has none.
+  const elsewhere = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: '/nowhere/mounted' });
+  expect(elsewhere?.workingDirectory).not.toBe('/nowhere/mounted');
+});
+
 it('records the profile on the machine, so a later daemon starts the same host', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-nested-label-'));
   const state = join(loose, 'docker.json');

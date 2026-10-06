@@ -261,6 +261,16 @@ export function chatAction(
     no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
     return;
   }
+  /*
+   * A session whose agent has gone for good refuses everything that follows
+   * with the sentence it ended with, a draft included, since nothing will
+   * read it.
+   */
+  const over = session.ended?.();
+  if (over !== undefined) {
+    refuse(connection.peer, channel, action, origin, over);
+    return;
+  }
   switch (type) {
     case 'chat/turnStarted': {
       const message = (typeof action.message === 'object' && action.message !== null

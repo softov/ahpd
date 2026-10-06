@@ -745,6 +745,8 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(options.vault === undefined ? {} : { vault: options.vault }),
     problem: (line) => { told.push(line); },
     ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
+    // As configuration wrote it, which is what a host inside a machine loads.
+    spec: said,
   });
   try {
     await apply.call(plugin, host, values);

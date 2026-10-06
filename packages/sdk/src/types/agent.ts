@@ -448,6 +448,20 @@ export interface Agent {
   runsNested?: boolean;
 
   /**
+   * Whether this agent was registered from a preset: one of several agents a
+   * plugin builds out of one backend, each under its own id with its own
+   * endpoint, keys or command.
+   *
+   * A host started inside a machine loads the plugin with its defaults, so it
+   * serves the plugin's own agent and none of the presets. The proxy lets that
+   * agent stand in for one that is not a variant - a built-in, or a default
+   * renamed by an option - and ends a variant's session with a sentence
+   * instead, since running it as the plain agent would use the wrong endpoint
+   * and keys. Absent is not a variant.
+   */
+  variant?: boolean;
+
+  /**
    * What the backend offers, asked once at startup.
    *
    * Before any session exists, because that is when a client asks: the models

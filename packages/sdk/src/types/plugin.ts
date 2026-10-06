@@ -406,6 +406,12 @@ export interface PortContribution {
 export interface Contribution {
   /** The `name` of the plugin that produced this. */
   by: string;
+  /**
+   * What configuration named the plugin by, a package or a path, when a loader
+   * named it: the spec a nested host is asked to load for this plugin's agents.
+   * Absent, the plugin's `name` stands for it.
+   */
+  spec?: string;
   /** Backends to append, in registration order. */
   agents: Agent[];
   /** Tools to append, in registration order. */

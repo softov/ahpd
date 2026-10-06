@@ -1,6 +1,6 @@
 ---
 title: Models, sign-in and the inner host's requests cross the proxy
-status: todo
+status: implemented
 depends: [task-12-the-proxy-answers-only-what-it-knows.md]
 layer: "sdk"
 refs:
@@ -37,3 +37,7 @@ The session's models are the inner host's for this provider, an inner `auth/requ
 - `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`models` comes from the inner root, which the proxy subscribes to and reduces; `awaiting` holds the inner `authRequired` resources and `authenticated` forwards `authenticate`; every inner server request is refused with a sentence through `setServerRequestHandler`.
+The cases failed before the change.

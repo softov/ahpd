@@ -136,7 +136,8 @@ The session's working directory is mapped through the machine's mounts. With `/s
 
 ### A backend that runs nested
 
-Some backends cannot be moved into a machine: cofold's loop, tools and shell all run in the host process, and there is no server mode a process outside could drive. Such a backend declares `runsNested: true`, and a session of it whose `computer` setting names a machine is given the SDK's proxy backend instead of the backend itself.
+Some backends cannot be moved into a machine: cofold's loop, tools and shell all run in the host process, and there is no server mode a process outside could drive.
+Such a backend declares `runsNested: true`, and a session of it whose `computer` setting names a machine is given the SDK's proxy backend instead of the backend itself.
 
 The proxy starts a whole `ahpd` **inside the machine**, in stdio mode, with that backend loaded, and presents the inner session to the client exactly as a local one:
 
@@ -144,14 +145,52 @@ The proxy starts a whole `ahpd` **inside the machine**, in stdio mode, with that
 <host> --stdio --plugin <each>
 ```
 
-The inner host creates the session with the same config minus `computer`, and the outer session forwards turns, tool confirmations, input answers, config changes, cancel and dispose to it and emits its chat and session actions as its own. The inner host's protocol version has to be this host's; another one is refused at the handshake.
+The inner host creates the session with the same config minus `computer`, and the outer session forwards turns, tool confirmations, input answers, config changes, cancel and dispose to it and emits its chat and session actions as its own.
+A subagent the inner session runs is a subagent chat of the outer session, with its own row, and every link to it names the outer chat.
+The inner host's protocol version has to be this host's; another one is refused at the handshake.
 
-**The image carries the host and the plugin.** There is no install step: a machine whose image has neither is a session that ends with a sentence carrying what the inner host last wrote to stderr. The plugin a provider needs is `@ahpd/agent-<provider>`, so cofold is `@ahpd/agent-cofold`:
+**The inner host loads the plugin that registered the agent.**
+This host records, for every agent, the spec of the plugin that registered it, and that spec is the `--plugin` the inner host is started with, whatever the provider is called and wherever the plugin came from.
+A cofold renamed `cofold-work` by its options still starts `--plugin @ahpd/agent-cofold`, and its inner session is created under `cofold`, the name the inner host serves it by.
+An agent registered from a preset says so with `variant: true`, as every Claude and ACP preset does, and a variant such as `claude-openrouter` is never run as another agent: an inner host that does not serve it ends the session naming it, even when it is the only agent its plugin registered.
+An agent handed to the host directly rather than through a plugin cannot run nested, and its session says the host does not know which plugin serves it.
+A plugin loaded from a path names a file on this host, so the machine has to have it at that path.
+
+**The inner host takes nothing from the outer plugin's options.**
+It loads the plugin with its defaults, and what holds inside a machine is its profile and what that mounts: for cofold, its configuration file at the [fixed target](#cofold-in-a-machine).
+
+**The image carries the host and the plugin.**
+There is no install step: a machine whose image has neither is a session that ends with a sentence carrying what the inner host last wrote to stderr.
+The host resolves a bare plugin name from its configuration directory and nowhere else, so the image installs ahpd with npm and each plugin with `ahpd plugin install --no-enable`, the way the [dev container launcher](CONTAINERS.md) does:
 
 ```dockerfile
 FROM node:22-bookworm-slim
-RUN npm i -g @ahpd/server @ahpd/agent-cofold
+RUN npm i -g @ahpd/server
+RUN mkdir -p /home/node/.config && chown -R node:node /home/node
+USER node
+ENV HOME=/home/node XDG_CONFIG_HOME=/home/node/.config
+RUN ahpd plugin install --no-enable @ahpd/agent-cofold
 ```
+
+Until `@ahpd/agent-cofold` is published, `ahpd plugin install` is given a packed tarball copied into the image, or a path to a checkout, instead of the name.
+
+**The image's user owns a writable `HOME` and `XDG_CONFIG_HOME`, with no mount under either.**
+The nested ahpd makes `$XDG_CONFIG_HOME/ahpd` when it starts, and exits with `EACCES` when it cannot.
+Docker makes the parent directories of a bind target as root, so a mount under `~/.config` leaves `~/.config/ahpd` unwritable, and the session ends with the inner host's `EACCES` line as its sentence.
+The example runs as the image's `node` user and gives it its home.
+
+**A session whose inner host ended stays ended.**
+Its end is a sentence: the process's exit code or the signal that killed it, and the last lines it wrote to stderr.
+Every later turn and action on that session is refused with that sentence; the inner host is not started again.
+
+**A resumed session continues the transcript the machine holds.**
+This host records a nested session in its session store when it opens: its agent, its machine, the inner session's id, its title and its folders.
+After this daemon restarts, the session is listed from that record without asking the machine, and a turn on it resumes it inside the machine, where the inner session goes by the outer session's id and keeps its earlier turns.
+The transcript lives in the machine, so a disposable machine that has gone takes it along: the session is still listed, and its resume ends with a sentence naming the machine.
+
+**The inner session works where the folder is inside the machine.**
+A session in `/srv/app/x` on a machine that mounts `/srv/app` at `/workspaces/app` is created in `/workspaces/app/x` inside, and a client still reads `/srv/app/x`.
+A folder no mount covers is the machine's own working directory.
 
 **The profile says how the host starts.** `host` is the command and its arguments, `["ahpd"]` when it names none, and it is where an image that keeps its host somewhere else says so:
 
@@ -169,7 +208,8 @@ RUN npm i -g @ahpd/server @ahpd/agent-cofold
 } }] }
 ```
 
-The machine remembers the profile that made it, so a daemon that restarts - or one that did not make it - still starts the host the profile named. The profile's `agents` is what shares cofold's configuration and provider key into the machine, the same mechanism [Claude Code](#claude-code-in-a-machine) uses, and a profile without them is a cofold session that cannot sign in.
+The machine remembers the profile that made it, so a daemon that restarts - or one that did not make it - still starts the host the profile named.
+The profile's `agents` is what shares cofold's configuration and provider key into the machine, the same mechanism [Claude Code](#claude-code-in-a-machine) uses, and a profile without them is a cofold session that cannot sign in.
 
 `--stdio` and one `--plugin` per spec are appended to `host`, so `host` names only the program: `ahpd`, a pinned `node /work/ahpd/main.js`, or whatever an image actually has.
 

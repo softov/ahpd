@@ -73,6 +73,8 @@ export interface AcpOptions {
   provider?: string;
   /** What a client reads instead of the id. Default `ACP`. */
   displayName?: string;
+  /** Whether this agent was registered from a preset, as `Agent.variant` says. */
+  variant?: boolean;
   /** One line about what this backend is. */
   description?: string;
   /** The model id a session that names none runs on. */

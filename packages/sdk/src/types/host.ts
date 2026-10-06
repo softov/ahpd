@@ -95,6 +95,16 @@ export interface HostOptions {
    */
   agents: Agent[];
   /**
+   * The spec of the plugin that registered each agent, by provider.
+   *
+   * What a host inside a machine is asked to load for a session of that agent
+   * that runs nested - decision
+   * `the-host-records-which-plugin-registered-each-agent`. `foldHostOptions`
+   * writes it; an agent handed over directly, not through a plugin, has no
+   * entry, and a session of it cannot run nested.
+   */
+  agentPlugins?: Record<string, string>;
+  /**
    * The files a client may read, and complete an `@` into.
    *
    * Left out, no `resource*` command is served. `fileResources()` is the one

@@ -90,6 +90,7 @@ export function acpAgent(options: AcpOptions): Agent {
   return {
     provider,
     displayName,
+    ...(options.variant === true ? { variant: true } : {}),
     ...(options.description !== undefined ? { description: options.description } : {}),
     schema,
     defaults,

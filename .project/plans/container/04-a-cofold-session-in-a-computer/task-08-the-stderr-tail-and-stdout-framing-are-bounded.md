@@ -1,6 +1,6 @@
 ---
 title: The stderr tail and the stdout framing are bounded
-status: todo
+status: implemented
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:
@@ -32,3 +32,7 @@ A failure's sentence carries at most a bounded number of characters of the inner
 - `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`lineReader` decodes with a `StringDecoder`, scans each byte once, and cuts a stderr line at 400 characters with an ellipsis; the tail keeps 12 lines.
+The two cases in `nested-proxy.test.ts` failed before the change.

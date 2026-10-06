@@ -1,6 +1,6 @@
 ---
 title: A nested host loads the plugin that registered the agent, and the inner host is configured by the profile only
-status: todo
+status: implemented
 depends: [task-06-docs.md]
 layer: "sdk | agent-cofold"
 refs:
@@ -43,3 +43,10 @@ The host knows which plugin spec registered each agent, the inner host loads tha
 - `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts` and `node_modules/.bin/tsc -p tsconfig.json --noEmit` pass.
 
 ## Resume
+
+Implemented 2026-10-06.
+`Contribution.spec` and `HostOptions.agentPlugins` record the plugin that registered each agent; `spawn.ts` passes it to `nestedAgent`, which takes required `plugins` and no longer derives `@ahpd/agent-<name>`, and ends with a sentence when there is none.
+The inner provider is the outer name if served, else the inner host's single agent when the outer agent is not a variant, else a sentence naming it.
+After Softov's answer (2026-10-06, "Agent says it's a variant"), `Agent.variant` marks an agent registered from a preset; Claude and ACP set it on every preset, and the built-in, cofold and pi do not.
+The not-installed process case passed already, as a guard; the rest failed before the change.
+Of the variant cases, the host-level renamed-default case passed already under the old count; the variant, Claude, ACP and validation cases failed before.

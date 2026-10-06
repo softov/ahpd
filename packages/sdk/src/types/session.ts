@@ -541,6 +541,17 @@ export interface Session {
   awaiting?(): string[];
 
   /**
+   * The sentence this session ended with, or nothing while it runs.
+   *
+   * A session whose agent has gone for good - a host inside a machine that
+   * died - answers it, and the host refuses every later client action on its
+   * session and chat channels with it, a new turn included.
+   *
+   * Optional. A backend that is either running or closed leaves it out.
+   */
+  ended?(): string | undefined;
+
+  /**
    * End the session and stop its agent.
    *
    * A backend that can tell when its process has gone answers a promise that

@@ -144,6 +144,14 @@ it('registers an agent per variant, each with its own name and models', async ()
   expect(await modelsOf(agents[0])).toEqual([]);
 });
 
+it('marks every preset agent a variant, and the built-in none, laid over or not', async () => {
+  const agents = await agentsOf({ presets: { claude: { name: 'Claude at work' }, 'claude-openrouter': {} } });
+  expect(agents.map((one) => [one.provider, one.variant])).toEqual([['claude', undefined], ['claude-openrouter', true]]);
+  // A preset left alone without the built-in beside it is still a variant.
+  const alone = await agentsOf({ presets: { claude: false, 'claude-openrouter': {} } });
+  expect(alone.map((one) => [one.provider, one.variant])).toEqual([['claude-openrouter', true]]);
+});
+
 it('gives each variant its own configuration directory in a machine, unless computerConfigDir names one', async () => {
   const targets = (agents: Agent[]): (string | undefined)[] =>
     agents.map((one) => (one.machine?.().claudeConfigDirectory as { target?: string } | undefined)?.target);

@@ -493,6 +493,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(`${channel} is not a session here`);
         return;
       }
+      // A session whose backend has ended takes no client into it, and says why.
+      const running = sessions.get(channel);
+      const over = running === undefined ? undefined : ctx.leadOf(running)?.ended?.();
+      if (over !== undefined) {
+        no(over);
+        return;
+      }
       const clientId = connection.clientId || 'anonymous';
       const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
         ? action.activeClient

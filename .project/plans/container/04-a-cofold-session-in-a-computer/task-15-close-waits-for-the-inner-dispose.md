@@ -1,6 +1,6 @@
 ---
 title: Close waits for the inner session to be disposed
-status: todo
+status: implemented
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:
@@ -27,3 +27,7 @@ Closing a nested session disposes the inner session before the inner host is sto
 - `node_modules/.bin/vitest run packages/sdk/test/nested-proxy.test.ts packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`close` resolves at once and, behind it, sends `disposeSession` bounded by 3 s, then `shutdown`, then `stop()`.
+The proxy case failed before; the process case for an inner host that ignores SIGTERM passed already, since task 07's `stop` escalates to SIGKILL.

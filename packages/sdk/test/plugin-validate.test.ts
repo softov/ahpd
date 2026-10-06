@@ -104,6 +104,12 @@ describe('pluginHost', () => {
     expect(() => host.registerAgent({} as never)).toThrow(/alpha.*registerAgent.*provider/);
   });
 
+  it('refuses an agent whose variant is not a boolean, and takes one that is', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerAgent({ ...agent('x'), variant: 'yes' } as never)).toThrow(/alpha.*registerAgent.*variant/);
+    expect(() => host.registerAgent({ ...agent('y'), variant: true })).not.toThrow();
+  });
+
   it('refuses an agent with a provider but no create, naming create', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerAgent({ provider: 'x', displayName: 'X', schema: () => ({}), defaults: () => ({}) } as never))

@@ -181,6 +181,12 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   const providers = new Map<string, string>();
   for (const agent of base.agents) providers.set(agent.provider, 'the daemon');
   const added: Agent[] = [];
+  /*
+   * The plugin each added agent came from, by provider - decision
+   * `the-host-records-which-plugin-registered-each-agent`. Seeded from the
+   * base's record, and an agent the base was handed directly has none.
+   */
+  const plugins: Record<string, string> = { ...base.agentPlugins };
 
   /*
    * The URI schemes, and who holds each. Seeded from the base for the same
@@ -210,6 +216,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
       }
       providers.set(agent.provider, contribution.by);
       added.push(agent);
+      plugins[agent.provider] = contribution.spec ?? contribution.by;
     }
 
     for (const [key, entry] of Object.entries(contribution.ports) as [PortKey, PortContribution | undefined][]) {
@@ -238,6 +245,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   }
 
   if (added.length > 0) options.agents = [...options.agents, ...added];
+  if (Object.keys(plugins).length > 0) options.agentPlugins = plugins;
 
   const tools = [...(base.tools ?? []), ...contributions.flatMap((contribution) => contribution.tools)];
   if (tools.length > 0 || base.tools !== undefined) options.tools = tools;
@@ -348,6 +356,11 @@ export interface HostRecording {
 /** What a plugin host is given besides its context. */
 export interface HostRecordingOptions {
   /**
+   * What configuration named this plugin by, a package or a path, kept on the
+   * contribution so the host can record it against each agent it registers.
+   */
+  spec?: string;
+  /**
    * Every agent this host knows, read when `machineNeeds` is called.
    *
    * A function rather than a list because the list is not complete while
@@ -420,6 +433,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
   const events: Record<string, EventListener[]> = {};
   const contribution: Contribution = {
     by,
+    ...(options.spec === undefined ? {} : { spec: options.spec }),
     agents: [],
     tools: [],
     sessionConfig: {},

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { AGENT_CLASH, foldHostOptions, pluginHost } from '../src/plugins.js';
@@ -62,6 +63,41 @@ it('answers whether it keeps a session, from the store and by the id in the URI'
   // A host that keeps no sessions has no leftovers of its own to adopt, which
   // is an answer rather than a failure.
   expect(await pluginHost('fixture', context).host.sessionKept('echo:/one')).toBe(false);
+});
+
+it('records the plugin that registered each agent, by the spec it was named with', async () => {
+  const context: PluginContext = {
+    path: '/tmp/plugin-host',
+    paths: ['/tmp/plugin-host'],
+    version: '0.0.0',
+    hostName: 'host',
+    configDir: '/tmp/plugin-host',
+    log: () => {},
+    say: () => {},
+  };
+  const scoped = pluginHost('agents', context, { spec: 'some-scope/agents' });
+  scoped.host.registerAgent({ ...contributed, provider: 'first' });
+  scoped.host.registerAgent({ ...contributed, provider: 'second' });
+  const local = pluginHost('local', context, { spec: './plugins/local' });
+  local.host.registerAgent({ ...contributed, provider: 'third' });
+
+  const folded = foldHostOptions(base(), [scoped.contribution, local.contribution]);
+  expect(folded.options.agentPlugins).toEqual({
+    first: 'some-scope/agents',
+    second: 'some-scope/agents',
+    third: './plugins/local',
+  });
+  // The daemon's own agent came through no plugin, so nothing is recorded for it.
+  expect(folded.options.agentPlugins?.echo).toBeUndefined();
+});
+
+it('records the spec a loaded plugin was named by, a path included', async () => {
+  const { loadPlugins } = await import('../../server/src/plugins.js');
+  const repo = join(import.meta.dirname, '../../..');
+  const spec = './packages/sdk/test/fixtures/plugin-nested-echo';
+  const { options, problems } = await loadPlugins([spec], { base: base(), configDir: repo, cwd: repo, log: () => {} });
+  expect(problems).toEqual([]);
+  expect(options.agentPlugins).toEqual({ cofold: spec });
 });
 
 it('waits for the store rather than answering before the fold has named it', async () => {

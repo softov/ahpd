@@ -103,6 +103,11 @@ it('gives each key of presets an agent of its own, under the shipped row it name
   expect(merged[0]?.env).toEqual({ X: '1' });
 });
 
+it('marks every agent a preset registers a variant', async () => {
+  const agents = await agentsOf({ presets: { codex: {}, mine: { command: 'mine' } } });
+  expect(agents.map((one) => [one.provider, one.variant])).toEqual([['codex', true], ['mine', true]]);
+});
+
 it('names a preset after its own key when the row names none it may take', async () => {
   const agents = await agentsOf({ presets: { mine: { command: 'mine', name: 'Mine' }, theirs: { command: 'theirs' } } });
   expect(agents.map((one) => [one.provider, one.displayName])).toEqual([['mine', 'Mine'], ['theirs', 'theirs']]);

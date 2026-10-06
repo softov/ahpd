@@ -204,6 +204,7 @@ const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Pro
     paths,
     provider: id,
     displayName: name,
+    ...(id === BUILT_IN ? {} : { variant: true }),
     ...(models === undefined ? {} : { models: models as ModelEntry[] }),
     ...(keepCliModels === undefined ? {} : { keepCliModels: keepCliModels as boolean }),
     ...(Object.keys(preset).length === 0 ? {} : { preset }),

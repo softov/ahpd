@@ -47,6 +47,18 @@ export interface NestedStart {
   cwd?: string;
 }
 
+/** The command that starts a nested host, and where its session works. */
+export interface NestedSpawn extends Spawn {
+  /**
+   * The path inside the machine the caller's `cwd` is mounted at, or the
+   * machine's own working directory when no mount covers it.
+   *
+   * Absent when there is neither: the caller named no folder, or the machine
+   * has no working directory of its own.
+   */
+  workingDirectory?: string;
+}
+
 /** The command a backend wants to run in a machine. */
 export interface SpawnOptions {
   /** The program to run inside the machine. */
@@ -213,7 +225,7 @@ export interface ComputerPort {
    * `undefined` is "there is no such machine", the same answer `how` gives.
    * Absent on a port whose runtime has no way to start one.
    */
-  nested?(id: string, asked: NestedStart): Promise<Spawn | undefined>;
+  nested?(id: string, asked: NestedStart): Promise<NestedSpawn | undefined>;
   /**
    * Make a machine from a source a session named, and answer its id.
    *

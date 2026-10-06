@@ -1,7 +1,7 @@
 ---
 title: A cofold session in a computer runs in an ahpd started inside it
 domain: container
-status: active
+status: built
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -87,6 +87,10 @@ process exits                    -> [new] the session ends with the stderr tail 
 | The real-process test hands the inner host an explicit env of `PATH`, `HOME` and the XDG directories only | (defaulted: a spread `process.env` lets the runner's environment decide what the inner host does) | 07 |
 | The image's user has a writable `HOME` and `XDG_CONFIG_HOME` with no mount under them, and a read-only config directory ends the session with the inner host's `EACCES` sentence; the image build is checked by hand | (defaulted: Docker makes a bind target's parents root, and a nested ahpd exits with `EACCES` when it cannot make `$XDG_CONFIG_HOME/ahpd`) | 16 |
 | The proxy implements a member only when it can report the inner session's real answer; the rest are left out so the host refuses them, and required members answer from the mirrored inner state. | Softov, 2026-09-26: "leave them out so the host refuses them honestly (no blind `true`)". | 12, 13 |
+| An agent registered from a preset says so with `Agent.variant: true`, which Claude and ACP set on every preset and nobody sets on a built-in or a renamed default; the inner host's single agent stands in only for an agent without it | Softov, 2026-10-06, asked how a variant is told from a plugin's default: "Agent says it's a variant". | 17 |
+| The outer host records a nested session in its own session store when it opens (provider, machine, inner session id, title), and lists and resumes it from that record after a restart without asking the machine | Softov, 2026-10-06, asked how a nested session is listed after a restart: "Outer host keeps a record". | 11 |
+| The proxy serves the inner host's subagent chats as outer chats now: their rows, their actions and the links to them in chat content all carry outer URIs | Softov, 2026-10-06, asked whether inner subagent chats wait for a wider `Emit`: "Build now". | 10 |
+| After a nested session ends, read/archived and terminal actions stay allowed; chat actions and `session/activeClientSet` are refused with its sentence | Softov, 2026-10-06, asked "should read/archived and terminal actions be refused too after the end?": "Keep them allowed", since archiving is how a person clears a dead session and a terminal is the session's | 09 |
 
 ## Tasks
 
@@ -98,17 +102,17 @@ process exits                    -> [new] the session ends with the stderr tail 
 | [04 - A backend that runs nested is proxied instead of refused](task-04-nested-instead-of-refused.md) | implemented | 03 |
 | [05 - A nested start that fails says why](task-05-a-failed-start-says-why.md) | implemented | 04 |
 | [06 - Docs](task-06-docs.md) | implemented | 05 |
-| [07 - The inner host's pipes cannot crash the daemon](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md) | todo | 06 |
-| [08 - The stderr tail and the stdout framing are bounded](task-08-the-stderr-tail-and-stdout-framing-are-bounded.md) | todo | 07 |
-| [09 - An ended nested session refuses what follows with the reason](task-09-an-ended-nested-session-refuses-with-the-reason.md) | todo | 07 |
-| [10 - Inner chat URIs are rewritten to the outer ones](task-10-inner-chat-uris-are-rewritten.md) | todo | 07 |
-| [11 - A nested session resumes the inner transcript by id](task-11-a-nested-session-resumes-by-id.md) | todo | 09 |
-| [12 - The proxy answers only what it knows](task-12-the-proxy-answers-only-what-it-knows.md) | todo | 10 |
-| [13 - Models, sign-in and the inner host's requests cross the proxy](task-13-models-sign-in-and-requests-cross-the-proxy.md) | todo | 12 |
-| [14 - The inner session works in the machine's directory](task-14-the-working-directory-is-the-machines.md) | todo | 07 |
-| [15 - Close waits for the inner session to be disposed](task-15-close-waits-for-the-inner-dispose.md) | todo | 07 |
-| [16 - The docs say how the image gets ahpd and what a nested session does](task-16-docs-for-the-fixes.md) | todo | 11, 12, 13, 14, 15, 17 |
-| [17 - A backend that runs nested names its plugin, and the inner host is configured by the profile only](task-17-a-backend-names-its-nested-plugin.md) | todo | 06 |
+| [07 - The inner host's pipes cannot crash the daemon](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md) | implemented | 06 |
+| [08 - The stderr tail and the stdout framing are bounded](task-08-the-stderr-tail-and-stdout-framing-are-bounded.md) | implemented | 07 |
+| [09 - An ended nested session refuses what follows with the reason](task-09-an-ended-nested-session-refuses-with-the-reason.md) | implemented | 07 |
+| [10 - Inner chat URIs are rewritten to the outer ones](task-10-inner-chat-uris-are-rewritten.md) | implemented | 07 |
+| [11 - A nested session resumes the inner transcript by id](task-11-a-nested-session-resumes-by-id.md) | implemented | 09 |
+| [12 - The proxy answers only what it knows](task-12-the-proxy-answers-only-what-it-knows.md) | implemented | 10 |
+| [13 - Models, sign-in and the inner host's requests cross the proxy](task-13-models-sign-in-and-requests-cross-the-proxy.md) | implemented | 12 |
+| [14 - The inner session works in the machine's directory](task-14-the-working-directory-is-the-machines.md) | implemented | 07 |
+| [15 - Close waits for the inner session to be disposed](task-15-close-waits-for-the-inner-dispose.md) | implemented | 07 |
+| [16 - The docs say how the image gets ahpd and what a nested session does](task-16-docs-for-the-fixes.md) | implemented | 11, 12, 13, 14, 15, 17 |
+| [17 - A backend that runs nested names its plugin, and the inner host is configured by the profile only](task-17-a-backend-names-its-nested-plugin.md) | implemented | 06 |
 
 ## Risks and tradeoffs
 
@@ -119,9 +123,10 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 06 implemented on 2026-09-26: the computers port starts a nested host, `packages/sdk/src/nested.ts` is the proxy, `Agent.runsNested` chooses it, cofold declares it, and `docs/COMPUTER.md` explains it.
-- **Next action:** [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md), which also builds the real-process test the later tasks use.
-- **Watch out for:** a failure must end the session with a sentence and never hang or throw; the in-memory fakes in `packages/sdk/test/nested-proxy.test.ts` hid an `EPIPE` crash, so a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` (created by task 07) against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session. `nested` reaches a machine through `reach`, so a dev container is reached by `docker exec` once container/03 task 18 lands, and nothing here changes for it.
+- **Done so far:** tasks 01 to 06 implemented on 2026-09-26; tasks 07 to 17 implemented on 2026-10-06, as [implemented.md](implemented.md) says.
+- **Done in the fix turn (2026-10-06):** Softov's three answers, in the table above, are built: `Agent.variant`, the nested session record, and inner subagent chats served outside.
+- **Next action:** Softov's review, and the open question in [implemented.md](implemented.md) about read, archive and terminal actions on an ended session.
+- **Watch out for:** a failure must end the session with a sentence and never hang or throw; a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session.
 
 ## Final verification checklist
 
@@ -133,5 +138,5 @@ process exits                    -> [new] the session ends with the stderr tail 
 - [ ] A nested session resumed after the outer daemon restarts shows its earlier turns.
 - [ ] A session in a folder mounted at another path inside the machine works in the inside path.
 - [ ] A cofold registered under another provider name runs nested with `@ahpd/agent-cofold` loaded inside, and the machine's cofold configuration is the one it uses.
-- [ ] The image built from `docs/COMPUTER.md`'s example starts `ahpd --stdio --plugin @ahpd/agent-cofold`.
+- [x] The image built from `docs/COMPUTER.md`'s example starts `ahpd --stdio --plugin @ahpd/agent-cofold`.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/COMPUTER.md`, `plans/index.md` updated.

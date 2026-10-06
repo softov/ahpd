@@ -1,6 +1,6 @@
 ---
 title: Inner chat URIs are rewritten to the outer ones
-status: todo
+status: implemented
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:
@@ -29,3 +29,10 @@ No action or snapshot the proxy emits names an inner chat URI.
 - `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+Every inner chat URI is rewritten by a deep walk over the inner-to-outer map, the default chat to `start.chatUri`, in actions and in `sessionState()`.
+Step 3 was built after Softov's answer (2026-10-06, "Build now") through the host's `subagent` seam rather than a wider `Emit`: an inner worker chat is opened outside with its title and prompt, its actions go to the outer chat on the turn the host opened, its row is the host's own, and a link to it names the outer chat.
+Other inner chats that are not served are still withheld and logged once.
+The three subagent cases in `nested-proxy.test.ts` failed before.
+The process case failed before the change.

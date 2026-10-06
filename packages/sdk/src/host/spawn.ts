@@ -5,7 +5,7 @@ import { computerId, computersFor } from '../computers.js';
 import { nestedAgent } from '../nested.js';
 import { idOf, uriFor, Status } from '../catalog.js';
 import { meter } from '../meter.js';
-import { subagentChatUri } from './channels.js';
+import { chatUriFor, subagentChatUri } from './channels.js';
 import { CLOSING } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
@@ -285,9 +285,16 @@ export function createSpawn(ctx: HostContext): Spawn {
     const former = formerChatUri(uri, chatUri);
     return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
   };
+  /** A nested session's record with a new title or a new time, where it has one. */
+  const moveNested = (id: string, change: { title?: string }): void => {
+    const was = kept.nested?.(id);
+    if (was === undefined) return;
+    kept.setNested?.(id, { ...was, ...change, modifiedAt: new Date().toISOString() });
+  };
   /** Store a chat's title under its name, and clear one kept under its `ahp-session:` spelling. */
   const keepTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
+    if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
     const former = formerChatUri(uri, chatUri);
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
   };
@@ -328,9 +335,14 @@ export function createSpawn(ctx: HostContext): Spawn {
      * decision `a-cofold-session-in-a-computer-runs-in-a-nested-host`. A
      * session with no machine, or a backend without the flag, is started here
      * exactly as it was.
+     *
+     * The host inside loads the plugin that registered the agent here, as its
+     * spec was recorded, and an agent with no record ends its session saying
+     * so - decision `the-host-records-which-plugin-registered-each-agent`.
      */
+    const plugin = options.agentPlugins?.[agent.provider];
     const used = agent.runsNested === true && computerId(config.computer) !== undefined
-      ? nestedAgent(agent)
+      ? nestedAgent(agent, { plugins: plugin === undefined ? [] : [plugin], log })
       : agent;
     if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
     if (resuming?.resume !== undefined) resumedSessions.add(uri);
@@ -503,6 +515,9 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A turn that has ended is let go of, once what a usage record will want
         // has been read off it and what a history needs is the store's.
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') senders.delete(turn);
+        // A nested session's record follows the title and the last turn.
+        if (action.type === 'session/titleChanged' && typeof action.title === 'string') moveNested(idOf(uri), { title: action.title });
+        else if (channel === 'chat' && action.type === 'chat/turnComplete') moveNested(idOf(uri), {});
         // The two ends of a turn, as the host sees them: the backend saying it
         // began, and saying it finished or was stopped. A per-token delta is
         // not an event, because a plugin that wants the stream is a client.
@@ -724,6 +739,24 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (inside !== undefined) {
       inMachine(inside, uri, true);
       enteredIn.set(uri, inside);
+    }
+    /*
+     * A nested session's record, which is what lists it after a restart: its
+     * transcript is in the machine and no backend here can list it.
+     */
+    if (used !== agent && inside !== undefined) {
+      const id = idOf(uri);
+      const was = kept.nested?.(id);
+      const now = new Date().toISOString();
+      kept.setNested?.(id, {
+        provider: agent.provider,
+        machine: inside,
+        inner: resuming?.resume ?? id,
+        title: named_ ?? was?.title ?? session.title(),
+        createdAt: was?.createdAt ?? now,
+        modifiedAt: now,
+        workingDirectories: workingDirectory !== undefined ? [`file://${workingDirectory}`] : was?.workingDirectories ?? [],
+      });
     }
     return session;
   };

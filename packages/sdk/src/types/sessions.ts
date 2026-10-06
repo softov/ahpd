@@ -10,6 +10,24 @@ import type { Owner } from './usage.js';
  * that never asked. `associatedPullRequestUrls` is what the session took as
  * its own, most recent first. Both keep the spelling they arrived with.
  */
+/** One session that runs in a host inside a machine, as the outer host lists it. */
+export interface NestedRecord {
+  /** The agent that runs it on this host. */
+  provider: string;
+  /** The machine's id, as in `computer://<id>`. */
+  machine: string;
+  /** The id the inner host holds the session under. */
+  inner: string;
+  /** The title a list shows. */
+  title: string;
+  /** When it was made, ISO 8601. */
+  createdAt: string;
+  /** When it last moved, ISO 8601. */
+  modifiedAt: string;
+  /** Its folders, as the URIs this host named. */
+  workingDirectories: string[];
+}
+
 export interface PullRequestBaseline {
   initialPullRequestUrls: string[];
   associatedPullRequestUrls: string[];
@@ -106,6 +124,20 @@ export interface SessionStore {
   provider(id: string): string | undefined;
   /** Record it, or forget it with `undefined`. */
   setProvider(id: string, value: string | undefined): void;
+  /**
+   * What this host knows of a session that runs in a host inside a machine,
+   * or nothing for any other session.
+   *
+   * The transcript of a nested session is the inner host's, kept in the
+   * machine, so no backend here lists it. This record is what lists it after a
+   * restart and what a resume starts from, without asking the machine.
+   * Optional: a store without it lists no nested session after a restart.
+   */
+  nested?(id: string): NestedRecord | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setNested?(id: string, value: NestedRecord | undefined): void;
+  /** Every nested session recorded, by id. */
+  nestedSessions?(): [string, NestedRecord][];
   /**
    * What the agent recorded as worth coming back to, or nothing where it
    * recorded nothing.

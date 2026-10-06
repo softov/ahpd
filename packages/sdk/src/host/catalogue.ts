@@ -415,6 +415,22 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       found.push(adopt(one.agent, one.row, waiting));
     }
     /*
+     * The nested sessions, from what this host recorded of them.
+     *
+     * Their transcripts are in the machines they ran in, so no backend lists
+     * them, and the machine is not asked: a row is what was recorded, and
+     * opening one is what reaches the machine. One whose agent is not loaded
+     * waits for it, as a listed row does.
+     */
+    for (const [id, record] of kept.nestedSessions?.() ?? []) {
+      if (claimed.has(id) || offered.has(id)) continue;
+      const agent = agents.get(record.provider);
+      const reader = agent ?? [...agents.values()][0];
+      if (reader === undefined) continue;
+      const { title, createdAt, modifiedAt, workingDirectories } = record;
+      found.push(adopt(reader, { id, title, createdAt, modifiedAt, workingDirectories }, agent === undefined ? record.provider : undefined));
+    }
+    /*
      * What a refusing backend had last time, kept as it was.
      *
      * A backend that did not answer said nothing about its sessions, and this
@@ -451,7 +467,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
      */
     const forgotten: Array<[string, Record<string, unknown> | undefined]> = [];
     const gone = (id: string): boolean => {
-      if (claimed.has(id) || offered.has(id))
+      if (claimed.has(id) || offered.has(id) || kept.nested?.(id) !== undefined)
         return false;
       const provider = kept.provider(id);
       if (provider === undefined || !spoken.has(provider))

@@ -1000,12 +1000,22 @@ export const apply: Plugin['apply'] = (host, options) => {
     const key = profileOf(held);
     const host = (key === undefined ? undefined : profiles?.[key]?.host) ?? defaults.host;
     const [program, ...before] = host;
-    return reach(id, {
+    const spawn = await reach(id, {
       command: program ?? defaults.host[0],
       // One `--plugin` per spec, which is how the daemon's own flag repeats.
       args: [...before, '--stdio', ...asked.plugins.flatMap((plugin) => ['--plugin', plugin])],
       ...(asked.cwd === undefined ? {} : { cwd: asked.cwd }),
     });
+    if (spawn === undefined) return undefined;
+    /*
+     * Where the session works inside: the caller's folder read through the
+     * machine's mounts, as `-w` is, or the machine's own directory. The inner
+     * session is created there, since the host inside knows only its own paths.
+     */
+    const config = (typeof held.Config === 'object' && held.Config !== null ? held.Config : {}) as Record<string, unknown>;
+    const workdir = typeof config.WorkingDir === 'string' && config.WorkingDir !== '' ? config.WorkingDir : undefined;
+    const inside = (asked.cwd === undefined ? undefined : within(held, asked.cwd)) ?? workdir;
+    return { ...spawn, ...(inside === undefined ? {} : { workingDirectory: inside }) };
   };
 
   host.registerComputers({

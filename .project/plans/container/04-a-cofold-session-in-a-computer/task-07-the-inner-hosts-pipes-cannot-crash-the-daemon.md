@@ -1,6 +1,6 @@
 ---
 title: The inner host's pipes cannot crash the daemon
-status: todo
+status: implemented
 depends: [task-06-docs.md]
 layer: "sdk | test"
 refs:
@@ -36,3 +36,7 @@ A nested host that dies at any moment, or closes its stdin, ends the outer sessi
 - `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts packages/sdk/test/nested-proxy.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+`stdioTransport` reads the end from `close` with the signal in the sentence, stdin has an `error` listener that waits 500 ms for the process's own end, and `stop` sends SIGTERM then SIGKILL after 3 s.
+`packages/sdk/test/nested-process.test.ts` (new) runs a real `ahpd --stdio` with `test/fixtures/plugin-nested-echo` under an env of `PATH`, `HOME` and the XDG directories only; its exit, stdin-closed and SIGKILL cases failed before the change.

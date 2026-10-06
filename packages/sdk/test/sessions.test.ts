@@ -805,6 +805,32 @@ it('keeps the titles chats were given, and forgets them with the session', async
   expect(fileSessions({ dir }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
 });
 
+it('keeps the record of a nested session across a restart, lists it, and forgets it with the session', async () => {
+  const dir = join(root, 'sessions');
+  const record = {
+    provider: 'cofold', machine: 'box', inner: 'n1', title: 'In the box',
+    createdAt: '2026-10-06T10:00:00.000Z', modifiedAt: '2026-10-06T10:05:00.000Z', workingDirectories: ['file:///srv/app'],
+  };
+  const store = fileSessions({ dir });
+  store.setNested?.('n1', record);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'n1')).toEqual({ version: 1, id: 'n1', nested: record });
+  const second = fileSessions({ dir });
+  expect(second.nested?.('n1')).toEqual(record);
+  expect(second.nestedSessions?.()).toEqual([['n1', record]]);
+  // A file a version before this one wrote has no record, and still reads.
+  writeFileSync(join(dir, 'old.json'), JSON.stringify({ version: 1, id: 'old', provider: 'cofold' }));
+  const third = fileSessions({ dir });
+  expect(third.nested?.('old')).toBeUndefined();
+  expect(third.provider('old')).toBe('cofold');
+  // A record missing what a listing needs is ignored rather than guessed at.
+  writeFileSync(join(dir, 'half.json'), JSON.stringify({ version: 1, id: 'half', nested: { provider: 'cofold' } }));
+  expect(fileSessions({ dir }).nested?.('half')).toBeUndefined();
+  third.forget('n1');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'n1')).toBeUndefined();
+});
+
 it('starts empty and says so when a file cannot be read', () => {
   const dir = join(root, 'sessions');
   mkdirSync(dir, { recursive: true });

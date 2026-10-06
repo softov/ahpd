@@ -74,6 +74,8 @@ export interface ClaudeOptions {
   provider?: string;
   /** What a client reads instead of the id. The variant's own `name`. */
   displayName?: string;
+  /** Whether this agent is a preset rather than the built-in, as `Agent.variant` says. */
+  variant?: boolean;
   /**
    * Where the CLI is *inside a machine*, for a session that names one.
    *
@@ -359,6 +361,7 @@ export function claude(options: ClaudeOptions): Agent {
   return {
     provider: options.provider ?? 'claude',
     displayName: options.displayName ?? 'Claude Code',
+    ...(options.variant === true ? { variant: true } : {}),
     // Both, because the SDK resumes at a named prompt: `resumeSessionAt` with
     // `forkSession` continues from a turn under a new id, and a side chat is
     // an unresumed session handed what that turn said.

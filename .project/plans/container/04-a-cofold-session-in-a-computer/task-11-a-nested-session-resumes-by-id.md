@@ -1,6 +1,6 @@
 ---
 title: A nested session resumes the inner transcript by id
-status: todo
+status: implemented
 depends: [task-09-an-ended-nested-session-refuses-with-the-reason.md]
 layer: "sdk"
 refs:
@@ -33,3 +33,9 @@ A nested session resumed by the outer host continues the conversation the inner 
 - `node_modules/.bin/vitest run packages/sdk/test/nested-process.test.ts` passes.
 
 ## Resume
+
+Implemented 2026-10-06.
+The inner session is named `<inner provider>:/<outer id>`, since the inner host broadcasts a resumed session on that name; with `resume` set `createSession` is skipped, and a subscribe failure ends with "computer://X holds no session <id> to resume".
+Step 4 was built after Softov's answer (2026-10-06, "Outer host keeps a record"): `SessionStore.nested` holds a `NestedRecord` (provider, machine, inner id, title, dates, folders) written when a nested session opens, kept in the session's own file, and the catalogue lists it and `past` opens it from there without asking the machine.
+The store case and the three restart cases in `nested-proxy.test.ts` failed before.
+Both process cases failed before the change.

@@ -67,6 +67,7 @@ const AGENT_OPTIONAL: Record<string, Kind> = {
   chats: 'object',
   multipleDirectories: 'boolean',
   runsNested: 'boolean',
+  variant: 'boolean',
   protectedResources: 'array',
   probe: 'function',
   machine: 'function',
