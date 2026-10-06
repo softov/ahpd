@@ -714,7 +714,13 @@ and refuses `-32004` while the session runs.
 clean tree nobody named for a day - the window forgetting a handle is not the
 same as a person being done with the branch. The handles live for the daemon's
 run: a restart forgets them, and the trees stand until a session or the window
-takes them down.
+takes them down. A tree is made at `<repo>.worktrees/<name>`, beside its
+repository, which is where the reference host puts one - or as
+`<dir>/<repo>/<name>` under `--worktrees-root <dir>` when the daemon was
+started with one, which is how a machine with many repositories keeps their
+trees in one folder instead of one folder beside each. A tree made under a root
+is not where the reference host would look for one, so a tree either of them
+makes is found by the other only at the default.
 
 A new tree carries what git checked out and nothing else: a checkout has no
 `.env`, no `node_modules`, and none of the local configuration the thing needs

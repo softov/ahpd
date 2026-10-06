@@ -163,6 +163,18 @@ export interface HostOptions {
    */
   worktrees?: Worktrees;
   /**
+   * An absolute folder every session tree goes under.
+   *
+   * With one, a session's worktree is `<root>/<repo>/<name>` rather than
+   * `<repo>.worktrees/<name>` beside its repository - decision
+   * `worktrees-can-live-under-one-root`. It is what a machine with many
+   * repositories under one folder wants, and it is this host's own departure
+   * from the reference, which fixes the location and offers no setting.
+   *
+   * Meaningless without `worktrees`: with no port there is no tree at all.
+   */
+  worktreesRoot?: string;
+  /**
    * What GitHub knows about the branch a session is on.
    *
    * Left out, no session carries `_meta.github` and no backend advertises a

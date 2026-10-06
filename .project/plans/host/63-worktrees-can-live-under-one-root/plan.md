@@ -1,7 +1,7 @@
 ---
 title: Worktrees can live under one root
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -67,8 +67,8 @@ ahpd config / --worktrees-root -> run.ts createHost({ worktreesRoot }) -> lifecy
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host takes a worktrees root](task-01-the-host-takes-a-worktrees-root.md) | todo | - |
-| [02 - The daemon reads the root](task-02-the-daemon-reads-the-root.md) | todo | 01 |
+| [01 - The host takes a worktrees root](task-01-the-host-takes-a-worktrees-root.md) | done | - |
+| [02 - The daemon reads the root](task-02-the-daemon-reads-the-root.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -77,14 +77,15 @@ ahpd config / --worktrees-root -> run.ts createHost({ worktreesRoot }) -> lifecy
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-takes-a-worktrees-root.md](task-01-the-host-takes-a-worktrees-root.md).
+- **Done so far:** both tasks implemented, 2026-10-06 - see `implemented.md`.
+- **Next action:** Softov's review.
 - **Open questions:** none.
-- **Watch out for:** `worktreesOf` is exported from the sdk's `index.ts`, so its one-argument form must keep working.
+- **Watch out for:** `worktreesOf` is exported from the sdk's `index.ts`, so its one-argument form must keep working. It does: the second parameter is optional and every caller that passes one passes two.
 
 ## Final verification checklist
 
-- [ ] A session with `isolation: worktree` on a host given a root gets its tree at `<root>/<repo>/<name>`.
-- [ ] Without a root, the tree is at `<repo>.worktrees/<name>` as before.
-- [ ] `pnpm typecheck`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] A session with `isolation: worktree` on a host given a root gets its tree at `<root>/<repo>/<name>`.
+- [x] Without a root, the tree is at `<repo>.worktrees/<name>` as before.
+- [x] `pnpm typecheck`, `pnpm boundary` and `pnpm build` pass.
+- [ ] `pnpm test` is clean. It is not: it fails on 5-second timeouts in `packages/computer/*` and a few heavy CLI tests, a different set on each run, every one of them passing alone. None is in a file this plan touches - see `implemented.md`.
+- [x] `plans/index.md` updated.

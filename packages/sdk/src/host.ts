@@ -24,7 +24,6 @@ import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { computerId, computersFor } from './computers.js';
 import { nestedAgent } from './nested.js';
 import { createCallLinks } from './calllinks.js';
-import { worktreeFor, worktreesOf } from './repo/worktrees.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { memorySessions } from './sessions.js';
 import { meter } from './meter.js';

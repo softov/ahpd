@@ -1,6 +1,6 @@
 ---
 title: The host takes a worktrees root
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -39,3 +39,16 @@ refs:
 - `pnpm exec vitest run packages/sdk/test/worktrees.test.ts`, `pnpm typecheck`, `pnpm boundary`.
 
 ## Resume
+
+Implemented 2026-10-06.
+
+- `worktreesOf(repository, root?)` answers `join(root, basename(repository))` when a root is given and `<repo>.worktrees` beside the repository otherwise; the doc comment keeps why the default is beside and carries the reference's name, and says a root is this host's departure from it, citing decision `worktrees-can-live-under-one-root`.
+- `HostOptions.worktreesRoot?: string` sits after `worktrees`, documented as an absolute folder every session tree goes under and as meaningless without the port.
+- `isolated` passes `options.worktreesRoot` to `worktreesOf`; nothing else in it changed.
+- The unused `worktreesOf`/`worktreeFor` import is gone from `host.ts`.
+- `packages/sdk/README.md` has the `worktreesRoot` row.
+- No `mkdir -p` was added to `create`: it already runs `mkdir(dirname(worktree.path), { recursive: true })` before `git worktree add`, which makes `<root>/<repo>` for a session the root has never been told about.
+
+Test first: the new case in `packages/sdk/test/worktrees.test.ts`, "puts every session tree under the root the host was given", failed first on the unchanged code, receiving `<root>/project.worktrees/rooted` where it expects `<root-under>/project/rooted`. The 30 cases already there were left as they are and pass.
+
+Gates: `pnpm exec vitest run packages/sdk/test/worktrees.test.ts` (31 passed), `pnpm typecheck`, `pnpm boundary` all pass.

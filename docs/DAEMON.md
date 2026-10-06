@@ -264,6 +264,7 @@ anything has been let go of.
 | `--host <addr>` | Default `127.0.0.1`. `0.0.0.0` accepts from other machines and needs a token |
 | `--path <dir>` | A directory this host catalogues. Repeatable. Default: where the daemon started |
 | `--no-cwd` | Serve only the directories named above, and ask about none. Refused when none is named. See below |
+| `--worktrees-root <dir>` | Keep every session worktree under this folder, as `<dir>/<repo>/<name>`. Default: `<repo>.worktrees` beside each repository |
 | `--connection-token <secret>` | Require this secret on every connection |
 | `--connection-token-file <p>` | Require the secret in this file, writing a fresh one if it is not there |
 | `--without-connection-token` | Accept any connection |
@@ -474,7 +475,7 @@ The daemon reads two files, in this order, each merged over the one before it ke
 
 A later file wins a key it sets, and an object such as `http` merges key by key; a list such as `paths` or `plugins` is replaced whole. No file in the working directory is read: starting `ahpd` inside a repository never picks up an `ahpd.json` or `.ahpd.json` from it, so per-project settings go through `$AHPD_CONFIG` or `--config-file`. `--config-file PATH` reads that file and nothing else, with `$AHPD_CONFIG` and the user file both left out.
 
-A relative path in `paths`, `users` or `connectionTokenFile` is taken from the directory of the file that set it, not from where the daemon was started. A relative plugin spec is tried against the working directory and then the configuration directory, the same as `--plugin`. The startup block has a `config` line naming every file read, and `none` when there were none.
+A relative path in `paths`, `worktreesRoot`, `users` or `connectionTokenFile` is taken from the directory of the file that set it, not from where the daemon was started. A `--worktrees-root` typed on the line is made absolute against the working directory as it is read, because it is a base other paths are joined to rather than a folder opened where it stands. A relative plugin spec is tried against the working directory and then the configuration directory, the same as `--plugin`. The startup block has a `config` line naming every file read, and `none` when there were none.
 
 Every flag can be a key instead, spelled without the dashes:
 
@@ -580,7 +581,7 @@ The merged files are checked against the same schema the flags are, before anyth
 
 ### What a client can configure
 
-The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
+The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, `worktreesRoot`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
 
 `advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. `mcpServers` applies to the next session opened; a running session keeps the servers it started with. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
 

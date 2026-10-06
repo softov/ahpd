@@ -132,6 +132,29 @@ describe('a relative path', () => {
     write(user, { paths: ['work'] });
     expect(optionsFrom({ paths: ['typed'] }).paths).toEqual(['typed']);
   });
+
+  it('names the worktrees root against the file that set it', () => {
+    write(environment, { worktreesRoot: 'trees' });
+    process.env['AHPD_CONFIG'] = environment;
+    // A root is a base every session tree is joined to, so it is answered
+    // whole here rather than left for whatever happens to be the working
+    // directory when a session starts.
+    expect(optionsFrom({}).worktreesRoot).toBe(join(elsewhere, 'trees'));
+  });
+
+  it('names the worktrees root typed on the command line against the working directory', () => {
+    write(user, { worktreesRoot: 'from-file' });
+    expect(optionsFrom({ worktreesRoot: 'trees' }).worktreesRoot).toBe(join(process.cwd(), 'trees'));
+    // And an absolute one is already where it says, wherever it was typed.
+    expect(optionsFrom({ worktreesRoot: '/trees' }).worktreesRoot).toBe('/trees');
+  });
+
+  it('leaves the worktrees root absent when nothing named one', () => {
+    write(user, { port: 1111 });
+    // Absent is the reference's own location, and an empty string would be a
+    // root of the working directory rather than no root at all.
+    expect(optionsFrom({}).worktreesRoot).toBeUndefined();
+  });
 });
 
 describe('a wrong value', () => {

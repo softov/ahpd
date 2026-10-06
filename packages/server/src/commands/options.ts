@@ -15,6 +15,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
 import type { McpServer, PluginSpec } from '@ahpd/sdk';
 import type { Config, HttpSetting } from '../config.js';
@@ -33,6 +34,14 @@ export interface Options {
   paths: string[];
   /** Serve only `paths`, and ask about no folder at all. */
   noCwd: boolean;
+  /**
+   * The folder every session worktree is made under, as an absolute path.
+   *
+   * Absent, a tree sits at `<repo>.worktrees` beside its repository, which is
+   * where VS Code's host looks for it. With one, it is `<root>/<repo>/<name>`
+   * - decision `worktrees-can-live-under-one-root`.
+   */
+  worktreesRoot?: string;
   /** The secret every connection must present, given directly. */
   token?: string;
   /** A file holding that secret. Written with a fresh one if it does not exist. */
@@ -299,6 +308,11 @@ export const serverFields = {
     type: 'boolean',
     description: 'Serve only the folders named above, and never ask about the folder this was started in. Refused when none is named.',
     cli: { negatable: false },
+  },
+  worktreesRoot: {
+    type: 'string',
+    description: 'Keep every session worktree under this folder, as <dir>/<repo>/<name>. Default: <repo>.worktrees beside each repository.',
+    cli: { value: 'DIR' },
   },
   connectionToken: {
     type: 'string',
@@ -762,6 +776,19 @@ const noCwd = input['noCwd'] === true;
     paths.push(process.cwd());
   }
 
+  /*
+   * A worktrees root is answered absolute, unlike `paths`.
+   *
+   * A folder a host serves is also the folder it was started in, so a typed one
+   * is left as written and read against the working directory by whatever opens
+   * it. A root is a base other paths are joined to - `git worktree add` makes
+   * `<root>/<repo>/<name>` - and a relative one would follow whatever the
+   * working directory happened to be when a session started. The file's value
+   * was already made absolute against the file it came from.
+   */
+  const typedRoot = given('worktreesRoot');
+  const worktreesRoot = typedRoot === undefined ? undefined : resolve(typedRoot);
+
   const token = given('connectionToken');
   const tokenFile = given('connectionTokenFile');
   const users = given('users');
@@ -778,6 +805,7 @@ const noCwd = input['noCwd'] === true;
     stdio: input['stdio'] === true,
     paths,
     noCwd,
+    ...(worktreesRoot === undefined ? {} : { worktreesRoot }),
     ...(token === undefined ? {} : { token }),
     ...(tokenFile === undefined ? {} : { tokenFile }),
     open: given('withoutConnectionToken') ?? false,

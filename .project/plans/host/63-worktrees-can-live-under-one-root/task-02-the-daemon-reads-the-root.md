@@ -1,6 +1,6 @@
 ---
 title: The daemon reads the root
-status: todo
+status: done
 depends: [task-01-the-host-takes-a-worktrees-root.md]
 layer: "server"
 refs:
@@ -36,3 +36,17 @@ refs:
 - By hand: `ahpd --worktrees-root /github/.worktrees`, a session with `isolation: worktree` in `/github/ahpd`, and its tree at `/github/.worktrees/ahpd/agents-<id8>`.
 
 ## Resume
+
+Implemented 2026-10-06.
+
+- `serverFields.worktreesRoot` sits after `noCwd`: `type: 'string'`, `cli: { value: 'DIR' }`, and the description the step asked for. It is in neither `FILE_ONLY` nor `TYPED_ONLY`, so it is a flag and a `config.json` key at once, which is what the plan's second table says.
+- `Options.worktreesRoot?: string` after `noCwd`, and `optionsFrom` answers `resolve(given('worktreesRoot'))` when the fold named one: absolute already when it came from a file, and the working directory when it was typed.
+- `Config.worktreesRoot?: string` in `config.ts`, and `anchored` takes it with `users` and `connectionTokenFile`, so a relative value in a file is made absolute against the folder of the file that set it rather than against the working directory.
+- `run.ts` spreads it into the `base` `HostOptions` only when it is set, beside `gitWorktrees()`.
+- `docs/DAEMON.md`: the flag row after `--no-cwd`, `worktreesRoot` in the sentence about which keys a relative path is anchored against, and the key named in the list of what root config does not carry. `docs/AHP.md`: where a tree is made, in the first paragraph of "Worktrees the window manages".
+
+Test first: three cases in `packages/server/test/config-layers.test.ts`, in its `a relative path` block. Two of them failed first on the unchanged code - `worktreesRoot` from a file answered `undefined`, and one typed on the line answered `undefined` - because there was no such key at all. The third, that absent stays absent, has nothing to fail against until the key exists; it is a guard on the resolution not inventing one, and it passes either way.
+
+Not run: the by-hand check in Validation, `ahpd --worktrees-root ...` with a session in `/github/ahpd`. It starts a daemon, which this work was told not to do outside the tests. What it would show is covered by the sdk case in task 01 for the tree's path and by the two tests above for the daemon's reading of the key; the wiring between them, `run.ts` handing the option to `createHost`, is held by `pnpm typecheck` alone.
+
+Gates: `pnpm exec vitest run packages/server/test/config-layers.test.ts` (17 passed), `pnpm typecheck`, `pnpm boundary`, `pnpm build` all pass. `pnpm test` is reported in `implemented.md`.

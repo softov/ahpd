@@ -480,6 +480,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     directories: gitBranches(),
     changes: gitChanges(),
     worktrees: gitWorktrees(),
+    /*
+     * Where those trees go, when the operator named a folder.
+     *
+     * Absent stays absent, which is the reference's own `<repo>.worktrees`
+     * beside each repository - decision `worktrees-can-live-under-one-root`.
+     * One root for the machine is what a deployment with many repositories
+     * wants, and the daemon sets it from `worktreesRoot` or --worktrees-root.
+     */
+    ...(options.worktreesRoot === undefined ? {} : { worktreesRoot: options.worktreesRoot }),
     github: githubPullRequests(),
     /*
      * The directory built above, handed to the host as its `users` port.

@@ -78,6 +78,14 @@ export interface Config {
   host?: string;
   /** The directories whose sessions this host serves. */
   paths?: string[];
+  /**
+   * The folder every session worktree is made under, as `<root>/<repo>/<name>`.
+   *
+   * Absent, a tree sits at `<repo>.worktrees` beside its repository, which is
+   * where VS Code's host looks for it - decision
+   * `worktrees-can-live-under-one-root`.
+   */
+  worktreesRoot?: string;
   /** The secret every connection must present. */
   connectionToken?: string;
   /** A file holding that secret, written with a fresh one if absent. */
@@ -403,10 +411,10 @@ export interface LoadedConfig {
 
 /**
  * `values` with every relative path made absolute against the directory of the
- * file that set it: `paths`, `users` and `connectionTokenFile`. A plugin spec
- * is left as written, for the loader to try against the working directory and
- * then the configuration directory. A value of the wrong type is left as it is
- * for the schema to refuse.
+ * file that set it: `paths`, `worktreesRoot`, `users` and `connectionTokenFile`.
+ * A plugin spec is left as written, for the loader to try against the working
+ * directory and then the configuration directory. A value of the wrong type is
+ * left as it is for the schema to refuse.
  */
 const anchored = (values: Record<string, unknown>, sourceOf: (key: string) => string | undefined): Config => {
   const out: Record<string, unknown> = { ...values };
@@ -414,7 +422,7 @@ const anchored = (values: Record<string, unknown>, sourceOf: (key: string) => st
     const file = sourceOf(key);
     return file === undefined || isAbsolute(path) ? path : resolve(dirname(file), path);
   };
-  for (const key of ['users', 'connectionTokenFile']) {
+  for (const key of ['users', 'connectionTokenFile', 'worktreesRoot']) {
     const value = out[key];
     if (typeof value === 'string') out[key] = at(key, value);
   }

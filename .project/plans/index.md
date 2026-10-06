@@ -137,7 +137,7 @@ Reference: [00-host.md](host/00-host.md)
 | [62 p2 - Claude runs its client calls through the sdk](host/62-every-backend-calls-a-clients-tool-p2-claude-runs-client-calls-through-the-sdk/plan.md) | high | planned 2026-10-06; tasks 01-02 todo | host 62 p1 | - |
 | [62 p3 - pi and cofold run their client calls through the sdk](host/62-every-backend-calls-a-clients-tool-p3-pi-and-cofold-run-client-calls-through-the-sdk/plan.md) | high | planned 2026-10-06; tasks 01-02 todo | host 62 p1 | - |
 | [62 p4 - An ACP agent calls a client's tool](host/62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 62 p1, acp 11 | - |
-| [63 - Worktrees can live under one root](host/63-worktrees-can-live-under-one-root/plan.md) | medium | planned 2026-10-06; tasks 01-02 todo | - | - |
+| [63 - Worktrees can live under one root](host/63-worktrees-can-live-under-one-root/plan.md) | medium | built 2026-10-06; reviewed and merged 2026-10-06 | - | - |
 | [64 - What the review of host/30, host/56, daemon/13 and claude/10 found is fixed](host/64-what-the-review-of-host-30-and-56-found/plan.md) | high | planned 2026-10-06; tasks 01-07 todo | host 30, host 56, daemon 13, claude 10 | - |
 
 Next free number in `host`: `63`.

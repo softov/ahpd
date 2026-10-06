@@ -609,7 +609,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ? `${said('worktreeBranchPrefix')}agents/${idOf(uri).slice(0, 8)}`
       : undefined;
     const base = typeof config.branch === 'string' ? config.branch : 'HEAD';
-    const path = join(worktreesOf(repository), worktreeFor(branch ?? base));
+    const path = join(worktreesOf(repository, options.worktreesRoot), worktreeFor(branch ?? base));
     // Read as either spelling: the array the schema declares, or a
     // comma-separated string. A config value is `unknown` on the wire - the
     // protocol declares the bag `Record<string, unknown>` and `permissions` is

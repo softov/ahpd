@@ -78,6 +78,7 @@ const host = createHost({
 | `directories` | the current branch of each served directory. Use `gitBranches()` |
 | `automations` | triggered agents. Use `memoryAutomations()`, or `scheduledAutomations({ file })` for cron |
 | `worktrees` | sessions in their own git worktree. Use `gitWorktrees()` |
+| `worktreesRoot` | an absolute folder every session tree goes under, as `<root>/<repo>/<name>`. Left out, a tree sits at `<repo>.worktrees` beside its repository, which is where VS Code's host looks for it |
 | `tools` | tools the host adds to every session. Use `hostTools()` |
 | `resourceProviders` | one provider per URI scheme beside `file:`; an optional `describe()` is what the host advertises in `_meta['ahpd.resourceProviders']` |
 | `onEvent` | called with one line per notable event, for logging |

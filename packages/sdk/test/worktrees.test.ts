@@ -217,6 +217,42 @@ describe('a session with a working tree of its own', () => {
     expect(said).toMatch(/^agents\//);
   });
 
+  it('puts every session tree under the root the host was given', async () => {
+    const root = repository();
+    // Somewhere else entirely, which is the arrangement the root exists for: a
+    // machine with many repositories gets one folder of trees rather than a
+    // `<repo>.worktrees` beside each of them.
+    const under = mkdtempSync(join(tmpdir(), 'ahpd-worktrees-'));
+    made.push(under);
+    const held = createHost({
+      path: root,
+      agents: [echo({ path: join(root, 'project'), pace: 0 })],
+      worktrees: gitWorktrees(),
+      worktreesRoot: under,
+    });
+    const client = held.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    const uri = 'ahp-session:/rooted';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main' },
+      },
+    });
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    const where = state.workingDirectories[0]?.replace('file://', '') ?? '';
+    // `<root>/<repo>/<name>`, `<repo>` the repository folder's own name.
+    expect(where).toBe(join(under, 'project', 'rooted'));
+    // A tree of the repository and not a folder beside it: git is the one that
+    // knows, and the session runs in what it made.
+    expect(existsSync(join(where, 'tracked.txt'))).toBe(true);
+    expect(execFileSync('git', ['-C', project(root), 'worktree', 'list']).toString()).toContain(where);
+  });
+
   it('brings along the files a checkout leaves behind', async () => {
     // Both spellings of the same key, and both are real: the schema declares
     // a list now and the reader still splits a comma-separated string, so a
