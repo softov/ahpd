@@ -179,8 +179,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [16 - A Claude preset that cannot be resolved skips only itself](claude/16-a-preset-that-fails-skips-only-itself/plan.md) | high | built 2026-10-03 ([implemented.md](claude/16-a-preset-that-fails-skips-only-itself/implemented.md)) | claude 15 | - |
 | [17 - A Claude subagent chat opens with its task's description as title and its prompt as the first message](claude/17-a-subagent-chat-opens-with-its-task/plan.md) | high | built 2026-10-04 ([implemented.md](claude/17-a-subagent-chat-opens-with-its-task/implemented.md)); tasks implemented, awaiting review | - | - |
 | [18 - session.ts is split into one file per area, and session.ts only composes them](claude/18-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](claude/18-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
+| [19 - An AskUserQuestion shows each question's header, and an answer shows on every client at once with its typed text reaching the tool](claude/19-a-question-shows-its-headers-and-its-answer-at-once/plan.md) | high | planned | claude 11 | - |
 
-Next free number in `claude`: `18`.
+Next free number in `claude`: `20`.
 
 ## documentation
 
