@@ -62,7 +62,19 @@ export interface ProxySetting {
   providers?: Record<string, ProxyProvider>;
   /** The model names, by `<maker>/<name>`, and the entries that serve each. */
   models?: Record<string, ModelEntry[]>;
+  /**
+   * Whether a call made with a session's own token is policy-checked and
+   * recorded by the proxy: `record` does both, `skip` does neither. The session
+   * meter records the same turn, so `record` can count its tokens twice.
+   */
+  sessionCalls?: SessionCalls;
 }
+
+/** What `proxy.sessionCalls` may say. */
+export const SESSION_CALLS = ['record', 'skip'] as const;
+
+/** One of those. */
+export type SessionCalls = (typeof SESSION_CALLS)[number];
 
 /** What `proxy` reads as once the file is over the built-ins. */
 export interface ProxyConfiguration {
@@ -70,6 +82,8 @@ export interface ProxyConfiguration {
   providers: Record<string, ProxyProvider>;
   /** Every model name, and the entries that serve it. */
   models: Record<string, ModelEntry[]>;
+  /** Whether a session's own call is checked and recorded; `record` when the file says nothing. */
+  sessionCalls: SessionCalls;
 }
 
 /**
@@ -108,6 +122,7 @@ export const BUILT_IN_PROVIDERS: Readonly<Record<string, ProxyProvider>> = {
 export const proxyConfiguration = (setting?: ProxySetting): ProxyConfiguration => ({
   providers: { ...BUILT_IN_PROVIDERS, ...setting?.providers },
   models: { ...setting?.models },
+  sessionCalls: setting?.sessionCalls ?? 'record',
 });
 
 /** One provider as the file writes it. */
@@ -151,6 +166,7 @@ export const proxySchema: JsonSchema = {
   properties: {
     providers: { type: 'object' },
     models: { type: 'object' },
+    sessionCalls: { type: 'string', enum: SESSION_CALLS },
   },
 };
 

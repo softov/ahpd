@@ -1,6 +1,6 @@
 ---
 title: A call ends when either side does, and on a timeout
-status: todo
+status: implemented
 depends: [task-04-the-call-streams-through.md]
 layer: "server"
 refs:
@@ -20,7 +20,7 @@ A caller that hangs up cancels the upstream call at once; a provider that sends 
 
 1. `request.signal` aborting aborts the upstream `fetch` and its body.
 2. No status and headers within 120 s: 504 in the dialect's body naming the provider. Then the idle timer restarts on every chunk; at 300 s the stream is ended, since a status was already sent, and the log says which provider stalled.
-3. Fallback: on a refused connection, a header timeout, a 429 or a 5xx, and only then, the next candidate from task 03 is tried with its own key and id; the answer the caller gets is the last one tried; the log names each provider tried and why it was left. Nothing is retried once a byte has reached the caller.
+3. Fallback: on a refused connection, a 429 or a 5xx, and only then, the next candidate from task 03 is tried with its own key and id; the answer the caller gets is the last one tried; the log names each provider tried and why it was left. Nothing is retried once a byte has reached the caller.
 4. The timeouts are constants in `listener.ts`, overridable by the test through `ProxyOptions`, and not a config key yet.
 
 ## Validation
@@ -31,3 +31,9 @@ A caller that hangs up cancels the upstream call at once; a provider that sends 
 - Fallback: a fake answering 503 then a second answering 200 gives the 200; a fake answering 400 is not retried; a fake that fails after its first event is not retried.
 
 ## Resume
+
+Implemented 2026-10-06.
+`HEADERS_TIMEOUT_MS` and `IDLE_TIMEOUT_MS` in `listener.ts`, overridable as `headersTimeoutMs` and `idleTimeoutMs`.
+The idle timer runs only while waiting on the provider, so a slow reader is not a stalled provider; a stall closes the stream cleanly.
+After Softov's review (2026-10-06): a provider that fails mid-answer errors the stream, so the caller's connection is cut; a header timeout is answered 504 and not retried; a caller who hung up between attempts starts no further upstream call.
+Tests: `proxy-forward.test.ts` second describe.

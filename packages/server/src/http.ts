@@ -74,7 +74,7 @@ export interface ApiOptions {
  * not answer to, whatever asked. What differs is the sentence, which is what
  * the caller passes, and the `Origin` below, which is the API's alone.
  */
-function hostRefusal(request: Request, authorities: readonly string[], subject: string): string | undefined {
+export function hostRefusal(request: Request, authorities: readonly string[], subject: string): string | undefined {
   const host = request.headers.get('host');
   if (host === null) return `${subject} does not answer to a request with no Host`;
   if (!authorities.includes(host)) return `${subject} does not answer to ${host}`;
@@ -90,11 +90,14 @@ function hostRefusal(request: Request, authorities: readonly string[], subject: 
  * and authenticate their own caller instead. Neither is a credential question,
  * so both are refused before a command or a grant is looked at.
  */
-function foreign(request: Request, allowed: ApiOrigins): string | undefined {
-  const refused = hostRefusal(request, allowed.authorities, 'This API');
-  if (refused !== undefined) return refused;
+export function foreign(request: Request, allowed: ApiOrigins): string | undefined {
+  return hostRefusal(request, allowed.authorities, 'This API') ?? originRefusal(request, allowed.origins, 'This API');
+}
+
+/** Why a request's `Origin` is not one of the daemon's, or nothing; a request with none is a caller outside a browser. */
+export function originRefusal(request: Request, origins: readonly string[], subject: string): string | undefined {
   const origin = request.headers.get('origin');
-  if (origin !== null && !allowed.origins.includes(origin)) return `This API does not answer to ${origin}`;
+  if (origin !== null && !origins.includes(origin)) return `${subject} does not answer to ${origin}`;
   return undefined;
 }
 
@@ -123,16 +126,22 @@ export function apiHandler(options: ApiOptions): RequestHandler {
   });
 }
 
+/** The path the model proxy is served under, beside the API - decision `the-proxy-answers-under-v1-beside-the-api`. */
+export const PROXY_PREFIX = '/v1';
+
+/** Whether a path is `prefix` or under it. */
+export const isUnder = (path: string, prefix: string): boolean => path === prefix || path.startsWith(`${prefix}/`);
+
 /**
  * What a daemon with no API answers a plain request with.
  *
- * `/api` and everything under it is 404, because a path nobody serves is not a
- * WebSocket handshake; anything else is 426, because this listener speaks the
- * protocol and a plain request is not one.
+ * `/api` and `/v1` and everything under them is 404, because a path nobody
+ * serves is not a WebSocket handshake; anything else is 426, because this
+ * listener speaks the protocol and a plain request is not one.
  */
 export function withoutApi(): RequestHandler {
   return guarded((_request, path) => {
-    if (path === API_PREFIX || path.startsWith(`${API_PREFIX}/`)) {
+    if (isUnder(path, API_PREFIX) || isUnder(path, PROXY_PREFIX)) {
       return Promise.resolve(json(404, { message: `No API at ${path}` }));
     }
     return Promise.resolve(new Response(SPEAKS_AHP, { status: 426, headers: { 'content-type': 'text/plain' } }));
@@ -218,7 +227,7 @@ const REQUEST_UNREADABLE = 'The request path or Host is not valid';
  * handler is called outside that check and its own failure is answered rather
  * than allowed to escape.
  */
-function guarded(handler: (request: Request, path: string) => Promise<Response>): RequestHandler {
+export function guarded(handler: (request: Request, path: string) => Promise<Response>): RequestHandler {
   return async (request) => {
     let path: string;
     try {
@@ -275,6 +284,6 @@ export async function listenApi(handler: RequestHandler, options: { port: number
 const pathOf = (request: Request): string => new URL(request.url).pathname;
 
 /** A JSON answer, in the shape `serve()` gives its own. */
-function json(status: number, value: unknown): Response {
+export function json(status: number, value: unknown): Response {
   return new Response(`${JSON.stringify(value, null, 2)}\n`, { status, headers: { 'content-type': 'application/json' } });
 }

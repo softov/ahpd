@@ -398,6 +398,7 @@ operations under their own name:
 | `role` | The roles this install defines. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
 | `policy` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
+| `proxy` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:write` calls a model, which spends this host's provider keys; `proxy:read` lists the model names with `GET /v1/models` |
 | a plugin's scheme | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -420,7 +421,7 @@ member of. Every other pool is refused until a role names the grant.
 | Role | Has |
 | --- | --- |
 | `admin` | `*:*` |
-| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write` |
+| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write` |
 | `guest` | `session:read`, `automation:read` |
 
 `guest` is the default for `ahpd user add` with no `--role`, and it is the one
@@ -477,7 +478,7 @@ when their credential comes from one:
 
 ```
 normal (guest) session:read automation:read sign-in http://127.0.0.1:9310
-sam (member) file:read file:write session:read session:write terminal:read terminal:write trusted
+sam (member) file:read file:write session:read session:write terminal:read terminal:write proxy:read proxy:write trusted
 ```
 
 ## People as resources

@@ -382,7 +382,7 @@ export const serverFields = {
   },
   proxy: {
     ...proxySchema,
-    description: 'The providers this proxy calls and the model names that point at them: providers are keyed by the id a model entry names, and a model name is written <maker>/<name> with the entries serving it. An entry under a built-in id replaces it whole. A key is named by the environment variable holding it, never written here. Set in the configuration file only.',
+    description: 'The providers this proxy calls and the model names that point at them: providers are keyed by the id a model entry names, and a model name is written <maker>/<name> with the entries serving it. An entry under a built-in id replaces it whole. A key is named by the environment variable holding it, never written here. sessionCalls is record (the default) or skip: whether a call made with a session\'s own token is policy-checked and recorded by the proxy. Set in the configuration file only.',
   },
   mcpServers: {
     // The entries are not described here, for the same reason `proxy`'s are

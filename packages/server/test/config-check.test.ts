@@ -350,6 +350,12 @@ describe('the proxy key', () => {
       .toBe(`${config}: proxy.models.anthropic/fable-5 must be a list`);
   });
 
+  it('reads sessionCalls as record when absent, takes skip, and refuses another value by name', () => {
+    expect(folded({}).proxy.sessionCalls).toBe('record');
+    expect(folded({ proxy: { sessionCalls: 'skip' } }).proxy.sessionCalls).toBe('skip');
+    expect(refusal({ proxy: { sessionCalls: 'always' } })).toBe(`${config}: proxy.sessionCalls must be one of record, skip`);
+  });
+
   it('refuses a proxy that is not an object', () => {
     expect(refusal({ proxy: 'on' })).toBe(`${config}: proxy must be an object`);
     expect(refusal({ proxy: [] })).toBe(`${config}: proxy must be an object`);

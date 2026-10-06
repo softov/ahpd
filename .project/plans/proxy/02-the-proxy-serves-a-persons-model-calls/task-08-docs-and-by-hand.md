@@ -1,6 +1,6 @@
 ---
 title: The proxy is documented, and a real call goes through openrouter and LM Studio
-status: todo
+status: implemented
 depends: [task-05-a-call-ends-when-either-side-does.md, task-06-policy-and-usage.md, task-07-the-models-list.md]
 layer: "docs"
 refs:
@@ -36,3 +36,8 @@ refs:
 - Steps 2 to 6 answered as written, recorded in this task's Resume with the date.
 
 ## Resume
+
+Implemented 2026-10-06, by-hand steps left for Softov.
+`docs/PROXY.md` written; `docs/DAEMON.md`, `docs/POLICY.md`, `docs/USERS.md` and `00-proxy.md` updated.
+Steps 1 to 6 were not run: they need Softov's daemon restarted in his terminal with his keys.
+Until they are, the plan's first three checklist lines are open.

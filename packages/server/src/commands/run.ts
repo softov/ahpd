@@ -46,6 +46,7 @@ import { offerConfigure, askToServe } from './configure.js';
 import { automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
+import { proxyHandler } from '../proxy/listener.js';
 import { loadPlugins } from '../plugins.js';
 import { fileVault } from '../vault.js';
 import { daemonRootConfig } from '../rootconfig.js';
@@ -372,10 +373,29 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     name: 'ahpd',
     version: version(),
   });
+  /*
+   * The model proxy, under `/v1` in front of the API on whichever listener
+   * carries it, and only while `http` is on - decision
+   * `the-proxy-answers-under-v1-beside-the-api`. Its providers and model
+   * names are the configuration read at startup; the environment, the users
+   * file and the usage store are read per call.
+   */
+  const served = api === undefined ? undefined : proxyHandler({
+    proxy: () => options.proxy,
+    ...(token === undefined ? {} : { token }),
+    ...(users === undefined ? {} : { users }),
+    policies,
+    policiesCheck: options.policiesCheck,
+    usage: () => metered,
+    hostName: hostname(),
+    origins: () => apiOrigins(apiHost, options.resource, apiBoundPort),
+    otherwise: api,
+    onProblem: stamp,
+  });
   // On the daemon's own port: a session's tools endpoint where it is, then a
-  // plugin's route where it is, then the API where it is, and the 404 that says
-  // it is not where `http.port` moved it.
-  const below = ownPort === undefined ? (api ?? withoutApi()) : withoutApi();
+  // plugin's route where it is, then the proxy and the API where they are, and
+  // the 404 that says they are not where `http.port` moved them.
+  const below = ownPort === undefined ? (served ?? withoutApi()) : withoutApi();
   /*
    * A plugin's own route, on this listener.
    *
@@ -389,9 +409,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let pluginRequests: RequestHandler = below;
   const daemonRequest = async (request: globalThis.Request): Promise<Response> =>
     (await toolsServers.request(request)) ?? pluginRequests(request);
-  const apiListener: ApiListener | undefined = api === undefined || ownPort === undefined
+  const apiListener: ApiListener | undefined = served === undefined || ownPort === undefined
     ? undefined
-    : await listenApi(api, { port: ownPort, host: apiHost });
+    : await listenApi(served, { port: ownPort, host: apiHost });
   apiBoundPort = apiListener?.port ?? 0;
 
   /*

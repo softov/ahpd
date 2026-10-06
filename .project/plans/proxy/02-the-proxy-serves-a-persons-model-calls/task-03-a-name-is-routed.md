@@ -1,6 +1,6 @@
 ---
 title: A model name is routed to the first entry that can take the call
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -34,3 +34,9 @@ refs:
 - `upstreamUrl` with and without a trailing slash.
 
 ## Resume
+
+Implemented 2026-10-06.
+`route` and `upstreamUrl` in `packages/server/src/proxy/route.ts`.
+`allowed(entry)` answers the refusal sentence or nothing, and may be async; with every speaking entry refused it is 403 with the first sentence.
+An empty key variable counts as set, as `proxy list` reads it.
+Tests: `proxy-route.test.ts`, 11 cases.

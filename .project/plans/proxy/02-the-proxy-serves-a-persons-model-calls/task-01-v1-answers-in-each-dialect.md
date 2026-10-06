@@ -1,6 +1,6 @@
 ---
 title: /v1 answers in each dialect, and refuses in its own error shape
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -36,3 +36,9 @@ With `http` off, `/v1` is the 404 `/api` gets.
 - `pnpm -F @ahpd/server test`.
 
 ## Resume
+
+Implemented 2026-10-06.
+`proxyHandler` in `packages/server/src/proxy/listener.ts`, the dialect bodies in `dialects.ts`, the mount in `run.ts` in front of `api` on both listeners, and `withoutApi` answering `/v1` 404.
+`hostRefusal`, `originRefusal`, `foreign`, `guarded`, `json`, `isUnder` and `PROXY_PREFIX` are exported from `http.ts`.
+A body over 32 MiB is 413 (`request_too_large`), which the plan did not list; the refusal table gained 413 and 500.
+Tests: `proxy-listener.test.ts`, the first describe and the daemon cases.

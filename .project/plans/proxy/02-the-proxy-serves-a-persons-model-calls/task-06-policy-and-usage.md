@@ -1,6 +1,6 @@
 ---
 title: A policy decides the model, and the call is recorded
-status: todo
+status: implemented
 depends: [task-02-a-caller-is-somebody.md, task-04-the-call-streams-through.md]
 layer: "server"
 refs:
@@ -39,3 +39,10 @@ With `policies.check` on, a person's call goes only through an entry a `model` p
 - The record's pools are the person's, team's and project's; the marker key is not in the record.
 
 ## Resume
+
+Implemented 2026-10-06.
+`policyFor`, `chargedAs` and `record` in `listener.ts`; the usage readers in `dialects.ts`; `proxy.sessionCalls` in `providers.ts` and the option description.
+The record's owner for root is `root:<hostname>`, the same name the host's own root records use, not the host id.
+OpenAI's cached tokens are taken out of `input` and kept as `cache.read`, and cache tokens are charged at the input price until there are cache prices.
+`poolsOf` is copied into `listener.ts` from `meter.ts`, which does not export it.
+Tests: `proxy-policy-usage.test.ts`, 13 cases; `config-check.test.ts` for `sessionCalls`.

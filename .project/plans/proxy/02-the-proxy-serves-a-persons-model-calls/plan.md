@@ -1,7 +1,7 @@
 ---
 title: The proxy serves a person's chat completions and messages, streamed back unchanged
 domain: proxy
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -111,9 +111,14 @@ tool -> POST /v1/chat/completions | /v1/messages on the API's listener
 | A call writes one `ModelUse` with `source: 'proxy'`, the model name, the provider, the tokens the answer reported, the owner, the scope and the pools `poolsOf` gives; cost from the entry's `price` when it has one, `from: 'price'` | usage/01 "the proxy listener writes to this port"; [`code://packages/sdk/src/meter.ts#L167-L171`](../../../../packages/sdk/src/meter.ts#L167-L171) | 06 |
 | `GET /v1/models` lists the names the caller may use: a name with at least one entry its policy allows | (defaulted: the list is what a call would accept) | 07 |
 | A person needs a grant of a new `proxy` subject to call: `proxy:write` to call, `proxy:read` to list; the built-in `member` gets both | Softov, 2026-10-06, asked "what grant does calling need?": "New `proxy` subject" | 02, 07 |
-| On a refused connection, a header timeout, a 429 or a 5xx, and only before any byte reached the caller, the call goes to the next candidate entry | Softov, 2026-10-06, asked "does a call fall back to the next entry when the provider fails?": "Yes, before any byte" | 05 |
+| On a refused connection, a 429 or a 5xx, and only before any byte reached the caller, the call goes to the next candidate entry; a header timeout is not one of them (see the 504 row below) | Softov, 2026-10-06, asked "does a call fall back to the next entry when the provider fails?": "Yes, before any byte" | 05 |
 | A call made with a session's token is checked as kind `model` and recorded with `source: 'proxy'`, linked to the session, chat and turn the token answers; `proxy.sessionCalls: "record" \| "skip"` (default `record`) turns both off for session calls, and the docs say the session meter and the proxy can count the same tokens twice | Softov, 2026-10-06, asked "is a session-token call checked and recorded by the proxy?": "check and record, with configurable default to check and record. Since a session is a harness and a harness code inside it could decide to call a proxy ... best to match the two and see it and disable, than not seeing none or seeing no cost" | 02, 06, 08 |
 | `/v1` accepts `Host` as the daemon's names or `127.0.0.1`, `localhost` and `[::1]` at any port, since a `-R` forward lands on a loopback port that is not the daemon's and a rebinding page sends its own name; `Origin` is held as the API holds it | (defaulted: container/05 p12's forward; Softov kept the proposal, 2026-10-06) | 01 |
+| A provider that fails mid-answer errors the caller's stream, so the caller's connection is cut and its client sees a transport error rather than a short body that looks whole; a stall the proxy reports and a caller's own hang-up still end the stream cleanly | Softov, 2026-10-06, review of the proxy/02 build | 05 |
+| `openai-organization`, `openai-project` and `anthropic-organization-id` are not sent upstream and not returned; `x-ratelimit-*` and `anthropic-ratelimit-*` are not returned; `retry-after` and `retry-after-ms` are returned, since they say only when the answer may be retried; the list is in `docs/PROXY.md` | Softov, 2026-10-06, review of the proxy/02 build | 04 |
+| A header the caller's `Connection` header names is hop-by-hop and not sent upstream, nor one the provider's names returned (RFC 9110 7.6.1) | Softov, 2026-10-06, review of the proxy/02 build | 04 |
+| A provider that sends no headers within the timeout is answered 504 in the dialect's error body and the next entry is not tried, since it may be doing the work; fallback is only for a refusal or an unreachable provider before any byte | Softov, 2026-10-06, review of the proxy/02 build | 05 |
+| A caller who hung up between two attempts starts no further upstream call: `request.signal` is checked before each attempt | Softov, 2026-10-06, review of the proxy/02 build | 05 |
 | Left for later: limits and pools (policy/02), cache-affinity routing, translation between dialects, cache prices | policy/01 deferred.md; proxy/01 implemented.md | - |
 
 ## Proposed architecture
@@ -129,14 +134,14 @@ tool -> POST /v1/chat/completions | /v1/messages on the API's listener
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - /v1 answers in each dialect, and refuses in its own error shape](task-01-v1-answers-in-each-dialect.md) | todo | - |
-| [02 - A caller is a person, root or a session, and may call](task-02-a-caller-is-somebody.md) | todo | 01 |
-| [03 - A model name is routed to the first entry that can take the call](task-03-a-name-is-routed.md) | todo | - |
-| [04 - The call goes out with the provider's key and streams back unchanged](task-04-the-call-streams-through.md) | todo | 01, 03 |
-| [05 - A call ends when either side does, and on a timeout](task-05-a-call-ends-when-either-side-does.md) | todo | 04 |
-| [06 - A policy decides the model, and the call is recorded](task-06-policy-and-usage.md) | todo | 02, 04 |
-| [07 - GET /v1/models lists the names a caller may use](task-07-the-models-list.md) | todo | 02, 03 |
-| [08 - Docs, and a real call through openrouter and LM Studio](task-08-docs-and-by-hand.md) | todo | 05, 06, 07 |
+| [01 - /v1 answers in each dialect, and refuses in its own error shape](task-01-v1-answers-in-each-dialect.md) | implemented | - |
+| [02 - A caller is a person, root or a session, and may call](task-02-a-caller-is-somebody.md) | implemented | 01 |
+| [03 - A model name is routed to the first entry that can take the call](task-03-a-name-is-routed.md) | implemented | - |
+| [04 - The call goes out with the provider's key and streams back unchanged](task-04-the-call-streams-through.md) | implemented | 01, 03 |
+| [05 - A call ends when either side does, and on a timeout](task-05-a-call-ends-when-either-side-does.md) | implemented | 04 |
+| [06 - A policy decides the model, and the call is recorded](task-06-policy-and-usage.md) | implemented | 02, 04 |
+| [07 - GET /v1/models lists the names a caller may use](task-07-the-models-list.md) | implemented | 02, 03 |
+| [08 - Docs, and a real call through openrouter and LM Studio](task-08-docs-and-by-hand.md) | implemented | 05, 06, 07 |
 
 ## Risks and tradeoffs
 
@@ -147,8 +152,8 @@ tool -> POST /v1/chat/completions | /v1/messages on the API's listener
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-06.
-- **Next action:** [task-01-v1-answers-in-each-dialect.md](task-01-v1-answers-in-each-dialect.md); task 03 needs nothing and can go beside it.
+- **Done so far:** tasks 01 to 08 implemented 2026-10-06, awaiting review; see [implemented.md](implemented.md).
+- **Next action:** Softov runs task 08's by-hand steps against his own daemon and reviews; container/05 p12 task 01 can build `whose` against `SessionCaller` in `packages/server/src/proxy/caller.ts`.
 - **Open questions:** none; the four asked on 2026-10-06 are rows in the second table.
 - **Watch out for:** never put a real provider key in a test; set a marker value and assert it is absent; `http` must be on for any of this to answer; the anthropic built-in's endpoint has no `/v1` and the OpenAI-style ones do, which is why the dialect path differs; do not change container/05 p12 here, it builds `whose` against task 02's type.
 

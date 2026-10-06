@@ -80,6 +80,7 @@ The store and the switch are separate. A daemon that is switched off, or that ha
 | --- | --- | --- |
 | A session is created | `agent`, for the harness and the machine asked for; then `computer`, for that machine | The users gate's `-32009`, naming the policy |
 | A turn starts | `agent`, for the harness, the session's machine and the model the turn named | The same, on the action's rejection reason |
+| A proxy call ([PROXY.md](PROXY.md)) | `model`, for the name called and each provider entry that serves it; the first entry allowed is called | 403 in the caller's dialect, naming the row; a session's call is checked as the person it runs for unless `proxy.sessionCalls` is `skip` |
 
 The session's checks run **before** the machine is made, so a refused session leaves nothing behind.
 
@@ -116,7 +117,6 @@ no policy allows computer kvm-shared
 
 - **`limits` are stored and read by nobody.** A row that has already spent what it had still allows. Enforcing a limit, charging the right pool for it, and refusing when every pool is out are the next plan's work.
 - **`pool` and `cap` are stored and read by nobody**, for the same reason. A row naming a `pool` does not yet draw from one total with the rows naming the same one.
-- **The `model` kind is decided and not called.** `decide` is one function for all three kinds, and the proxy calls it for the `model` kind when the proxy serves requests.
 - **Which row pays is not settled here.** A refused turn is refused; an allowed one is not yet charged to a particular row in a particular unit.
 
 ## Where it is in the code
@@ -128,3 +128,4 @@ no policy allows computer kvm-shared
 | The `policy:` scheme | `packages/sdk/src/policy.ts` |
 | The switch, in the host | `policies` and `policiesCheck` on `HostOptions`, `packages/sdk/src/types/host.ts` |
 | The switch, in the daemon | `PoliciesSetting` in `packages/server/src/config.ts`, and the wiring in `packages/server/src/commands/run.ts` |
+| The proxy's check | `policyFor` in `packages/server/src/proxy/listener.ts` |

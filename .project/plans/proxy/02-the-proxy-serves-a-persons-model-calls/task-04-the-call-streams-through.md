@@ -1,6 +1,6 @@
 ---
 title: The call goes out with the provider's key and streams back unchanged
-status: todo
+status: implemented
 depends: [task-01-v1-answers-in-each-dialect.md, task-03-a-name-is-routed.md]
 layer: "server"
 refs:
@@ -36,3 +36,10 @@ A routed call is sent to the upstream URL with the body's `model` replaced by th
 - The marker key is absent from the daemon's stdout and stderr, the refusal bodies and the answers.
 
 ## Resume
+
+Implemented 2026-10-06.
+The forward in `listener.ts`; `keyHeader` in `dialects.ts`.
+Beyond the plan's list, `accept-encoding`, `expect` and every `x-ahp-*` header are not sent, and redirects are refused (`redirect: 'error'`) so a key never follows one.
+After Softov's review (2026-10-06): headers named in the caller's `Connection` header are not sent, and the account headers listed in `docs/PROXY.md` (organization, project, rate limits) are kept out both ways.
+The failed-call log line is `proxy: <caller> <model>: <providers left and why>; <provider> answered <status>`.
+Tests: `proxy-forward.test.ts` first describe, and the daemon case in `proxy-listener.test.ts` that reads the daemon's output for the marker key.

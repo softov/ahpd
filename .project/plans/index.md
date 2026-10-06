@@ -336,7 +336,7 @@ Reference: [00-proxy.md](proxy/00-proxy.md)
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
 | [01 - The proxy knows its providers and model names](proxy/01-the-proxy-knows-its-providers-and-models/plan.md) | high | built 2026-10-01 ([implemented.md](proxy/01-the-proxy-knows-its-providers-and-models/implemented.md)) | - | proxy 02 |
-| [02 - The proxy serves a person's chat completions and messages, streamed back unchanged](proxy/02-the-proxy-serves-a-persons-model-calls/plan.md) | high | planned 2026-10-06; tasks 01-08 todo | proxy 01, policy 01, usage 01, host 35 | container 05 p12 |
+| [02 - The proxy serves a person's chat completions and messages, streamed back unchanged](proxy/02-the-proxy-serves-a-persons-model-calls/plan.md) | high | built 2026-10-06 ([implemented.md](proxy/02-the-proxy-serves-a-persons-model-calls/implemented.md)); tasks implemented, awaiting review | proxy 01, policy 01, usage 01, host 35 | container 05 p12 |
 
 Next free number in `proxy`: `03`.
 

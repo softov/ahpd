@@ -25,8 +25,9 @@ const BUILT_IN: Record<string, Grant[]> = {
   // Everything, a plugin's scheme included: naming the wildcard is the opt-in
   // a scheme-scoped grant was for.
   admin: ['*:*'],
-  // Works on this machine: files, sessions, a shell. No automations.
-  member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'],
+  // Works on this machine: files, sessions, a shell, and the models the proxy
+  // serves. No automations.
+  member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'proxy:read', 'proxy:write'],
   // Looks and does not touch: what the sessions and the automations are, and
   // neither a file nor a shell nor a session of their own.
   guest: ['session:read', 'automation:read'],
@@ -51,6 +52,9 @@ export const SUBJECTS = [
   // a host allows rather than what it may be told - decision
   // `policies-are-a-scheme-clients-edit`.
   'policy',
+  // Calling a model through the proxy (write) and listing the names it serves
+  // (read), which spends the host's provider keys.
+  'proxy',
 ] as const;
 
 /** What one subject is, what may be done to it, and which group each act is in. */

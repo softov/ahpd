@@ -692,6 +692,9 @@ Without `http`, `/api` answers 404 and a request anywhere else keeps the answer
 it always had. The API is served on Node, Bun and Deno alike, on the daemon's
 own port or on `http.port`.
 
+The model proxy is served beside it under `/v1`, on the same listener and only
+while `http` is on; see [PROXY.md](PROXY.md).
+
 The same commands under the same grants. A request carries
 `Authorization: Bearer <token>`: the deployment's connection token is root,
 exactly as it is on the socket; anything else is a person's token, verified the

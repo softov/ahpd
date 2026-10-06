@@ -1,6 +1,6 @@
 ---
 title: GET /v1/models lists the names a caller may use
-status: todo
+status: implemented
 depends: [task-02-a-caller-is-somebody.md, task-03-a-name-is-routed.md]
 layer: "server"
 refs:
@@ -32,3 +32,7 @@ refs:
 - Each shape parses with its SDK's list type; no credential is 401 in OpenAI's body.
 
 ## Resume
+
+Implemented 2026-10-06.
+The `/v1/models` route in `listener.ts` and `modelList` in `dialects.ts`; a refusal there follows `anthropic-version` too, and a method other than `GET` is 405 with `Allow: GET`.
+Tests: `proxy-listener.test.ts` third describe.

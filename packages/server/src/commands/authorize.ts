@@ -50,7 +50,7 @@ const bearer = (headers: ServeRequest['headers']): string | undefined => {
  * than chosen: they are all the same length. The same comparison the door
  * makes, because the same secret is being presented.
  */
-const same = (a: string, b: string): boolean => {
+export const same = (a: string, b: string): boolean => {
   const left = Buffer.from(a, 'utf8');
   const right = Buffer.from(b, 'utf8');
   return left.length === right.length && timingSafeEqual(left, right);
