@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { acpAgent } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { toolsReachable } from '../src/session/opening.js';
@@ -81,6 +82,9 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
   settings: {},
   schema: () => ({ type: 'object', properties: {} }),
   emit: () => {},
+  // The host always resolves this, and its own answer when the deployment said
+  // nothing is ten minutes.
+  clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   ...over,
 });
 
@@ -225,7 +229,7 @@ it('reads the legacy models list, and sets a chosen model the old way', async ()
 
 describe('the MCP servers a session is opened with', () => {
   /** The host's own tools server, as `Start.toolsServer` opens one. */
-  const hostTools = { url: 'http://127.0.0.1:4242/ahp-mcp/one', token: 't-kn', close: () => {} };
+  const hostTools = { url: 'http://127.0.0.1:4242/ahp-mcp/one', token: 't-kn', setTools: () => {}, close: () => {} };
 
   const servers: Record<string, McpServer> = {
     files: { type: 'stdio', command: 'mcp-files', args: ['--root', '/tmp'], env: { KEY: 'k-1' } },
@@ -376,7 +380,7 @@ describe('the MCP servers a session is opened with', () => {
         ...(spawn.env === undefined ? {} : { env: spawn.env }),
       }),
     },
-    toolsServer: () => ({ url, token: 't-kn', close: () => {} }),
+    toolsServer: () => ({ url, token: 't-kn', setTools: () => {}, close: () => {} }),
   });
 
   for (const [url, at] of [

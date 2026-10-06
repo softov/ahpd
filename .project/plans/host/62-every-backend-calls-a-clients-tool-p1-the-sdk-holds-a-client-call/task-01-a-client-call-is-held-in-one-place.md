@@ -1,6 +1,6 @@
 ---
 title: A client call is held in one place
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -50,3 +50,9 @@ refs:
 - `pnpm typecheck` and `pnpm boundary` green.
 
 ## Resume
+
+- **Done:** `packages/sdk/src/clientcalls.ts` with `createClientCalls`, `ClientCalls`, `ClientCall`, `ClientCallAnswer`, `ClientCallsOptions` and `DEFAULT_CLIENT_TOOL_TIMEOUT_MS`, exported from `packages/sdk/src/index.ts`; `packages/sdk/test/clientcalls.test.ts`, 13 cases, all passing.
+- **Failed first:** the test was written before the module and every case failed on `Failed to resolve import "../src/clientcalls.js"` - the module did not exist yet.
+- **Each step seen to fail on its own:** removing the `session/inputNeededRemoved` emit failed 3 cases; dropping the owner check in `complete` failed 2; disabling the timer with `if (false)` failed 2; dropping the gone hint failed 1; deleting a record in `end` instead of flagging it finished failed 7.
+- **Two things the plan did not spell out, resolved from the code the task's refs name:** the holder treats `toolCall.toolName` as the bare name the client announced (the failure text uses it verbatim, `providers` is asked with it, and the hint renders `${other}__${name}`), and a finished call's record is kept so a `wait` that arrives after the answer still resolves, pruned past `KEEP_FINISHED = 32`.
+- **Next action:** nothing; this task is implemented. Task 02 is next.

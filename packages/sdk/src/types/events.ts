@@ -96,8 +96,14 @@ export interface TurnEndEvent {
 }
 
 /**
- * A session began waiting on a person, or a new thing was added to what it is
- * already waiting on.
+ * A session gained an entry on its input queue, which is usually a person being
+ * waited on.
+ *
+ * `kind` is what tells the two apart. A `toolClientExecution` is not a question:
+ * the call has cleared its confirmation gate and a client is running it, and the
+ * protocol's own reducer deliberately does not count it as waiting on a person -
+ * so a plugin that reacts to somebody being asked reads `kind` rather than the
+ * event.
  *
  * The protocol's action is an upsert keyed by `id`, so a backend that sets the
  * same entry again raises the event again. Dedupe by `id` rather than counting.

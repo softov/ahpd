@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';
@@ -158,6 +159,9 @@ it('refuses a session asked to fork and rewind at once, writing nothing', async 
     sessionDir,
     schema: () => ({}),
     emit: (channel, action) => { sent.push({ channel, action }); },
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     resume: source.getSessionId(),
     // A real leaf, so a branch made before the refusal would have succeeded
     // and left a file behind rather than failing on an entry pi cannot find.

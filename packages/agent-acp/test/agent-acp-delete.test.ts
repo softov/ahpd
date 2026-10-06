@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import type { Agent, Bag, Emit, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 
@@ -67,6 +68,9 @@ const opening = (id: string, over: Partial<Start> = {}): Start => ({
   settings: {},
   schema: () => ({ type: 'object', properties: {} }),
   emit: () => {},
+  // The host always resolves this, and its own answer when the deployment said
+  // nothing is ten minutes.
+  clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   ...over,
 });
 

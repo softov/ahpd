@@ -548,6 +548,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     advancedTools: options.advancedTools,
     /*
+     * How long a session's client calls may wait, when this deployment said.
+     *
+     * Left off rather than defaulted here, because the host's own ten minutes
+     * is the same answer and one place should hold it.
+     */
+    ...(options.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: options.clientToolTimeoutMs }),
+    /*
      * The daemon's own settings, as the keys root config carries.
      *
      * Handed over rather than left in `config.json`, so a client holding

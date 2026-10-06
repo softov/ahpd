@@ -1,7 +1,7 @@
 ---
 title: The sdk holds a client call, raises it for the client, and runs one for the tool server
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -84,9 +84,9 @@ ACP: agent -> MCP tools/call -> tool server -> runClient(tool, input, meta) -> b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A client call is held in one place](task-01-a-client-call-is-held-in-one-place.md) | todo | - |
-| [02 - The tool server runs a client's tool and serves the tools the session has now](task-02-the-tool-server-runs-a-clients-tool.md) | todo | 01 |
-| [03 - The host carries a client call end to end](task-03-the-host-carries-a-client-call-end-to-end.md) | todo | 01 |
+| [01 - A client call is held in one place](task-01-a-client-call-is-held-in-one-place.md) | done | - |
+| [02 - The tool server runs a client's tool and serves the tools the session has now](task-02-the-tool-server-runs-a-clients-tool.md) | done | 01 |
+| [03 - The host carries a client call end to end](task-03-the-host-carries-a-client-call-end-to-end.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -95,13 +95,13 @@ ACP: agent -> MCP tools/call -> tool server -> runClient(tool, input, meta) -> b
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-client-call-is-held-in-one-place.md](task-01-a-client-call-is-held-in-one-place.md).
-- **Open questions:** none.
+- **Done so far:** all three tasks. Task 01 - the holder is in `packages/sdk/src/clientcalls.ts`, exported, with 13 cases in `packages/sdk/test/clientcalls.test.ts`. Task 02 - the tool server runs a client's tool and can stream a list change, with 14 further cases in `packages/sdk/test/toolserver.test.ts`. Task 03 - the host carries the call end to end, with 7 further cases in `packages/sdk/test/host-tools.test.ts`.
+- **Next action:** nothing to build; the plan is waiting on Softov's review, which is what moves a task to `done`.
+- **Open questions:** one, from task 03 - `clientToolTimeoutMs` is a key `config.json` and the command line set, and not one a client edits through root config. `advancedTools` is both, `rootconfig.ts`'s `DAEMON_KEYS` holds exactly eight keys on purpose, and this task's file list names `config.ts` and `options.ts` only, so it was left as the list says. Softov may want the symmetry.
 - **Watch out for:** an answer can come back before the harness asks for it, because the client starts at `running`; `complete` on an opened call nobody waits on yet keeps the answer for `wait`.
 
 ## Final verification checklist
 
-- [ ] `vitest run packages/sdk/test/clientcalls.test.ts packages/sdk/test/toolserver.test.ts packages/sdk/test/host-tools.test.ts` green.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `plans/index.md` updated.
+- [x] `vitest run packages/sdk/test/clientcalls.test.ts packages/sdk/test/toolserver.test.ts packages/sdk/test/host-tools.test.ts` green - 72 passing.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green, and `pnpm build` with them.
+- [x] `plans/index.md` updated.

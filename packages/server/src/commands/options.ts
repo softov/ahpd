@@ -60,6 +60,8 @@ export interface Options {
   trustToken: boolean;
   /** Whether a tool that declares `advancedPermission` is offered to sessions. */
   advancedTools: boolean;
+  /** How long a call a client runs may wait, absent when the deployment said nothing. */
+  clientToolTimeoutMs?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
   /** Where the read and archived bits and a session's settings go. */
@@ -355,6 +357,12 @@ export const serverFields = {
   advancedTools: {
     type: 'boolean',
     description: "Offer the tools that declare they need advanced permission, such as the computer's three.",
+  },
+  clientToolTimeoutMs: {
+    type: 'integer',
+    minimum: 0,
+    description: 'How long a call a client runs may wait. Default ten minutes; 0 waits for ever.',
+    cli: { value: 'MS' },
   },
   automations: {
     type: 'string',
@@ -795,6 +803,7 @@ const noCwd = input['noCwd'] === true;
   const resource = given('resource');
   const issuer = given('issuer');
   const wire = given('wire');
+  const clientToolTimeoutMs = given('clientToolTimeoutMs');
   const usageZone = given('usage')?.timezone;
   const http = httpOf(file.http, source('http'));
   const proxy = proxyConfiguration(given('proxy'));
@@ -815,6 +824,7 @@ const noCwd = input['noCwd'] === true;
     ...(issuer === undefined ? {} : { issuer }),
     trustToken: given('trustToken') ?? false,
     advancedTools: given('advancedTools') ?? false,
+    ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     automations: given('automations') ?? 'file',
     sessions: given('sessions') ?? 'file',
     usagePer: given('usage')?.per ?? 'turn',

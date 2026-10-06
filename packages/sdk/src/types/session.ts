@@ -3,6 +3,7 @@
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { BoundTool } from './agent.js';
+import type { ClientCallAnswer } from '../clientcalls.js';
 
 export type { MessageAttachment };
 
@@ -457,6 +458,11 @@ export interface Session {
   /**
    * What a client says one of its own tool calls did.
    *
+   * The whole answer, not only its words: a client's tool can return an image
+   * or a file as readily as a sentence, and a backend whose harness takes
+   * those is handed them. `text` is the blocks' words joined, which is what a
+   * harness that takes only text reads.
+   *
    * False when no call by that id is waiting, or when it is waiting on a
    * different client - both are a client out of step rather than a no-op, and
    * the host refuses rather than dropping it.
@@ -464,7 +470,7 @@ export interface Session {
   completeToolCall?(
     toolCallId: string,
     clientId: string,
-    result: { text: string; ok: boolean },
+    result: ClientCallAnswer,
   ): boolean;
   /**
    * A client that was running tool calls here has gone.

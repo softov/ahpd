@@ -1,6 +1,6 @@
 ---
 title: The tool server runs a client's tool and serves the tools the session has now
-status: todo
+status: done
 depends: [task-01-a-client-call-is-held-in-one-place.md]
 layer: "sdk"
 refs:
@@ -47,3 +47,10 @@ A backend that asks for the tool server can hand it a runner for client tools, a
 - `pnpm typecheck` green.
 
 ## Resume
+
+- **Done:** `packages/sdk/src/mcpcontent.ts` with `toMcpContent`; `packages/sdk/src/toolserver.ts` with `RunClientTool`, `ToolsChanged`, `ToolsEndpoint.setTools`, `ToolsServers.open(tools, runClient?, toolsChanged?)`, the runner path in `answered` and the `GET` event stream; `packages/sdk/src/types/agent.ts` `toolsServer({ runClient?, toolsChanged? })`; `packages/sdk/src/host/spawn.ts` passing both through; `RunClientTool` and `ToolsChanged` exported from `packages/sdk/src/index.ts`. 14 new cases in `packages/sdk/test/toolserver.test.ts`, 25 in the file, all passing.
+- **Failed first:** the cases were written before the implementation and the whole file failed to collect on `Failed to load url ../src/mcpcontent.js (resolved id: ../src/mcpcontent.js) ... Does the file exist?`.
+- **Each step seen to fail on its own:** making `answered` always take the no-runner branch failed 5 cases; dropping `isError` on `ok: false` failed 1; leaving `setTools` without swapping the list failed 2; refusing the `GET` in notify mode failed 1; disabling the image branch of `toMcpContent` failed 1.
+- **Two things the task left open, resolved from what it does say:** `toolsChanged` is a property of the endpoint and not of the server, because `Start.toolsServer({ runClient?, toolsChanged? })` is per session and step 2's `open(tools, runClient?)` stays true with a third optional argument; and the URI minted for a resource blob is `ahp-tool-result:<callId>/<index>`, with the call id being the JSON-RPC id of the `tools/call`, so two blocks in one answer cannot collide.
+- **One file outside the task's list:** adding the required `setTools` to `ToolsEndpoint` broke two fake endpoints in `packages/agent-acp/test/agent-acp-catalog.test.ts`, which now carry a no-op.
+- **Next action:** nothing; this task is implemented. Task 03 is next.

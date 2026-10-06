@@ -6,6 +6,7 @@ import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { cofoldAgent } from '../src/index.js';
 
 /*
@@ -47,6 +48,9 @@ const spoken = async (agent: Agent, id: string, workingDirectory: string): Promi
     workingDirectory,
     schema: () => agent.schema(),
     emit: (_channel, action) => { notes.push(action); },
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   });
   session.begin('t1', `say ${id}`);
   await until(() => notes.some((one) => one.type === 'chat/turnComplete' || one.type === 'chat/turnCancelled'));

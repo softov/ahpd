@@ -1,5 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Agent, McpServer, Start } from '../src/types/agent.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { sessionReducer } from '@microsoft/agent-host-protocol';
+import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/clientcalls.js';
+import { foldHostOptions, pluginHost } from '../src/plugins.js';
+import { sdkVersion } from '../src/version.js';
+import type { Agent, BoundTool, McpServer, Start } from '../src/types/agent.js';
+import type { ClientCalls } from '../src/clientcalls.js';
+import type { Bag } from '../src/types/common.js';
+import type { HostEvent } from '../src/types/events.js';
+import type { HostOptions } from '../src/types/host.js';
+import type { PluginContext } from '../src/types/plugin.js';
+import type { Session } from '../src/types/session.js';
+import type { SessionAction, SessionInputRequest, SessionState } from '@microsoft/agent-host-protocol';
 import {
   resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
   machine, peer, sdk, serving, sessionQueries, settle, running,
@@ -749,5 +760,378 @@ describe('tools a client contributes', () => {
     // And the tool goes with the client: one whose provider has left is one
     // every call to would fail.
     expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
+  });
+});
+
+/*
+ * The same calls, held where every backend holds them.
+ *
+ * `packages/sdk/src/clientcalls.ts` is the one place a call a client runs is
+ * kept, and a backend spreads its three methods onto its `Session`. This drives
+ * that backend through `createHost`: the entry on the session and what the
+ * protocol's own reducer makes of it, who may answer, and every way a call ends.
+ * There is no model in the example backend, so the test is the model - `open` is
+ * the backend reporting a call the model made and `wait` is the harness blocking
+ * on it, which is the whole of what p2-p4 do with this module.
+ */
+describe('a client\'s call, held by the backend', () => {
+  const DIR = '/tmp/host-tools-held';
+
+  const OPEN_FILE = {
+    name: 'openFile',
+    description: 'Open a file in the editor',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  };
+
+  /**
+   * `SessionStatus` bits, which the protocol types as a `const enum`.
+   *
+   * A `verbatimModuleSyntax` build cannot import one as a value, and the
+   * protocol's own number is what is being checked rather than a spelling of it.
+   */
+  const IN_PROGRESS = 1 << 3;
+  /** The bit that means a person is being asked, and not only that work runs. */
+  const NEEDS_PERSON = 1 << 4;
+  const INPUT_NEEDED = IN_PROGRESS | NEEDS_PERSON;
+
+  /** A call as the backend reports it, before the holder marks it running. */
+  const running = (toolCallId: string, name = 'openFile'): Bag => ({
+    toolCallId,
+    toolName: name,
+    displayName: name,
+    invocationMessage: `Run ${name}`,
+    confirmed: 'not-needed',
+  });
+
+  type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
+
+  /** What the holder and the start it was made from are, once a session exists. */
+  interface Held {
+    start: Start;
+    calls: ClientCalls;
+    tools: () => BoundTool[];
+    session: Session;
+  }
+
+  const context = (): PluginContext => ({
+    path: DIR, paths: [DIR], version: sdkVersion(), hostName: 'test', configDir: DIR, log: () => {}, say: () => {},
+  });
+
+  /** The example backend with the holder bolted on, and a listener on the events. */
+  const holding = (over: Partial<HostOptions> = {}) => {
+    const base = echo({ path: DIR, pace: 0 });
+    const heard: HostEvent[] = [];
+    let held: Held | undefined;
+    const agent: Agent = {
+      ...base,
+      provider: 'holder',
+      displayName: 'Holder',
+      create: (start: Start) => {
+        // The tools this session offers right now, which move as clients come
+        // and go - not `start.tools`, which is the list it was born with.
+        let current: BoundTool[] = start.tools ?? [];
+        const calls = createClientCalls({
+          chat: start.chatUri,
+          emit: start.emit,
+          timeoutMs: start.clientToolTimeoutMs,
+          providers: (name) => current
+            .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
+            .map((one) => String(one.owner)),
+        });
+        const inner = base.create(start);
+        held = { start, calls, tools: () => current, session: inner };
+        return {
+          ...inner,
+          ...calls.methods,
+          setTools: async (tools: BoundTool[]) => { current = tools; return true; },
+          // A turn with a call out is a turn running, which is what a backend
+          // reports - and the status the host serves the session under, since
+          // it asks the chat rather than the snapshot.
+          status: () => (calls.entries().length > 0 ? IN_PROGRESS : inner.status()),
+          /*
+           * What is still out with a client, on the snapshot.
+           *
+           * `entries()` is the holder's own list, and `inputNeeded` is where a
+           * client watching only the session finds a call - which is the whole
+           * reason the entry is raised at all.
+           */
+          sessionState: () => {
+            const out = calls.entries();
+            return {
+              ...inner.sessionState(),
+              ...(out.length === 0 ? {} : { inputNeeded: out }),
+            };
+          },
+        };
+      },
+    };
+    const { host: plugin, contribution } = pluginHost('probe', context());
+    plugin.on('input_needed_set', (event) => { heard.push(event); });
+    const { options } = foldHostOptions({ path: DIR, agents: [agent], ...machine(), ...over }, [contribution]);
+    return {
+      host: createHost(options),
+      heard,
+      /** The holder, once the host has started the session. */
+      held: (): Held => {
+        if (held === undefined) throw new Error('no session was started');
+        return held;
+      },
+    };
+  };
+
+  /** One running session, with each of these clients announcing `openFile`. */
+  const open = async (ids: string[], over: Partial<HostOptions> = {}) => {
+    const { host, heard, held } = holding(over);
+    const uri = 'ahp-session:/held';
+    const peers = ids.map(() => peer());
+    const clients = peers.map((one) => host.accept(one));
+    const first = clients[0] as Client;
+    await first.handle({ method: 'initialize', params: { channel: 'ahp-root://', clientId: ids[0], protocolVersions: ['0.9.0'] } });
+    await first.handle({ method: 'createSession', params: { channel: uri, provider: 'holder' } });
+    const opened = await first.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    const chatUri = opened.snapshot.state.defaultChat;
+    await first.handle({ method: 'subscribe', params: { channel: chatUri } });
+
+    // Everybody else joins and watches, so the session knows they are there
+    // before any of them says what it can run.
+    for (const [at, id] of ids.slice(1).entries()) {
+      const client = clients[at + 1] as Client;
+      await client.handle({ method: 'initialize', params: { channel: 'ahp-root://', clientId: id, protocolVersions: ['0.9.0'] } });
+      await client.handle({ method: 'subscribe', params: { channel: uri } });
+      await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    }
+    for (const client of clients) {
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: 'Editor', tools: [OPEN_FILE] } } },
+      });
+    }
+    await settle();
+    return { host, heard, held, uri, chatUri, clients, peers };
+  };
+
+  // One case runs the holder's own clock forward, and a timer left faked is a
+  // `settle` in the next one that never fires.
+  afterEach(() => { vi.useRealTimers(); });
+
+  /**
+   * Raise one entry the way the host does, through the protocol's own reducer.
+   *
+   * The action's type is spelled as the string it is rather than as
+   * `ActionType`: that enum is ambient and `const`, which a
+   * `verbatimModuleSyntax` build cannot read, and the host's own emitters spell
+   * these actions the same way.
+   */
+  const raised = (held_: SessionState, request: SessionInputRequest): SessionState =>
+    sessionReducer(held_, { type: 'session/inputNeededSet', request } as SessionAction);
+
+  /** What a session's channel holds right now. */
+  const state = async (client: Client, uri: string): Promise<SessionState> =>
+    ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+      snapshot: { state: SessionState };
+    }).snapshot.state;
+
+  it('raises the entry against the client that will answer it', async () => {
+    const { held, clients, uri, chatUri } = await open(['a', 'b']);
+    const { calls, tools, start } = held();
+    // Two clients in one session both provide `openFile`, and the model is
+    // offered both under a name of each client's own.
+    expect(tools().map((one) => one.definition.name)).toEqual(['a__openFile', 'b__openFile']);
+
+    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    await settle();
+    // The entry id is the protocol's own spelling, built from the chat the
+    // backend named - its own name for it, not the URI a client watches.
+    expect(id).toBe(`toolClientExecution:${start.chatUri}:t1:call-1`);
+
+    const held_ = await state(clients[0] as Client, uri);
+    expect(held_.inputNeeded).toEqual([{
+      id,
+      kind: 'toolClientExecution',
+      // Respelled for whoever reads it, because the chat on the entry is the
+      // one a client dispatches its answer to.
+      chat: chatUri,
+      turnId: 't1',
+      clientId: 'a',
+      toolCall: {
+        toolCallId: 'call-1',
+        toolName: 'openFile',
+        displayName: 'openFile',
+        invocationMessage: 'Run openFile',
+        confirmed: 'not-needed',
+        status: 'running',
+        contributor: { kind: 'client', clientId: 'a' },
+      },
+    }]);
+  });
+
+  it('keeps the session in progress while the call is out, not waiting on a person', async () => {
+    const { held, clients, uri, chatUri } = await open(['a']);
+    const { calls } = held();
+    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    await settle();
+
+    const held_ = await state(clients[0] as Client, uri);
+    const entry = (held_.inputNeeded ?? []).find((one) => one.id === id);
+    expect(entry).toBeDefined();
+    expect(held_.status).toBe(IN_PROGRESS);
+
+    /*
+     * The protocol's own reducer, on the state the host serves.
+     *
+     * `channels-session/reducer.ts` counts every entry that blocks on a person
+     * and deliberately does not count a `toolClientExecution`: the call has
+     * cleared its confirmation gate and is running somewhere else. Reducing
+     * this entry must leave the session running, and a question must not -
+     * which is what makes this an assertion rather than a tautology.
+     */
+    const again = raised(held_, entry as SessionInputRequest);
+    expect(again.status & IN_PROGRESS).toBe(IN_PROGRESS);
+    expect(again.status & NEEDS_PERSON).toBe(0);
+
+    const asked = raised(again, { id: 'q-1', kind: 'chatInput', chat: chatUri } as SessionInputRequest);
+    expect(asked.status).toBe(INPUT_NEEDED);
+  });
+
+  it('settles the call for its own client, and refuses the other one', async () => {
+    const { held, clients, chatUri } = await open(['a', 'b']);
+    const { calls } = held();
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const waiting = calls.wait('call-1');
+    await settle();
+
+    // `b` provides the same tool and does not own this call.
+    clients[1]?.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'not mine' }] } } },
+    });
+    await settle();
+    // Still open, and still the other client's to answer.
+    expect(calls.owner('call-1')).toBe('a');
+
+    clients[0]?.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'mine' }] } } },
+    });
+    expect((await waiting).text).toBe('mine');
+  });
+
+  it('hands the whole answer to the backend, content blocks and all', async () => {
+    const { held, clients, chatUri } = await open(['a']);
+    const { calls } = held();
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const waiting = calls.wait('call-1');
+    await settle();
+
+    clients[0]?.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: {
+          type: 'chat/toolCallComplete',
+          toolCallId: 'call-1',
+          result: {
+            success: true,
+            content: [
+              { type: 'text', text: 'here it is' },
+              { type: 'embeddedResource', data: 'iVBORw0KGgo=', contentType: 'image/png' },
+            ],
+          },
+        },
+      },
+    });
+    await settle();
+
+    // The text alone is what a text-only harness reads; a harness that takes an
+    // image takes the blocks, so both arrive.
+    const answer = await waiting;
+    expect(answer.ok).toBe(true);
+    expect(answer.text).toBe('here it is');
+    expect(answer.content).toEqual([
+      { type: 'text', text: 'here it is' },
+      { type: 'embeddedResource', data: 'iVBORw0KGgo=', contentType: 'image/png' },
+    ]);
+  });
+
+  it('fails the call of a client that leaves, naming the other client\'s tool', async () => {
+    const { held, clients, uri } = await open(['a', 'b']);
+    const { calls } = held();
+    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const waiting = calls.wait('call-1');
+    await settle();
+
+    // Unsubscribing is one of the three ways the protocol says a client stops
+    // being active in a session.
+    clients[0]?.handle({ method: 'unsubscribe', params: { channel: uri } });
+    await settle();
+
+    const lost = await waiting;
+    expect(lost.ok).toBe(false);
+    expect(lost.text).toBe('The client a that was running openFile is no longer here. b__openFile provides the same tool');
+
+    const held_ = await state(clients[1] as Client, uri);
+    expect((held_.inputNeeded ?? []).some((one) => one.id === id)).toBe(false);
+  });
+
+  it('fails a call nobody answers in the time the host allows', async () => {
+    const { held, clients, uri } = await open(['a'], { clientToolTimeoutMs: 50 });
+    const { calls } = held();
+    // The session is up first: `settle` waits on a real timer, and a fake one
+    // would never fire it.
+    vi.useFakeTimers();
+    const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    const waiting = calls.wait('call-1');
+    vi.advanceTimersByTime(50);
+    const lost = await waiting;
+    vi.useRealTimers();
+
+    expect(lost.ok).toBe(false);
+    expect(lost.text).toBe('openFile got no answer from a in 0 s');
+    await settle();
+    const held_ = await state(clients[0] as Client, uri);
+    expect((held_.inputNeeded ?? []).some((one) => one.id === id)).toBe(false);
+  });
+
+  it('fires input_needed_set with the kind a plugin has to read', async () => {
+    const { held, heard } = await open(['a']);
+    held().calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    await settle();
+
+    // Delegated work reads as an entry like any other, so the kind on the event
+    // is what tells a plugin this is not somebody being asked something.
+    const said = heard.filter((event) => event.type === 'input_needed_set');
+    expect(said).toHaveLength(1);
+    expect(said[0]).toMatchObject({
+      session: 'holder:/held',
+      id: `toolClientExecution:${held().start.chatUri}:t1:call-1`,
+      kind: 'toolClientExecution',
+    });
+  });
+
+  it('gives every session ten minutes unless the host says otherwise', async () => {
+    const seen: number[] = [];
+    const base = echo({ path: DIR, pace: 0 });
+    const agent: Agent = {
+      ...base,
+      provider: 'holder',
+      displayName: 'Holder',
+      create: (start: Start) => { seen.push(start.clientToolTimeoutMs); return base.create(start); },
+    };
+    for (const clientToolTimeoutMs of [undefined, 0, 1500]) {
+      const host = createHost({
+        path: DIR,
+        agents: [agent],
+        ...machine(),
+        ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
+      });
+      const client = host.accept(peer());
+      await client.handle({ method: 'initialize', params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'] } });
+      await client.handle({ method: 'createSession', params: { channel: `ahp-session:/t${seen.length}`, provider: 'holder' } });
+    }
+    // Ten minutes when nobody said, which is the same answer an absent option
+    // gives the holder; a zero that means no limit at all; and a number through.
+    expect(seen).toEqual([DEFAULT_CLIENT_TOOL_TIMEOUT_MS, 0, 1500]);
   });
 });

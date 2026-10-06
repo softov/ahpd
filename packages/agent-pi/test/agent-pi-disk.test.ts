@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { expect, it } from 'vitest';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { piAgent } from '../src/agent.js';
 import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';
@@ -132,6 +133,9 @@ it('answers where a turn from pi file ended, once the session is resumed', async
     workingDirectory: root,
     schema: () => ({}),
     emit: () => {},
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     resume: disk.id,
   } as Start);
   for (let i = 0; i < 200 && session.endPoint?.(disk.first) === undefined; i++) await settled();
@@ -154,6 +158,9 @@ it('keeps the turns from pi file in the record of a session resumed and run agai
     workingDirectory: root,
     schema: () => ({}),
     emit: () => {},
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     resume: disk.id,
   } as Start);
   for (let i = 0; i < 200 && session.endPoint?.(disk.first) === undefined; i++) await settled();

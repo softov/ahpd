@@ -165,6 +165,13 @@ export interface Config {
    * `a-tool-says-when-it-needs-advanced-permission`.
    */
   advancedTools?: boolean;
+  /**
+   * How long a call a client runs may wait before it is failed.
+   *
+   * Unset is ten minutes; zero waits for ever, for a deployment whose clients
+   * are slow rather than gone.
+   */
+  clientToolTimeoutMs?: number;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

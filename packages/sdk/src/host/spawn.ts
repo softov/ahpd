@@ -5,12 +5,13 @@ import { computerId, computersFor } from '../computers.js';
 import { nestedAgent } from '../nested.js';
 import { idOf, uriFor, Status } from '../catalog.js';
 import { meter } from '../meter.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../clientcalls.js';
 import { chatUriFor, subagentChatUri } from './channels.js';
 import { CLOSING } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
-import type { ToolsEndpoint } from '../toolserver.js';
+import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
 import type { HostContext } from './context.js';
 
 /**
@@ -381,8 +382,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the session goes, so a token reaches the tools of the session it was
      * handed to and nothing else.
      */
-    const toolsServer = (): ToolsEndpoint | undefined => {
-      const opened = options.toolsServers?.open(ctx.boundTools(uri, chatUri, agent.provider));
+    const toolsServer = (ask?: { runClient?: RunClientTool; toolsChanged?: ToolsChanged }): ToolsEndpoint | undefined => {
+      const opened = options.toolsServers?.open(
+        ctx.boundTools(uri, chatUri, agent.provider),
+        ask?.runClient,
+        ask?.toolsChanged,
+      );
       if (opened === undefined) return undefined;
       const held = ctx.served.get(uri) ?? [];
       held.push(opened);
@@ -423,6 +428,9 @@ export function createSpawn(ctx: HostContext): Spawn {
        */
       ...(Object.keys(servers).length === 0 ? {} : { mcpServers: servers }),
       ...(options.toolsServers === undefined ? {} : { toolsServer }),
+      // Resolved here rather than left for the backend to default, so what a
+      // call waits is one number the host decided and a deployment set once.
+      clientToolTimeoutMs: options.clientToolTimeoutMs ?? DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional } : {}),

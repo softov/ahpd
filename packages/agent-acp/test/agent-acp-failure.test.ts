@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { Bag, Session, Start } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { acpAgent, connectAcp, watchSession } from '../src/index.js';
 
 /*
@@ -54,6 +55,9 @@ function start(command: string, args: string[] = []): { session: Session; action
     settings: {},
     schema: () => ({ type: 'object', properties: {} }),
     emit: (_channel, action) => { actions.push(action); },
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   };
   const session = agent.create(opening);
   started.push(session);

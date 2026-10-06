@@ -3,6 +3,7 @@ import { localPath } from '../fileuri.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import type { Bag } from '../types/common.js';
+import type { ClientCallAnswer } from '../clientcalls.js';
 import type { Origin } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -1091,13 +1092,16 @@ export function chatAction(
         no('This backend runs no tools on a client\'s behalf');
         break;
       }
-      // `ToolCallResult.content` is MCP's content blocks; what reaches a
-      // model through this host is text, so text is what is read out of
-      // them. An error carries its message instead, which is the only
-      // thing a failed call actually says.
+      // The blocks go through whole, because a client's tool can answer with
+      // an image or a file as readily as a sentence and the backend's harness
+      // is the thing that decides which it can take. The joined text is the
+      // fallback for one that takes only text, and an error's message is what
+      // a failed call actually says.
       const ok = result.success !== false;
-      const text = (Array.isArray(result.content) ? result.content : [])
+      const content = (Array.isArray(result.content) ? result.content : [])
         .map((block) => (typeof block === 'object' && block !== null ? block as Bag : {}))
+        .filter((block) => typeof block.type === 'string');
+      const text = content
         .filter((block) => typeof block.text === 'string')
         .map((block) => String(block.text))
         .join('\n');
@@ -1105,8 +1109,9 @@ export function chatAction(
         ? String((result.error as Bag).message ?? '')
         : '';
       if (!session.completeToolCall(toolCallId, clientId, {
-        text: ok ? text : (wrong || text || 'The tool failed'),
         ok,
+        text: ok ? text : (wrong || text || 'The tool failed'),
+        content: content as ClientCallAnswer['content'],
       })) no(`${toolCallId} is not a call ${clientId} is running here`);
       break;
     }

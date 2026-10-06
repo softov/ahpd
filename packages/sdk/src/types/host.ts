@@ -343,6 +343,17 @@ export interface HostOptions {
    */
   advancedTools?: boolean;
   /**
+   * How long a call a client runs may wait before the host calls it failed.
+   *
+   * A client's tool call blocks the turn that made it, and a client that has
+   * gone quiet without going away would block it for ever, so there is a limit
+   * and this is where a deployment sets it. Unset is ten minutes; zero is no
+   * limit at all, for a deployment that would rather wait than cut a slow
+   * client off. Handed to each backend on `Start`, because the backend is what
+   * holds the call.
+   */
+  clientToolTimeoutMs?: number;
+  /**
    * The daemon's own settings, as the keys root config carries beside the host's.
    *
    * The host has no business in a daemon's `config.json`: it does not read it,

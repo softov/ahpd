@@ -1,10 +1,14 @@
 import { expect, describe, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { toolServers } from '../src/toolserver.js';
+import { toMcpContent } from '../src/mcpcontent.js';
 import { echo } from '../../../examples/echo/agent.js';
-import type { Agent, Start } from '../src/types/agent.js';
+import type { Agent, BoundTool, Start } from '../src/types/agent.js';
+import type { ClientCallAnswer } from '../src/clientcalls.js';
+import type { OnWire } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
-import type { ToolsEndpoint, ToolsServers } from '../src/toolserver.js';
+import type { RunClientTool, ToolsEndpoint, ToolsServers } from '../src/toolserver.js';
+import type { ToolResultContent } from '@microsoft/agent-host-protocol';
 
 /*
  * The host's tools as an MCP server over HTTP.
@@ -242,5 +246,201 @@ describe('what a session is handed', () => {
     // The host still offers the field - it is the one that knows the listener
     // is not there - and opening one answers nothing.
     expect(start.toolsServer?.()).toBeUndefined();
+  });
+});
+
+describe('a client\'s tool, run through the server', () => {
+  /** A client's tool: an owner, and no `run` of this host's own. */
+  const clientTool = (name: string, owner = 'vscode'): BoundTool => ({
+    definition: { name: `${owner}__${name}`, description: `${name} is run by ${owner}` },
+    owner,
+  });
+
+  /** What a client said its own tool did. */
+  const answer = (value: string, content?: OnWire<ToolResultContent>[]): ClientCallAnswer => ({
+    ok: true,
+    text: value,
+    content: content ?? [{ type: 'text', text: value }],
+  });
+
+  /**
+   * An endpoint as a backend that handed over a runner would be given one.
+   *
+   * The host's own `peek` is served beside the client's `openFile`, because a
+   * backend takes both through the same list and only one of them is this
+   * server's to run.
+   */
+  const serving = (runClient?: RunClientTool, toolsChanged?: 'notify' | 'list') => {
+    const servers = toolServers({ origin: () => ORIGIN, name: 'ahpd', version: '9.9.9' });
+    const endpoint = servers.open(
+      [tool('peek', 'peeked'), clientTool('openFile')],
+      runClient,
+      toolsChanged,
+    ) as ToolsEndpoint;
+    return { servers, endpoint };
+  };
+
+  /** The names this path lists, in the order it lists them. */
+  const names = async (servers: ToolsServers, endpoint: ToolsEndpoint): Promise<string[]> => {
+    const { said } = await call(servers, endpoint, 'tools/list');
+    return (said.result as { tools: { name: string }[] }).tools.map((one) => one.name);
+  };
+
+  it('runs a client\'s tool through the runner, and hands it the request as it came', async () => {
+    const seen: { tool: BoundTool; input: Record<string, unknown>; meta: Record<string, unknown> | undefined }[] = [];
+    const { servers, endpoint } = serving(async (asked, input, meta) => {
+      seen.push({ tool: asked, input, meta });
+      return answer('opened /a.txt');
+    });
+
+    const { said } = await call(servers, endpoint, 'tools/call', {
+      name: 'vscode__openFile',
+      arguments: { path: '/a.txt' },
+      _meta: { toolCallId: 'call-1' },
+    });
+    expect(said.result).toEqual({ content: [{ type: 'text', text: 'opened /a.txt' }] });
+
+    // The tool as the host bound it, so the backend can see whose tool it has
+    // been asked to run; the arguments as the model wrote them; and `_meta` as
+    // it came, so a backend reads a call id the agent put there.
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.tool.definition.name).toBe('vscode__openFile');
+    expect(seen[0]?.tool.owner).toBe('vscode');
+    expect(seen[0]?.input).toEqual({ path: '/a.txt' });
+    expect(seen[0]?.meta).toEqual({ toolCallId: 'call-1' });
+  });
+
+  it('runs the host\'s own tools itself, runner or not', async () => {
+    const { servers, endpoint } = serving(async () => answer('the runner was not asked'));
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'peek', arguments: { what: 'x' } });
+    expect(said.result).toEqual({ content: [{ type: 'text', text: 'peeked x' }] });
+  });
+
+  it('answers an image as an image and another embedded resource as a blob, beside the text', async () => {
+    const { servers, endpoint } = serving(async () => answer('here it is', [
+      { type: 'text', text: 'here it is' },
+      { type: 'embeddedResource', data: 'iVBORw0KGgo=', contentType: 'image/png' },
+      { type: 'embeddedResource', data: 'JVBERi0=', contentType: 'application/pdf' },
+    ]));
+
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'vscode__openFile', arguments: {} });
+    expect(said.result).toEqual({
+      content: [
+        { type: 'text', text: 'here it is' },
+        { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+        {
+          type: 'resource',
+          resource: { uri: expect.any(String), mimeType: 'application/pdf', blob: 'JVBERi0=' },
+        },
+      ],
+    });
+  });
+
+  it('says a client\'s failed call in the content, which is where a model reads it', async () => {
+    const { servers, endpoint } = serving(async () => ({
+      ok: false,
+      text: 'the file is not there',
+      content: [{ type: 'text', text: 'the file is not there' }],
+    }));
+
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'vscode__openFile', arguments: {} });
+    expect(said.result).toEqual({
+      content: [{ type: 'text', text: 'the file is not there' }],
+      isError: true,
+    });
+  });
+
+  it('says a runner that threw the same way, rather than failing the request', async () => {
+    const { servers, endpoint } = serving(() => { throw new Error('the client went away'); });
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'vscode__openFile', arguments: {} });
+    expect(said.result).toEqual({ content: [{ type: 'text', text: 'the client went away' }], isError: true });
+  });
+
+  it('still refuses a client\'s tool when it was handed no runner', async () => {
+    const { servers, endpoint } = serving();
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'vscode__openFile', arguments: {} });
+    expect((said.error as { message: string }).message).toBe('vscode__openFile is a client\'s tool, which this server cannot run');
+  });
+
+  it('serves the tools the session has now, after the list is replaced', async () => {
+    const ran: string[] = [];
+    const { servers, endpoint } = serving(async (asked) => {
+      ran.push(asked.definition.name);
+      return answer(`ran ${asked.definition.name}`);
+    });
+    expect(await names(servers, endpoint)).toEqual(['peek', 'vscode__openFile']);
+
+    endpoint.setTools([tool('poke', 'poked'), clientTool('saveFile', 'zed')]);
+    expect(await names(servers, endpoint)).toEqual(['poke', 'zed__saveFile']);
+
+    // A tool taken away is not one this path answers any more, and the one put
+    // in its place reaches the runner as the client's it now is.
+    const gone = await call(servers, endpoint, 'tools/call', { name: 'vscode__openFile', arguments: {} });
+    expect((gone.said.error as { message: string }).message).toBe('No tool named vscode__openFile');
+    const { said } = await call(servers, endpoint, 'tools/call', { name: 'zed__saveFile', arguments: {} });
+    expect(said.result).toEqual({ content: [{ type: 'text', text: 'ran zed__saveFile' }] });
+    expect(ran).toEqual(['zed__saveFile']);
+  });
+
+  it('declares listChanged and streams the notification, when it was asked to notify', async () => {
+    const { servers, endpoint } = serving(async () => answer('ran'), 'notify');
+    const { said } = await call(servers, endpoint, 'initialize');
+    expect((said.result as { capabilities: unknown }).capabilities).toEqual({ tools: { listChanged: true } });
+
+    // A GET under this token is the server-to-client stream, and the token is
+    // still asked for before anything is held open.
+    const stream = await servers.request(new Request(endpoint.url, { headers: { authorization: `Bearer ${endpoint.token}` } }));
+    expect(stream?.status).toBe(200);
+    const reader = (stream as Response).body?.getReader();
+    if (reader === undefined) throw new Error('the notify mode opened no stream to read');
+
+    endpoint.setTools([tool('peek', 'peeked')]);
+    const chunk = await reader.read();
+    expect(new TextDecoder().decode(chunk.value)).toContain('notifications/tools/list_changed');
+    await reader.cancel();
+
+    const wrong = await servers.request(new Request(endpoint.url, { headers: { authorization: 'Bearer not-the-token' } }));
+    expect(wrong?.status).toBe(401);
+  });
+
+  it('leaves the list to the next tools/list when it was asked for no stream', async () => {
+    const { servers, endpoint } = serving(async () => answer('ran'), 'list');
+    const { said } = await call(servers, endpoint, 'initialize');
+    expect((said.result as { capabilities: unknown }).capabilities).toEqual({ tools: {} });
+
+    const stream = await servers.request(new Request(endpoint.url, { headers: { authorization: `Bearer ${endpoint.token}` } }));
+    expect(stream?.status).toBe(405);
+
+    endpoint.setTools([tool('poke', 'poked')]);
+    expect(await names(servers, endpoint)).toEqual(['poke']);
+  });
+});
+
+describe('a client\'s answer, as MCP content', () => {
+  it('mints one URI per embedded resource, so two in one answer do not collide', () => {
+    expect(toMcpContent({
+      ok: true,
+      text: '',
+      content: [
+        { type: 'embeddedResource', data: 'AA==', contentType: 'application/pdf' },
+        { type: 'embeddedResource', data: 'BB==', contentType: 'application/zip' },
+      ],
+    }, 'call-1')).toEqual([
+      { type: 'resource', resource: { uri: 'ahp-tool-result:call-1/0', mimeType: 'application/pdf', blob: 'AA==' } },
+      { type: 'resource', resource: { uri: 'ahp-tool-result:call-1/1', mimeType: 'application/zip', blob: 'BB==' } },
+    ]);
+  });
+
+  it('puts a block it does not know in the text, where the model still reads it', () => {
+    const odd = { type: 'terminal', terminalId: 't-1' } as unknown as OnWire<ToolResultContent>;
+    expect(toMcpContent({ ok: true, text: '', content: [odd] }, 'call-1')).toEqual([
+      { type: 'text', text: '{"type":"terminal","terminalId":"t-1"}' },
+    ]);
+  });
+
+  it('falls back to the text when an answer carried no blocks at all', () => {
+    // An answer is at least its text, and an empty MCP result would say
+    // nothing about a tool that did something.
+    expect(toMcpContent({ ok: true, text: 'done', content: [] }, 'call-1')).toEqual([{ type: 'text', text: 'done' }]);
   });
 });

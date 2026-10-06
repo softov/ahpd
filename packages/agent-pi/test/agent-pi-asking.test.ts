@@ -229,7 +229,7 @@ it('does not send a client tool to its client until the person approves it', asy
   const running = tool!.execute('c1', {} as never, undefined, undefined, undefined as never);
   await settled();
   expect(session.toolCallOwner?.('c1')).toBe('editor');
-  expect(session.completeToolCall?.('c1', 'editor', { text: 'opened', ok: true })).toBe(true);
+  expect(session.completeToolCall?.('c1', 'editor', { text: 'opened', ok: true, content: [] })).toBe(true);
   await running;
 });
 

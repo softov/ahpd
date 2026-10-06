@@ -7,6 +7,7 @@ import type { Agent as CofoldAgent, ModelAdapter, ModelProvider, Store } from '@
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Bag, Emit, Start } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { cofoldSession, compactionNotice, harnessConfig, storeOf, turnsOf } from '../src/index.js';
 import type { CofoldOptions, Held } from '../src/agent.js';
 import type { SessionContext } from '../src/context.js';
@@ -94,6 +95,9 @@ const start = (emit: Emit): Start => ({
   workingDirectory: process.cwd(),
   schema: () => ({}),
   emit,
+  // The host always resolves this, and its own answer when the deployment said
+  // nothing is ten minutes.
+  clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
 });
 
 /**

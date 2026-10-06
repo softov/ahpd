@@ -7,6 +7,7 @@ import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag, Session, Start } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
 import { cofoldAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -76,6 +77,9 @@ function open(agent: Agent, id: string, workingDirectory: string, extra: Partial
     workingDirectory,
     schema: () => agent.schema(),
     emit: view.emit,
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     ...extra,
   });
   return { session, view, uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` };

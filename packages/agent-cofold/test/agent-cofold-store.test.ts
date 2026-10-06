@@ -9,6 +9,7 @@ import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
 
 /*
@@ -97,6 +98,9 @@ function open(
     workingDirectory,
     schema: () => agent.schema(),
     emit: view.emit,
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
     ...extra,
   });
   return { session, view, uri: `ahp-session:/${id}`, chatUri: `ahp-chat:/${id}` };

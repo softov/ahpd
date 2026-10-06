@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { mapEvent } from '../src/mapping.js';
 import { THINKING_KEY } from '../src/models.js';
 import { piSession } from '../src/session.js';
@@ -88,10 +89,10 @@ it('waits on the client that owns a tool, and lets only that client answer', asy
   await settled();
   expect(session.toolCallOwner?.('c1')).toBe('editor');
   // A result from anybody else is a client out of step and does not settle it.
-  expect(session.completeToolCall?.('c1', 'other', { text: 'not mine', ok: true })).toBe(false);
+  expect(session.completeToolCall?.('c1', 'other', { text: 'not mine', ok: true, content: [] })).toBe(false);
   await settled();
   expect(answered).toBeUndefined();
-  expect(session.completeToolCall?.('c1', 'editor', { text: 'opened it', ok: true })).toBe(true);
+  expect(session.completeToolCall?.('c1', 'editor', { text: 'opened it', ok: true, content: [] })).toBe(true);
   await pending;
   expect(answered?.content).toEqual([{ type: 'text', text: 'opened it' }]);
   expect(session.toolCallOwner?.('c1')).toBeUndefined();
@@ -106,7 +107,7 @@ it('fails a client tool call with the answer, and when its client is gone', asyn
   const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
   const refused = tool!.execute('c1', {} as never, undefined, undefined, undefined as never);
   await settled();
-  session.completeToolCall?.('c1', 'editor', { text: 'it refused', ok: false });
+  session.completeToolCall?.('c1', 'editor', { text: 'it refused', ok: false, content: [] });
   await expect(refused).rejects.toThrow('it refused');
 
   const gone = tool!.execute('c2', {} as never, undefined, undefined, undefined as never);
@@ -208,6 +209,9 @@ it('takes a setTools made while the first open is still pending', async () => {
     workingDirectory: root,
     schema: () => ({}),
     emit: () => {},
+    // The host always resolves this, and its own answer when the deployment
+    // said nothing is ten minutes.
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Start;
   const session = piSession({}, start, (async (options: BackendOptions) => {
     await gate;

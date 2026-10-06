@@ -8,7 +8,7 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { StartTerminals } from './terminals.js';
-import type { ToolsEndpoint } from '../toolserver.js';
+import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
 import type { ComputerPort } from './computers.js';
 import type { MachineNeed } from './machine.js';
 
@@ -212,8 +212,26 @@ export interface Start {
    *
    * Answers `undefined` when no endpoint can be opened, which is what a host
    * that holds no listener to serve one on says.
+   *
+   * `runClient` is this backend's way of running a client's tool, for a backend
+   * whose client reaches the host's tools through this server rather than in
+   * process: a `tools/call` for a tool with an `owner` goes there instead of
+   * being refused. `toolsChanged` is what it wants done when the session's tools
+   * move - `notify` for a `list_changed` on an open stream, `list` to leave it
+   * to the next `tools/list` - and leaving it out is `list`.
    */
-  toolsServer?(): ToolsEndpoint | undefined;
+  toolsServer?(options?: { runClient?: RunClientTool; toolsChanged?: ToolsChanged }): ToolsEndpoint | undefined;
+  /**
+   * How long this host lets one of a session's client calls wait.
+   *
+   * A backend holding a call a client runs needs a limit, because the turn is
+   * blocked on it and a client that has gone quiet without going away would
+   * hang it for ever. Handed rather than assumed so a deployment can say, and
+   * already resolved: the host's own ten minutes when it was given nothing,
+   * and zero for no limit at all, which is what a deployment that would rather
+   * wait than cut a slow client off asks for.
+   */
+  clientToolTimeoutMs: number;
   /**
    * How to run a process in a machine, when the host holds a computer plugin.
    *
