@@ -1,6 +1,7 @@
 ---
 title: A backend that runs nested names the plugin the inner host loads
-status: accepted
+status: superseded
+superseded-by: decisions/the-host-records-which-plugin-registered-each-agent.md
 date: 2026-09-26
 refs:
   - "[code://packages/sdk/src/types/agent.ts#L356](../../packages/sdk/src/types/agent.ts#L356) - `runsNested`, a boolean today"

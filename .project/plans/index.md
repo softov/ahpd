@@ -31,8 +31,9 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | built 2026-10-04 ([implemented.md](daemon/12-a-plugin-option-is-set-from-the-command-line/implemented.md)); tasks implemented, awaiting review; by-hand checks not run | - | - |
 | [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented, 04 todo | - | - |
 | [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | built 2026-10-02 ([implemented.md](daemon/14-the-daemon-log-rotates-at-start/implemented.md)) | - | - |
+| [15 - A verb declares only the flags it reads](daemon/15-a-verb-declares-only-its-own-flags/plan.md) | medium | planned 2026-10-06 | - | - |
 
-Next free number in `daemon`: `15`.
+Next free number in `daemon`: `16`.
 
 ## host
 
@@ -126,8 +127,17 @@ Reference: [00-host.md](host/00-host.md)
 | [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/55-users-gate-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [56 - The catalogue answers at once, and a summary is sent only when it changes](host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md) | high | active 2026-10-04; tasks 01-04 implemented, awaiting review; 05 by hand | - | - |
 | [57 - pi, cofold and ACP find a session by id, and the listing throttle goes](host/57-pi-cofold-and-acp-find-a-session-by-id/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | host 56 | - |
+| [58 - Policy and automation files are private, a cursor the host did not issue is refused, and a file URI is decoded](host/58-private-files-refused-cursors-and-decoded-file-uris/plan.md) | high | planned 2026-10-05; tasks 01-06 todo | - | host 59, host 60 |
+| [59 - People and policy are served by one record-store provider, and the value readers are one sdk module](host/59-one-record-store-provider-and-shared-value-helpers/plan.md) | medium | planned 2026-10-05; tasks 01-07 todo | host 58 | host 61, host 60 task 04 |
+| [60 - JSON files are read and written through one helper, and the session store keeps one row per session](host/60-one-json-file-reader-and-writer-and-a-session-is-one-row/plan.md) | medium | planned 2026-10-05; tasks 01-06 todo | host 58 | - |
+| [61 - The agents share their status, activity, title and preset reading, and the host checks tool inputs and request params one way](host/61-agents-share-their-session-kit-presets-and-input-checks/plan.md) | medium | planned 2026-10-05; tasks 01-06 todo | host 59 | - |
+| [62 - Every backend calls a client's tool, acp, cofold, pi and claude, the way the protocol asks](host/62-every-backend-calls-a-clients-tool/plan.md) | high | planned 2026-10-06; p1-p4 planned, Softov answered all eight questions | acp 11 | - |
+| [62 p1 - The sdk holds a client call, raises it for the client, and runs one for the tool server](host/62-every-backend-calls-a-clients-tool-p1-the-sdk-holds-a-client-call/plan.md) | high | planned 2026-10-06; tasks 01-03 todo | host 62 | 62 p2, 62 p3, 62 p4 |
+| [62 p2 - Claude runs its client calls through the sdk](host/62-every-backend-calls-a-clients-tool-p2-claude-runs-client-calls-through-the-sdk/plan.md) | high | planned 2026-10-06; tasks 01-02 todo | host 62 p1 | - |
+| [62 p3 - pi and cofold run their client calls through the sdk](host/62-every-backend-calls-a-clients-tool-p3-pi-and-cofold-run-client-calls-through-the-sdk/plan.md) | high | planned 2026-10-06; tasks 01-02 todo | host 62 p1 | - |
+| [62 p4 - An ACP agent calls a client's tool](host/62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 62 p1, acp 11 | - |
 
-Next free number in `host`: `58`.
+Next free number in `host`: `63`.
 
 ## claude
 
@@ -234,7 +244,7 @@ Reference: [00-container.md](container/00-container.md)
 | [05 p3 - Parts are built from one versions file, and the joined image from the same file](container/05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/plan.md) | high | built 2026-10-04 ([implemented.md](container/05-an-agent-in-a-machine-p3-parts-are-built-from-one-versions-file/implemented.md)); tasks implemented, awaiting review | container 05 | 05 p4 |
 | [05 p4 - A part is mounted into a machine, from its image or from a volume](container/05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/plan.md) | high | built 2026-10-05 ([implemented.md](container/05-an-agent-in-a-machine-p4-a-part-is-mounted-into-a-machine/implemented.md)); tasks implemented, awaiting review | container 05 p3, plugin 15, container 03 | 05 p5 |
 | [05 p5 - Agents run from their parts and keep their own state, and the host's binary and home become opt-ins](container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md) | high | planned 2026-10-03; tasks 01-09 todo | container 05 p2, container 05 p3, container 05 p4, container 05 p6, container 04, claude 15, plugin 15, acp 05 | 05 p8, 05 p9 |
-| [05 p6 - An agent's configuration lives in a volume per profile, seeded from the host once](container/05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/plan.md) | high | planned 2026-10-03; tasks 01-05 todo | container 05 | 05 p5 |
+| [05 p6 - An agent's configuration lives in a volume per profile, seeded from the host once](container/05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/plan.md) | high | built 2026-10-06 ([implemented.md](container/05-an-agent-in-a-machine-p6-an-agents-configuration-lives-in-a-volume/implemented.md)); tasks implemented, awaiting review | container 05 | 05 p5 |
 | [05 p7 - A worktree reaches its machine with the repository it belongs to](container/05-an-agent-in-a-machine-p7-a-worktree-brings-its-repository/plan.md) | high | planned 2026-10-02; tasks 01-04 todo | plugin 16, container 03 | 05 p8 |
 | [05 p8 - A profile's machines may live on another Docker](container/05-an-agent-in-a-machine-p8-a-profile-on-another-docker/plan.md) | medium | planned 2026-10-03; tasks 01-07 todo | container 05 p5, container 05 p7, container 05 p9, container 05 p12 | - |
 | [05 p9 - An ssh machine runs a nested host](container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md) | medium | planned 2026-10-03; tasks 01-07 todo | container 04 (tasks 11, 14, 15, 17) | 05 p10 |

@@ -16,7 +16,7 @@ decisions:
   - decisions/a-nested-session-resumes-its-inner-transcript-by-id.md
   - decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md
   - decisions/a-nested-host-is-configured-by-the-machine-profile-only.md
-  - decisions/a-backend-that-runs-nested-names-its-plugin.md
+  - decisions/the-host-records-which-plugin-registered-each-agent.md
 refs:
   - "[code://packages/agent-cofold/src/agent.ts#L673](../../../../packages/agent-cofold/src/agent.ts#L673) - cofold's `runsNested: true`"
   - "[code://packages/sdk/src/nested.ts](../../../../packages/sdk/src/nested.ts) - the proxy: the nested host's stdio, the inner session, the mirror"
@@ -70,13 +70,13 @@ process exits                    -> [new] the session ends with the stderr tail 
 | [A nested session is resumed by resuming the inner transcript by id](../../../decisions/a-nested-session-resumes-its-inner-transcript-by-id.md) | 11 |
 | [A nested host's image installs its plugins with ahpd plugin install](../../../decisions/a-nested-host-image-installs-its-plugins-with-ahpd-plugin-install.md) | 16 |
 | [A nested host is configured by the machine's profile only](../../../decisions/a-nested-host-is-configured-by-the-machine-profile-only.md) | 17 |
-| [A backend that runs nested names the plugin the inner host loads](../../../decisions/a-backend-that-runs-nested-names-its-plugin.md) | 17 |
+| [The host records which plugin registered each agent, and a nested host loads that plugin](../../../decisions/the-host-records-which-plugin-registered-each-agent.md) | 17 |
 
 | What | Source | Task |
 | --- | --- | --- |
 | The profile provides ahpd: its image or mounts carry it, and an optional `host` command says how to start it, default `ahpd` | Softov, 2026-09-26: "profile serves it.. command if desired and will be needed for kvm" | 01 |
 | No install step; a machine without ahpd is refused with a sentence | follows from the profile providing it | 01, 05 |
-| A backend opts in to the proxy by declaring `runsNested: { plugin }`; cofold does | the proxy is generic | 04, 17 |
+| A backend opts in to the proxy by declaring `runsNested: true`; cofold does | the proxy is generic | 04, 17 |
 | cofold's config reaches the machine as its declared need, at a fixed target | [decision](../../../decisions/cofold-config-reaches-a-machine-by-a-path-variable.md), `plugin/15` | 12 |
 | A write to a dead inner host, or its stdin closing, is the session's end and never an uncaught error; the end is read from `close`, with the signal in the sentence | follows from "a failure is a sentence, never a hang" | 07 |
 | The proxy is tested against a real child process as well as the in-memory fakes | the fakes cannot raise `EPIPE` or reorder `exit` and stdout | 07 |
@@ -121,7 +121,6 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 - **Done so far:** tasks 01 to 06 implemented on 2026-09-26: the computers port starts a nested host, `packages/sdk/src/nested.ts` is the proxy, `Agent.runsNested` chooses it, cofold declares it, and `docs/COMPUTER.md` explains it.
 - **Next action:** [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md), which also builds the real-process test the later tasks use.
-- **Open question (ask before task 17):** task 17 removes the `@ahpd/agent-${name}` default, which is wrong for every variant, and container/05 p9 task 03 reaches every backend through `nestedAgent`, so how does the host know the package an agent comes from - (a) every backend declares its plugin (`runsNested: { plugin }`, or a `nestedPlugin` member for a backend that does not run nested by default), or (b) the host records which package registered each agent?
 - **Watch out for:** a failure must end the session with a sentence and never hang or throw; the in-memory fakes in `packages/sdk/test/nested-proxy.test.ts` hid an `EPIPE` crash, so a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` (created by task 07) against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session. `nested` reaches a machine through `reach`, so a dev container is reached by `docker exec` once container/03 task 18 lands, and nothing here changes for it.
 
 ## Final verification checklist

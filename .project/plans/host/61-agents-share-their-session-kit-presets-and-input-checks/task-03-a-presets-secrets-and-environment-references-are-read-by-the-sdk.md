@@ -1,0 +1,41 @@
+---
+title: A preset's secrets and environment references are read by the sdk
+status: todo
+depends: []
+layer: "sdk, agent-acp, agent-claude"
+refs:
+  - "[code://packages/sdk/src/vault.ts#L55-L68](../../../../packages/sdk/src/vault.ts#L55-L68) - `secretRef`, the sibling and the one-key rule"
+  - "[code://packages/agent-acp/src/plugin.ts#L96-L130](../../../../packages/agent-acp/src/plugin.ts#L96-L130) - `secretsOf` and `fromEnvOf`"
+  - "[code://packages/agent-claude/src/plugin.ts#L115-L138](../../../../packages/agent-claude/src/plugin.ts#L115-L138) - `secretsOf`"
+  - "[code://packages/agent-claude/src/options.ts#L243-L247](../../../../packages/agent-claude/src/options.ts#L243-L247) - `fromEnvOf`, which allows other keys"
+  - "[code://packages/agent-claude/src/claude.ts#L46-L51](../../../../packages/agent-claude/src/claude.ts#L46-L51) - `baseUrlOf`, reading `fromEnv` inline"
+  - "[code://packages/agent-claude/test/agent-claude-presets.test.ts](../../../../packages/agent-claude/test/agent-claude-presets.test.ts) - claude's preset cases"
+  - "[code://packages/agent-acp/test/agent-acp-presets.test.ts](../../../../packages/agent-acp/test/agent-acp-presets.test.ts) - acp's preset cases"
+---
+
+## Objective
+
+`readSecrets(host, env, by)` and `fromEnvRef(value)` are exported from `@ahpd/sdk` beside `secretRef`, and acp and claude read a preset's `env` and `{ fromEnv }` values through them.
+
+## Files
+
+- `UPDATE: packages/sdk/src/vault.ts` - `fromEnvRef` after `secretRef`, and `readSecrets`, acp's `secretsOf` answering `Record<string, unknown>` (claude's type; acp narrows at its call).
+- `UPDATE: packages/sdk/src/index.ts:59` - exported.
+- `UPDATE: packages/sdk/test/vault.test.ts` - the helper's cases.
+- `UPDATE: packages/agent-acp/src/plugin.ts:96-130` - `secretsOf` and `fromEnvOf` go.
+- `UPDATE: packages/agent-claude/src/plugin.ts:115-138`, `options.ts:243-247`, `claude.ts:46-51` - `secretsOf` and `fromEnvOf` go; `baseUrlOf` reads through `fromEnvRef`.
+- `UPDATE: packages/agent-claude/test/agent-claude-presets.test.ts` - one case.
+
+## Steps
+
+1. `fromEnvRef`: an object whose only key is `fromEnv`, holding a non-empty string, as the plan's second table records.
+2. `readSecrets` keeps the refusal `<by>.<name> names <ref>: <reason>` word for word.
+
+## Validation
+
+- `vault.test.ts`, a new helper's cases: `fromEnvRef({ fromEnv: 'X' })` is `X`; `{ fromEnv: '' }`, `{ fromEnv: 'X', other: 1 }` and `'X'` are `undefined`; `readSecrets` reads a `$secret`, passes a plain value through and words a failed read.
+- Written first and seen failing (today claude reads it as a reference): a claude preset whose `env` holds `{ fromEnv: 'X', other: 1 }` is refused for that preset, as acp refuses it.
+- acp's preset tests stay green unchanged.
+- `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test packages/sdk packages/agent-acp packages/agent-claude`.
+
+## Resume

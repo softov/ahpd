@@ -30,7 +30,7 @@ refs:
 2. `nested` sends no `env`: the box's ahpd uses what it was configured with there.
 3. `hostCommand` is the machine's `host`, default `['ahpd']`, so the plugin's `nestedHost` answers `ssh ... -- 'cd <workdir> && ahpd --stdio --plugin <each>'`.
 4. For now non-secret variables are written inline, and a secret env need, one whose value is named from the vault, is refused for an ssh machine with a sentence naming the need and not its value. The refusal is one check in `how`, and it applies to the host's exec tools (a terminal, a command run in the machine): a session never reaches it, since a session on a remote machine runs nested and `nested` sends no env. What a nested session's credentials may carry is p12 task 03's.
-5. `computersFor` keeps `remote` as it spreads the port; a backend without `runsNested` in a remote machine is wrapped by `nestedAgent` with the plugin package it comes from. This needs container/04 task 17, which removes the `@ahpd/agent-${name}` default; how the host knows that package waits on container/04's open question, and this step is built after it is answered.
+5. `computersFor` keeps `remote` as it spreads the port; a backend without `runsNested` in a remote machine is wrapped by `nestedAgent` with the plugin that registered it, as the host records it (container/04 task 17, [the decision](../../../decisions/the-host-records-which-plugin-registered-each-agent.md)).
 
 ## Validation
 

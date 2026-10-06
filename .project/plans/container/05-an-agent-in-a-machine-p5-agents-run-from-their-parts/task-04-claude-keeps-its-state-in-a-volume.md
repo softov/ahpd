@@ -12,7 +12,7 @@ refs:
 
 Claude's `machine()` answers a state need at its config dir, seeded with `settings.json`, `CLAUDE.md`, `skills/`, `agents/`, `commands/` and `.claude.json` keeping `mcpServers`; the two host mounts are marked `when: 'host'`.
 Claude's secrets are not machine needs: `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` reach the CLI per exec from the variant's own `env` (task 09), never as container env, so a key one variant signs in with never reaches another variant on the same machine.
-Every variant of one load declares the same state need at `computerConfigDir` (`/ahpd/claude`), so variants share one state volume per profile, and `container/05-p6` task 05 collapses the identical needs at create.
+Each variant declares its state need at its own `computerConfigDir`, which defaults to `/ahpd/<provider>` (`/ahpd/claude` for the built-in), so each provider has its own state volume per profile (container/05 p6, Softov, 2026-10-05: "One per provider"), and its key reaches the CLI only from its own `env` per exec (task 09).
 
 ## Files
 
