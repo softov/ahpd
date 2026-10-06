@@ -62,6 +62,15 @@ const backend = (here: Store, provider = 'slow'): Agent => ({
     if (here.refuse) throw new Error('the store could not be read');
     return [...here.rows];
   },
+  // A delete takes the row out of the store, the way a backend that answers
+  // for its own transcripts does.
+  delete: async (id: string) => {
+    const at = here.rows.findIndex((one) => one.id === id);
+    if (at >= 0) here.rows.splice(at, 1);
+  },
+  // A row this backend lists opens, and a session continued from one resumes
+  // with nothing before it - which is all this fixture has ever held.
+  transcript: async () => [],
 });
 
 /** Ticks until this is true, or long enough that it plainly is not. */
@@ -83,10 +92,13 @@ const listed = async (client: { handle(request: unknown): Promise<unknown> }) =>
  *
  * The client watches the root, because a catalogue notification goes to the
  * connections watching the root channel and to no others.
+ *
+ * `runs` is which backend to build it over, for a case about one this fixture
+ * is not.
  */
-const started = async () => {
+const started = async (runs: (here: Store) => Agent = backend) => {
   const here = store([row('one', 'One')]);
-  const host = createHost({ path: PATH, agents: [backend(here)], ...machine() });
+  const host = createHost({ path: PATH, agents: [runs(here)], ...machine() });
   const p = peer();
   const client = host.accept(p);
   await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -96,6 +108,12 @@ const started = async () => {
 /** Wait for the first listing to have landed, and for the rows it left. */
 const filled = async (here: Store): Promise<void> => {
   await until(() => here.done >= 1);
+  await settle(4);
+};
+
+/** Wait for the backend's `n`th answer, and for the refresh it belongs to. */
+const passed = async (here: Store, n: number): Promise<void> => {
+  await until(() => here.done >= n);
   await settle(4);
 };
 
@@ -281,5 +299,152 @@ describe('a backend that refuses keeps what it had', () => {
 
     expect(said(notes, 'root/sessionRemoved').map((one) => one.session)).toEqual(['second:/b']);
     expect(await resources(client)).toEqual(['first:/a']);
+  });
+});
+
+describe('a refresh and a session this host is running', () => {
+  /*
+   * A running session is in no listing, and that is what makes this the case
+   * it is: `listing` claims a session this host serves so a backend's row for
+   * it cannot be listed twice, and a refresh compares what it found against
+   * what the last one found. A row the last one held and this one does not is
+   * a session that looks deleted - so a client is told to close the session
+   * it is looking at, about a session this host is running right now.
+   */
+
+  /** Open a listed row and give it a turn, which is what makes this host serve it. */
+  const give = async (
+    client: { handle(request: unknown): Promise<unknown> },
+    session: string,
+  ): Promise<string> => {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: session } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    const chat = opened.snapshot.state.defaultChat;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+    });
+    await settle(8);
+    return chat;
+  };
+
+  it('never says a session it opened and gave a turn is gone', async () => {
+    const { here, client, notes } = await started();
+    await filled(here);
+    expect((await listed(client)).items.map((one) => one.resource)).toEqual(['slow:/one']);
+    await passed(here, 2);
+
+    const chat = await give(client, 'slow:/one');
+    notes.length = 0;
+    await listed(client);
+    await passed(here, 3);
+
+    // Not one word about it, and the row a client holds still moves: what a
+    // client is told about a session this host runs is the session's own row.
+    expect(said(notes, 'root/sessionRemoved')).toEqual([]);
+    notes.length = 0;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+    });
+    await settle(8);
+    expect(said(notes, 'root/sessionSummaryChanged').map((one) => one.session)).toContain('slow:/one');
+  });
+
+  it('never says a session created while a refresh was out is gone', async () => {
+    const { here, client, notes } = await started();
+    await filled(here);
+
+    // Started first, and the session created while it is out: the pass that is
+    // already running does not know about it, and the store gains its
+    // transcript before that pass reads the store - so the pass lists a row
+    // for a session this host is running.
+    await listed(client);
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'slow' } });
+    here.rows.push(row('two', 'Two'));
+    await passed(here, 2);
+
+    // The pass after it does know, and leaves the row out: that is the moment
+    // the row it listed a moment ago looks like a session that went away.
+    notes.length = 0;
+    await listed(client);
+    await passed(here, 3);
+    await listed(client);
+    await passed(here, 4);
+
+    expect(said(notes, 'root/sessionRemoved')).toEqual([]);
+  });
+});
+
+describe('a session deleted from the catalogue', () => {
+  /*
+   * A listed row was listed once and held since, so deleting it is not a thing
+   * a listing ever hears about: the backend's store loses the row and says
+   * nothing, and the copy this host is answering out of is the one from before
+   * the delete. A host that leaves it there tells every client the session is
+   * gone and then offers it again in the next `listSessions` - the same half
+   * answer `removeSession` exists to avoid, one layer down.
+   */
+
+  const gone = (notes: { method: string; params: unknown }[], session: string) =>
+    said(notes, 'root/sessionRemoved').filter((one) => one.session === session);
+
+  /**
+   * The same backend, reading its store when a pass starts.
+   *
+   * A pass is one look at a directory, so a real one answers with the store as
+   * it was when the pass began - which is what puts a delete *inside* a pass.
+   * The fixture reads its store after the wait instead, because most cases are
+   * about a store a test edited before it asked.
+   */
+  const readingEarly = (here: Store): Agent => ({
+    ...backend(here),
+    list: async () => {
+      here.calls += 1;
+      const seen = [...here.rows];
+      await new Promise((done) => { setTimeout(done, WAIT); });
+      here.done += 1;
+      if (here.refuse) throw new Error('the store could not be read');
+      return seen;
+    },
+  });
+
+  it('leaves the held rows, and is said gone once', async () => {
+    const { here, client, notes } = await started();
+    await filled(here);
+    expect((await listed(client)).items.map((one) => one.resource)).toEqual(['slow:/one']);
+    await passed(here, 2);
+
+    notes.length = 0;
+    await client.handle({ method: 'disposeSession', params: { channel: 'slow:/one' } });
+    await settle(4);
+    expect(gone(notes, 'slow:/one')).toHaveLength(1);
+
+    // The next answer is the catalogue the client deleted it out of, and the
+    // pass behind that answer does not say it a second time: a row already
+    // said to be gone is not news again.
+    expect((await listed(client)).items.map((one) => one.resource)).toEqual([]);
+    await passed(here, 3);
+    expect(gone(notes, 'slow:/one')).toHaveLength(1);
+  });
+
+  it('is not put back by a pass that read the store before the delete', async () => {
+    const { here, client, notes } = await started(readingEarly);
+    await filled(here);
+    expect((await listed(client)).items.map((one) => one.resource)).toEqual(['slow:/one']);
+    await passed(here, 2);
+
+    // This answer starts a pass that has the row in what it read, and the
+    // delete lands while that pass is still out. What it brings back is the
+    // catalogue from before the delete - and a pass is not allowed to undo a
+    // delete, however long it was out.
+    await listed(client);
+    notes.length = 0;
+    await client.handle({ method: 'disposeSession', params: { channel: 'slow:/one' } });
+    await passed(here, 3);
+
+    expect(gone(notes, 'slow:/one')).toHaveLength(1);
+    expect((await listed(client)).items.map((one) => one.resource)).toEqual([]);
   });
 });

@@ -367,6 +367,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // `resource` a client reads `undefined` and takes nothing out, so a
     // disposed session stayed in every catalogue until something else
     // made that client re-read the list.
+    /*
+     * Out of the rows this host is holding as well as out of the backend's
+     * store. A client told a session is gone and then handed it by the next
+     * `listSessions` is the same half answer, one layer down - and the row is
+     * dropped before the broadcast, so the pass behind the answer that
+     * followed it cannot bring the row back.
+     */
+    ctx.drop(uri);
     forgetSent(uri);
     broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
@@ -682,6 +690,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     queuedAs?: string,
     attachments?: MessageAttachment[],
   ): string | undefined | Promise<string | undefined> => {
+    /*
+     * No new turn while an embedder is on its way out.
+     *
+     * Every road a turn reaches a backend by comes through here, which is why
+     * the hold is asked here rather than at each of them. Read off the context
+     * rather than destructured above, because a hold taken after this area was
+     * built is the one that counts - and a host that stops taking turns does
+     * stop, rather than only saying so.
+     */
+    if (ctx.refusing !== undefined) return ctx.refusing;
     /*
      * A turn with nowhere to charge.
      *

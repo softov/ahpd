@@ -1,6 +1,6 @@
 ---
 title: Opening a past session reads the held row
-status: implemented
+status: done
 depends: [task-03-the-catalogue-is-held.md]
 layer: "sdk, agent-claude"
 refs:

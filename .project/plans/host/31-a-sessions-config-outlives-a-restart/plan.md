@@ -62,8 +62,8 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The store keeps what a session was made with and every change](task-01-the-store-keeps-every-change.md) | implemented | - |
-| [02 - A stored value the schema refuses falls back to the default](task-02-a-refused-value-falls-back.md) | implemented | 01 |
+| [01 - The store keeps what a session was made with and every change](task-01-the-store-keeps-every-change.md) | done | - |
+| [02 - A stored value the schema refuses falls back to the default](task-02-a-refused-value-falls-back.md) | done | 01 |
 
 ## Risks and tradeoffs
 

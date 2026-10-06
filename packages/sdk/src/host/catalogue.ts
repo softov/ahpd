@@ -321,7 +321,16 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     ctx.dispatch(ROOT, { type: 'root/agentsChanged', agents: ctx.descriptors() });
   };
 
-  const listing = async (before: Summary[] = []): Promise<Summary[]> => {
+  /**
+   * Every id a session this host is serving answers to.
+   *
+   * The session's own, and the backend's own id for each of its chats: the two
+   * can differ, and a row listed under either is a session this host runs
+   * rather than one a backend is offering. Asked by a listing, so a running
+   * session is not listed twice, and by a refresh, so the row this host built
+   * for it is not one it calls gone.
+   */
+  const claimedIds = (): Set<string> => {
     const claimed = new Set<string>();
     for (const [uri, held] of sessions) {
       claimed.add(idFor(uri));
@@ -331,6 +340,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
           claimed.add(own);
       }
     }
+    return claimed;
+  };
+  const listing = async (before: Summary[] = []): Promise<Summary[]> => {
+    const claimed = claimedIds();
     /**
      * Whether this listing can say what is gone, and where it looked.
      *
@@ -668,7 +681,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
       sayMoved(row.resource, mutable);
     }
+    const claimed = claimedIds();
     for (const [resource] of was) {
+      /*
+       * A session this host is running is not one that went away.
+       *
+       * A listing leaves out what a session claims - the row it would have
+       * offered is in the live half of the answer instead - so a refresh finds
+       * it missing, and a row that was held and is not listed any more is
+       * exactly what a session deleted outside this host looks like. It is
+       * still here, its summary is the session's own, and what was last sent
+       * for it is kept so the next move of it is still compared against it.
+       */
+      if (sessions.has(resource) || claimed.has(idFor(resource)))
+        continue;
       forgetSent(resource);
       ctx.broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: resource });
     }

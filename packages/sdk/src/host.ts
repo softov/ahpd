@@ -709,7 +709,7 @@ export function createHost(options: HostOptions): Host {
     madeFrom, origins, births, moves, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
-    closed: false, described, links,
+    closed: false, refusing: undefined, described, links,
     watches, marksOf, resumedSessions, activeClientsOf, drafts,
     restartNeeded: false,
     dispatch,
@@ -865,6 +865,15 @@ export function createHost(options: HostOptions): Host {
     },
     turning: () => [...sessions.keys()]
       .filter((uri) => (statusOf(uri) & (Status.InProgress | Status.InputNeeded)) !== 0),
+    /*
+     * And the hold an embedder about to go puts on new ones.
+     *
+     * Held as the embedder's own words rather than as a flag, because this
+     * host has no idea why it is being taken down - a restart under it, a
+     * handover to another process - and the client that asked for a turn is
+     * owed that reason rather than a silence.
+     */
+    refuseTurns: (why) => { ctx.refusing = why; },
     accept(peer: Peer, principal?: Principal, root?: boolean) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),

@@ -1,6 +1,6 @@
 ---
 title: The restart line names `ahpd restart`, and the docs say it
-status: implemented
+status: done
 depends: [task-02-ahpd-restart.md]
 layer: "server, docs"
 refs:

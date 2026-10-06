@@ -29,6 +29,31 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
    * does not acquire a plugin's scheme by accident. That is what `HANDOFF`'s
    * pending step 9 means by scoping the gate rather than restoring it.
    */
+  /**
+   * The parameters a request has to spell as a string, or be refused for.
+   *
+   * `capabilityFor` reads these only when they are strings - `completions`
+   * only when its channel is one, the file methods' URIs through a filter -
+   * and `String(params.x ?? '')` in the handlers reads them whatever they
+   * are. So a value sent another way was gated as something else and then
+   * served as this: a channel sent as a list reached the handler with nothing
+   * asked for it, and the coercion there made it the session for a caller who
+   * had not been checked against it. Refused here, before any handler and
+   * before any method's grants, because refusing is the one answer that
+   * cannot skip a check.
+   *
+   * `uri`, `source` and `destination` are the three the file methods read a
+   * scheme off, and are asked for only where those methods are: `createChat`
+   * sends an object as its `source` and is not a file method.
+   */
+  const spelled = (params: Record<string, unknown>, ...names: string[]): void => {
+    for (const name of names) {
+      const said = params[name];
+      if (said !== undefined && typeof said !== 'string')
+        throw new RpcError(-32602, `${name} must be a string`);
+    }
+  };
+
   const capabilityFor = (method: string, params: Record<string, unknown>): Grant[] | undefined => {
     if (method === 'subscribe') {
       const channel = String(params.channel ?? '');
@@ -103,6 +128,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
      * needs: `excused` below asks the provider first.
      */
     if (subject !== 'file') return [plain];
+    spelled(params, 'uri', 'source', 'destination');
     const uris = [params.uri, params.source, params.destination]
       .filter((one): one is string => typeof one === 'string');
     if (uris.length === 0) return [plain];
@@ -208,6 +234,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
    */
   const admit = (method: string, params: Record<string, unknown>): void | Promise<void> => {
     if (ctx.options.users === undefined || connection.root === true) return;
+    spelled(params, 'channel');
     const needed = capabilityFor(method, params);
     if (needed === undefined || needed.length === 0) return;
     const who = connection.principal;

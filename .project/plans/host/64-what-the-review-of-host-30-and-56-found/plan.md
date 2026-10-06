@@ -1,7 +1,7 @@
 ---
 title: What the review of host/30, host/56, daemon/13 and claude/10 found is fixed
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -73,13 +73,13 @@ The review's probes reproduced tasks 01, 02 and 03; their cases are the first te
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A running session is never announced removed](task-01-a-running-session-is-never-announced-removed.md) | todo | - |
-| [02 - A deleted session leaves the held catalogue](task-02-a-deleted-session-leaves-the-held-catalogue.md) | todo | - |
-| [03 - A channel is a string or the request is refused](task-03-a-channel-is-a-string-or-refused.md) | todo | - |
-| [04 - Turns are fetched only for a session's channel](task-04-turns-are-fetched-only-for-a-sessions-channel.md) | todo | 03 |
-| [05 - A restart takes no new turn once it has checked](task-05-a-restart-takes-no-new-turn-once-checked.md) | todo | - |
-| [06 - A restart checks its line with the code that will run it](task-06-a-restart-checks-its-line-with-the-code-that-will-run-it.md) | todo | 05 |
-| [07 - A stored sandbox on survives the preset](task-07-a-stored-sandbox-on-survives-the-preset.md) | todo | - |
+| [01 - A running session is never announced removed](task-01-a-running-session-is-never-announced-removed.md) | done | - |
+| [02 - A deleted session leaves the held catalogue](task-02-a-deleted-session-leaves-the-held-catalogue.md) | done | - |
+| [03 - A channel is a string or the request is refused](task-03-a-channel-is-a-string-or-refused.md) | done | - |
+| [04 - Turns are fetched only for a session's channel](task-04-turns-are-fetched-only-for-a-sessions-channel.md) | done | 03 |
+| [05 - A restart takes no new turn once it has checked](task-05-a-restart-takes-no-new-turn-once-checked.md) | done | - |
+| [06 - A restart checks its line with the code that will run it](task-06-a-restart-checks-its-line-with-the-code-that-will-run-it.md) | done | 05 |
+| [07 - A stored sandbox on survives the preset](task-07-a-stored-sandbox-on-survives-the-preset.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -88,13 +88,13 @@ The review's probes reproduced tasks 01, 02 and 03; their cases are the first te
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-running-session-is-never-announced-removed.md](task-01-a-running-session-is-never-announced-removed.md).
-- **Open questions:** none.
+- **Done so far:** tasks 01-07 implemented 2026-10-06, each with a case that failed before the fix. Task 07 stopped on a fork - the value a store actually holds - which Softov answered on 2026-10-06: a stored `'on'` or `true`, so both the decision and the task now read that.
+- **Next action:** Softov's review, which sets the tasks to `done`.
+- **Open questions:** none. The one task 07 stopped on is answered and recorded in [the decision](../../../decisions/a-stored-sandbox-on-survives-the-preset.md).
 - **Watch out for:** every task starts with a test that fails on `main`; a fix with no failing test first is not done.
 
 ## Final verification checklist
 
-- [ ] Each task's new case fails on `c4e4dd0` and passes after.
-- [ ] `pnpm typecheck`, `pnpm boundary`, `pnpm test`, `pnpm build` pass.
-- [ ] `plans/index.md` updated.
+- [x] Each task's new case fails on `c4e4dd0` and passes after.
+- [ ] `pnpm typecheck`, `pnpm boundary`, `pnpm test`, `pnpm build` pass - typecheck, boundary and build pass; `pnpm test` fails one case, `computer-parts-mount.test.ts > asks again after a probe the image failed`, a docker test timing out in a file this plan does not change, which fails the same way when run on its own. [implemented.md](implemented.md) reports it as a failure.
+- [x] `plans/index.md` updated.

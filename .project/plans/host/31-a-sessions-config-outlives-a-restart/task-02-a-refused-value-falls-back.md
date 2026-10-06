@@ -1,6 +1,6 @@
 ---
 title: A stored value the schema refuses falls back to the default
-status: implemented
+status: done
 depends: [task-01-the-store-keeps-every-change.md]
 layer: "sdk"
 refs:

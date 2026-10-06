@@ -22,6 +22,8 @@ import type { Command, OptionSpec, Runner } from '@cofold/commands';
 import { Program, renderDefinitions, runEntry, styleFor } from '@cofold/terminal';
 import { cliRegistry, remoteRegistry } from './commands/registry.js';
 import { programGlobals } from './commands/options.js';
+import { CHECK_LINE_ENV } from './commands/restart.js';
+import { optionsOfLine } from './commands/run.js';
 import { version } from './version.js';
 
 /*
@@ -37,6 +39,29 @@ import { version } from './version.js';
 const ON_MACHINE = /^https?:\/\/(?:127\.0\.0\.1|\[::1\]|localhost)(?::\d+)?(?:[/?#]|$)/iu;
 
 const argv0 = process.argv.slice(2);
+
+/*
+ * A check run: this binary started with the line a restart is about to start
+ * its successor with, and asked whether it takes that line at all.
+ *
+ * It is reached by the environment rather than by a word, because the line is
+ * the one thing here that was not written by this code: a checking flag would
+ * be a flag no ahpd declares, and the reading of the line that matters is the
+ * strict one. Nothing is served and nothing is written - the line and the
+ * configuration as this code reads them are the whole of it - and the exit
+ * code is the answer, with the refusal on stderr for whoever asked.
+ */
+if (process.env[CHECK_LINE_ENV] === '1') {
+  try {
+    await optionsOfLine(argv0, true);
+  }
+  catch (error: unknown) {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(exitCodeFor(error));
+  }
+  process.exit(0);
+}
+
 const remoteUrl = readGlobal(argv0, '--remote');
 const refresh = argv0.includes('--refresh');
 

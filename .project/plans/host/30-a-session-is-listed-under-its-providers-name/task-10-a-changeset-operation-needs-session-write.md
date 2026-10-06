@@ -1,6 +1,6 @@
 ---
 title: A changeset operation needs session:write as well as file:write
-status: implemented
+status: done
 depends: [task-08-a-dispatch-into-a-session-needs-session-write.md]
 layer: "sdk"
 refs:

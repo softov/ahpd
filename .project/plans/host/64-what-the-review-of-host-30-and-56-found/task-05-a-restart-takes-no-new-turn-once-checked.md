@@ -1,6 +1,6 @@
 ---
 title: A restart takes no new turn once it has checked
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -31,3 +31,14 @@ Between an unforced restart's turn check and the host closing, no new turn start
 - `pnpm exec vitest run packages/server/test/server-restart.test.ts packages/server/test/server-cli.test.ts`.
 
 ## Resume
+
+Built 2026-10-06.
+
+- The case is in `packages/server/test/server-restart.test.ts`, `refuses a turn started while it stops, rather than having the close end one`. It failed first: a host built in that file over the echo example, one session subscribed, a `checkedRestart` whose hold is `host.refuseTurns`, and a way down whose `stopping` phase waits on a promise the case holds. A turn sent in that window was applied and answered with nothing - the action and its turn went through, and the `host.close()` at the end of the restart is what would have ended it. After the fix the same turn comes back as an `action` envelope with `rejectionReason: 'The daemon is restarting'`.
+- Two more cases in the same describe, which pass before and after and hold the fix in place: a turn already running lets the hold go again when the restart is refused because of it, and so do a line that cannot be read and a lifecycle that refuses the restart.
+- `checkedRestart` gained a fourth parameter, `hold: (why: string | undefined) => void`, and takes it *before* the line is read - a turn that starts while the file is being read is the same turn the close would end. It is let go on the three ways a restart does not run: an unreadable line, a running turn that is not forced, and a `way.restart` that throws (`A restart is already under way.`, `It is stopping.`). Otherwise it stays held, since the process ends.
+- `RESTARTING = 'The daemon is restarting'` is declared in `restart.ts`. The words are the embedder's, which is why the host is handed them rather than inventing them.
+- The SDK gained `Host.refuseTurns(why: string | undefined)`, `ctx.refusing` and the refusal in `beginOrRun` - the one road every turn takes, which is why it sits there rather than at the three call sites. `undefined` takes turns again. A turn already running is untouched, and `turning()` still names it. A turn on a session this host is not running yet still starts the session before `beginOrRun` refuses the turn; the client is told, and the close takes the session.
+- `users-gate-names.test.ts` needed a `WireTurn` annotation on task 04's fake transcript: it did not typecheck, since that task's validation ran vitest and not `pnpm typecheck`. Cast as `echo` casts its own.
+- Seen, not this task: a plain `ahpd stop` has the same window - `down()` awaits the `stopping` handlers before `host.close()` - and takes no hold, so a turn started there is still ended by the close.
+- `pnpm typecheck` passes. `packages/server/test/server-restart.test.ts` and `packages/server/test/server-cli.test.ts` pass, 115 tests. `packages/sdk/test` passes, 1438 tests.

@@ -1,6 +1,6 @@
 ---
 title: The catalogue is held, and a refresh sends what moved
-status: implemented
+status: done
 depends: [task-01-a-summary-that-did-not-change-is-not-sent.md, task-02-agents-are-listed-at-once-and-once-per-store.md]
 layer: "sdk"
 refs:

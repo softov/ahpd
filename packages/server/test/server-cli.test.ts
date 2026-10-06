@@ -724,6 +724,33 @@ describe('start, stop and status', () => {
     expect(await knock(before.connectUrl as string)).toBe('open');
   }, 60000);
 
+  it('refuses a restart whose recorded line this code does not take, and the daemon runs on', async () => {
+    const began = await cli([
+      'start', '--port', '0', '--plugin', BACKEND, '--sessions', 'memory', '--automations', 'memory', '--no-update-check',
+    ]);
+    expect(began.code).toBe(0);
+    const before = recordOf();
+    spawned.push(before.pid);
+
+    /*
+     * A line written by an ahpd that had a flag this one does not, which is
+     * what an update under a running daemon leaves in the record: the old
+     * daemon carries on holding a line only the new code can read.
+     */
+    const written = join(home, 'ahpd', 'daemon.json');
+    const record = JSON.parse(readFileSync(written, 'utf8')) as Record<string, unknown>;
+    writeFileSync(written, JSON.stringify({ ...record, argv: [...(record['argv'] as string[]), '--frobnicate'] }));
+
+    // The refusal carries the successor's own words, because they are what it
+    // would have died of, with the daemon that holds the line still up.
+    const again = await cli(['restart']);
+    expect(again.code).toBe(1);
+    expect(again.stderr).toBe('ahpd: Its line cannot run now, so it was not stopped: Unknown option --frobnicate.\n');
+    expect(alive(before.pid)).toBe(true);
+    expect(recordOf().pid).toBe(before.pid);
+    expect(await knock(before.connectUrl as string)).toBe('open');
+  }, 60000);
+
   it('restarts on a fixed port at the same URL, and a session made before is listed after', async () => {
     const port = await freePort();
     const began = await cli([

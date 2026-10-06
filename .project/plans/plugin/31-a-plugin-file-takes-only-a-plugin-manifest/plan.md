@@ -41,7 +41,7 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Only a plugin's manifest is taken](task-01-only-a-plugins-manifest-is-taken.md) | implemented | - |
+| [01 - Only a plugin's manifest is taken](task-01-only-a-plugins-manifest-is-taken.md) | done | - |
 
 ## Risks and tradeoffs
 

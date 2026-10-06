@@ -1,6 +1,6 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
-import { optionDefaults } from './options.js';
+import { optionDefaults, storedSandbox } from './options.js';
 import { tail } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
@@ -70,7 +70,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     gone: undefined as string | undefined,
     customizations: [...(options.seedCustomizations ?? [])] as Bag[],
     offered: [] as { id: string; name: string }[],
-    values: { ...optionDefaults(), ...options.preset } as Bag,
+    values: { ...optionDefaults(), ...options.preset, ...storedSandbox(options.settings) } as Bag,
     draft: undefined as Bag | undefined,
     beginning: undefined as string | undefined,
     turns: [...(options.seed ?? [])] as Bag[],

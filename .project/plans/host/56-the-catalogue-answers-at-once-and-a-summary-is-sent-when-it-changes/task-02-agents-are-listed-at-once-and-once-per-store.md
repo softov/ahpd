@@ -1,6 +1,6 @@
 ---
 title: Agents are listed at once, and Claude's variants read their store once
-status: implemented
+status: done
 depends: []
 layer: "sdk, agent-claude"
 refs:

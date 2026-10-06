@@ -1,6 +1,6 @@
 ---
 title: A dispatch into a session needs session:write, whatever its scheme
-status: implemented
+status: done
 depends: [task-07-a-provider-scheme-session-needs-session-read.md]
 layer: "sdk"
 refs:

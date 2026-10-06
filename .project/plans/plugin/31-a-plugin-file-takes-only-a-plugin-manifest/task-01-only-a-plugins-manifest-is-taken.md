@@ -1,6 +1,6 @@
 ---
 title: Only a plugin's manifest is taken
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

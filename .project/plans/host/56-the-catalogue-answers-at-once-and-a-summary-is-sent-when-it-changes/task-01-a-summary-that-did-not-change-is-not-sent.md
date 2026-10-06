@@ -1,6 +1,6 @@
 ---
 title: A summary that did not change is not sent
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

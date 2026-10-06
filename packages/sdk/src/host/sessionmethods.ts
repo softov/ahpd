@@ -37,8 +37,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     chatSummary, claimable, claims, dir, dispatch, drafts, first, forWhom, heldAs, isolating,
     isolated, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
-    seenBy, sessionFor, sessionSchema, sessions, settle, snapshotOf, spawn, unheld, waitingFor, watches,
-    withSender,
+    seenBy, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle, snapshotOf,
+    spawn, unheld, waitingFor, watches, withSender,
   } = ctx;
 
   /**
@@ -161,6 +161,19 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // by a URI this host did not mint, and a page of turns asked for
       // under that name is the same chat.
       const channel = meantBy(String(params.channel ?? ''));
+      /*
+       * A chat's or a session's, and never another kind of name that carries
+       * an id.
+       *
+       * The transcript a page is read from is chosen by the id inside the
+       * channel, so a terminal, a file or a watch called after a session's id
+       * would be answered with that session's turns - sent, as `turnsLoaded`
+       * is, to everyone watching *that* name. Never a session's id read out
+       * of a file, a terminal or a watch, which is the guard `snapshotOf`
+       * makes and this is the same one.
+       */
+      if (!sessionChannel(sessionOfChat(channel) ?? channel))
+        throw new RpcError(-32602, `${channel} is not a session or a chat`);
       const live = byChat.get(channel);
       // Asked before the transcript, so a page asked for out of a session
       // waiting for its agent names that agent rather than saying the

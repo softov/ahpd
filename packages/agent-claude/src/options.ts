@@ -55,6 +55,22 @@ export const sandbox: Declaration = {
 };
 
 /**
+ * The sandbox a session was stored on, over whatever its preset says.
+ *
+ * `sandboxEnabled` was a session's own control before the schema stopped
+ * declaring it, and a store still holds what that control was left on. An
+ * `on` - the word it wrote, or the `true` a client could have sent in its
+ * place - is the one value that outlives the control: it turns the sandbox on
+ * as the preset's `sandbox: 'on'` does, so an upgrade never runs a session
+ * less sandboxed than it was. `off`, `default` and `false` are the sandbox
+ * being turned off or left alone, and leave the preset in charge.
+ */
+export const storedSandbox = (settings: Record<string, unknown> | undefined): Bag => {
+  const held = settings?.['sandboxEnabled'];
+  return held === 'on' || held === true ? { sandbox: 'on' } : {};
+};
+
+/**
  * Extended thinking, which the query is built with.
  *
  * What every session ran on before a preset could say otherwise, which is why

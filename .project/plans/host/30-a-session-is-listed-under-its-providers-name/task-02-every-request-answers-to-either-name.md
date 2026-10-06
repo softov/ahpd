@@ -1,6 +1,6 @@
 ---
 title: Every request answers to either name of a session
-status: implemented
+status: done
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:

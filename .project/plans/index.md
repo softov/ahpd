@@ -29,7 +29,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | built 2026-10-02 ([implemented.md](daemon/10-a-first-run-sets-the-daemon-up/implemented.md)) | daemon 09 | - |
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | built 2026-10-02 ([implemented.md](daemon/11-root-config-carries-the-daemon-and-its-plugins/implemented.md)) | - | - |
 | [12 - A plugin option is set from the command line, in the file or for one run](daemon/12-a-plugin-option-is-set-from-the-command-line/plan.md) | medium | built 2026-10-04 ([implemented.md](daemon/12-a-plugin-option-is-set-from-the-command-line/implemented.md)); tasks implemented, awaiting review; by-hand checks not run | - | - |
-| [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01, 02, 03 implemented, 04 todo | - | - |
+| [13 - `ahpd restart` restarts the daemon in place, and refuses while a turn runs](daemon/13-ahpd-restart/plan.md) | high | active 2026-09-30; tasks 01-03 done (reviewed, fixed in host 64), 04 todo | - | - |
 | [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | built 2026-10-02 ([implemented.md](daemon/14-the-daemon-log-rotates-at-start/implemented.md)) | - | - |
 | [15 - A verb declares only the flags it reads](daemon/15-a-verb-declares-only-its-own-flags/plan.md) | medium | built 2026-10-06 ([implemented.md](daemon/15-a-verb-declares-only-its-own-flags/implemented.md)); tasks implemented, awaiting review | - | - |
 | [16 - A command says what it does to what, and the daemon serves on the cofold that checks it](daemon/16-a-command-says-what-it-does-to-what/plan.md) | high | planned 2026-10-06; task 01 blocked on the cofold release, 02 and 03 can start | cofold commands/03, commands/04 | ahpd-web resource screens |
@@ -74,8 +74,8 @@ Reference: [00-host.md](host/00-host.md)
 
 | [29 - A session that is not running shows its own folder, and its changes follow git](host/29-a-session-not-running-follows-its-own-folder/plan.md) | high | built 2026-09-29 ([implemented.md](host/29-a-session-not-running-follows-its-own-folder/implemented.md)) | - | - |
 
-| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | active 2026-09-30; tasks 01-04 and 07-10 implemented, 05 doing (checks by hand left), 06 done | - | - |
-| [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | active 2026-09-30; tasks 01, 02 implemented | - | claude 10 |
+| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | active 2026-09-30; tasks 01-04 and 07-10 done (reviewed, fixed in host 64), 05 doing (checks by hand left), 06 done | - | - |
+| [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | active 2026-09-30; tasks 01, 02 done (reviewed 2026-10-06) | - | claude 10 |
 | [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | built 2026-10-02 ([implemented.md](host/32-the-session-store-is-a-file-per-session/implemented.md)) | host 31 | - |
 | [33 - A session tool acts as the person it works for, within VS Code's limits, and can be switched off](host/33-a-session-tool-acts-as-the-person-it-works-for/plan.md) | high | planned 2026-09-30; task files to write, tasks 01-03 todo | host 30 | - |
 
@@ -126,7 +126,7 @@ Reference: [00-host.md](host/00-host.md)
 | [53 - ahpd.grants lists every subject a role can name, the schemes included](host/53-ahpd-grants-lists-every-scheme/plan.md) | high | built 2026-10-04 ([implemented.md](host/53-ahpd-grants-lists-every-scheme/implemented.md)); tasks implemented, awaiting review | host 46 | ahpapp people/01's role editor |
 | [54 - host.test.ts is split into one test file per area, with its helpers in one module](host/54-host-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/54-host-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [55 - users-gate.test.ts is split into one test file per area, with its shared helpers in one module](host/55-users-gate-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](host/55-users-gate-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
-| [56 - The catalogue answers at once, and a summary is sent only when it changes](host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md) | high | active 2026-10-04; tasks 01-04 implemented, awaiting review; 05 by hand | - | - |
+| [56 - The catalogue answers at once, and a summary is sent only when it changes](host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md) | high | active 2026-10-04; tasks 01-04 done (reviewed, fixed in host 64); 05 by hand | - | - |
 | [57 - pi, cofold and ACP find a session by id, and the listing throttle goes](host/57-pi-cofold-and-acp-find-a-session-by-id/plan.md) | high | planned 2026-10-04; tasks 01-04 todo | host 56 | - |
 | [58 - Policy and automation files are private, a cursor the host did not issue is refused, and a file URI is decoded](host/58-private-files-refused-cursors-and-decoded-file-uris/plan.md) | high | built 2026-10-06 ([implemented.md](host/58-private-files-refused-cursors-and-decoded-file-uris/implemented.md)); tasks implemented, awaiting review | - | host 59, host 60 |
 | [59 - People and policy are served by one record-store provider, and the value readers are one sdk module](host/59-one-record-store-provider-and-shared-value-helpers/plan.md) | medium | planned 2026-10-05; tasks 01-07 todo | host 58 | host 61, host 60 task 04 |
@@ -138,7 +138,7 @@ Reference: [00-host.md](host/00-host.md)
 | [62 p3 - pi and cofold run their client calls through the sdk](host/62-every-backend-calls-a-clients-tool-p3-pi-and-cofold-run-client-calls-through-the-sdk/plan.md) | high | planned 2026-10-06; tasks 01-02 todo | host 62 p1 | - |
 | [62 p4 - An ACP agent calls a client's tool](host/62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 62 p1, acp 11 | - |
 | [63 - Worktrees can live under one root](host/63-worktrees-can-live-under-one-root/plan.md) | medium | built 2026-10-06; reviewed and merged 2026-10-06 | - | - |
-| [64 - What the review of host/30, host/56, daemon/13 and claude/10 found is fixed](host/64-what-the-review-of-host-30-and-56-found/plan.md) | high | planned 2026-10-06; tasks 01-07 todo | host 30, host 56, daemon 13, claude 10 | - |
+| [64 - What the review of host/30, host/56, daemon/13 and claude/10 found is fixed](host/64-what-the-review-of-host-30-and-56-found/plan.md) | high | built 2026-10-06 ([implemented.md](host/64-what-the-review-of-host-30-and-56-found/implemented.md)); reviewed and merged 2026-10-06 | host 30, host 56, daemon 13, claude 10 | - |
 
 Next free number in `host`: `63`.
 
@@ -159,7 +159,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | built 2026-10-03 ([implemented.md](claude/08-tool-input-is-the-whole-input/implemented.md)) | - | - |
 
 | [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | built 2026-10-04 ([implemented.md](claude/09-a-message-runs-on-the-agent-it-picked/implemented.md)) | - | - |
-| [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | active 2026-10-02; tasks 01, 02, 04 done, 03 awaits the ahpapp check | host 31 | - |
+| [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | active 2026-10-02; tasks 01-04 done (03 reviewed, fixed in host 64); the ahpapp chip check is by hand | host 31 | - |
 | [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | built 2026-10-04 ([implemented.md](claude/11-an-answered-question-carries-its-answers/implemented.md)) | claude 08 | ahpapp chat/01 |
 | [12 - A second Claude harness runs on another endpoint, named on its own and keyed from the daemon's environment](claude/12-a-second-claude-runs-on-another-endpoint/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/12-a-second-claude-runs-on-another-endpoint/implemented.md)) | claude 10 | - |
 | [13 - A Claude harness offers the models it is told, written or fetched from an endpoint](claude/13-a-claude-harness-offers-the-models-it-is-told/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/13-a-claude-harness-offers-the-models-it-is-told/implemented.md)) | claude 12 | - |
@@ -222,7 +222,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [29 - A tool call says when it started and how long it ran, live and in history](plugin/29-a-tool-call-says-when-it-ran/plan.md) | medium | built 2026-10-03 ([implemented.md](plugin/29-a-tool-call-says-when-it-ran/implemented.md)) | - | - |
 
 | [30 - Two more tests wait for what their session is still doing](plugin/30-two-more-tests-wait-for-their-session/plan.md) | high | built 2026-09-30 ([implemented.md](plugin/30-two-more-tests-wait-for-their-session/implemented.md)) | plugin 28 | - |
-| [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 implemented | - | - |
+| [31 - A plugin file takes the nearest manifest only when it is a plugin's](plugin/31-a-plugin-file-takes-only-a-plugin-manifest/plan.md) | low | active 2026-09-30; task 01 done (reviewed 2026-10-06) | - | - |
 
 | [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 

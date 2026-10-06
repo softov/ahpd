@@ -498,13 +498,13 @@ describe('a session\'s config across a restart', () => {
   });
 
   /** A host over a store already holding a config for the session `stale`, as a restart finds it. */
-  const staleHost = async (config: Record<string, unknown>) => {
+  const staleHost = async (config: Record<string, unknown>, preset?: Record<string, unknown>) => {
     const store = memorySessions();
     store.setConfig('stale', config);
     sdk.sessions.push({ sessionId: 'stale', summary: 'Stale', lastModified: 1, cwd: '/home/softov' });
     const said: string[] = [];
     const host = createHost({
-      path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), sessions: store,
+      path: '/home/softov', agents: [claude({ paths: ['/home/softov'], ...(preset === undefined ? {} : { preset }) })], ...machine(), sessions: store,
       onEvent: (message) => said.push(message),
     });
     const client = host.accept(peer());
@@ -542,5 +542,38 @@ describe('a session\'s config across a restart', () => {
     await read();
     expect(said.filter((line) => /stale.*permissions.*"all"/.test(line))).toHaveLength(1);
     expect(said.some((line) => line.includes('stored model'))).toBe(false);
+  });
+
+  /** The `query()` options a turn on the stored session `stale` was built with. */
+  const resumedQuery = async (config: Record<string, unknown>, preset?: Record<string, unknown>) => {
+    const { client } = await staleHost(config, preset);
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/stale', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+    });
+    await settle(8);
+    return sessionQueries().at(-1)?.options as { settings?: Record<string, unknown> } | undefined;
+  };
+
+  it('runs a resumed session in the sandbox its store holds, which its preset need not say', async () => {
+    const options = await resumedQuery({ sandboxEnabled: 'on' });
+    expect(options?.settings).toEqual({ sandbox: { enabled: true } });
+  });
+
+  it('keeps a stored sandbox on over a preset that says off, in both spellings it was written in', async () => {
+    // `'on'` is what the control the schema dropped actually wrote; `true` is
+    // the same value in the shape a client could have sent it.
+    expect((await resumedQuery({ sandboxEnabled: 'on' }, { sandbox: 'off' }))?.settings)
+      .toEqual({ sandbox: { enabled: true } });
+    expect((await resumedQuery({ sandboxEnabled: true }, { sandbox: 'off' }))?.settings)
+      .toEqual({ sandbox: { enabled: true } });
+  });
+
+  it('lets a stored sandbox that is off, default or false leave the preset in charge', async () => {
+    for (const held of ['off', 'default', false]) {
+      expect((await resumedQuery({ sandboxEnabled: held }, { sandbox: 'on' }))?.settings, String(held))
+        .toEqual({ sandbox: { enabled: true } });
+      expect((await resumedQuery({ sandboxEnabled: held }))?.settings, String(held)).toBeUndefined();
+    }
   });
 });

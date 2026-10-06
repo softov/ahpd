@@ -1,6 +1,6 @@
 ---
 title: An action reaches an aliased subscriber in its own spelling
-status: implemented
+status: done
 depends: [task-01-a-created-session-is-held-under-its-providers-name.md]
 layer: "sdk"
 refs:

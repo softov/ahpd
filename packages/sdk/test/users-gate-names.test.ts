@@ -5,9 +5,11 @@ import { memoryAutomations } from '../src/automations.js';
 import { shellTerminals } from '../src/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import {
-  RECORD, call, directory, hello, host, listingOne, peer, root, signIn, until, watching, withRole,
+  RECORD, call, directory, hello, host, listingOne, onDisk, peer, root, signIn, until, watching, withRole,
 } from './users-gate-helpers.js';
 import type { Bag } from './users-gate-helpers.js';
+import type { Turn } from '@microsoft/agent-host-protocol';
+import type { WireTurn } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /** A peer that answers a relayed `createResourceWatch` with the channel it is given. */
@@ -117,6 +119,45 @@ it('keeps terminals and sessions from being named after each other', async () =>
   expect(await call(admin.client, 'createSession', { channel: 'vscode:/two', provider: 'claude' })).toMatchObject({ code: -32003 });
 });
 
+
+it('refuses turns for a name that is nobody\'s session or chat', async () => {
+  const one = { ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' };
+  const made = host({
+    users: directory({ a: ['file:read', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }),
+    agents: [{
+      ...one,
+      list: async () => [onDisk('one')],
+      // One turn as the wire carries it, which the host reads the message out
+      // of and nothing else - `echo` casts its own the same way.
+      transcript: async () => ([
+        { uuid: 'u0', message: { role: 'user', content: 'said 0' } },
+      ] as Bag[] as WireTurn<Turn>[]),
+    }],
+    terminals: shellTerminals(),
+  });
+  const admin = await withRole(made, 'a');
+  expect(await call(admin.client, 'subscribe', { channel: 'claude:/one' })).toHaveProperty('result');
+  // A terminal the client named after the session's *id*, which is a name in
+  // the terminal space and no session of this host's.
+  const terminal = 'ahp-terminal:/one';
+  expect(await call(admin.client, 'createTerminal', { channel: terminal, cwd: root })).toHaveProperty('result');
+  expect(await call(admin.client, 'subscribe', { channel: terminal })).toHaveProperty('result');
+
+  /*
+   * The turns of a session named `one`, sent to everyone watching a terminal
+   * that is called that.
+   *
+   * `fetchTurns` reads the id out of whatever channel it is given, so a name
+   * in another space is answered with a session's transcript - which host/30
+   * task 08 says is never how a session's id is read.
+   */
+  await call(admin.client, 'fetchTurns', { channel: terminal, cursor: '1' });
+  expect(admin.seen.seen.filter((said) => said.method === 'action' && said.params.channel === terminal)).toEqual([]);
+  // And the session's own chat still pages.
+  await call(admin.client, 'fetchTurns', { channel: 'claude:/one', cursor: '1' });
+  expect(admin.seen.seen.filter((said) => said.method === 'action'
+    && said.params.action?.type === 'chat/turnsLoaded')).not.toEqual([]);
+});
 
 it('answers no channel a connection may not read in its handshake', async () => {
   const made = host({

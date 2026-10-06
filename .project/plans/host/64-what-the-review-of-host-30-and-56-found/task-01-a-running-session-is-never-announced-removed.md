@@ -1,6 +1,6 @@
 ---
 title: A running session is never announced removed
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -31,3 +31,10 @@ A refresh never sends `root/sessionRemoved` for a session this host is serving, 
 - `pnpm exec vitest run packages/sdk/test/host-catalogue*.test.ts packages/sdk/test/host-past-open.test.ts`.
 
 ## Resume
+
+Built 2026-10-06.
+
+- The two cases in `describe('a refresh and a session this host is running')` in `packages/sdk/test/host-catalogue-held.test.ts`. Both failed first on `c4e4dd0`, each with a `root/sessionRemoved` for the session this host was serving: `slow:/one` for the row opened and given a turn, `slow:/two` for the session created while a refresh was out. The second case is the one the first pass hides: the in-flight listing still holds the row, so the removal lands one pass later.
+- The `backend` fixture gained `transcript: async () => []`, because a row opened for a turn has to be readable before it can be resumed. No case depended on its absence.
+- `catalogue.ts` gained `claimedIds()`, the id set `listing` built inline, now asked by `rowsMoved` too. The removal loop skips a resource `sessions` holds or `claimedIds()` claims, before `forgetSent`, so a live session's summaries are still compared against what was sent.
+- `packages/sdk/test/host-catalogue*.test.ts` and `host-past-open.test.ts` pass.

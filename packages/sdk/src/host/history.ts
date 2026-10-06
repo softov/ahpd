@@ -35,6 +35,8 @@ export interface History {
   /** The rows as last listed: held when there are any, and the first listing when there are not. */
   held(): Promise<Summary[]>;
   past(id: string): Promise<Bag[] | undefined>;
+  /** A session deleted here, out of the rows this host is holding, by id. */
+  drop(resource: string): void;
 }
 
 export function createHistory(ctx: HostContext): History {
@@ -138,6 +140,18 @@ export function createHistory(ctx: HostContext): History {
   let rows: Summary[] = [];
   /** The listing in flight, so a second ask joins it rather than starting one. */
   let refreshing: Promise<Summary[]> | undefined;
+  /** How many listings have been started, which is what a delete is dated by. */
+  let passes = 0;
+  /**
+   * The sessions deleted here, against the pass each delete happened in.
+   *
+   * A pass that was already out read the store before the delete, so what it
+   * finds still has a row for a session this host has said is gone. Dated, so
+   * a pass knows whether it is one of those - and kept until a pass that
+   * started after the delete lands, since that is the first one that read the
+   * store knowing about it.
+   */
+  const droppedIn = new Map<string, number>();
   /** When `past` last listed for itself, and so did not read the held rows. */
   let pastAt = -Infinity;
   /**
@@ -158,16 +172,52 @@ export function createHistory(ctx: HostContext): History {
   const refresh = (): Promise<Summary[]> => {
     const already = refreshing;
     if (already !== undefined) return already;
+    /*
+     * The pass this is, and what it is allowed to bring back.
+     *
+     * A delete dates itself with the pass it happened in, and that pass is the
+     * one that can still be carrying the row: what it read, and the rows it is
+     * diffed against, are both filtered by it. `rows` is taken here rather
+     * than read again when the listing lands, because a delete during the
+     * listing replaces it - and a delete's own rows are the ones this pass has
+     * to be judged against.
+     */
+    const startedAt = ++passes;
+    const goneWhileOut = (row: Summary): boolean => {
+      const dropped = droppedIn.get(idFor(row.resource));
+      return dropped !== undefined && dropped >= startedAt;
+    };
     const asked = (async (): Promise<Summary[]> => {
-      const found = await listing(rows);
-      ctx.rowsMoved(rows, found);
+      const before = rows;
+      const listed = await listing(before);
+      const found = listed.filter((row) => !goneWhileOut(row));
+      ctx.rowsMoved(before.filter((row) => !goneWhileOut(row)), found);
       rows = found;
+      // A pass that started after a delete read the store knowing about it, so
+      // a delete older than this pass has nothing left to hold back.
+      for (const [id, dropped] of droppedIn) if (dropped < startedAt) droppedIn.delete(id);
       return found;
     })();
     refreshing = asked;
     const clear = (): void => { if (refreshing === asked) refreshing = undefined; };
     asked.then(clear, clear);
     return asked;
+  };
+  /**
+   * A session deleted here, out of the rows this host is holding.
+   *
+   * A delete lists nothing, so a row the backend's store has lost is still the
+   * row a `listSessions` answers with - and a client is offered the session it
+   * was just told is gone. Removed here, and dated, so the pass behind that
+   * answer cannot put it back either.
+   *
+   * By id, because the two names a session answers to are one session: a
+   * delete under either spelling drops the row under both.
+   */
+  const drop = (resource: string): void => {
+    const id = idFor(resource);
+    rows = rows.filter((row) => idFor(row.resource) !== id);
+    droppedIn.set(id, passes);
   };
   /**
    * The catalogue as `listSessions` and `past` read it: the held rows, or the
@@ -324,5 +374,6 @@ export function createHistory(ctx: HostContext): History {
 
   return {
     history, subHistory, titles, restoredSubagents, restoredParentChat, linkedTurns, refresh, held, past,
+    drop,
   };
 }

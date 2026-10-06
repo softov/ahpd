@@ -11,6 +11,7 @@
  * leave the terminal it runs in, so it is restarted where it runs.
  */
 
+import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
@@ -219,30 +220,123 @@ export function lifecycle(steps: LifecycleSteps): Lifecycle {
 /** What a restart whose recorded line no longer runs is refused with. */
 const UNRUNNABLE = 'Its line cannot run now, so it was not stopped: ';
 
+/** What a turn is refused with from the moment a restart has begun. */
+export const RESTARTING = 'The daemon is restarting';
+
+/**
+ * The variable a check run is reached by: set on the successor's binary, which
+ * is handed the recorded line as its arguments like a start, and which reads
+ * that line and answers rather than serving it.
+ *
+ * An environment variable rather than a flag, because the line is the one
+ * thing here that was written by another ahpd: a flag meaning "check only"
+ * would be a flag that ahpd does not declare, in a line that is only ever read
+ * by the code that wrote it - and the reading that matters is the strict one.
+ */
+export const CHECK_LINE_ENV = 'AHPD_CHECK_LINE';
+
+/** The first line a check said, which is the whole of what a refusal can carry. */
+const firstLine = (said: string): string | undefined =>
+  said.split('\n').map((one) => one.trim()).find((one) => one !== '');
+
+/**
+ * How long a check is given before it is killed and the restart refused.
+ *
+ * A check is a parse and a file read, and the daemon's own start gives a whole
+ * successor twenty seconds. The bound is not for a slow check but for a child
+ * that is not one: the entry at that path may be an ahpd older than the
+ * variable this asks by - a downgrade under a running daemon - and what that
+ * one does with a line is start serving it.
+ */
+const CHECK_WAIT_MS = 10_000;
+
+/**
+ * Ask the binary the successor will run whether it takes that line at all.
+ *
+ * `process.argv[1]` is this daemon's entry as the install has it *now*, which
+ * is the file `start` runs a successor from: a daemon started before an
+ * `npm i -g` is holding a line that only the ahpd now on disk can read, and it
+ * is that ahpd which answers here. The child is handed the recorded line
+ * exactly as the successor would be handed it, in the same environment and
+ * from the same working directory, so what it reads is what the successor will
+ * read; `CHECK_LINE_ENV` is the whole difference between this and a start.
+ *
+ * Rejects with the child's own words when it does not exit zero, which is why
+ * the caller refuses the restart with them: a successor that dies on its line
+ * takes the daemon down with it, and the words are what it would have died of.
+ * One line of them, because the daemon's refusal is one line of its log, which
+ * a terminal reads the rest of. A child that says nothing by `CHECK_WAIT_MS` is
+ * killed and rejected with that instead, since a restart that hangs here is a
+ * restart that neither happens nor is refused.
+ */
+export async function successorTakes(argv: readonly string[]): Promise<void> {
+  const child = spawn(process.execPath, [...process.execArgv, process.argv[1] as string, ...argv], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+    env: { ...process.env, [CHECK_LINE_ENV]: '1' },
+    timeout: CHECK_WAIT_MS,
+    killSignal: 'SIGKILL',
+  });
+  const answer = await new Promise<{ code: number | null; said: string }>((done) => {
+    let said = '';
+    child.stderr.on('data', (chunk: Buffer) => { said += String(chunk); });
+    // A spawn that never happened answers as one that failed does, and answers
+    // once: a settled promise ignores the second answer.
+    child.once('error', (error: Error) => { done({ code: null, said: error.message }); });
+    child.once('close', (code) => { done({ code, said }); });
+  });
+  if (answer.code === 0) return;
+  throw new Error(firstLine(answer.said) ?? (answer.code === null
+    ? `it did not answer within ${String(CHECK_WAIT_MS / 1000)} seconds, and was killed`
+    : `it exited with ${String(answer.code)} and said nothing`));
+}
+
 /**
  * A restart that reads its line before anything goes down.
  *
  * `read` is the recorded line read over the configuration as it is now, and
  * answers the connection token the successor will have; when it throws, the
- * restart is refused with why and the daemon runs on. The running turns are
- * read again after it, so a turn that began during the read refuses a restart
- * that is not forced. Otherwise the lifecycle restarts with that line and token.
+ * restart is refused with why and the daemon runs on. Asking the successor's
+ * own binary whether it takes the line is part of that read - `successorTakes`
+ * - because a line only this daemon can read is a line the successor dies on,
+ * and it dies after this one has already gone.
+ *
+ * `hold` stops the host taking new turns, and is asked *before* the line is
+ * read: a turn that begins anywhere between this and the close at the end of
+ * the way down is a turn that close ends, and a check a turn can slip past is
+ * no check. The running turns are read again after it, so a turn that began
+ * during the read refuses a restart that is not forced. A restart that does
+ * not run - an unreadable line, a running turn, a lifecycle that refuses it -
+ * lets turns go again, because this daemon carries on. Otherwise the lifecycle
+ * restarts with that line and token, and turns stay held until the process
+ * ends.
  */
 export const checkedRestart = (
   read: (argv: string[]) => Promise<string | undefined>,
   turning: () => string[],
   way: Pick<Lifecycle, 'restart'>,
+  hold: (why: string | undefined) => void,
 ) => async (argv: string[], force: boolean): Promise<void> => {
+  hold(RESTARTING);
   let token: string | undefined;
   try {
     token = await read(argv);
   }
   catch (error) {
+    hold(undefined);
     conflict(`${UNRUNNABLE}${wordsOf(error)}`);
   }
   const now = turning();
-  if (now.length > 0 && !force) conflict(busy(now));
-  way.restart(argv, token);
+  if (now.length > 0 && !force) {
+    hold(undefined);
+    conflict(busy(now));
+  }
+  try {
+    way.restart(argv, token);
+  }
+  catch (error) {
+    hold(undefined);
+    throw error;
+  }
 };
 
 /** What the daemon reads when a restart signal arrives. */

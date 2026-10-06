@@ -55,7 +55,7 @@ import { filesOf, lineFor, writerFor } from '../wire.js';
 import { MAX_AGE_MS, checkingUpdates, readUpdate, refreshUpdate, registry as npmRegistry, stale, updateLine } from '../update.js';
 import { manifest, version } from '../version.js';
 import { conflict, optionsFrom, secret, flagFields, stop } from './options.js';
-import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle } from './restart.js';
+import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, successorTakes } from './restart.js';
 import type { Options } from './options.js';
 
 /**
@@ -943,8 +943,28 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * answer has gone, the same steps as a shutdown, the successor started with
    * that line and token, and the exit. The token is the one the line reads
    * now, so a changed token is the one the successor's record carries.
+   *
+   * Before any of that, the host stops taking new turns: the way down awaits
+   * the plugins' `stopping` handlers, which have no limit, and a turn begun
+   * while one of those runs is a turn `host.close()` ends.
+   *
+   * The read also asks the successor's own binary whether it takes that line
+   * at all, which is the one thing a daemon holding a line cannot answer for
+   * itself: this process was started by the ahpd as it was then, and an
+   * install since may have dropped a flag the line still names. Its token is
+   * read first, so a line this daemon also cannot read is refused with this
+   * daemon's words rather than with a child's.
    */
-  restart = checkedRestart(async (line) => secret(await optionsOfLine(line)).token, () => host.turning(), way);
+  restart = checkedRestart(
+    async (line) => {
+      const token = secret(await optionsOfLine(line)).token;
+      await successorTakes(line);
+      return token;
+    },
+    () => host.turning(),
+    way,
+    (why) => { host.refuseTurns(why); },
+  );
   /*
    * `ahpd restart` at the terminal: a signal to the recorded process, which
    * answers it here. A daemon run in the foreground never listens for them.
@@ -963,10 +983,16 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
 /**
  * The options a recorded line runs with, read over the configuration as it is
  * now: what a daemon started again with that line is told.
+ *
+ * `strict` refuses a flag this code does not know rather than keeping it as a
+ * guess, and is what a check run asks for: the permissive read is the daemon
+ * holding a line it did not write and has to answer for, while the question
+ * "does this code take this line" is only answerable by the code itself - a
+ * flag this ahpd has dropped is one a successor would die on.
  */
-export async function optionsOfLine(argv: readonly string[]): Promise<Options> {
+export async function optionsOfLine(argv: readonly string[], strict = false): Promise<Options> {
   const run = declareRun(createRegistry());
-  const tokens = tokenize(optionTable(optionsOf(run), true), argv, { permissive: true });
+  const tokens = tokenize(optionTable(optionsOf(run), true), argv, { permissive: !strict });
   return optionsFrom(await canonicalFromCli(run, { slots: {}, options: tokens.options }));
 }
 

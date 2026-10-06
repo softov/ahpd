@@ -5,7 +5,8 @@
  * Request against a daemon's facts written by hand, the terminal's signal and
  * the daemon's log are fakes, and the restart itself is driven with a fake
  * close, start and exit, so no case can stop the process running the suite or
- * leave a daemon behind.
+ * leave a daemon behind. The one host built here is in this process, over a
+ * backend that answers without a CLI.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -13,9 +14,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { fileUsers } from '@ahpd/sdk';
+import { createHost } from '../../sdk/src/host.js';
+import { echo } from '../../../examples/echo/agent.js';
+import type { Peer } from '../../sdk/src/types/rpc.js';
 import { conflict, type Options } from '../src/commands/options.js';
 import {
-  FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartAtTerminal, restartInPlace,
+  FORCED_SIGNAL, RESTARTING, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, restartAtTerminal, restartInPlace,
 } from '../src/commands/restart.js';
 import type { InPlace, LifecycleSteps } from '../src/commands/restart.js';
 import { apiOrigins } from '../src/commands/run.js';
@@ -378,7 +382,7 @@ describe('the daemon, told to restart by a signal', () => {
       recorded: () => recordFor(7),
       turning: () => [],
       log: (line) => { said.push(line); },
-      restart: checkedRestart(async () => { throw new Error('config.json is not JSON'); }, () => [], { restart: (argv, token) => { restarts.push([argv, token]); } }),
+      restart: checkedRestart(async () => { throw new Error('config.json is not JSON'); }, () => [], { restart: (argv, token) => { restarts.push([argv, token]); } }, () => {}),
     });
     expect(restarts).toEqual([]);
     expect(said).toEqual(['restart refused (SIGHUP): Its line cannot run now, so it was not stopped: config.json is not JSON']);
@@ -389,21 +393,27 @@ describe('checkedRestart', () => {
   it('reads the line before the lifecycle is asked, and hands it the token read', async () => {
     const asked: [string[], string | undefined][] = [];
     const read: string[][] = [];
+    const held: (string | undefined)[] = [];
     const restart = checkedRestart(async (argv) => { read.push(argv); expect(asked).toEqual([]); return 'xyz'; }, () => [], {
       restart: (argv, token) => { asked.push([argv, token]); },
-    });
+    }, (why) => { held.push(why); });
     await restart(ARGV, false);
     expect(read).toEqual([ARGV]);
     expect(asked).toEqual([[ARGV, 'xyz']]);
+    // Held before the line was read, and left held: this restart is going.
+    expect(held).toEqual([RESTARTING]);
   });
 
   it('refuses with why, and never asks the lifecycle, when the line or its token cannot be read', async () => {
     const asked: string[][] = [];
+    const held: (string | undefined)[] = [];
     const restart = checkedRestart(async () => { throw new Error('connectionTokenFile /nope cannot be read'); }, () => [], {
       restart: (argv) => { asked.push(argv); },
-    });
+    }, (why) => { held.push(why); });
     await expect(restart(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: connectionTokenFile /nope cannot be read');
     expect(asked).toEqual([]);
+    // Taken, then let go: this daemon runs on and takes turns again.
+    expect(held).toEqual([RESTARTING, undefined]);
   });
 });
 
@@ -427,7 +437,7 @@ describe('a turn that starts while the line is read', () => {
       turning: () => turning,
       log: (line: string) => { said.push(line); },
       // The read waits for the test, and a turn begins meanwhile.
-      restart: checkedRestart(() => new Promise<string | undefined>((done) => { reading = () => { done(undefined); }; }), () => turning, way),
+      restart: checkedRestart(() => new Promise<string | undefined>((done) => { reading = () => { done(undefined); }; }), () => turning, way, () => {}),
     };
     const first = answerRestartSignal(false, facts);
     await new Promise((wait) => { setTimeout(wait, 0); });
@@ -599,5 +609,158 @@ describe('restartAtTerminal', () => {
       return false;
     });
     expect((await restartAtTerminal(false, steps)).pid).toBe(8);
+  });
+});
+
+describe('a turn and a restart that is stopping the daemon', () => {
+  /** A client that keeps what the host sent it. */
+  const peer = (): Peer & { notes: { method: string; params: unknown }[] } => {
+    const notes: { method: string; params: unknown }[] = [];
+    return {
+      notes,
+      send: () => {},
+      notify: (method, params) => notes.push({ method, params }),
+      request: async () => ({}),
+      answered: () => {},
+      close: () => {},
+    };
+  };
+
+  const settle = async (times = 8): Promise<void> => {
+    for (let i = 0; i < times; i++) await new Promise((wake) => { setTimeout(wake, 0); });
+  };
+
+  /*
+   * A daemon's host, in this process.
+   *
+   * The backend is the echo example, which answers without a CLI, so a turn
+   * costs a few ticks rather than a process - and `pace` is how long one is held
+   * open, which is how a case has a turn running when it needs one.
+   */
+  const live = async (pace = 0) => {
+    const where = join(home, 'work');
+    const host = createHost({ path: where, agents: [echo({ path: where, pace })] });
+    const said = peer();
+    const client = host.accept(said);
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'restarting', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    const uri = 'ahp-session:/restarting';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    const chat = opened.snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    return { host, client, said, uri, chat };
+  };
+
+  type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
+
+  /** What the host last said about an action on a chat: the action, or the refusal of it. */
+  const answeredOn = (said: { notes: { method: string; params: unknown }[] }, chat: string) => said.notes
+    .filter((note) => note.method === 'action')
+    .map((note) => note.params as { channel: string; action: { type: string }; rejectionReason?: string })
+    .filter((one) => one.channel === chat)
+    .at(-1);
+
+  /** A client saying something on a chat now. */
+  const say = async (client: Client, chat: string, text: string, turnId: string): Promise<void> => {
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    });
+    await settle();
+  };
+
+  it('refuses a turn started while it stops, rather than having the close end one', async () => {
+    const { host, client, said, chat } = await live();
+    const log: string[] = [];
+    let release = (): void => {};
+    const held = new Promise<void>((done) => { release = done; });
+    let finished = (): void => {};
+    const over = new Promise<void>((done) => { finished = done; });
+
+    const way = lifecycle({
+      /*
+       * A plugin's `stopping` handler holds the way down open, and the host
+       * closes after it - the same order the daemon's own down goes in.
+       */
+      down: async () => { await held; await host.close(); },
+      start: async () => recordFor(8),
+      stop: () => {},
+      forget: () => {},
+      log: (line) => { log.push(line); },
+      exit: (code) => { log.push(`exit ${String(code)}`); finished(); },
+      later: (step) => { step(); },
+    });
+    const restart = checkedRestart(
+      async () => 'xyz',
+      () => host.turning(),
+      way,
+      (why) => { host.refuseTurns(why); },
+    );
+    await restart(ARGV, false);
+
+    // On its way down, with the host still answering: the window a turn can
+    // start in, and be ended by the close at the end of this restart.
+    await say(client, chat, 'hello', 't1');
+    expect(answeredOn(said, chat)?.rejectionReason).toBe('The daemon is restarting');
+
+    release();
+    await over;
+    expect(log).toContain('exit 0');
+  });
+
+  it('takes turns again when a running one refuses the restart', async () => {
+    const { host, client, said, chat } = await live(50);
+    await say(client, chat, 'busy', 't1');
+    // As the host spells it, which is the name a refusal names it by.
+    const running = host.turning();
+    expect(running).toHaveLength(1);
+
+    const asked: string[][] = [];
+    const restart = checkedRestart(
+      async () => 'xyz',
+      () => host.turning(),
+      { restart: (argv) => { asked.push(argv); } },
+      (why) => { host.refuseTurns(why); },
+    );
+    await expect(restart(ARGV, false)).rejects.toThrow(`A turn is running in ${String(running[0])}; pass --force to restart anyway.`);
+    expect(asked).toEqual([]);
+
+    // The daemon ran on, so the next thing somebody says is theirs again.
+    await say(client, chat, 'still here', 't2');
+    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    await host.close();
+  });
+
+  it('takes turns again when its line cannot run, or a restart is already under way', async () => {
+    const { host, client, said, chat } = await live();
+    const asked: string[][] = [];
+    const holding = (why: string | undefined): void => { host.refuseTurns(why); };
+
+    const unrunnable = checkedRestart(
+      async () => { throw new Error('config.json is not JSON'); },
+      () => host.turning(),
+      { restart: (argv) => { asked.push(argv); } },
+      holding,
+    );
+    await expect(unrunnable(ARGV, false)).rejects.toThrow('Its line cannot run now, so it was not stopped: config.json is not JSON');
+    await say(client, chat, 'hello', 't1');
+    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+
+    const underWay = checkedRestart(
+      async () => 'xyz',
+      () => host.turning(),
+      { restart: () => { conflict('A restart is already under way.'); } },
+      holding,
+    );
+    await expect(underWay(ARGV, false)).rejects.toThrow('A restart is already under way.');
+    await say(client, chat, 'and again', 't2');
+    expect(answeredOn(said, chat)?.rejectionReason).toBeUndefined();
+    expect(asked).toEqual([]);
+    await host.close();
   });
 });

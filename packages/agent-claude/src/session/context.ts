@@ -166,7 +166,9 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    *
    * What each is when nothing named one, then what this backend's variant
    * holds, under the names the declarations give them. These are written by
-   * whoever configured this backend, never by a session's config keys.
+   * whoever configured this backend, and not by a session's config keys: the
+   * one thing this session's own store has a say in is a `sandboxEnabled` it
+   * was left on, which no field of the schema carries any more.
    */
   values: Bag;
   /** The config in force, by key. What `session/configChanged` merges into. */

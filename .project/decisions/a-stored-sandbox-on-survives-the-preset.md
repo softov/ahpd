@@ -11,12 +11,12 @@ refs:
 ## Context
 
 claude/10 task 03 took `sandboxEnabled` off the session schema; the sandbox now comes only from the preset.
-A session someone switched to Sandbox On before that change still has `sandboxEnabled: true` in its stored config, and host/31 keeps the key, but nothing reads it, so the session resumes unsandboxed unless its preset says `sandbox: 'on'`.
+A session someone switched to Sandbox On before that change still has `sandboxEnabled: 'on'` in its stored config (the old control was the enum `default`, `on`, `off`), and host/31 keeps the key, but nothing reads it, so the session resumes unsandboxed unless its preset says `sandbox: 'on'`.
 
 ## Decision
 
-On resume, a stored `sandboxEnabled: true` turns the CLI's sandbox on, as the preset's `sandbox: 'on'` would.
-A stored `false` or no value changes nothing: the preset decides, as claude/10 says.
+On resume, a stored `sandboxEnabled` of `'on'` (or `true`) turns the CLI's sandbox on, as the preset's `sandbox: 'on'` would.
+A stored `'off'`, `'default'`, `false` or no value changes nothing: the preset decides, as claude/10 says.
 No session becomes weaker by upgrading.
 
 Source: Softov, 2026-10-06, asked "claude/10: an old session switched to Sandbox On resumes unsandboxed unless its preset says sandbox on. Keep that?" and chose "Honour the stored value".

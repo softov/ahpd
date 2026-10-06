@@ -1,6 +1,6 @@
 ---
 title: A session a client creates is held under its provider's name
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

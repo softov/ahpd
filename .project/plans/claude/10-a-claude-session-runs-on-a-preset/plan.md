@@ -74,7 +74,7 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 | --- | --- | --- |
 | [01 - Each Claude option is one declaration](task-01-each-option-is-one-declaration.md) | done | - |
 | [02 - Presets, and the `preset` key](task-02-presets-and-the-preset-key.md) | done | 01, host/31 |
-| [03 - The ahpd-only chips move into presets](task-03-the-chips-move-into-presets.md) | implemented | 02 |
+| [03 - The ahpd-only chips move into presets](task-03-the-chips-move-into-presets.md) | done | 02 |
 | [04 - Docs, and the six-modes line corrected](task-04-docs.md) | done | 03 |
 
 ## Risks and tradeoffs

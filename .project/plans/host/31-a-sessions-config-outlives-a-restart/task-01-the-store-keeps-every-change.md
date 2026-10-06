@@ -1,6 +1,6 @@
 ---
 title: The store keeps what a session was made with and every change
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

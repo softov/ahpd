@@ -1,6 +1,6 @@
 ---
 title: A terminal needs terminal grants whatever its scheme
-status: implemented
+status: done
 depends: [task-08-a-dispatch-into-a-session-needs-session-write.md]
 layer: "sdk"
 refs:

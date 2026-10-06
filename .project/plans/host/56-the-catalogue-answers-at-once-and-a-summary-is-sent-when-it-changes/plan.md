@@ -116,10 +116,10 @@ any change to a live session -> summaryMoved(uri) -> root/sessionSummaryChanged 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A summary that did not change is not sent](task-01-a-summary-that-did-not-change-is-not-sent.md) | implemented | - |
-| [02 - Agents are listed at once, and Claude's variants read their store once](task-02-agents-are-listed-at-once-and-once-per-store.md) | implemented | - |
-| [03 - The catalogue is held, and a refresh sends what moved](task-03-the-catalogue-is-held.md) | implemented | 01, 02 |
-| [04 - Opening a past session reads the held row](task-04-opening-a-past-session-reads-the-held-row.md) | implemented | 03 |
+| [01 - A summary that did not change is not sent](task-01-a-summary-that-did-not-change-is-not-sent.md) | done | - |
+| [02 - Agents are listed at once, and Claude's variants read their store once](task-02-agents-are-listed-at-once-and-once-per-store.md) | done | - |
+| [03 - The catalogue is held, and a refresh sends what moved](task-03-the-catalogue-is-held.md) | done | 01, 02 |
+| [04 - Opening a past session reads the held row](task-04-opening-a-past-session-reads-the-held-row.md) | done | 03 |
 | [05 - Measured before and after, by hand](task-05-measured-before-and-after.md) | todo | 01, 02, 03, 04 |
 
 ## Risks and tradeoffs

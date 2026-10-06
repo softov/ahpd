@@ -801,6 +801,20 @@ export interface Host {
    */
   turning(): string[];
   /**
+   * Take no new turn from now on, saying why, or take them again.
+   *
+   * What an embedder about to go asks for, and it asks before it reads
+   * `turning`: a turn that starts between that read and the close which
+   * follows is a turn the close ends, and a check a turn can slip past is no
+   * check. The words are the embedder's, since only it knows what it is doing,
+   * and they are what the client that asked for the turn is told.
+   *
+   * A turn already running is untouched and still named by `turning`.
+   * `undefined` takes turns again, which is what an embedder that decided to
+   * stay asks for.
+   */
+  refuseTurns(why: string | undefined): void;
+  /**
    * The connected clients, as places a resource can come from.
    *
    * Used by this host to answer a `resource*` command naming a URI a client

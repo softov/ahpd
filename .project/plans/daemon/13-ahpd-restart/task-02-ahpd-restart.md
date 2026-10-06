@@ -1,6 +1,6 @@
 ---
 title: "`ahpd restart`"
-status: implemented
+status: done
 depends: [task-01-the-record-keeps-the-argv.md]
 layer: "server, sdk"
 refs:

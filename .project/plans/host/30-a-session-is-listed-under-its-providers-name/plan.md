@@ -106,16 +106,16 @@ createSession(channel, provider) -> named() -> openSession(uri) -> spawn(): sess
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session a client creates is held under its provider's name](task-01-a-created-session-is-held-under-its-providers-name.md) | implemented | - |
-| [02 - Every request answers to either name of a session](task-02-every-request-answers-to-either-name.md) | implemented | 01 |
-| [03 - An action reaches an aliased subscriber in its own spelling](task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md) | implemented | 01 |
-| [04 - A chat title survives the session's new name](task-04-a-chat-title-survives-the-new-name.md) | implemented | 01 |
+| [01 - A session a client creates is held under its provider's name](task-01-a-created-session-is-held-under-its-providers-name.md) | done | - |
+| [02 - Every request answers to either name of a session](task-02-every-request-answers-to-either-name.md) | done | 01 |
+| [03 - An action reaches an aliased subscriber in its own spelling](task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md) | done | 01 |
+| [04 - A chat title survives the session's new name](task-04-a-chat-title-survives-the-new-name.md) | done | 01 |
 | [05 - VS Code opens a session another client created](task-05-vs-code-opens-a-session-another-client-created.md) | doing | 02, 03, 04 |
 | [06 - The mismatch is reported upstream](task-06-the-mismatch-is-reported-upstream.md) | done | - |
-| [07 - A session under its provider's scheme needs session:read](task-07-a-provider-scheme-session-needs-session-read.md) | implemented | 01 |
-| [08 - A dispatch into a session needs session:write, whatever its scheme](task-08-a-dispatch-into-a-session-needs-session-write.md) | implemented | 07 |
-| [09 - A terminal needs terminal grants whatever its scheme](task-09-a-terminal-needs-terminal-grants-whatever-its-scheme.md) | implemented | 08 |
-| [10 - A changeset operation needs session:write as well as file:write](task-10-a-changeset-operation-needs-session-write.md) | implemented | 08 |
+| [07 - A session under its provider's scheme needs session:read](task-07-a-provider-scheme-session-needs-session-read.md) | done | 01 |
+| [08 - A dispatch into a session needs session:write, whatever its scheme](task-08-a-dispatch-into-a-session-needs-session-write.md) | done | 07 |
+| [09 - A terminal needs terminal grants whatever its scheme](task-09-a-terminal-needs-terminal-grants-whatever-its-scheme.md) | done | 08 |
+| [10 - A changeset operation needs session:write as well as file:write](task-10-a-changeset-operation-needs-session-write.md) | done | 08 |
 
 ## Risks and tradeoffs
 

@@ -237,6 +237,33 @@ it('asks a session\'s grants for completions in a session', async () => {
   expect(await call(guest.client, 'completions', { ...asked, channel: ROOT })).toHaveProperty('result');
 });
 
+it('refuses a channel that is not a string rather than reading it as one', async () => {
+  const made = host({
+    users: directory({ a: ['file:read', 'session:read', 'session:write'], g: ['file:read'] }),
+    agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
+  });
+  const admin = await withRole(made, 'a');
+  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  const guest = await withRole(made, 'g');
+  const asked = { kind: 'userMessage', text: '/', offset: 1 };
+
+  // A session's commands are the session's to give, and the gate asks for a
+  // session's read on the name the request spells out.
+  expect(await call(guest.client, 'completions', { ...asked, channel: 'claude:/one' }))
+    .toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
+
+  /*
+   * And a channel that is not a string is not a channel.
+   *
+   * `capabilityFor` gates `completions` only when the channel is a string, so
+   * a list where a name belongs reached the handler with nothing asked for it
+   * - and `String()` there made it the session, so a guest who may not read
+   * that session was answered with its commands.
+   */
+  expect(await call(guest.client, 'completions', { ...asked, channel: ['claude:/one'] }))
+    .toMatchObject({ code: -32602, message: 'channel must be a string' });
+});
+
 it('needs computer:write to name a source for a session, and no more to name a machine', async () => {
   const made = host({
     users: directory({

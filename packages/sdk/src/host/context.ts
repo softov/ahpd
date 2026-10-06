@@ -81,6 +81,11 @@ export interface HostContext extends Routing, Relay, Changesets, Facts, Telemetr
   terminals: Claiming<Terminal>;
   /** Set by `close`: no session, terminal or automation run starts after it. */
   closed: boolean;
+  /**
+   * Why this host is taking no new turn, or nothing: what `refuseTurns` was
+   * last given, in the embedder's words.
+   */
+  refusing: string | undefined;
   /** What each chat's summary last said, so an unchanged one is not re-sent. */
   described: Map<string, string>;
   /** The side index a worker's link is written from, fed from `dispatch`. */

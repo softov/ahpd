@@ -1,6 +1,6 @@
 ---
 title: The ahpd-only chips move into presets
-status: implemented
+status: done
 depends: [task-02-presets-and-the-preset-key.md]
 layer: "agent-claude"
 refs:
