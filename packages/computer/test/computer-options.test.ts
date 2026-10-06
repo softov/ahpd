@@ -59,6 +59,20 @@ it('takes a profile\'s secretUnreadable as fail or drop, and refuses anything el
   expect(skip.problems.join('\n')).toContain('profiles.claude.secretUnreadable is fail or drop, and skip is neither');
 });
 
+it('takes a profile\'s state and stateScope by their values, and refuses anything else by name', async () => {
+  const shared = await load({ profiles: { bots: { state: 'volume', stateScope: 'shared' }, home: { state: 'host', stateScope: 'owner' } } });
+  expect(shared.problems).toEqual([]);
+  expect(shared.loaded.map((one) => one.name)).toEqual([NAME]);
+
+  const team = await load({ profiles: { bots: { stateScope: 'team' } } });
+  expect(team.loaded).toEqual([]);
+  expect(team.problems.join('\n')).toContain('profiles.bots.stateScope is owner or shared, and team is neither');
+
+  const disk = await load({ profiles: { bots: { state: 'disk' } } });
+  expect(disk.loaded).toEqual([]);
+  expect(disk.problems.join('\n')).toContain('profiles.bots.state is volume or host, and disk is neither');
+});
+
 it.each<[string, unknown]>([
   ['runtime', 'podman'],
   ['command', 5],

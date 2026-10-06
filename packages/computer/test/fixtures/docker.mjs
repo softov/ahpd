@@ -106,10 +106,14 @@ if (verb === 'image') {
   const images = held.images ?? [];
   if (args[1] === 'inspect' && images.includes(tag)) {
     const env = (held.imageEnv ?? {})[tag] ?? ['PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'];
+    // The user its containers run as: `imageUser` by tag, else root's empty one.
+    const user = (held.imageUser ?? {})[tag] ?? '';
     const format = args.includes('--format') ? args[args.indexOf('--format') + 1] : undefined;
     process.stdout.write(format === '{{json .Config.Env}}'
       ? `${JSON.stringify(env)}\n`
-      : `${JSON.stringify({ Id: `sha256:${tag}`, Config: { Env: env } })}\n`);
+      : format === '{{json .Config.User}}'
+        ? `${JSON.stringify(user)}\n`
+        : `${JSON.stringify({ Id: `sha256:${tag}`, Config: { Env: env, User: user } })}\n`);
     keep();
     process.exit(0);
   }
@@ -488,12 +492,14 @@ if (verb === 'run' || verb === 'create') {
    * reads it: a machine runs `<image> sleep infinity`, and a probe or a fill
    * helper is `<image> x`.
    */
-  const valued = new Set(['--name', '--label', '-v', '-e', '-w', '--cpus', '--memory', '--mount']);
+  const valued = new Set(['--name', '--label', '-v', '-e', '-w', '--cpus', '--memory', '--mount', '--user']);
   let image;
+  let imageAt = -1;
   for (let i = 1; i < args.length; i++) {
     if (valued.has(args[i])) { i++; continue; }
     if (String(args[i]).startsWith('-')) continue;
     image = args[i];
+    imageAt = i;
     break;
   }
   /** `key=value` as its two halves, on the first `=`. */
@@ -575,6 +581,20 @@ if (verb === 'run' || verb === 'create') {
     }
     targets.add(target);
   }
+  /*
+   * A `run --rm`, which runs one command and leaves no container: `id -u` and
+   * `id -g` answer the `--user` from `users`, and a `chown` is recorded in
+   * `chowns`, which is what a state volume's seeding asks of one.
+   */
+  if (verb === 'run' && args.includes('--rm')) {
+    const command = args.slice(imageAt + 1);
+    const user = args.includes('--user') ? args[args.indexOf('--user') + 1] : '';
+    const ids = (held.users ?? {})[user] ?? { uid: 0, gid: 0 };
+    if (command[0] === 'id') process.stdout.write(`${command[1] === '-g' ? ids.gid : ids.uid}\n`);
+    if (command[0] === 'chown') (held.chowns ??= []).push(command);
+    keep();
+    process.exit(0);
+  }
   held.machines.push({
     name: named === -1 ? `unnamed-${held.machines.length}` : args[named + 1],
     // The `DOCKER_*` names the make itself was spawned with.
@@ -621,25 +641,75 @@ if (verb === 'cp') {
     }
     return undefined;
   };
-  if (args[1] === '-') {
+  // `-a` keeps the uid and gid each entry carries, which is recorded in
+  // `owners`; without it every entry is root's, as Docker makes it.
+  const archive = args[1] === '-a';
+  const said = archive ? [args[0], ...args.slice(2)] : args;
+  if (said[1] === '-') {
+    /*
+     * Each entry by its whole path - the ustar prefix, then the name - with its
+     * text kept in `contents`, over whatever the volume held at that path, and
+     * the paths of one copy recorded in `copiedIn`. Each entry lands in the
+     * volume its path falls in, so an archive written into the directory above
+     * a mount reaches it. A directory entry is only its owner, `.` for the
+     * mount point itself, which is the volume's root; an entry for the
+     * directory the archive is written into is not applied, as Docker does not.
+     */
     const piped = await readStdin();
-    const into = volumeAt(args[2]);
-    for (let at = 0; into !== undefined && at + 512 <= piped.length;) {
+    const dest = String(said[2]);
+    const container = dest.slice(0, dest.indexOf(':'));
+    const base = dest.slice(dest.indexOf(':') + 1).replace(/\/$/, '');
+    const copied = [];
+    const field = (header, from, to) => Number.parseInt(header.subarray(from, to).toString('latin1').replace(/\0.*$/s, '').trim() || '0', 8);
+    for (let at = 0; at + 512 <= piped.length;) {
       const header = piped.subarray(at, at + 512);
       if (header.every((byte) => byte === 0)) break;
-      const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim(), 8);
-      into.volume.files.push(header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, ''));
+      const size = field(header, 124, 136);
+      const name = header.subarray(0, 100).toString('utf8').replace(/\0.*$/s, '');
+      const prefix = header.subarray(345, 500).toString('utf8').replace(/\0.*$/s, '');
+      const owner = archive ? `${field(header, 108, 116)}:${field(header, 116, 124)}` : '0:0';
+      const bytes = piped.subarray(at + 512, at + 512 + size);
       at += 512 + ((size + 511) & ~511);
+      const relative = [prefix, name.replace(/\/$/, '')].filter((one) => one !== '' && one !== '.').join('/');
+      if (relative === '') continue;
+      const into = volumeAt(`${container}:${base}/${relative}`);
+      if (into === undefined) continue;
+      if (String.fromCharCode(header[156]) === '5') {
+        (into.volume.owners ??= {})[into.rest === '' ? '.' : into.rest] = owner;
+        continue;
+      }
+      const path = into.rest;
+      if (!into.volume.files.includes(path)) into.volume.files.push(path);
+      (into.volume.contents ??= {})[path] = bytes.toString('utf8');
+      (into.volume.owners ??= {})[path] = owner;
+      copied.push(path);
     }
+    if (copied.length > 0) (held.copiedIn ??= []).push(copied);
     keep();
     process.exit(0);
   }
   if (args[2] === '-') {
+    /*
+     * One file out, as Docker writes it: a tar holding that file. A file the
+     * volume holds no text for, such as a part's marker, answers nothing.
+     */
     const from = volumeAt(args[1]);
     keep();
     if (from === undefined || !from.volume.files.includes(from.rest)) {
       process.stderr.write(`Error response from daemon: Could not find the file ${String(args[1]).slice(String(args[1]).indexOf(':') + 1)} in container\n`);
       process.exit(1);
+    }
+    const text = from.volume.contents?.[from.rest];
+    if (text !== undefined) {
+      const bytes = Buffer.from(text, 'utf8');
+      const header = Buffer.alloc(512);
+      header.write(from.rest.split('/').pop(), 0, 100, 'utf8');
+      header.write(`${bytes.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'utf8');
+      header.write('0', 156, 1, 'utf8');
+      header.write('ustar\0', 257, 6, 'utf8');
+      const padded = Buffer.alloc((bytes.length + 511) & ~511);
+      bytes.copy(padded);
+      process.stdout.write(Buffer.concat([header, padded, Buffer.alloc(1024)]));
     }
     process.exit(0);
   }
@@ -747,6 +817,13 @@ if (verb === 'exec') {
     const env = { ...(found.env ?? {}), ...(found.probeEnv ?? held.probeEnv ?? { PATH: '/usr/bin', HOME: '/root' }) };
     process.stdout.write(`${marker}${Object.entries(env)
       .map(([key, value]) => `${key}=${value}\0`).join('')}${marker}`);
+    keep();
+    process.exit(0);
+  }
+  // `id -u` and `id -g` for the `-u` user, from `users`.
+  if (command[0] === 'id') {
+    const ids = (held.users ?? {})[user ?? ''] ?? { uid: 0, gid: 0 };
+    process.stdout.write(`${command[1] === '-g' ? ids.gid : ids.uid}\n`);
     keep();
     process.exit(0);
   }

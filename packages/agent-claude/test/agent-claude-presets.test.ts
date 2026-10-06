@@ -144,6 +144,15 @@ it('registers an agent per variant, each with its own name and models', async ()
   expect(await modelsOf(agents[0])).toEqual([]);
 });
 
+it('gives each variant its own configuration directory in a machine, unless computerConfigDir names one', async () => {
+  const targets = (agents: Agent[]): (string | undefined)[] =>
+    agents.map((one) => (one.machine?.().claudeConfigDirectory as { target?: string } | undefined)?.target);
+  const agents = await agentsOf({ presets: { 'claude-openrouter': {} } });
+  expect(targets(agents)).toEqual(['/ahpd/claude', '/ahpd/claude-openrouter']);
+  expect(targets(await agentsOf({ computerConfigDir: '/ahpd/shared', presets: { 'claude-openrouter': {} } })))
+    .toEqual(['/ahpd/shared', '/ahpd/shared']);
+});
+
 it('names a variant after its own key when it names none', async () => {
   const agents = await agentsOf({ presets: { 'claude-openrouter': {} } });
   expect(agents.map((one) => [one.provider, one.displayName])).toEqual([

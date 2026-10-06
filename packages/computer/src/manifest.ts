@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { RpcError } from '@ahpd/sdk';
 import { partTarget, resolveNeeds } from '@ahpd/sdk';
 import { hasDefinition } from './devcontainer.js';
@@ -6,7 +7,7 @@ import { withRequires } from './parts.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
-import type { MachineNeed, Owner, ResolvedNeed, SecretRef } from '@ahpd/sdk';
+import type { MachineNeed, Owner, ResolvedNeed, SecretRef, StateMode } from '@ahpd/sdk';
 import type { MachineSpec } from './runtime.js';
 import type { SchemeDescription } from '@ahpd/sdk';
 
@@ -138,6 +139,26 @@ export interface Profile {
    * a machine made from no profile.
    */
   secretUnreadable?: 'fail' | 'drop';
+  /**
+   * Where the agents in a machine from this profile keep their state.
+   *
+   * `volume`, the default, gives each agent's state need a named volume of its
+   * own, seeded from this host and kept across machines, and leaves out every
+   * need marked `when: "host"`. `host` mounts this host's own configuration,
+   * sign-in included, as the needs marked `when: "host"` say, and makes no
+   * state volume.
+   */
+  state?: StateMode;
+  /**
+   * Who shares a state volume of this profile.
+   *
+   * `owner`, the default, gives each owner of a machine from this profile - a
+   * person, a bot, an automation or a plugin - a volume of their own per
+   * provider, `ahpd-state-<profile>-<owner>-<provider>`. `shared` gives every
+   * owner one volume per provider, `ahpd-state-<profile>-<provider>`, for a
+   * team that wants one shared bot state.
+   */
+  stateScope?: 'owner' | 'shared';
 }
 
 /** What the provider holds, and what a manifest may leave out. */
@@ -527,6 +548,53 @@ const oneMountEach = (landed: Landed[]): void => {
 };
 
 /**
+ * Whether two resolved needs ask for one thing, so a machine carries it once.
+ *
+ * The one place what counts as the same need is decided. A need's name and
+ * description are not compared, since two agents that ask for one thing name it
+ * in their own words; everything that reaches the machine is - how it arrives,
+ * where, from what, read-only or not, an env need's value, which is compared
+ * here and never printed, and a state need's seeds and the provider its volume
+ * is named by.
+ */
+export const sameNeed = (a: ResolvedNeed, b: ResolvedNeed): boolean =>
+  a.kind === b.kind
+  && a.target === b.target
+  && a.source === b.source
+  && (a.readOnly === true) === (b.readOnly === true)
+  && a.provider === b.provider
+  && JSON.stringify(a.seed ?? []) === JSON.stringify(b.seed ?? []);
+
+/**
+ * The resolved needs with each repeated one kept once, under the first name.
+ *
+ * An env need at a variable another already sets, or a state need at a
+ * directory another already holds, is dropped when `sameNeed` says it is the
+ * same, and refused with both named when it is not, since one of the two would
+ * silently lose. Mounts are collapsed by `oneMountEach`, which sees the
+ * profile's and the body's mounts beside them.
+ */
+const oneNeedEach = (resolved: ResolvedNeed[]): ResolvedNeed[] => {
+  const kept: ResolvedNeed[] = [];
+  for (const one of resolved) {
+    if (one.kind !== 'env' && one.kind !== 'state') {
+      kept.push(one);
+      continue;
+    }
+    const first = kept.find((held) => held.kind === one.kind && held.target === one.target);
+    if (first === undefined) {
+      kept.push(one);
+      continue;
+    }
+    if (sameNeed(first, one)) continue;
+    throw new RpcError(-32602, one.kind === 'env'
+      ? `need ${first.name} and need ${one.name} both set ${one.target}, to different values`
+      : `need ${first.name} and need ${one.name} both land at ${one.target}`);
+  }
+  return kept;
+};
+
+/**
  * A write body as text, whatever encoding it arrived in.
  *
  * The one decoder both kinds of write share: a manifest is this parsed as
@@ -819,7 +887,7 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(profile.agents ?? []),
     ...(defaults.for === undefined ? [] : [defaults.for]),
   ])];
-  const resolved: ResolvedNeed[] = [];
+  const declared: ResolvedNeed[] = [];
   // The parts the session's own agent needs, for a machine made for a session.
   const sessionParts: string[] = [];
   for (const provider of agents) {
@@ -835,14 +903,16 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
         // strings `resolveNeeds` works in.
         ...(profile.needs === undefined ? {} : { profile: profile.needs as Record<string, string> }),
         ...(defaults.needValues === undefined ? {} : { option: defaults.needValues as Record<string, string> }),
-      });
-      resolved.push(...own);
+      }, homedir(), profile.state ?? 'volume');
+      // A state need's volume is named by the agent that declared it.
+      declared.push(...own.map((one) => (one.kind === 'state' ? { ...one, provider } : one)));
       if (provider === defaults.for) sessionParts.push(...own.filter((one) => one.kind === 'part').map((one) => one.source));
     }
     catch (error) {
       throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
     }
   }
+  const resolved = oneNeedEach(declared);
   // A variable whose value the vault gave, which the runtime leaves off the
   // command that makes the machine.
   for (const one of resolved) {
@@ -866,6 +936,15 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     .filter((one) => one.kind === 'copy')
     .map((one) => ({ source: one.source, target: one.target }));
   const mounts = [...new Set([...(defaults.mounts ?? []), ...(profile.mounts ?? []), ...(asked ?? []), ...needMounts])];
+  // Each state directory, which whoever makes the machine gives a named volume.
+  const states = resolved
+    .filter((one) => one.kind === 'state')
+    .map((one) => ({
+      need: one.name,
+      provider: one.provider ?? '',
+      target: one.target,
+      ...(one.seed === undefined ? {} : { seed: one.seed }),
+    }));
   /*
    * The parts this machine asks for: the profile's own, then each agent's part
    * needs, then what each of those requires. Built by whoever makes the
@@ -907,6 +986,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     // And each part, at the one place a part lands; the same part asked twice
     // is one entry.
     ...parts.map((id) => ({ mount: `part:${id}`, target: partTarget(id), said: `the part ${id}` })),
+    // And each state volume, already one per directory.
+    ...states.map((one) => ({ mount: `state:${one.provider}`, target: one.target, said: `need ${one.need}` })),
   ]);
   // A machine with a folder starts a session in it, so a host path inside the
   // folder is the same path in there.
@@ -929,6 +1010,8 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(named.length === 0 ? {} : { named }),
     ...(copies.length === 0 ? {} : { copies }),
     ...(parts.length === 0 ? {} : { partsAsked: parts }),
+    ...(states.length === 0 ? {} : { statesAsked: states }),
+    ...(states.length === 0 || profile.stateScope === undefined ? {} : { stateScope: profile.stateScope }),
     ...(defaults.for === undefined ? {} : { sessionParts: [...new Set(sessionParts)] }),
     ...(agents.length === 0 ? {} : { agents }),
     ...(folder === undefined ? {} : { folder }),

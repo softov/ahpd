@@ -11,7 +11,7 @@ import { madeAgain, namedAgain, revealed, vaultNamed, withDefaults } from './sec
 import { manifestOf } from './manifest.js';
 import { ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf } from './runtime.js';
+import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf, stateVolumeOf } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
@@ -102,6 +102,16 @@ export const optionsSchema = {
             type: 'string',
             enum: ['fail', 'drop'],
             description: 'When a need value named from the vault cannot be read again after a restart: fail every command into the machine, or drop that variable and log it. fail when absent.',
+          },
+          state: {
+            type: 'string',
+            enum: ['volume', 'host'],
+            description: "Where its agents keep their state: volume, a named volume per provider seeded from this host, or host, this host's own configuration mounted. volume when absent.",
+          },
+          stateScope: {
+            type: 'string',
+            enum: ['owner', 'shared'],
+            description: 'Who shares a state volume: owner, one per owner of the machine, or shared, one for every owner of the profile. owner when absent.',
           },
         },
       },
@@ -200,6 +210,10 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // What a command into one of its machines does when a vault-named value
       // cannot be read again. Absent is `fail`.
       ...(said.secretUnreadable === 'fail' || said.secretUnreadable === 'drop' ? { secretUnreadable: said.secretUnreadable } : {}),
+      // Where its agents' state lives, and who shares a state volume. Absent
+      // is `volume` and `owner`.
+      ...(said.state === 'volume' || said.state === 'host' ? { state: said.state } : {}),
+      ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
     };
   }
   return Object.keys(held).length === 0 ? undefined : held;
@@ -352,15 +366,22 @@ export const apply: Plugin['apply'] = (host, options) => {
     one.parts = one.parts.filter((part) => partIds.has(part));
   }
   /*
-   * A `secretUnreadable` that is neither answer is fatal here rather than
-   * dropped: the loader's check does not reach into a profile, and a value read
-   * as the default would fail every command into a machine whose operator
-   * asked for something else.
+   * A `secretUnreadable`, `state` or `stateScope` that is neither of its two
+   * answers is fatal here rather than dropped: the loader's check does not
+   * reach into a profile, and a value read as the default would make a machine
+   * other than the one its operator asked for.
    */
+  const answers: [field: string, values: [string, string]][] = [
+    ['secretUnreadable', ['fail', 'drop']],
+    ['state', ['volume', 'host']],
+    ['stateScope', ['owner', 'shared']],
+  ];
   for (const [key, one] of Object.entries(options.profiles as Record<string, unknown> | undefined ?? {})) {
-    const said = typeof one === 'object' && one !== null ? (one as Record<string, unknown>).secretUnreadable : undefined;
-    if (said !== undefined && said !== 'fail' && said !== 'drop') {
-      throw new Error(`plugin ${name}: profiles.${key}.secretUnreadable is fail or drop, and ${String(said)} is neither`);
+    for (const [field, values] of answers) {
+      const said = typeof one === 'object' && one !== null ? (one as Record<string, unknown>)[field] : undefined;
+      if (said !== undefined && !values.includes(said as string)) {
+        throw new Error(`plugin ${name}: profiles.${key}.${field} is ${values.join(' or ')}, and ${String(said)} is neither`);
+      }
     }
   }
   /*
@@ -640,6 +661,25 @@ export const apply: Plugin['apply'] = (host, options) => {
         }
         for (const one of built.failed) noted(`${asked.name} is made without the part ${one.id}: ${one.reason}`);
         spec = { ...asked, parts: built.made };
+      }
+      /*
+       * Each state directory's volume, named by the machine's profile, its
+       * owner as `claimOf` answers it, and the provider that declared it.
+       */
+      if (asked.statesAsked !== undefined && asked.statesAsked.length > 0) {
+        const owner = asked.owner ?? `root:${host.hostName}`;
+        spec = {
+          ...spec,
+          states: asked.statesAsked.map((one) => ({
+            ...one,
+            volume: stateVolumeOf({
+              ...(asked.profile === undefined ? {} : { profile: asked.profile }),
+              owner,
+              id: asked.name,
+              ...(asked.stateScope === undefined ? {} : { scope: asked.stateScope }),
+            }, one.provider),
+          })),
+        };
       }
       const machine = await dockered.run(spec);
       // What the vault gave, which the runtime left off the make: held for
@@ -967,7 +1007,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       for (const [need, one] of Object.entries(needs)) {
         if (!('part' in one)) continue;
         try {
-          wanted.push(...resolveNeeds({ [need]: one }, { profile: plain(profile?.needs), option: plain(needValues) }).map((part) => part.source));
+          wanted.push(...resolveNeeds({ [need]: one }, { profile: plain(profile?.needs), option: plain(needValues) }, undefined, profile?.state ?? 'volume').map((part) => part.source));
         }
         catch {
           wanted.push(one.part);

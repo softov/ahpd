@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
 import { machineRefusal } from '../../sdk/src/computers.js';
 import { readParts } from '../src/parts.js';
-import { dockerRuntime } from '../src/runtime.js';
+import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
@@ -92,6 +93,7 @@ const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vaul
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
   list(uri: string): Promise<{ name: string }[]>;
+  remove(uri: string): Promise<void>;
 };
 
 it('turns resolved needs into flags, a copy, a label and a same-path folder', async () => {
@@ -1214,4 +1216,207 @@ it('refuses a mount at a part\'s target as any other shared target', async () =>
   const { options } = await loadParts(state, { parts: ['codex'], mounts: [`${dir}:/opt/ahpd/node`] }, [CODEXER]);
   await expect(providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'box' }), encoding: 'utf-8' }))
     .rejects.toThrow(`the profile's mount ${dir}:/opt/ahpd/node and the part node both land at /opt/ahpd/node`);
+});
+
+/*
+ * Two agents that ask for one thing at one target get it once, and two that ask
+ * for different things there are refused with both named - `sameNeed` decides
+ * which. A value is compared, never printed.
+ */
+const sameRuntime = (state: string, profiles: Record<string, unknown>): Record<string, unknown> => ({
+  command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: state }, sessionSetting: false, profiles,
+});
+
+it('makes one -e of an env need two agents declare with one value', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { both: { agents: ['one', 'two'] } }), [
+    agent('one', { endpoint: { name: 'ENDPOINT', default: 'https://x' } }),
+    agent('two', { url: { name: 'ENDPOINT', default: 'https://x', description: 'in other words' } }),
+  ]);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'both' }), encoding: 'utf-8' });
+  const made = makes(state)[0] ?? [];
+  expect(made.filter((one) => one === 'ENDPOINT')).toHaveLength(1);
+  expect(envOf(state)).toEqual({ ENDPOINT: 'https://x' });
+});
+
+it('refuses two env needs at one variable with different values, naming both and printing neither', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { both: { agents: ['one', 'two'] } }), [
+    agent('one', { firstKey: { name: 'API_KEY', default: 'value-of-one' } }),
+    agent('two', { secondKey: { name: 'API_KEY', default: 'value-of-two' } }),
+  ]);
+  const refused = await written(options, 'box', { profile: 'both' });
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toBe('need firstKey and need secondKey both set API_KEY, to different values');
+  // Refused before anything was asked of Docker.
+  expect(existsSync(state)).toBe(false);
+});
+
+it('mounts each of two variants’ identical Claude mounts once', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const home = join(dir, 'claude-home');
+  const cli = join(dir, 'claude');
+  mkdirSync(home);
+  writeFileSync(cli, '#!/bin/sh\n');
+  const needs = (): Record<string, MachineNeed> => ({
+    claudeConfigDirectory: { directory: home, target: '/ahpd/claude', required: true },
+    claudeExecutable: { file: cli, target: '/usr/local/bin/claude', readOnly: true, required: true },
+  });
+  const { options } = await load(sameRuntime(state, { claude: { agents: ['claude', 'claude-openrouter'] } }), [
+    agent('claude', needs()),
+    agent('claude-openrouter', needs()),
+  ]);
+  await providerOf(options).write('computer://box', { data: JSON.stringify({ profile: 'claude' }), encoding: 'utf-8' });
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).machines[0]?.mounts)
+    .toEqual([`${home}:/ahpd/claude`, `${cli}:/usr/local/bin/claude:ro`]);
+});
+
+/*
+ * An agent's state, in a volume per profile, owner and provider.
+ *
+ * `stateVolumeOf` names each one; the machine mounts it at the state directory
+ * and is labelled `ahpd.state=volume`. `state: "host"` is the machine made
+ * before state volumes existed.
+ */
+const CLAUDE_STATE = (provider: string, target = `/ahpd/${provider}`): Agent =>
+  agent(provider, { claudeState: { state: target, description: 'The configuration directory.' } });
+
+/**
+ * A state volume's name as `stateVolumeOf` makes it: the readable name, then the
+ * first 8 hex of the sha256 of the unslugged pieces joined by NUL.
+ */
+const named = (readable: string, ...pieces: string[]): string =>
+  `${readable}-${createHash('sha256').update(pieces.join('\0')).digest('hex').slice(0, 8)}`;
+
+/** The named volumes one machine mounts, as `volume:target`. */
+const volumesOf = (state: string, name: string): string[] =>
+  ((JSON.parse(readFileSync(state, 'utf8')) as Held).machines.find((one) => one.name === name)?.mounts ?? [])
+    .filter((one) => !one.startsWith('/'));
+
+it('mounts one state volume for two machines of one profile and owner, and one per owner', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { box: { agents: ['claude'] } }), [CLAUDE_STATE('claude')]);
+  await written(options, 'one', { profile: 'box' }, 'user:alice');
+  await written(options, 'two', { profile: 'box' }, 'user:alice');
+  await written(options, 'three', { profile: 'box' }, 'user:bob');
+  expect(volumesOf(state, 'one')).toEqual([`${named('ahpd-state-box-user-alice-claude', 'box', 'user:alice', 'claude')}:/ahpd/claude`]);
+  expect(volumesOf(state, 'two')).toEqual([`${named('ahpd-state-box-user-alice-claude', 'box', 'user:alice', 'claude')}:/ahpd/claude`]);
+  expect(volumesOf(state, 'three')).toEqual([`${named('ahpd-state-box-user-bob-claude', 'box', 'user:bob', 'claude')}:/ahpd/claude`]);
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  expect(held.machines.find((one) => one.name === 'one')?.labels?.['ahpd.state']).toBe('volume');
+});
+
+it('shares one state volume between every owner of a profile whose stateScope is shared', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { bots: { agents: ['claude'], stateScope: 'shared' } }), [CLAUDE_STATE('claude')]);
+  await written(options, 'one', { profile: 'bots' }, 'user:alice');
+  await written(options, 'two', { profile: 'bots' }, 'user:bob');
+  expect(volumesOf(state, 'one')).toEqual([`${named('ahpd-state-bots-claude', 'bots', '', 'claude')}:/ahpd/claude`]);
+  expect(volumesOf(state, 'two')).toEqual([`${named('ahpd-state-bots-claude', 'bots', '', 'claude')}:/ahpd/claude`]);
+});
+
+it('makes a state: "host" machine with exactly the flags it had before state volumes', async () => {
+  const dir = temp();
+  const home = join(dir, 'claude-home');
+  mkdirSync(home);
+  const before = join(dir, 'before.json');
+  const after = join(dir, 'after.json');
+  const { options: plain } = await load(sameRuntime(before, { box: { agents: ['claude'] } }), [
+    agent('claude', { claudeConfigDirectory: { directory: home, target: '/ahpd/claude' } }),
+  ]);
+  await written(plain, 'box', { profile: 'box' }, 'user:alice');
+  const { options: hosted } = await load(sameRuntime(after, { box: { agents: ['claude'], state: 'host' } }), [
+    agent('claude', {
+      claudeState: { state: '/ahpd/claude' },
+      claudeConfigDirectory: { directory: home, target: '/ahpd/claude', when: 'host' },
+    }),
+  ]);
+  await written(hosted, 'box', { profile: 'box' }, 'user:alice');
+  expect(makes(after)).toEqual(makes(before));
+});
+
+it('mounts a state volume per variant at its own directory, and refuses two variants at one', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { claude: { agents: ['claude', 'claude-openrouter'] } }), [
+    CLAUDE_STATE('claude'),
+    CLAUDE_STATE('claude-openrouter'),
+  ]);
+  await written(options, 'box', { profile: 'claude' }, 'user:alice');
+  expect(volumesOf(state, 'box')).toEqual([
+    `${named('ahpd-state-claude-user-alice-claude', 'claude', 'user:alice', 'claude')}:/ahpd/claude`,
+    `${named('ahpd-state-claude-user-alice-claude-openrouter', 'claude', 'user:alice', 'claude-openrouter')}:/ahpd/claude-openrouter`,
+  ]);
+
+  // One `computerConfigDir` for both is two volumes at one directory.
+  const { options: one } = await load(sameRuntime(state, { claude: { agents: ['claude', 'claude-openrouter'] } }), [
+    CLAUDE_STATE('claude', '/ahpd/shared'),
+    CLAUDE_STATE('claude-openrouter', '/ahpd/shared'),
+  ]);
+  const refused = await written(one, 'two', { profile: 'claude' }, 'user:alice');
+  expect(refused).toMatchObject({ code: -32602 });
+  expect((refused as Error).message).toBe('need claudeState and need claudeState both land at /ahpd/shared');
+});
+
+it('mounts two identical state needs as one volume, and refuses two with different seeds', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const seed = join(dir, 'settings.json');
+  writeFileSync(seed, '{}');
+  const { options } = await load(sameRuntime(state, { box: { agents: ['claude'] } }), [agent('claude', {
+    first: { state: '/ahpd/claude' },
+    second: { state: '/ahpd/claude', description: 'in other words' },
+  })]);
+  await written(options, 'box', { profile: 'box' }, 'user:alice');
+  expect(volumesOf(state, 'box')).toEqual([`${named('ahpd-state-box-user-alice-claude', 'box', 'user:alice', 'claude')}:/ahpd/claude`]);
+
+  const { options: differ } = await load(sameRuntime(state, { box: { agents: ['claude'] } }), [agent('claude', {
+    first: { state: '/ahpd/claude' },
+    second: { state: '/ahpd/claude', seed: [{ source: seed }] },
+  })]);
+  const refused = await written(differ, 'two', { profile: 'box' }, 'user:alice');
+  expect((refused as Error).message).toBe('need first and need second both land at /ahpd/claude');
+});
+
+it('names a dev container’s state volume by its id, and removes it with the machine', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  const devState = join(dir, 'dev.json');
+  const folder = join(dir, 'work');
+  mkdirSync(join(folder, '.devcontainer'), { recursive: true });
+  writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
+  const { options } = await loadParts(state, {}, [CLAUDE_STATE('claude')], {}, {
+    devcontainer: {
+      command: process.execPath,
+      args: [fileURLToPath(new URL('./fixtures/devcontainer.mjs', import.meta.url))],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: state },
+    },
+  });
+  const id = await options.computers?.create?.({ source: `devcontainer://${folder}`, session: 'claude:/one', provider: 'claude', owner: 'user:ada' }) as string;
+  const up = (JSON.parse(readFileSync(devState, 'utf8')) as { calls: string[][] }).calls.find((one) => one[0] === 'up') ?? [];
+  expect(up).toContain(`type=volume,source=${named(`ahpd-state-${id}-claude`, id, 'claude')},target=/ahpd/claude`);
+
+  await providerOf(options).remove(`computer://${id}`);
+  const calls = (JSON.parse(readFileSync(state, 'utf8')) as Held).calls;
+  expect(calls).toContainEqual(['volume', 'rm', named(`ahpd-state-${id}-claude`, id, 'claude')]);
+});
+
+it('keeps a profile’s state volume when its machine is removed', async () => {
+  const state = join(temp(), 'docker.json');
+  const { options } = await load(sameRuntime(state, { box: { agents: ['claude'] } }), [CLAUDE_STATE('claude')]);
+  await written(options, 'box', { profile: 'box' }, 'user:alice');
+  await providerOf(options).remove('computer://box');
+  expect((JSON.parse(readFileSync(state, 'utf8')) as Held).calls.filter((one) => one[0] === 'volume')).toEqual([]);
+});
+
+it('names two owners whose readable names meet two state volumes', () => {
+  const of = (owner: string, provider: string): string => stateVolumeOf({ profile: 'dev', owner, id: 'box' }, provider);
+  // The readable halves meet, and the hash of the pieces as written keeps them apart.
+  expect(of('user:a', 'b-claude')).toBe(named('ahpd-state-dev-user-a-b-claude', 'dev', 'user:a', 'b-claude'));
+  expect(of('user:a-b', 'claude')).toBe(named('ahpd-state-dev-user-a-b-claude', 'dev', 'user:a-b', 'claude'));
+  expect(of('user:a', 'b-claude')).not.toBe(of('user:a-b', 'claude'));
+  expect(of('user:A', 'claude')).not.toBe(of('user:a', 'claude'));
+  // A shared profile and a machine without one never meet either.
+  expect(stateVolumeOf({ profile: 'dev', id: 'x', scope: 'shared' }, 'claude')).toBe(named('ahpd-state-dev-claude', 'dev', '', 'claude'));
+  expect(stateVolumeOf({ id: 'dev' }, 'claude')).toBe(named('ahpd-state-dev-claude', 'dev', 'claude'));
 });

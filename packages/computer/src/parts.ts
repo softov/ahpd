@@ -204,6 +204,12 @@ export type AhpdSource =
 /** A packed workspace package, as the build context carries it. */
 export type Tarball = { name: string; bytes: Buffer };
 
+/**
+ * One entry of an archive: a file, or with `directory` a directory and its
+ * bytes empty, owned by `uid` and `gid`, root's when absent.
+ */
+export type ArchiveEntry = Tarball & { uid?: number; gid?: number; directory?: boolean };
+
 /** What `ensurePart` needs to answer, and builds with. */
 export interface EnsureOptions {
   /** The runtime the image is built on, which is where the build happens. */
@@ -532,22 +538,34 @@ export const dockerfileOf = (part: Part, source?: AhpdSource): string => {
   ].join('\n\n');
 };
 
-/** One entry of a tar archive: 512 bytes of header, then the bytes themselves. */
-const tarEntry = (name: string, bytes: Buffer): Buffer => {
+/** One entry of a tar archive: 512 bytes of header, then the bytes themselves, with its owner and type. */
+const tarEntry = (entry: ArchiveEntry): Buffer => {
+  const { name: path, bytes } = entry;
   const header = Buffer.alloc(512);
+  // A path longer than the 100 bytes of the name field is split at a slash,
+  // its directories in the 155 bytes of the ustar prefix field.
+  let name = path;
+  let prefix = '';
+  if (Buffer.byteLength(path) > 100) {
+    const at = path.indexOf('/', Buffer.byteLength(path) - 101);
+    if (at <= 0 || at > 155) throw new Error(`${path} is too long a path for a tar entry`);
+    prefix = path.slice(0, at);
+    name = path.slice(at + 1);
+  }
   // A tar header is a fixed layout of fields, each padded to its own width, and
   // the checksum is the sum of the header's bytes with its own field read as
   // spaces - which is what a reader adds up to decide the header is honest.
   header.write(name, 0, 100, 'utf8');
-  header.write('0000644\0', 100, 8, 'utf8');
-  header.write('0000000\0', 108, 8, 'utf8');
-  header.write('0000000\0', 116, 8, 'utf8');
+  header.write(prefix, 345, 155, 'utf8');
+  header.write(entry.directory === true ? '0000755\0' : '0000644\0', 100, 8, 'utf8');
+  header.write(`${(entry.uid ?? 0).toString(8).padStart(7, '0')}\0`, 108, 8, 'utf8');
+  header.write(`${(entry.gid ?? 0).toString(8).padStart(7, '0')}\0`, 116, 8, 'utf8');
   header.write(`${bytes.length.toString(8).padStart(11, '0')}\0`, 124, 12, 'utf8');
   // A fixed mtime, so the same context twice is the same bytes and Docker's own
   // cache is not thrown away by a build that changed nothing.
   header.write('00000000000\0', 136, 12, 'utf8');
   header.write('        ', 148, 8, 'utf8');
-  header.write('0', 156, 1, 'utf8');
+  header.write(entry.directory === true ? '5' : '0', 156, 1, 'utf8');
   header.write('ustar\0', 257, 6, 'utf8');
   header.write('00', 263, 2, 'utf8');
   let sum = 0;
@@ -571,8 +589,24 @@ export const contextOf = (dockerfile: string, files: Tarball[] = []): Buffer =>
   archiveOf([{ name: 'Dockerfile', bytes: Buffer.from(dockerfile, 'utf8') }, ...files]);
 
 /** Files as one tar archive, which is what `docker build -` and `docker cp -` read on stdin. */
-export const archiveOf = (files: Tarball[]): Buffer =>
-  Buffer.concat([...files.map((one) => tarEntry(one.name, one.bytes)), Buffer.alloc(1024)]);
+export const archiveOf = (files: ArchiveEntry[]): Buffer =>
+  Buffer.concat([...files.map((one) => tarEntry(one)), Buffer.alloc(1024)]);
+
+/**
+ * The bytes of the first regular file in a tar archive, which is what `docker
+ * cp <container>:<file> -` writes for one file; nothing for an archive with none.
+ */
+export const firstFileOf = (archive: Buffer): Buffer | undefined => {
+  for (let at = 0; at + 512 <= archive.length;) {
+    const header = archive.subarray(at, at + 512);
+    if (header.every((byte) => byte === 0)) return undefined;
+    const size = Number.parseInt(header.subarray(124, 136).toString('latin1').replace(/\0.*$/s, '').trim() || '0', 8);
+    const type = String.fromCharCode(header[156] ?? 0);
+    if (type === '0' || type === '\0') return archive.subarray(at + 512, at + 512 + size);
+    at += 512 + ((size + 511) & ~511);
+  }
+  return undefined;
+};
 
 /** The builds and fills running in this process, by key, so two callers wait for one of them. */
 const building = new Map<string, Promise<unknown>>();

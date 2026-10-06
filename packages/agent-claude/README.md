@@ -31,7 +31,7 @@ It takes no options in the ordinary install: it catalogues whatever directories 
 | --- | --- |
 | `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
 | `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
-| `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/claude` by default; `false` leaves the image's own |
+| `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/<variant>` by default, `/ahpd/claude` for the built-in; `false` leaves the image's own |
 | `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
 | `presets` | the variants of this package, by the id clients name. Each key registers an agent of its own, with its own name, models and options |
 

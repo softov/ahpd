@@ -7,11 +7,12 @@
  * makes the machine supplies them, so the knowledge lives with the agent that
  * has it rather than with the plugin that makes machines.
  *
- * A need is delivered one of five ways, and the field that names the way is
+ * A need is delivered one of six ways, and the field that names the way is
  * the one that carries its value: a `directory` or a `file` is made visible in
  * the machine, a `name` is an environment variable, a `source` is copied in
- * rather than mounted, so a runtime that cannot bind-mount still has a way, and
- * a `part` is a CLI the host builds and mounts at `/opt/ahpd/<part>`.
+ * rather than mounted, so a runtime that cannot bind-mount still has a way, a
+ * `part` is a CLI the host builds and mounts at `/opt/ahpd/<part>`, and a
+ * `state` is a directory kept in a volume and seeded from this host.
  * Which fields a delivery takes is `MachineNeed`; what a runtime is handed once
  * the value is settled is `ResolvedNeed`.
  */
@@ -43,7 +44,21 @@ interface Need<D = string> {
   required?: boolean;
   /** One line about what it is, for a listing and for a refusal. */
   description?: string;
+  /**
+   * The one mode this need belongs to, or both when absent.
+   *
+   * `volume` is a machine whose agent state lives in a state volume; `host` is
+   * one that mounts this host's own configuration, sign-in included. A profile
+   * picks the mode, and a need of the other mode is left out of the machine.
+   */
+  when?: StateMode;
 }
+
+/**
+ * Where an agent's state lives for a machine: in a state volume of its own, or
+ * mounted from this host's home.
+ */
+export type StateMode = 'host' | 'volume';
 
 /** A host directory made visible in the machine. */
 export interface DirectoryNeed extends Need {
@@ -100,11 +115,56 @@ export interface PartNeed extends Need {
   part: string;
 }
 
+/**
+ * One host file or directory a state directory is seeded from.
+ *
+ * Written into the state volume the first time and again only when it changed
+ * on this host; what the agent wrote beside it is kept.
+ */
+export interface Seed {
+  /** The host path. `~` at the start is the host user's home. */
+  source: string;
+  /** Where it lands, relative to the state directory. The source's base name when absent. */
+  target?: string;
+  /** For a JSON file: the top-level keys kept, every other one left out. */
+  keep?: string[];
+  /** For a JSON file: dotted paths removed, such as `security.auth`. */
+  drop?: string[];
+}
+
+/**
+ * A directory inside the machine that holds the agent's own state, kept in a
+ * named volume rather than taken from this host.
+ *
+ * Whatever makes the machine names the volume - by profile, owner and the
+ * agent that declared it - and seeds it from `seed` before the machine starts,
+ * so nothing of this host's home is mounted. A login file is never a seed: a
+ * credential reaches the machine as an env need instead.
+ */
+export interface StateNeed extends Need {
+  /** The state directory inside the machine. A profile's or an option's value names another. */
+  state: string;
+  /** The host files and directories it is seeded from. */
+  seed?: Seed[];
+}
+
 /** One thing an agent needs, by the delivery it names. */
-export type MachineNeed = DirectoryNeed | FileNeed | EnvNeed | CopyNeed | PartNeed;
+export type MachineNeed = DirectoryNeed | FileNeed | EnvNeed | CopyNeed | PartNeed | StateNeed;
 
 /** How a resolved need reaches the machine. */
-export type NeedKind = 'directory' | 'file' | 'env' | 'copy' | 'part';
+export type NeedKind = 'directory' | 'file' | 'env' | 'copy' | 'part' | 'state';
+
+/** A seed with its host path settled and its target set. */
+export interface ResolvedSeed {
+  /** The absolute host path. */
+  source: string;
+  /** Where it lands, relative to the state directory. */
+  target: string;
+  /** For a JSON file: the top-level keys kept. */
+  keep?: string[];
+  /** For a JSON file: dotted paths removed. */
+  drop?: string[];
+}
 
 /** One need with its value settled, as a runtime is handed it. */
 export interface ResolvedNeed {
@@ -114,11 +174,21 @@ export interface ResolvedNeed {
   kind: NeedKind;
   /**
    * The host path for a mount or a copy-in, the value for an environment
-   * variable, or the part's id.
+   * variable, the part's id, or the state directory.
    */
   source: string;
-  /** The mount point, the copied-to path, the variable's name, or `/opt/ahpd/<part>`. */
+  /**
+   * The mount point, the copied-to path, the variable's name,
+   * `/opt/ahpd/<part>`, or the state directory.
+   */
   target: string;
+  /** What a state directory is seeded from. */
+  seed?: ResolvedSeed[];
+  /**
+   * The provider id of the agent that declared it, on a state need, which is
+   * what its volume is named by.
+   */
+  provider?: string;
   /** A mount delivered read-only. */
   readOnly?: boolean;
   /**

@@ -264,7 +264,12 @@ if (verb === 'up') {
           // The workspace mount is what the real CLI makes, and the one thing a
           // caller's folder can be read through; the override's own `mounts`
           // are added to it as the container's other binds.
-          mounts: [`${folder}:${made.remoteWorkspaceFolder}`, ...mounts],
+          // A named volume's `--mount` on the command line is one more.
+          mounts: [`${folder}:${made.remoteWorkspaceFolder}`, ...mounts, ...args.flatMap((one, at) => {
+            if (at === 0 || args[at - 1] !== '--mount' || !String(one).startsWith('type=volume,')) return [];
+            const read = (key) => String(one).split(',').find((pair) => pair.startsWith(`${key}=`))?.slice(key.length + 1) ?? '';
+            return [`${read('source')}:${read('target')}`];
+          })],
           ...(typed.length === 0 ? {} : { typed }),
           // The container's own environment: the image's, with the override's
           // `containerEnv` laid over it, which is what `${containerEnv:NAME}`

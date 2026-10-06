@@ -1,16 +1,16 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { partTarget } from '@ahpd/sdk';
-import type { Owner } from '@ahpd/sdk';
+import type { Owner, ResolvedSeed } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
-import { archiveOf, FILLED_MARKER, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
-import type { MadePart } from './parts.js';
+import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
+import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, Reach } from './devcontainer.js';
 
 /**
@@ -88,6 +88,175 @@ export interface Machine {
   team?: string;
   project?: string;
 }
+
+/** One state directory a machine asks for, as its manifest answers it. */
+export interface AskedState {
+  /** The need's name, for a refusal and a log line. */
+  need: string;
+  /** The provider id of the agent that declared it. */
+  provider: string;
+  /** The state directory inside the machine. */
+  target: string;
+  /** What it is seeded from. */
+  seed?: ResolvedSeed[];
+}
+
+/** One state directory with the volume that holds it. */
+export interface MadeState extends AskedState {
+  /** The named volume, as `stateVolumeOf` names it. */
+  volume: string;
+}
+
+/** The label a machine with state volumes carries, valued `volume`. */
+export const MACHINE_STATE = 'ahpd.state';
+
+/** A name as one piece of a volume name: lowercased, every character outside `[a-z0-9-]` a dash. */
+const volumePiece = (said: string): string => said.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+/**
+ * The volume one provider's state lives in on a machine, and the one place a
+ * state volume is named.
+ *
+ * By profile, owner and provider, `ahpd-state-<profile>-<owner>-<provider>`;
+ * with a `shared` scope by profile and provider, `ahpd-state-<profile>-<provider>`;
+ * without a profile by the machine's id and provider,
+ * `ahpd-state-<id>-<provider>`, which goes with the machine. Each piece is
+ * lowercased with every character outside `[a-z0-9-]` written as a dash, so
+ * `user:alice` is `user-alice`, and the name ends in the first 8 hex of the
+ * sha256 of the pieces as written, joined by NUL - the profile, the owner or
+ * nothing, and the provider, or the id and the provider - so two machines whose
+ * readable names meet, `user:a` with `b-claude` and `user:a-b` with `claude`,
+ * still get two volumes.
+ */
+export const stateVolumeOf = (
+  machine: { profile?: string; owner?: string; id: string; scope?: 'owner' | 'shared' },
+  provider: string,
+): string => {
+  const pieces = machine.profile === undefined || machine.profile === ''
+    ? [machine.id, provider]
+    : [machine.profile, machine.scope === 'shared' ? '' : machine.owner ?? '', provider];
+  const readable = ['ahpd-state', ...pieces.filter((one) => one !== '')].map(volumePiece).join('-');
+  return `${readable}-${createHash('sha256').update(pieces.join('\0')).digest('hex').slice(0, 8)}`;
+};
+
+/**
+ * The file in a state volume that records each seed as it was when it was
+ * written, by its target: its size and mtime and its filters, or that it was
+ * absent.
+ */
+export const SEED_STAMP = '.ahpd-seed.json';
+
+/**
+ * Where a state volume is mounted in a helper that seeds it: one level under
+ * a directory of its own, so the archive written into that directory names the
+ * volume's root as an entry of its own, `state/`, whose owner Docker sets. An
+ * entry for the directory an archive is written into is not one Docker applies.
+ */
+const SEED_AT = '/ahpd-seed/state';
+
+/**
+ * Every regular file under a directory, by its path relative to it, in a fixed
+ * order, and the links found there.
+ *
+ * Read with `lstat`, so a link is never followed: one to a parent would walk
+ * forever, and one out of the directory would copy a file the seed never named.
+ * Each link is answered in `links` by its host path.
+ */
+const filesUnder = (root: string, at = '', links: string[] = []): { files: string[]; links: string[] } => {
+  const files: string[] = [];
+  for (const entry of readdirSync(join(root, at), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const path = at === '' ? entry.name : `${at}/${entry.name}`;
+    const stat = lstatSync(join(root, path), { throwIfNoEntry: false });
+    if (stat === undefined) continue;
+    if (stat.isSymbolicLink()) links.push(join(root, path));
+    else if (stat.isDirectory()) files.push(...filesUnder(root, path, links).files);
+    else if (stat.isFile()) files.push(path);
+  }
+  return { files, links };
+};
+
+/**
+ * What a seed is on this host now, as the stamp records it.
+ *
+ * A file by its size and mtime, a directory by its files' count, total size and
+ * newest mtime, and an absent source as absent; the filters are part of it, so
+ * a changed `keep` or `drop` seeds the file again. A source that is itself a
+ * link is followed, since the agent named it.
+ */
+const seedMark = (seed: ResolvedSeed): string => {
+  const filters = { ...(seed.keep === undefined ? {} : { keep: seed.keep }), ...(seed.drop === undefined ? {} : { drop: seed.drop }) };
+  const stat = statSync(seed.source, { throwIfNoEntry: false });
+  if (stat === undefined) return JSON.stringify({ source: seed.source, absent: true });
+  if (!stat.isDirectory()) return JSON.stringify({ source: seed.source, size: stat.size, mtime: stat.mtimeMs, ...filters });
+  const files = filesUnder(seed.source).files.map((one) => lstatSync(join(seed.source, one)));
+  return JSON.stringify({
+    source: seed.source,
+    files: files.length,
+    size: files.reduce((sum, one) => sum + one.size, 0),
+    mtime: files.reduce((newest, one) => Math.max(newest, one.mtimeMs), 0),
+  });
+};
+
+/** One own property of an object, never one its prototype answers. */
+const ownOf = (value: unknown, key: string): unknown =>
+  (typeof value === 'object' && value !== null && Object.hasOwn(value, key) ? (value as Record<string, unknown>)[key] : undefined);
+
+/**
+ * A JSON file's text with only the `keep` keys at its top, and each `drop`
+ * dotted path taken out, walking own properties alone.
+ */
+const filteredJson = (text: string, keep?: string[], drop?: string[]): string => {
+  const parsed: unknown = JSON.parse(text);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('it is not a JSON object');
+  let value = parsed as Record<string, unknown>;
+  if (keep !== undefined) value = Object.fromEntries(Object.entries(value).filter(([key]) => keep.includes(key)));
+  for (const path of drop ?? []) {
+    const keys = path.split('.');
+    const last = keys.pop() ?? '';
+    let at: unknown = value;
+    for (const key of keys) at = ownOf(at, key);
+    if (typeof at === 'object' && at !== null && Object.hasOwn(at, last)) delete (at as Record<string, unknown>)[last];
+  }
+  return `${JSON.stringify(value, undefined, 2)}\n`;
+};
+
+/**
+ * One seed's files as archive entries under its target, a JSON file filtered,
+ * and the links inside a seeded directory that were left out.
+ */
+const seedEntries = (seed: ResolvedSeed): { entries: Tarball[]; links: string[] } => {
+  if (statSync(seed.source).isDirectory()) {
+    const found = filesUnder(seed.source);
+    return {
+      entries: found.files.map((one) => ({ name: `${seed.target}/${one}`, bytes: readFileSync(join(seed.source, one)) })),
+      links: found.links,
+    };
+  }
+  const bytes = readFileSync(seed.source);
+  if (seed.keep === undefined && seed.drop === undefined) return { entries: [{ name: seed.target, bytes }], links: [] };
+  return { entries: [{ name: seed.target, bytes: Buffer.from(filteredJson(bytes.toString('utf8'), seed.keep, seed.drop), 'utf8') }], links: [] };
+};
+
+/**
+ * A seed archive owned by `ids`, to be written into the directory above the
+ * volume's root: the root as `<dir>/`, every directory the files sit in, then
+ * the files, each entry carrying the uid and gid, which `docker cp -a` keeps.
+ */
+const ownedArchive = (files: Tarball[], ids: { uid: number; gid: number }, dir: string): ArchiveEntry[] => {
+  const directories = [...new Set(files.flatMap((one) => {
+    const parts = one.name.split('/').slice(0, -1);
+    return parts.map((_, at) => `${parts.slice(0, at + 1).join('/')}/`);
+  }))];
+  const empty = Buffer.alloc(0);
+  return [
+    { name: `${dir}/`, bytes: empty, directory: true, ...ids },
+    ...directories.map((name) => ({ name: `${dir}/${name}`, bytes: empty, directory: true, ...ids })),
+    ...files.map((one) => ({ ...one, name: `${dir}/${one.name}`, ...ids })),
+  ];
+};
+
+/** Whether a container user is root, which owns whatever `docker cp` wrote. */
+const isRoot = (user: string): boolean => user === '' || /^(?:root|0)(?::|$)/.test(user);
 
 /** What to make. */
 export interface MachineSpec {
@@ -181,6 +350,19 @@ export interface MachineSpec {
    * one's `bin` in front.
    */
   parts?: MadePart[];
+  /**
+   * The state directories this machine asks for, each by the agent that
+   * declared it; the plugin names each one's volume into `states`.
+   */
+  statesAsked?: AskedState[];
+  /** Who shares this machine's state volumes, as its profile says. */
+  stateScope?: 'owner' | 'shared';
+  /**
+   * The state volumes this machine is made with, each mounted at its state
+   * directory and seeded before the machine starts. The machine is labelled
+   * `ahpd.state=volume` when it has one.
+   */
+  states?: MadeState[];
   /**
    * The agents this machine is prepared for, recorded as a label.
    *
@@ -892,6 +1074,8 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
   // The parts it was made with, which is what a session needing one is
   // checked against and what puts each part's `bin` on every command's `PATH`.
   if (spec.parts !== undefined) runArgs.push('--label', `${MACHINE_PARTS}=${partsLabel(spec.parts)}`);
+  // Whether its agents' state lives in volumes, which a remove reads back.
+  if ((spec.states ?? []).length > 0) runArgs.push('--label', `${MACHINE_STATE}=volume`);
   held.runArgs = runArgs;
   return held;
 };
@@ -1335,6 +1519,126 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     return path === undefined ? IMAGE_PATH : path.slice('PATH='.length);
   };
 
+  /** The user an image's containers run as, or root's empty one where it cannot be read. */
+  const imageUser = async (image: string): Promise<string> => {
+    const asked = (): Promise<Ran> => ran(options, ['image', 'inspect', '--format', '{{json .Config.User}}', image]);
+    let held = await asked();
+    if (held.code !== 0) {
+      await ran(options, ['pull', image]);
+      held = await asked();
+    }
+    if (held.code !== 0) return '';
+    try {
+      const user: unknown = JSON.parse(held.stdout.trim());
+      return typeof user === 'string' ? user : '';
+    }
+    catch { return ''; }
+  };
+
+  /**
+   * A container user as numeric ids, read once per image and user from the
+   * image itself, or nothing where they cannot be read.
+   */
+  const idsHeld = new Map<string, Promise<{ uid: number; gid: number } | undefined>>();
+  const idsOf = (image: string, user: string): Promise<{ uid: number; gid: number } | undefined> => {
+    const key = `${image}\n${user}`;
+    const known = idsHeld.get(key);
+    if (known !== undefined) return known;
+    const reading = (async () => {
+      const id = async (flag: string): Promise<string> =>
+        (await must(['run', '--rm', '--user', user, image, 'id', flag])).trim();
+      try {
+        const [uid, gid] = [await id('-u'), await id('-g')];
+        return /^\d+$/.test(uid) && /^\d+$/.test(gid) ? { uid: Number(uid), gid: Number(gid) } : undefined;
+      }
+      catch { return undefined; }
+    })();
+    idsHeld.set(key, reading);
+    return reading;
+  };
+
+  /**
+   * The ids a machine made from `image` runs as for `user`: root's for a root
+   * user, else read from the image, else root's with a line saying so.
+   */
+  const ownerIds = async (machine: string, image: string, user: string): Promise<{ uid: number; gid: number }> => {
+    if (isRoot(user)) return { uid: 0, gid: 0 };
+    const ids = await idsOf(image, user);
+    if (ids !== undefined) return ids;
+    options.log?.(`${machine} leaves its state volumes owned by root: the ids of ${user} could not be read from ${image}`);
+    return { uid: 0, gid: 0 };
+  };
+
+  /**
+   * Seed one state volume where its stamp says a seed changed.
+   *
+   * The stamp is read and the seeds written through a helper created from
+   * `image` with the volume mounted and never started, so an image without a
+   * shell seeds the same way. Only a seed whose mark differs from the stamp's is
+   * written, over the file at its target, and everything else in the volume -
+   * what the agent wrote - is left alone. A seed whose host source is absent is
+   * skipped with a line and stamped absent, so it is seeded once it appears; one
+   * that cannot be read is skipped with a line and left unstamped, and a link
+   * inside a seeded directory is left out with a line. What is written is owned
+   * by `ids` - the volume's root, each directory and each file - through the
+   * archive's own entries and `docker cp -a`. One seed per volume at a time.
+   *
+   * `into` is where the volume is reached: a helper created from `image` and
+   * never started, with the volume at `SEED_AT`, or a running `container`,
+   * with the volume at the state directory itself.
+   */
+  const seedState = (
+    machine: string,
+    state: MadeState,
+    into: { image: string } | { container: string },
+    ids: { uid: number; gid: number },
+  ): Promise<void> =>
+    once(`state:${state.volume}`, async () => {
+      const helper = 'image' in into ? `ahpd-state-seed-${randomUUID().slice(0, 8)}` : undefined;
+      const container = 'container' in into ? into.container : helper ?? '';
+      const at = helper === undefined ? state.target : SEED_AT;
+      const dir = posix.basename(at);
+      if (dir === '') throw new Error(`${machine} cannot seed ${state.volume} at ${at}, which has no directory above it`);
+      try {
+        if ('image' in into) await must(['create', '--name', container, '-v', `${state.volume}:${SEED_AT}`, into.image, 'x']);
+        const out = await ran(options, ['cp', `${container}:${at}/${SEED_STAMP}`, '-']);
+        let stamp: Record<string, unknown> | undefined;
+        try {
+          const text = out.code === 0 ? firstFileOf(Buffer.from(out.stdout, 'utf8')) : undefined;
+          const parsed: unknown = text === undefined ? undefined : JSON.parse(text.toString('utf8'));
+          stamp = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
+        }
+        catch { stamp = undefined; }
+        const next: Record<string, unknown> = { ...(stamp ?? {}) };
+        const entries: Tarball[] = [];
+        for (const seed of state.seed ?? []) {
+          const mark = seedMark(seed);
+          if (stamp?.[seed.target] === mark) continue;
+          const stat = statSync(seed.source, { throwIfNoEntry: false });
+          if (stat === undefined) {
+            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}, which is not on this host`);
+            next[seed.target] = mark;
+            continue;
+          }
+          try {
+            const found = seedEntries(seed);
+            entries.push(...found.entries);
+            for (const link of found.links) options.log?.(`${machine} seeds ${state.volume} without ${link}, a link it does not follow`);
+            next[seed.target] = mark;
+          }
+          catch (error) {
+            options.log?.(`${machine} seeds ${state.volume} without ${seed.source}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        if (stamp !== undefined && entries.length === 0 && JSON.stringify(next) === JSON.stringify(stamp)) return;
+        entries.push({ name: SEED_STAMP, bytes: Buffer.from(`${JSON.stringify(next)}\n`, 'utf8') });
+        await must(['cp', '-a', '-', `${container}:${posix.dirname(at)}`], undefined, archiveOf(ownedArchive(entries, ids, dir)));
+      }
+      finally {
+        if (helper !== undefined) await ran(options, ['rm', '-f', helper]);
+      }
+    });
+
   /**
    * The containers a connect adopted, as the record beside the configuration
    * says them.
@@ -1530,6 +1834,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         const bound = [...new Set([
           ...(spec.mounts ?? []).filter((mount) => !readOnlyMount(mount)).map(cliMount),
           ...(spec.copies ?? []).map((one) => `type=bind,source=${one.source},target=${one.target}`),
+          // Each state volume, writable, at its state directory.
+          ...(spec.states ?? []).map((one) => `type=volume,source=${one.volume},target=${one.target}`),
         ])];
         for (const mount of bound) argv.push('--mount', mount);
         /*
@@ -1546,6 +1852,18 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * nothing behind.
          */
         const config = configOf(spec.devcontainer);
+        /*
+         * Each state volume seeded before `up`, from the definition's own image
+         * and owned by its `remoteUser`, else its `containerUser`, else the
+         * image's user. A definition that builds its image has no image before
+         * `up`, so its volumes are seeded once the container is up.
+         */
+        const base = typeof config.image === 'string' && config.image !== '' ? config.image : undefined;
+        const asUser = [config.remoteUser, config.containerUser].find((one): one is string => typeof one === 'string' && one !== '');
+        if (base !== undefined && (spec.states ?? []).length > 0) {
+          const ids = await ownerIds(spec.name, base, asUser ?? await imageUser(base));
+          for (const one of spec.states ?? []) await seedState(spec.name, one, { image: base }, ids);
+        }
         /*
          * The parts, by the route a dev container takes: an image mount needs
          * the part image here before `up`, which the plugin has built, and the
@@ -1577,6 +1895,22 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
            */
           const said = masked([ran.stdout.trim(), ran.stderr.trim()].filter((one) => one !== '').join(' '));
           throw new Error(`The Dev Container CLI reported no container for ${spec.devcontainer}: ${said === '' ? `exit ${String(ran.code)}` : said}`);
+        }
+        /*
+         * A definition that builds its image is seeded now, inside the running
+         * container at each state directory, owned by its user's ids as read
+         * there.
+         */
+        if (base === undefined && (spec.states ?? []).length > 0) {
+          const as = asUser === undefined ? [] : ['-u', asUser];
+          const id = async (flag: string): Promise<string> =>
+            (await must(['exec', ...as, made.containerId, 'id', flag])).trim();
+          const [uid, gid] = [await id('-u'), await id('-g')];
+          if (!/^\d+$/.test(uid) || !/^\d+$/.test(gid)) {
+            throw new Error(`${spec.name} could not read the ids of ${asUser ?? 'its user'} inside ${made.containerId}`);
+          }
+          const ids = { uid: Number(uid), gid: Number(gid) };
+          for (const one of spec.states ?? []) await seedState(spec.name, one, { container: made.containerId }, ids);
         }
         /*
          * The name this create gave, when the container carries it.
@@ -1680,6 +2014,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       ])];
       for (const mount of mounted) flags.push('-v', mount);
       /*
+       * Each state volume at its state directory, after the binds, and the label
+       * that says the machine has them.
+       */
+      for (const one of spec.states ?? []) flags.push('-v', `${one.volume}:${one.target}`);
+      if ((spec.states ?? []).length > 0) flags.push('--label', `${MACHINE_STATE}=volume`);
+      /*
        * Each part, read-only at `/opt/ahpd/<id>`, after the binds; the label
        * names exactly the parts the machine has, and its `PATH` puts each one's
        * `bin` in front of the image's own, so a command a preset names is found
@@ -1702,6 +2042,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (spec.workdir !== undefined) flags.push('-w', spec.workdir);
       // Kept alive with nothing running in it, as the script does: a machine
       // waits for work.
+      // Each state volume seeded before the machine exists, for the image's user.
+      if ((spec.states ?? []).length > 0) {
+        const ids = await ownerIds(spec.name, image, await imageUser(image));
+        for (const one of spec.states ?? []) await seedState(spec.name, one, { image }, ids);
+      }
       const keeps = [image, 'sleep', 'infinity'];
       const copies = spec.copies ?? [];
       if (copies.length === 0) {
@@ -1726,7 +2071,23 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * the same machine between the two.
      */
     restart: async (id) => { await must(['restart', await containerOf(id)]); },
-    remove: async (id) => { await must(['rm', '-f', await containerOf(id)]); },
+    /*
+     * Take one away, and with a machine made without a profile its state
+     * volumes, which nothing else would ever mount: one per agent its label
+     * names, as `stateVolumeOf` names them, and a volume that is not there is
+     * nothing to remove. A profile's state volumes outlive every machine.
+     */
+    remove: async (id) => {
+      const at = await containerOf(id);
+      const found = await recordOf(at);
+      const labels = labelsOf(found);
+      await must(['rm', '-f', at]);
+      if (labels[MACHINE_STATE] !== 'volume' || profileOf(found) !== undefined) return;
+      const named = namedOf(found) ?? id;
+      for (const provider of preparedFor(found)) {
+        await ran(options, ['volume', 'rm', stateVolumeOf({ id: named }, provider)]);
+      }
+    },
 
     exec: async (id, command, env) => {
       const at = await containerOf(id);

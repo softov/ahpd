@@ -143,6 +143,72 @@ it('resolves a part to its place under /opt/ahpd, and a profile value names anot
     .toThrow(/^machine need codex names the part \.\.\/etc \(from the profile\), and a part is named by its id in the versions file$/);
 });
 
+it('keeps the needs of the mode a machine is made in, and a need without `when` in both', () => {
+  const dir = temp();
+  const needs: Record<string, MachineNeed> = {
+    state: { state: '/ahpd/claude', seed: [{ source: join(dir, 'settings.json') }] },
+    home: { directory: dir, target: '/ahpd/claude', when: 'host' },
+    shared: { name: 'SHARED', default: 'x', when: 'volume' },
+    both: { name: 'BOTH', default: 'y' },
+  };
+  const names = (mode: 'host' | 'volume'): string[] => resolveNeeds(needs, {}, dir, mode).map((one) => one.name);
+  expect(names('volume')).toEqual(['state', 'shared', 'both']);
+  expect(names('host')).toEqual(['home', 'both']);
+  // Volume is the mode a caller that names none gets.
+  expect(resolveNeeds(needs, {}, dir).map((one) => one.name)).toEqual(['state', 'shared', 'both']);
+});
+
+it('resolves a state need with its seeds, a seed target defaulting to the source’s name', () => {
+  const home = temp();
+  writeFileSync(join(home, '.claude.json'), '{}');
+  mkdirSync(join(home, 'skills'));
+  const needs: Record<string, MachineNeed> = {
+    claudeState: {
+      state: '/ahpd/claude',
+      seed: [
+        { source: '~/.claude.json', keep: ['mcpServers'] },
+        { source: '~/skills', target: 'skills' },
+        { source: '~/settings.json', target: 'conf/settings.json', drop: ['security.auth'] },
+      ],
+      description: 'The state.',
+    },
+  };
+  expect(resolveNeeds(needs, {}, home)).toEqual([{
+    name: 'claudeState',
+    kind: 'state',
+    source: '/ahpd/claude',
+    target: '/ahpd/claude',
+    seed: [
+      { source: join(home, '.claude.json'), target: '.claude.json', keep: ['mcpServers'] },
+      { source: join(home, 'skills'), target: 'skills' },
+      { source: join(home, 'settings.json'), target: 'conf/settings.json', drop: ['security.auth'] },
+    ],
+    description: 'The state.',
+  }]);
+  // A profile's value names another directory inside the machine.
+  expect(resolveNeeds(needs, { profile: { claudeState: '/state/claude' } }, home)[0]?.target).toBe('/state/claude');
+});
+
+it('refuses a state need whose directory or seed cannot work', () => {
+  const home = temp();
+  mkdirSync(join(home, 'skills'));
+  const one = (need: MachineNeed): (() => unknown) => () => resolveNeeds({ s: need }, {}, home);
+  expect(one({ state: 'relative' })).toThrow(/^machine need s is relative \(from the agent's default\), and a state directory is an absolute path inside the machine$/);
+  expect(one({ state: '/s', seed: [{ source: 'here.json' }] })).toThrow(/^machine need s seeds here\.json, and a seed is an absolute host path$/);
+  expect(one({ state: '/s', seed: [{ source: '~/x.json', target: '../x.json' }] })).toThrow(/^machine need s seeds .* at \.\.\/x\.json, and a seed lands inside the state directory$/);
+  expect(one({ state: '/s', seed: [{ source: '~/x.json', target: '/x.json' }] })).toThrow(/and a seed lands inside the state directory$/);
+  expect(one({ state: '/s', seed: [{ source: '~/skills', keep: ['a'] }] })).toThrow(/^machine need s seeds .*skills, a directory, and keep and drop are only for a JSON file$/);
+  // A key that walks into an object's prototype is never a key of the file.
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    expect(one({ state: '/s', seed: [{ source: '~/x.json', drop: [`${key}.toString`] }] }))
+      .toThrow(new RegExp(`^machine need s seeds .*x\\.json with ${key}, and keep and drop name a file's own keys$`));
+    expect(one({ state: '/s', seed: [{ source: '~/x.json', keep: [key] }] })).toThrow(/name a file's own keys$/);
+  }
+  expect(one({ state: '/s', seed: [{ source: '~/x.json', drop: ['a.prototype'] }] })).toThrow(/with prototype,/);
+  // An absent source is the seed's own business when the machine is made.
+  expect(one({ state: '/s', seed: [{ source: '~/gone.json', drop: ['a.b'] }] })()).toHaveLength(1);
+});
+
 it('refuses a path that is not there, naming the need, the path and the source', () => {
   const dir = temp();
   const gone = join(dir, 'not-there');

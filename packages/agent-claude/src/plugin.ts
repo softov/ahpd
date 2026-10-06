@@ -42,7 +42,7 @@ export const optionsSchema = {
     computerExecutable: { type: 'string', description: "Where the CLI is inside a machine. claude on the image's PATH by default." },
     computerConfigDir: {
       anyOf: [{ type: 'string' }, { const: false }],
-      description: "The configuration directory the CLI reads inside a machine. /ahpd/claude by default; false leaves the image's own.",
+      description: "The configuration directory the CLI reads inside a machine. /ahpd/<variant> by default, /ahpd/claude for the built-in; false leaves the image's own.",
     },
     workerStop: { type: 'string', enum: ['worker', 'session'], description: "What a stop given in a subagent's chat stops. worker by default." },
     presets: {

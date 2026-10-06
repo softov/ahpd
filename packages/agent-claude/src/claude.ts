@@ -86,10 +86,12 @@ export interface ClaudeOptions {
   /**
    * The configuration directory the CLI reads *inside a machine*.
    *
-   * `/ahpd/claude` by default. `machine()` mounts this host's `~/.claude`
-   * there, and the CLI runs with `CLAUDE_CONFIG_DIR` pointing at it, so a
-   * machine made for this backend is one the CLI is already signed in on.
-   * `false` declares no configuration need at all and leaves the image's own.
+   * `/ahpd/<provider>` by default, `/ahpd/claude` for the built-in, so two
+   * variants in one machine read two directories. `machine()` mounts this
+   * host's `~/.claude` there, and the CLI runs with `CLAUDE_CONFIG_DIR`
+   * pointing at it, so a machine made for this backend is one the CLI is
+   * already signed in on. `false` declares no configuration need at all and
+   * leaves the image's own.
    */
   computerConfigDir?: string | false;
   /**
@@ -136,7 +138,7 @@ export interface ClaudeOptions {
 export function claude(options: ClaudeOptions): Agent {
   const dirs = options.paths;
   const executable = options.computerExecutable ?? 'claude';
-  const configDir = options.computerConfigDir === undefined ? '/ahpd/claude' : options.computerConfigDir;
+  const configDir = options.computerConfigDir === undefined ? `/ahpd/${options.provider ?? 'claude'}` : options.computerConfigDir;
   const dir = dirs[0];
   if (dir === undefined)
     throw new Error('claude() needs at least one directory to work in.');

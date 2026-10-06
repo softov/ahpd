@@ -185,7 +185,7 @@ A machine made from a profile that names `claude` carries what the agent says it
 
 The executable is resolved at the moment the machine is made, so an update on the host is followed rather than a version pinned in a path. A host path that is not there is refused at create, naming the need and the path, instead of becoming an empty directory the session exits 127 in.
 
-The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/claude`. `computerConfigDir` in the `@ahpd/agent-claude` options names another path inside the machine, and `false` leaves the image's own configuration alone and mounts only the executable.
+The CLI runs with `CLAUDE_CONFIG_DIR=/ahpd/<variant>`: `/ahpd/claude` for the built-in Claude, `/ahpd/claude-openrouter` for a variant whose key is `claude-openrouter`, so two variants in one machine read two directories, and the table's targets move with it. `computerConfigDir` in the `@ahpd/agent-claude` options names another path inside the machine for every variant, and `false` leaves the image's own configuration alone and mounts only the executable. Two variants given one `computerConfigDir` in a profile with `state: "volume"` would be two state volumes at one directory, and a machine with both is refused at create, naming the directory.
 
 Only `CLAUDE_*` and `ANTHROPIC_*` variables are passed into the machine. The host's `HOME`, `PATH` and `PWD` are not.
 
@@ -235,7 +235,20 @@ A need is filled from the profile, then the plugin option, then the agent's own 
 { "profiles": { "claude": { "agents": ["claude"], "needs": { "claudeConfigJson": "/srv/claude.json" } } } }
 ```
 
-A need is delivered as a bind mount, an environment variable, a file copied in, or a part. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine.
+A need is delivered as a bind mount, an environment variable, a file copied in, a part, or a state volume. Copy-ins are placed between the container being created and its first process starting, and they are paid on every create and lost with the machine. A state volume is kept across machines and seeded only when its seed changed; see [Agent state](#agent-state).
+
+`state` and `stateScope` say where the agents in a machine from the profile keep their state, and who shares it:
+
+| Field | Values | What it does |
+| --- | --- | --- |
+| `state` | `volume` (default), `host` | `volume` gives each agent's state directory a named volume, seeded from this host, and leaves out every need an agent marks `when: "host"`. `host` mounts this host's own configuration, sign-in included, as those needs say, and makes no state volume: the machine is made exactly as it was before state volumes existed. |
+| `stateScope` | `owner` (default), `shared` | `owner` gives each owner of a machine from the profile a volume per provider, `ahpd-state-<profile>-<owner>-<provider>-<hash>`; a bot, an automation or a plugin that owns a machine is an owner like a person. `shared` gives every owner of the profile one volume per provider, `ahpd-state-<profile>-<provider>-<hash>`, for a team that wants one shared bot state. |
+
+```json
+{ "profiles": { "bots": { "agents": ["claude"], "state": "volume", "stateScope": "shared" } } }
+```
+
+Any other value of either refuses the plugin when the options are read.
 
 `parts` names the parts every machine from the profile carries, by their ids in the versions file, beside the ones its agents' needs name. A running machine never gains a part, so a long-lived machine names here every part a session in it will want. An id the versions file does not name is left out with a log line, and the rest of the profile stands. See [Parts in a machine](#parts-in-a-machine).
 
@@ -285,7 +298,9 @@ A manifest picks a profile with `"profile": "claude"`, and its own fields still 
 
 An unknown profile is refused with the list of known ones. A profile that names an agent this host does not have is refused too, rather than made without what it was prepared for.
 
-A target two different mounts land at is refused at create, naming both and where each came from, because one of them would silently lose - Docker refuses the machine outright. Two mounts that are one statement, the same source and target, are one mount however many of them say it, so two variants of one plugin can share a profile's state, and a profile may mount an agent's configuration by hand at the need's own target.
+A target two different mounts land at is refused at create, naming both and where each came from, because one of them would silently lose - Docker refuses the machine outright. Two mounts that are one statement, the same source and target, are one mount however many of them say it, so two variants of one plugin that mount the same file get it once, and a profile may mount an agent's configuration by hand at the need's own target.
+
+Two agents that ask for the same thing at one target get it once: an environment variable with one value is one `-e`, and two state needs of one provider with the same seeds are one volume. Two that ask for different things there are refused at create with both needs named - two values for one variable, neither of them printed, or two state volumes at one directory.
 
 A mount whose host path is not there is refused at create, naming the mount and whether it came from the plugin options, a profile or a body - not mounted as an empty directory for the session to find out about later. A relative source is refused the same way, because Docker reads `cache:/cache` as a named volume rather than as a path on this host. The check is at create and not at load, so a folder made after the daemon started is still accepted, and the same is true of a need's own value.
 
@@ -331,7 +346,55 @@ At startup a daemon lists the machines labelled `ahpd.disposable` and adopts the
 
 A `disposableAlone` machine is refused as well to a session whose owner is not the owner it was made for, and to every session on a daemon that did not make it: a channel is the client's to choose, so a session opened under a disposed one's id spells the same URI and the owner is what tells the two apart, and a machine another daemon made is that daemon's to run and to remove.
 
-**A copy-in is paid on every create**, so a disposable profile prefers mounts. A need delivered as a copy is paid again for every session's machine and lost with it, which is the opposite of what a profile picked per session wants.
+A disposable machine's state lives in its profile's state volume, so a second disposable machine of one profile and owner, or of one shared profile, finds the state the first left and copies nothing; see [Agent state](#agent-state).
+
+**A hand-written copy-in is paid on every create**, so a disposable profile prefers a state volume or a mount. A need delivered as a copy is paid again for every session's machine and lost with it, which is the opposite of what a profile picked per session wants.
+
+## Agent state
+
+An agent declares its state directory as a state need, with the few host files that seed it:
+
+```js
+machine: () => ({
+  claudeState: {
+    state: '/ahpd/claude',
+    seed: [
+      { source: '~/.claude/settings.json', drop: ['security.auth'] },
+      { source: '~/.claude/CLAUDE.md' },
+      { source: '~/.claude/skills' },
+      { source: '~/.claude.json', target: '.claude.json', keep: ['mcpServers'] },
+    ],
+  },
+  claudeConfigDirectory: { directory: '~/.claude', target: '/ahpd/claude', when: 'host' },
+}),
+```
+
+In a profile with `state: "volume"`, the default, the machine mounts a named volume at the state directory, and needs marked `when: "host"` are left out. Nothing of this host's home is mounted.
+
+Each provider has its own state volume, the variants of one plugin included, so the built-in Claude and an OpenRouter variant share no setting and no sign-in. The volume is named by the machine's profile, its owner and the provider of the agent that declared the need:
+
+| Machine | Volume |
+| --- | --- |
+| From a profile, `stateScope: "owner"` | `ahpd-state-<profile>-<owner>-<provider>-<hash>`, such as `ahpd-state-claude-user-alice-claude-openrouter-3f9c21ab` |
+| From a profile, `stateScope: "shared"` | `ahpd-state-<profile>-<provider>-<hash>` |
+| Without a profile | `ahpd-state-<machine id>-<provider>-<hash>` |
+
+Each piece is lowercased, with every character outside `a-z`, `0-9` and `-` written as a dash, so the owner `user:alice` is `user-alice`. Two owners can read the same that way, `user:A` and `user:a` among them, so `<hash>` is the first 8 hex digits of the sha256 of the pieces as written, joined by a NUL byte, and each owner keeps a volume of its own. A profile's volumes outlive every machine made from it. The volumes of a machine made without a profile, such as a dev container a session asked for, are removed with it. A machine with a state volume is labelled `ahpd.state=volume`.
+
+A seed is written before the machine starts, through a helper container that is removed again, and only when it changed. A dev container that builds its own image has no image before it is made, so its seeds are written once it is up, into the running container, by the same rules:
+
+- The volume holds `.ahpd-seed.json`, which records each seed's size and mtime, or that it was absent. A seed whose record matches is not copied, so a second machine of one profile and owner copies nothing.
+- A seed that changed on this host is written again on its own, over the file at its target. Everything else in the volume - the agent's history, caches and what it wrote - is left alone. A setting edited inside a machine is lost at the next seed of that file, so edit it on the host.
+- `target` is relative to the state directory and defaults to the source's name. A directory is copied whole under its target.
+- `keep` keeps only those top-level keys of a JSON file, and `drop` removes each dotted path. Either on a directory is refused when the machine is made.
+- A seed whose host source is not there is skipped with a log line naming it, and the others are seeded. It is seeded once it appears.
+- A seed's source may be a link, which is followed. A link inside a seeded directory is never followed: it is skipped with a log line naming it.
+- Every entry of the seed is written with the numeric ids of the machine's user, the volume's root included, by `docker cp -a`, so an image whose user is not root can write its state. The ids are read once from the image. A dev container uses its `remoteUser`, else its `containerUser`, else its image's user.
+- A dev container that builds its own image reads its user's ids inside the running container before its seeds are written there.
+
+A login file is never a seed. A credential reaches a machine as an env need, from the vault or the daemon's environment, and a Claude variant's key reaches the CLI on each exec rather than through the machine: it is never in a state volume or the container's environment, so a variant's key is not left in a machine another variant runs in.
+
+`state: "host"` is the old shared sign-in: the machine mounts this host's `~/.claude` and every machine that mounts it uses the same subscription.
 
 ## Stats
 

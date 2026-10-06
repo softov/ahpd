@@ -31,7 +31,7 @@ export type {
 } from './listen.js';
 export type { Offered } from './probe.js';
 export type { Agent, Listed, Start, BoundTool, Endpoint, ToolEffects, RestoredSubagent, McpServer, StdioMcpServer, HttpMcpServer } from './agent.js';
-export type { DirectoryNeed, FileNeed, EnvNeed, CopyNeed, PartNeed, MachineNeed, NeedKind, ResolvedNeed } from './machine.js';
+export type { DirectoryNeed, FileNeed, EnvNeed, CopyNeed, PartNeed, StateNeed, Seed, ResolvedSeed, StateMode, MachineNeed, NeedKind, ResolvedNeed } from './machine.js';
 export type { Entry, Metadata, Read, ResourceProvider, ResourceStore, SchemeDescription, Write } from './resources.js';
 export type { ComputerPort, MachineSource, Spawn, SpawnOptions } from './computers.js';
 export type { ContainerConnect, ContainerConnectResult, ContainerPort, ContainerSink } from './containers.js';

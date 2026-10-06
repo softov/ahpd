@@ -13,10 +13,10 @@
  * answer the way Docker does.
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { MachineNeed, ResolvedNeed } from './types/machine.js';
+import { basename, join } from 'node:path';
+import type { MachineNeed, ResolvedNeed, ResolvedSeed, Seed, StateMode } from './types/machine.js';
 import { secretRef } from './vault.js';
 
 /** What a profile and a plugin option name, by need name. */
@@ -36,14 +36,57 @@ export interface NeedSources {
 export const expandHome = (value: string, home: string = homedir()): string =>
   (value === '~' ? home : value.startsWith('~/') ? join(home, value.slice(2)) : value);
 
-/** The value a need carries itself: its path, its part id, or nothing for an environment variable. */
+/**
+ * The value a need carries itself: its path, its part id, its state directory,
+ * or nothing for an environment variable.
+ */
 const carriedBy = (need: MachineNeed): string | undefined => {
   if ('directory' in need) return need.directory;
   if ('file' in need) return need.file;
   if ('source' in need) return need.source;
   if ('part' in need) return need.part;
+  if ('state' in need) return need.state;
   return undefined;
 };
+
+/** The keys that reach an object's prototype, which `keep` and `drop` never name. */
+const PROTOTYPE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/**
+ * A state need's seeds, each with its host path expanded and its target set.
+ *
+ * A source is an absolute host path once `~` is read, and a target stays inside
+ * the state directory. `keep` and `drop` filter a JSON file, so a source that is
+ * a directory is refused with them, and so is a key of theirs that reaches an
+ * object's prototype; a source that is not there is left for the
+ * machine maker, which skips that seed alone.
+ */
+const seedsOf = (name: string, seeds: Seed[], home: string): ResolvedSeed[] => seeds.map((seed) => {
+  const source = expandHome(seed.source, home);
+  if (!source.startsWith('/')) {
+    throw new Error(`machine need ${name} seeds ${seed.source}, and a seed is an absolute host path`);
+  }
+  const target = seed.target ?? basename(source);
+  const parts = target.split('/');
+  if (target === '' || target.startsWith('/') || parts.some((one) => one === '..' || one === '')) {
+    throw new Error(`machine need ${name} seeds ${source} at ${target}, and a seed lands inside the state directory`);
+  }
+  const walked = [...(seed.keep ?? []), ...(seed.drop ?? []).flatMap((path) => path.split('.'))]
+    .find((key) => PROTOTYPE_KEYS.has(key));
+  if (walked !== undefined) {
+    throw new Error(`machine need ${name} seeds ${source} with ${walked}, and keep and drop name a file's own keys`);
+  }
+  const filtered = seed.keep !== undefined || seed.drop !== undefined;
+  if (filtered && existsSync(source) && statSync(source).isDirectory()) {
+    throw new Error(`machine need ${name} seeds ${source}, a directory, and keep and drop are only for a JSON file`);
+  }
+  return {
+    source,
+    target,
+    ...(seed.keep === undefined ? {} : { keep: [...seed.keep] }),
+    ...(seed.drop === undefined ? {} : { drop: [...seed.drop] }),
+  };
+});
 
 /** Where every part is mounted inside a machine, one directory each. */
 export const PART_ROOT = '/opt/ahpd';
@@ -69,14 +112,22 @@ const from = (source: 'profile' | 'option' | 'default'): string =>
  * the value came from; a required need with no value at all is refused the same
  * way. An optional need with no value is left out, which is how an image that
  * already carries something is used.
+ *
+ * `mode` is where the machine keeps its agents' state, as its profile says: a
+ * need whose `when` names the other mode is left out, one without `when`
+ * belongs to both, and a state need belongs to `volume` alone.
  */
 export function resolveNeeds(
   needs: Record<string, MachineNeed>,
   sources: NeedSources = {},
   home: string = homedir(),
+  mode: StateMode = 'volume',
 ): ResolvedNeed[] {
   const resolved: ResolvedNeed[] = [];
   for (const [name, need] of Object.entries(needs)) {
+    // A state need is a state volume, which is the `volume` mode itself.
+    const when = 'state' in need ? 'volume' : need.when;
+    if (when !== undefined && when !== mode) continue;
     const profile = sources.profile?.[name];
     const option = sources.option?.[name];
     // A default naming a secret is read by whatever makes the machine and
@@ -100,6 +151,16 @@ export function resolveNeeds(
         throw new Error(`machine need ${name} names the part ${said} (from ${from(where)}), and a part is named by its id in the versions file`);
       }
       resolved.push({ name, kind: 'part', source: said, target: partTarget(said), ...about });
+      continue;
+    }
+    // A state directory is a place inside the machine, so it is never looked
+    // for here; its seeds are this host's paths.
+    if ('state' in need) {
+      if (!said.startsWith('/')) {
+        throw new Error(`machine need ${name} is ${said} (from ${from(where)}), and a state directory is an absolute path inside the machine`);
+      }
+      const seed = seedsOf(name, need.seed ?? [], home);
+      resolved.push({ name, kind: 'state', source: said, target: said, ...(seed.length === 0 ? {} : { seed }), ...about });
       continue;
     }
     const value = expandHome(said, home);

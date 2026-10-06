@@ -1,6 +1,6 @@
 ---
 title: Two identical needs collapse to one, and only differing needs at one target are refused
-status: todo
+status: implemented
 depends: []
 layer: "computer"
 refs:
@@ -37,3 +37,8 @@ What is left is env needs and state needs: two env needs at one variable with th
 - `pnpm --filter @ahpd/computer test` green.
 
 ## Resume
+
+- Built 2026-10-05 on cecc459.
+- `sameNeed` in `packages/computer/src/manifest.ts` compares kind, target, source, read-only, provider and seeds, never name or description; `oneNeedEach` keeps the first of two equal env or state needs and refuses two that differ, naming both needs and no value.
+- A state need also joins `oneMountEach`, so a state directory at a bind's or a part's target is refused like any other shared target.
+- Tests in `packages/computer/test/computer-needs.test.ts`: the differing env case failed before the change; the one `-e` case and the two-variant mounts case already passed, as the objective says; the state cases are task 02's "mounts two identical state needs as one volume, and refuses two with different seeds", built once the state need existed.

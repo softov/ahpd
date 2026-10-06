@@ -1,6 +1,6 @@
 ---
 title: The SDK has a state need, and a need may belong to one mode
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -30,3 +30,11 @@ refs:
 - A seed with `~` resolves to the home.
 
 ## Resume
+
+- Built 2026-10-05 on cecc459.
+- `StateNeed`, `Seed`, `ResolvedSeed`, `StateMode`, `when` on every need, and `seed` and `provider` on `ResolvedNeed` are in `packages/sdk/src/types/machine.ts`; `resolveNeeds(needs, sources, home, mode = 'volume')` in `packages/sdk/src/machine.ts`.
+- A state need belongs to `volume` alone, so mode `host` drops it, as the validation asks.
+- A profile's or an option's value names another state directory; the directory is an absolute path inside the machine and is never looked for on the host.
+- A seed source must be absolute once `~` is read, and a seed target stays inside the state directory.
+- A seed whose `keep` or `drop` names `__proto__`, `constructor` or `prototype` is refused in `seedsOf` (2026-10-06).
+- Tests in `packages/sdk/test/machine-needs.test.ts` (3 new, and the prototype keys added to the refusal case), each failing before the change.
