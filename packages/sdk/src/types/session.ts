@@ -565,8 +565,13 @@ export interface Session {
   /**
    * End the session and stop its agent.
    *
+   * `removing` says whether the session is being deleted rather than started
+   * again. A backend that keeps its transcript on the far side of a process
+   * - one running nested - disposes the one inside only when it is being
+   * deleted, so a restart resumes the conversation instead of finding it gone.
+   *
    * A backend that can tell when its process has gone answers a promise that
    * settles then, and never rejects; `Host.close` waits on it, bounded.
    */
-  close(): void | Promise<void>;
+  close(removing?: boolean): void | Promise<void>;
 }

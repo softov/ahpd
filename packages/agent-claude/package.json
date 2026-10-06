@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/agent-claude",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "description": "Claude Code as an Agent Host Protocol backend: a plugin for the ahpd daemon and an Agent for @ahpd/sdk",
   "keywords": [
@@ -60,7 +60,7 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@ahpd/sdk": ">=0.9",
+    "@ahpd/sdk": ">=0.10",
     "@microsoft/agent-host-protocol": "^1.0.0"
   },
   "devDependencies": {

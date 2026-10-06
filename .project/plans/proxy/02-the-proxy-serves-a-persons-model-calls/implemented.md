@@ -2,7 +2,7 @@
 title: The proxy serves a person's chat completions and messages, streamed back unchanged - implemented
 date: 2026-10-06
 refs:
-  - git://2cb298d
+  - git://3e93f6a
   - "[code://packages/server/src/proxy/listener.ts](../../../../packages/server/src/proxy/listener.ts)"
   - "[code://packages/server/src/proxy/caller.ts](../../../../packages/server/src/proxy/caller.ts)"
   - "[code://packages/server/src/proxy/route.ts](../../../../packages/server/src/proxy/route.ts)"

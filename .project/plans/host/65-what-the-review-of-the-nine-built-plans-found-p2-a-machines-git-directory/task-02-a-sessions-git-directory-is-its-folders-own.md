@@ -1,6 +1,6 @@
 ---
 title: A session's git directory is its folder's own
-status: todo
+status: done
 depends: []
 layer: "sdk, computer"
 refs:

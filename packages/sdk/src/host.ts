@@ -1015,6 +1015,12 @@ export function createHost(options: HostOptions): Host {
         },
       };
       return {
+        /*
+         * The keys of the table above, which is the only place they exist: it
+         * is rebuilt per connection, and the suite reads them here to assert
+         * that every one is classified in `GATE`.
+         */
+        methods: Object.keys(handlers),
         async handle(request) {
           const notify = notifications[request.method];
           if (notify) {

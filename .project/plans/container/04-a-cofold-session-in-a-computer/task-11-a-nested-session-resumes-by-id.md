@@ -1,6 +1,6 @@
 ---
 title: A nested session resumes the inner transcript by id
-status: implemented
+status: done
 depends: [task-09-an-ended-nested-session-refuses-with-the-reason.md]
 layer: "sdk"
 refs:

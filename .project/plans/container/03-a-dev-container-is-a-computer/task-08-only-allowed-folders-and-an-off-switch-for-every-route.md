@@ -1,6 +1,6 @@
 ---
 title: Only allowed folders become dev containers, and devcontainer false turns every route off
-status: implemented
+status: done
 depends: []
 layer: "computer"
 refs:

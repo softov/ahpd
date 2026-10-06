@@ -1,6 +1,6 @@
 ---
 title: "`--plugin-option`"
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

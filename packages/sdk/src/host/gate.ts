@@ -19,7 +19,10 @@ export const GREETINGS = new Set(['initialize', 'reconnect', 'ping']);
  *
  * `subscribe` is not here because its subject is the channel rather than the
  * method, and `capabilityFor` is what reads it through `channelRead`. A method
- * with no entry anywhere is served to anybody who is connected.
+ * with no entry anywhere is one nobody classified, and `capabilityFor` refuses
+ * it rather than reading the absent row as "needs nothing": the methods that
+ * need nothing are `UNGATED`'s, said out loud, so that an entry nobody wrote
+ * fails closed instead of being served to anybody who is connected.
  */
 export const NEEDS: Record<string, Grant> = {
   // file, one operation per method, in the order the protocol declares them.
@@ -84,7 +87,16 @@ export const NEEDS: Record<string, Grant> = {
   'vscode/collectAgentHostDebugLogs': 'diagnostics:logs',
   'vscode/readAgentHostDebugLogsChunk': 'diagnostics:logs',
   getNetworkDiagnosticsInfo: 'diagnostics:network',
+  // The window asks this beside `getNetworkDiagnosticsInfo`, for the same
+  // troubleshooting pane, so it needs the same grant.
+  getManagedSettingsDiagnostics: 'diagnostics:network',
   diagnosticsFetch: 'diagnostics:fetch',
+  /*
+   * Stopping the daemon, which the window's own host answers. It is the one
+   * method that ends every session on this machine, so it is a host-wide
+   * change and not the window's - decision `shutdown-needs-config-change`.
+   */
+  shutdown: 'config:change',
 
   /*
    * A changeset is a session's, so running an operation on it writes to the

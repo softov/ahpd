@@ -1,7 +1,7 @@
 ---
 title: A nested host has one process per session, and a dev container is made only where it is allowed
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -79,14 +79,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A restart waits for the old inner host and keeps its session](task-01-a-restart-waits-for-the-old-inner-host.md) | todo | - |
-| [02 - A session the inner host does not hold is created, not resumed](task-02-a-session-the-inner-host-does-not-hold-is-created.md) | todo | 01 |
-| [03 - A worker chat that will not open is logged, not thrown](task-03-a-worker-chat-that-will-not-open-is-logged.md) | todo | - |
-| [04 - A close during create disposes what was made](task-04-a-close-during-create-disposes-what-was-made.md) | todo | 01 |
-| [05 - Deleting a nested session that is not running](task-05-deleting-a-nested-session-that-is-not-running.md) | todo | 01 |
-| [06 - An unreadable computers file is not overwritten](task-06-an-unreadable-computers-file-is-not-overwritten.md) | todo | - |
-| [07 - A host with users makes dev containers only from named folders](task-07-a-host-with-users-makes-dev-containers-only-from-named-folders.md) | todo | - |
-| [08 - A computer is found by its label first](task-08-a-computer-is-found-by-its-label-first.md) | todo | - |
+| [01 - A restart waits for the old inner host and keeps its session](task-01-a-restart-waits-for-the-old-inner-host.md) | done | - |
+| [02 - A session the inner host does not hold is created, not resumed](task-02-a-session-the-inner-host-does-not-hold-is-created.md) | done | 01 |
+| [03 - A worker chat that will not open is logged, not thrown](task-03-a-worker-chat-that-will-not-open-is-logged.md) | done | - |
+| [04 - A close during create disposes what was made](task-04-a-close-during-create-disposes-what-was-made.md) | done | 01 |
+| [05 - Deleting a nested session that is not running](task-05-deleting-a-nested-session-that-is-not-running.md) | done | 01 |
+| [06 - An unreadable computers file is not overwritten](task-06-an-unreadable-computers-file-is-not-overwritten.md) | done | - |
+| [07 - A host with users makes dev containers only from named folders](task-07-a-host-with-users-makes-dev-containers-only-from-named-folders.md) | done | - |
+| [08 - A computer is found by its label first](task-08-a-computer-is-found-by-its-label-first.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -95,10 +95,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-restart-waits-for-the-old-inner-host.md](task-01-a-restart-waits-for-the-old-inner-host.md).
+- **Done so far:** tasks 01, 02, 03, 04, 05, 06, 07 and 08, each case failing first and passing after. Task 08 reads the record `inspect` answers and takes the id only for a container that is this host's, rather than asking the `ahpd.name` label before it: a machine made under a name of its own is what almost every caller holds, and the label asked first would spend a second `docker` call on every `exec`, `stats` and `state` for it. The label still decides - no id is taken for a container that does not carry this host's label - and the task's Resume says so. A name that answers to something this host did not make is `undefined` from `containerOf`: `inspect` reads it as a machine that is not there, which is what it already answers for a name Docker does not have, and the five verbs that run something (`stop`, `start`, `restart`, `remove`, `exec`) refuse through `containerOrFail` and name the id, so `rm -f` and `stop` are never handed something else's container. `computer-plugin.test.ts`'s `will not read, stop or destroy a container it did not make` is the case that caught the throw: the provider asks `inspect` first and answers `-32008` for a name that is not there, so a refusal out of the lookup is not the answer a URI's caller gets. Task 04's case is in `nested-proxy.test.ts` rather than the `nested-process.test.ts` it names, because the window it needs - a create left unanswered - is not reachable with a real child; the task's Resume says so. Task 05's cases are there too, because `Host.close()` still disposes inside a machine, so "recorded and not running" is a state a case has to stage in the machine's store; `container/05 p9 task 05` is the task that stops that dispose. Task 07 was implemented without the `run.ts` change its Files list names: the loader reads the base's users port, which is the same fact and cannot disagree with it.
+- **Next action:** Softov's review. Every task is implemented, the package gates are recorded and [implemented.md](implemented.md) is written.
 - **Open questions:** none.
-- **Watch out for:** the nested cases run a real child in `nested-process.test.ts`; a timing case needs the old process's exit, not a sleep.
+- **Watch out for:** the nested cases run a real child in `nested-process.test.ts`; a timing case needs the old process's exit, not a sleep. A case that restarts a nested session needs `manyDirectories` in that file: a host refuses `session/workingDirectorySet` for a backend that works in one directory. The fixture writes the inner host's transcript to `<XDG_STATE_HOME>/nested-echo/<id>.json` after every completed turn, which is what a case reads to see what the host inside kept. A resume the inner host cannot serve is now a session made there rather than a sentence, so an older case asserting that sentence has to move with it.
 
 ## Final verification checklist
 

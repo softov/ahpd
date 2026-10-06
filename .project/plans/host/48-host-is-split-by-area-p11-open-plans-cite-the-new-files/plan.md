@@ -40,7 +40,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every open plan's host.ts ref names the file that holds the code](task-01-rewrite-the-refs.md) | implemented | - |
+| [01 - Every open plan's host.ts ref names the file that holds the code](task-01-rewrite-the-refs.md) | done | - |
 
 ## Resume state
 

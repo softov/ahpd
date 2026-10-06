@@ -1,5 +1,6 @@
 import { negotiateProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import { RpcError } from '../rpc.js';
+import { uriOf } from '../fileuri.js';
 import { BANG } from './common.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -198,7 +199,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         serverSeq: ctx.serverSeq,
         serverInfo: { name: 'ahpd', version: options.diagnostics?.version ?? '0.0.1' },
         snapshots,
-        defaultDirectory: `file://${dir}`,
+        defaultDirectory: uriOf(dir),
         // What the client should ask about rather than send. A slash is a
         // skill or a prompt the host contributed; an at-sign is a file.
         // Without this the client has no reason to believe either means

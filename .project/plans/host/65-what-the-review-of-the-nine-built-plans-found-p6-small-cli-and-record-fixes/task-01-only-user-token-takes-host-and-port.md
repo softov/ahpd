@@ -1,6 +1,6 @@
 ---
 title: Only user token takes --host and --port
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -33,3 +33,9 @@ refs:
 - `pnpm exec vitest run packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts`.
 
 ## Resume
+
+Implemented. `userAt` is `configFile` and `users`; `userTokenFields` adds `host` and `port` beside `url`, with a note saying why the address is that verb's alone. The comment on `people` in `user.ts` moves with it: it said "`--host` and `--port` here" and now says the two are `user token`'s flags, which every other verb is refused. The configuration file's `host` and `port` are still read by every verb as the address to fall back on - it is the flags that moved, not the fallback.
+
+Both cases failed first. The flag declaration case failed with `expected [ '--config-file', '--users', …(2) ] to not include '--host'`, and the CLI case with `expected +0 to be 2` on `user list --users <file> --port 9310`, which listed rather than refusing.
+
+Gates: `npx tsc -b` clean, `pnpm exec vitest run packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts` 108 passed.

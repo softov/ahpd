@@ -1,6 +1,6 @@
 ---
 title: A person can build ahead, and the docs say how
-status: implemented
+status: done
 depends: [task-03-built-on-first-use.md, task-04-the-joined-image.md]
 layer: "computer, docs"
 refs:

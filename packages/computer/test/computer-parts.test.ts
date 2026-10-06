@@ -173,19 +173,40 @@ it('tags a part with its version, and the ahpd part with its source', () => {
   expect(tagOf(host, '000000000000')).not.toBe(tagOf(host, 'abcdef123456'));
   // And a tag without it is a refusal rather than an image that reuses itself.
   expect(() => tagOf(host)).toThrow(/carries a hash of its own source/);
+
+  // The Dockerfile is in the tag beside the version, so an upgrade that changes
+  // how an image is written is a different image at the same versions.
+  expect(tagOf(codex, undefined, 'FROM scratch\n')).toMatch(/^ahpd-part\/codex:2\.1\.1-[0-9a-f]{12}$/u);
+  expect(tagOf(codex, undefined, 'FROM scratch\n')).not.toBe(tagOf(codex, undefined, 'FROM scratch\n\n'));
+  expect(tagOf(host, 'abcdef123456', 'FROM scratch\n')).toMatch(/^ahpd-part\/ahpd:0\.8\.0-abcdef123456-[0-9a-f]{12}$/u);
 });
 
-it('hashes the file and the ahpd part together, so either moves the joined image', () => {
+it('hashes the file, the ahpd part and the joined Dockerfile together, so either moves the joined image', () => {
   const one = hashOf('abcdef123456');
   expect(one).toMatch(/^[0-9a-f]{12}$/);
   // The same file and the same source is the same image.
   expect(hashOf('abcdef123456')).toBe(one);
   // A checkout whose code moved rebuilds it even though no version changed.
   expect(hashOf('000000000000')).not.toBe(one);
+  // And so does the text the joined image is written from, which names every
+  // part's own tag - one of them moving is this image moving.
+  expect(hashOf('abcdef123456', readParts(), [], 'FROM debian:bookworm-slim\n')).not.toBe(one);
 });
 
 /** One tarball as a build context carries it, with bytes no test reads. */
 const tarball = (name: string): { name: string; bytes: Buffer } => ({ name, bytes: Buffer.from(name) });
+
+/**
+ * The `node` tag a Dockerfile copies from.
+ *
+ * `dockerfileOf` names it out of the file that ships rather than out of the
+ * parts a case handed it, so a case reading its own node part still copies the
+ * shipped one - which is the same part in a daemon, and a stand-in only here.
+ */
+const nodeTag = (): string => {
+  const one = readParts().find((part) => part.kind === 'node') as Part;
+  return tagOf(one, undefined, dockerfileOf(one));
+};
 
 /** The ahpd part from a checkout, with the tarballs `pnpm pack` would have written. */
 const workspace: AhpdSource = {
@@ -215,7 +236,7 @@ it('builds an npm part on the node part, at the version the file pins', () => {
   const file = dockerfileOf(part);
 
   // One Node serves them all, copied in rather than fetched a second time.
-  expect(file).toContain('COPY --from=ahpd-part/node:24.21.0 /opt/ahpd/node /opt/ahpd/node');
+  expect(file).toContain(`COPY --from=${nodeTag()} /opt/ahpd/node /opt/ahpd/node`);
   expect(file).toContain('ENV PATH="/opt/ahpd/node/bin:${PATH}"');
   expect(file).toContain('npm install --prefix /opt/ahpd/codex');
   expect(file).toContain('@agentclientprotocol/codex-acp@2.1.1');
@@ -241,6 +262,8 @@ it('installs a package pinned at its own version, and moves the tag with it', ()
   expect(file).toContain('> /opt/ahpd/claude/bin/claude-agent-acp');
   expect(file).toContain('> /opt/ahpd/claude/bin/claude;');
   expect(tagOf(part)).toBe('ahpd-part/claude:0.85.1-2.1.291');
+  // The tag the image is actually built at carries the Dockerfile too.
+  expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/claude:0\.85\.1-2\.1\.291-[0-9a-f]{12}$/u);
 
   expect(() => read([node(), npm({ packages: ['@anthropic-ai/claude-code@^2.1.291'] })]))
     .toThrow(/the package @anthropic-ai\/claude-code@\^2.1.291, whose version is a range/);
@@ -261,12 +284,13 @@ it('installs an archive part\'s npm packages beside its download, each at its ow
   })])[1] as Part;
   const file = dockerfileOf(part);
 
-  expect(file).toContain('COPY --from=ahpd-part/node:24.21.0 /opt/ahpd/node /opt/ahpd/node');
+  expect(file).toContain(`COPY --from=${nodeTag()} /opt/ahpd/node /opt/ahpd/node`);
   expect(file).toContain('RUN npm install --prefix /opt/ahpd/amp --no-audit --no-fund --loglevel=error @ampcode/cli@0.0.1791273659-g33d612');
   // A bin npm installed is written from `node_modules/.bin`, and the rest found in the archive.
   expect(file).toContain('elif test -e /opt/ahpd/amp/node_modules/.bin/amp; then run=/opt/ahpd/amp/node_modules/.bin/amp;');
   expect(file).toContain('found=$(find /opt/ahpd/amp -name amp-acp');
   expect(tagOf(part)).toBe('ahpd-part/amp:0.9.0-0.0.1791273659-g33d612');
+  expect(tagOf(part, undefined, file)).toMatch(/^ahpd-part\/amp:0\.9\.0-0\.0\.1791273659-g33d612-[0-9a-f]{12}$/u);
 
   expect(() => read([node(), archive({ requires: ['node'], packages: ['@ampcode/cli'] })]))
     .toThrow(/the package @ampcode\/cli with no version of its own/);

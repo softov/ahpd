@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Owner } from '@ahpd/sdk';
 import type { Probe } from './devcontainer.js';
@@ -120,8 +120,17 @@ const entry = (said: unknown): Entry | undefined => {
   };
 };
 
-/** Every machine this file says something about. */
-const read = (configDir: string, log: (line: string) => void): Record<string, Entry> => {
+/**
+ * Every machine this file says something about, or nothing when the file is
+ * there and could not be read.
+ *
+ * The two are told apart because a write replaces the whole file: no file is a
+ * file with no entries, which is every host that has not written one yet, while
+ * one that could not be read or parsed may hold any record and is never written
+ * over. A caller that only asks may take both for nothing; one that writes has
+ * to know which it has.
+ */
+const read = (configDir: string, log: (line: string) => void): Record<string, Entry> | undefined => {
   let text: string;
   try { text = readFileSync(at(configDir), 'utf8'); }
   catch (error) {
@@ -132,17 +141,17 @@ const read = (configDir: string, log: (line: string) => void): Record<string, En
     // JSON leaves no owner to name, and a meter that stopped over it would
     // lose the stretches of every machine it still has.
     complain(log, 'could not read', error);
-    return {};
+    return undefined;
   }
   let parsed: unknown;
   try { parsed = JSON.parse(text) as unknown; }
   catch (error) {
     complain(log, 'could not read', error);
-    return {};
+    return undefined;
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     complain(log, 'could not read', new Error('the top of it is not an object of machines'));
-    return {};
+    return undefined;
   }
   return Object.fromEntries(
     Object.entries(parsed as Record<string, unknown>)
@@ -151,6 +160,21 @@ const read = (configDir: string, log: (line: string) => void): Record<string, En
         return held === undefined ? [] : [[id, held] as const];
       }),
   );
+};
+
+/**
+ * The records a write may be made from, or nothing when the file could not be
+ * read.
+ *
+ * Said once here, so every caller that writes refuses the same way and none of
+ * them has to remember: a write is the whole file, and one made over a file
+ * nobody could read would drop every machine it names.
+ */
+const writable = (configDir: string, log: (line: string) => void): Record<string, Entry> | undefined => {
+  const held = read(configDir, log);
+  if (held !== undefined) return held;
+  log(`not writing ${at(configDir)}: it is there and could not be read, so the records it holds would go with the write`);
+  return undefined;
 };
 
 /**
@@ -169,6 +193,11 @@ const write = (configDir: string, held: Record<string, Entry>, log: (line: strin
     // everybody's business on a host with more than one person on it, and a
     // probed environment is what a user's shell was holding.
     const scratch = `${path}.${String(process.pid)}.tmp`;
+    // Removed before it is written, because `mode` is applied when a file is
+    // *created*: a scratch this pid left readable - one of ours killed between
+    // the write and the rename, and this process given its pid back - would
+    // keep its 0644, and the rename would put that on the real file.
+    rmSync(scratch, { force: true });
     writeFileSync(scratch, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
     renameSync(scratch, path);
   }
@@ -179,7 +208,7 @@ const write = (configDir: string, held: Record<string, Entry>, log: (line: strin
 
 /** Who a machine is recorded as belonging to, or nothing when it is not in the file. */
 export const ownedOf = (configDir: string, id: string, log: (line: string) => void): Owned | undefined => {
-  const held = read(configDir, log)[id];
+  const held = read(configDir, log)?.[id];
   return held?.owner === undefined ? undefined : {
     owner: held.owner,
     ...(held.team === undefined ? {} : { team: held.team }),
@@ -197,7 +226,8 @@ export const ownedOf = (configDir: string, id: string, log: (line: string) => vo
  * charged to.
  */
 export const claimOwned = (configDir: string, id: string, said: Owned, log: (line: string) => void): void => {
-  const held = read(configDir, log);
+  const held = writable(configDir, log);
+  if (held === undefined) return;
   if (held[id]?.owner !== undefined) return;
   write(configDir, { ...held, [id]: { ...held[id], ...said } }, log);
 };
@@ -212,7 +242,7 @@ export const claimOwned = (configDir: string, id: string, said: Owned, log: (lin
  * connect adopted it - decision `a-relay-container-is-owned-by-who-connected`.
  */
 export const adoptedOf = (configDir: string, log: (line: string) => void): string[] =>
-  Object.entries(read(configDir, log))
+  Object.entries(read(configDir, log) ?? {})
     .flatMap(([id, held]) => held.adopted === true ? [id] : []);
 
 /**
@@ -232,7 +262,8 @@ export const claimAdopted = (
   said: Partial<Owned>,
   log: (line: string) => void,
 ): void => {
-  const held = read(configDir, log);
+  const held = writable(configDir, log);
+  if (held === undefined) return;
   const was = held[id];
   if (was?.adopted === true && (was.owner !== undefined || said.owner === undefined)) return;
   write(configDir, { ...held, [id]: { ...was, ...(was?.owner === undefined ? said : {}), adopted: true } }, log);
@@ -243,7 +274,7 @@ export const claimAdopted = (
  * none for it.
  */
 export const probeOf = (configDir: string, id: string, log: (line: string) => void): Probe | undefined =>
-  read(configDir, log)[id]?.probe;
+  read(configDir, log)?.[id]?.probe;
 
 /**
  * Keep what one userEnvProbe run found, against the container it was taken for.
@@ -259,7 +290,8 @@ export const keepProbe = (
   probe: Probe,
   log: (line: string) => void,
 ): void => {
-  const held = read(configDir, log);
+  const held = writable(configDir, log);
+  if (held === undefined) return;
   write(configDir, { ...held, [id]: { ...held[id], probe } }, log);
 };
 
@@ -268,7 +300,7 @@ export const keepProbe = (
  * none for it: a machine made with none, or made before they were recorded.
  */
 export const madeNeedsOf = (configDir: string, id: string, log: (line: string) => void): MadeNeed[] | undefined =>
-  read(configDir, log)[id]?.needs;
+  read(configDir, log)?.[id]?.needs;
 
 /**
  * Record the vault-named needs a machine was made with, by need, variable, the
@@ -281,7 +313,8 @@ export const keepMadeNeeds = (
   needs: readonly MadeNeed[],
   log: (line: string) => void,
 ): void => {
-  const held = read(configDir, log);
+  const held = writable(configDir, log);
+  if (held === undefined) return;
   write(configDir, { ...held, [id]: { ...held[id], needs: needs.map(({ need, variable, secret, providers }) => ({
     need,
     variable,
@@ -292,7 +325,8 @@ export const keepMadeNeeds = (
 
 /** Forget a machine, which is what its being removed means. */
 export const forgetOwned = (configDir: string, id: string, log: (line: string) => void): void => {
-  const held = read(configDir, log);
+  const held = writable(configDir, log);
+  if (held === undefined) return;
   if (held[id] === undefined) return;
   const rest = { ...held };
   delete rest[id];

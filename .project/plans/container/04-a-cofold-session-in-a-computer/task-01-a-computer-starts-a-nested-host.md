@@ -1,6 +1,6 @@
 ---
 title: A computer can start a nested host
-status: implemented
+status: done
 depends: []
 layer: "computer | sdk"
 refs:

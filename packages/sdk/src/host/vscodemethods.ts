@@ -3,7 +3,7 @@ import { stat } from 'node:fs/promises';
 import { INTERNAL_ERROR, METHOD_NOT_FOUND, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { hostLogPath } from '../debuglogs.js';
-import { localPath } from '../fileuri.js';
+import { localPath, uriOf } from '../fileuri.js';
 import { need, reason } from './common.js';
 import type { LogFile } from '../debuglogs.js';
 import type { ContainerConnect, ContainerConnectResult, ContainerSink } from '../types/containers.js';
@@ -163,7 +163,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
         lastSeenAt: now,
       });
       log(`${connection.clientId || 'a client'} holds ${handle} on ${tree.path}`);
-      return { handle, resource: `file://${tree.path}` };
+      return { handle, resource: uriOf(tree.path) };
     },
     /** The session started in the tree: the handle is in use, and stays until the window lets go. */
     'vscode/claimAgentHostDetachedWorktree': async (params) => {
@@ -284,7 +284,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       if (typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
       if (params.chat !== undefined && typeof params.chat !== 'string') throw new RpcError(-32602, 'chat must be a URI string');
       const found = stateFileOf(params.session, params.chat);
-      return found === undefined ? {} : { resource: `file://${found}` };
+      return found === undefined ? {} : { resource: uriOf(found) };
     },
     /**
      * The logs, packed up for a bug report.

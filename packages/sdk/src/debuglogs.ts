@@ -13,7 +13,7 @@
 import { copyFile, mkdir, open, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { localPath } from './fileuri.js';
+import { localPath, uriOf } from './fileuri.js';
 import { zip } from './zip.js';
 
 /** What the reference window reads back. */
@@ -89,13 +89,13 @@ export function debugLogs(options: { tmp?: string; lease?: number } = {}): Debug
         }
         if (kind === 'directory') {
           lend(staging, true);
-          return { kind, resource: `file://${staging}`, providerLogsIncluded, size: uncompressedSize, uncompressedSize, entries };
+          return { kind, resource: uriOf(staging), providerLogsIncluded, size: uncompressedSize, uncompressedSize, entries };
         }
         const archive = join(tmp, `agent-host-debug-logs-${id}.zip`);
         const size = await zip(archive, packed);
         lend(archive, false);
         readable.add(archive);
-        return { kind, resource: `file://${archive}`, providerLogsIncluded, size, uncompressedSize, entries };
+        return { kind, resource: uriOf(archive), providerLogsIncluded, size, uncompressedSize, entries };
       }
       finally {
         if (kind !== 'directory') await rm(staging, { recursive: true, force: true }).catch(() => {});

@@ -1,7 +1,7 @@
 ---
 title: A file URI keeps every character of its path, and every temp file is private and swept
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -53,6 +53,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | Every builder of a `file:` URI, in the sdk and in the agents, is `uriOf`; the sdk exports `localPath` and `uriOf` | host/58 task 05 step 2, and the review | 02, 03 |
 | The sweeper clears `<file>.<pid>.tmp` beside every file the daemon writes that way, rather than the claim being narrowed | `(defaulted: the comment in users.ts already relies on it)` | 04 |
 | A temp file is removed before it is written, so `mode` applies | `(defaulted: unlink then create, the one way the mode is the one asked for)` | 05 |
+| The next published workspace version is 0.10.0, so the four agents' `@ahpd/sdk` peer range is `>=0.10` and all eight packages move to it together | Softov, 2026-10-06, answering "what is the next published workspace version?" | 03 |
 
 ## Proposed architecture
 
@@ -63,12 +64,12 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - localPath keeps a # and a ?](task-01-localpath-keeps-a-hash-and-a-question-mark.md) | todo | - |
-| [02 - The sdk builds every file URI with uriOf](task-02-the-sdk-builds-every-file-uri-with-uri-of.md) | todo | 01 |
-| [03 - The agents build every file URI with uriOf](task-03-the-agents-build-every-file-uri-with-uri-of.md) | todo | 02 |
-| [04 - Every temp file of a dead writer is swept](task-04-every-temp-file-of-a-dead-writer-is-swept.md) | todo | - |
-| [05 - A temp file is private even when one was left](task-05-a-temp-file-is-private-even-when-one-was-left.md) | todo | - |
-| [06 - host/58's record says what was built](task-06-host-58s-record-says-what-was-built.md) | todo | 02, 03 |
+| [01 - localPath keeps a # and a ?](task-01-localpath-keeps-a-hash-and-a-question-mark.md) | done | - |
+| [02 - The sdk builds every file URI with uriOf](task-02-the-sdk-builds-every-file-uri-with-uri-of.md) | done | 01 |
+| [03 - The agents build every file URI with uriOf](task-03-the-agents-build-every-file-uri-with-uri-of.md) | done | 02 |
+| [04 - Every temp file of a dead writer is swept](task-04-every-temp-file-of-a-dead-writer-is-swept.md) | done | - |
+| [05 - A temp file is private even when one was left](task-05-a-temp-file-is-private-even-when-one-was-left.md) | done | - |
+| [06 - host/58's record says what was built](task-06-host-58s-record-says-what-was-built.md) | done | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -78,13 +79,13 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-localpath-keeps-a-hash-and-a-question-mark.md](task-01-localpath-keeps-a-hash-and-a-question-mark.md).
+- **Done so far:** all six tasks, each with its case failing first and passing after. Task 03's code landed with the rest, and its `package.json` half landed once Softov answered: the four agents are `>=0.10` and the eight workspace packages are 0.10.0. Nothing waits, so there is no `deferred.md`.
+- **Next action:** none; this plan is built and waits for review.
 - **Open questions:** none.
 - **Watch out for:** `rg -n '\`file://\$\{' packages/*/src` finds only `agent-claude/src/input.ts:186` when task 03 is done.
 
 ## Final verification checklist
 
-- [ ] Each task's case fails on the code before it and passes after.
-- [ ] `pnpm typecheck`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] Each task's case fails on the code before it and passes after.
+- [x] `npx tsc -b`, `pnpm boundary` and each touched package's tests pass - the counts are in [implemented.md](implemented.md).
+- [x] `plans/index.md` updated.

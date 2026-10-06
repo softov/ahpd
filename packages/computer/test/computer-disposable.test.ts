@@ -33,7 +33,9 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 let loose: string | undefined;
 afterEach(() => {
   vi.useRealTimers();
-  if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
+  // The scripted docker this file spawns is stopped behind the case and may
+  // still be writing its state file, so the folder is removed with retries.
+  if (loose !== undefined) rmSync(loose, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   loose = undefined;
 });
 
@@ -47,6 +49,8 @@ interface Held {
   machines: {
     name: string; image: string; mounts?: string[]; env?: Record<string, string>;
     labels?: Record<string, string>; workdir?: string; state?: string;
+    /** When the machine stopped, as `docker inspect` answers it: absent while it is up. */
+    stoppedAt?: string;
   }[];
   calls: string[][];
   failRun?: boolean;
@@ -1272,12 +1276,50 @@ const repositoryIn = (dir: string) => {
   return { repo, tree, other, gitDir, entry: join(gitDir, 'worktrees', 'tree') };
 };
 
+/** A repository at `at`, with one commit, every path resolved. */
+const repositoryUnder = (at: string) => {
+  mkdirSync(at, { recursive: true });
+  const run = (...args: string[]) => execFileSync('git', ['-C', at, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  writeFileSync(join(at, 'tracked.txt'), 'tracked\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'first');
+  return { repo: at, gitDir: join(at, '.git') };
+};
+
+/** A second repository beside it, for a `.git` that names somebody else's. */
+const elsewhereIn = (dir: string) => {
+  const repo = join(dir, 'elsewhere');
+  mkdirSync(repo);
+  const run = (...args: string[]) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  writeFileSync(join(repo, 'tracked.txt'), 'tracked\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'first');
+  return { repo, gitDir: join(repo, '.git') };
+};
+
 const ME = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
 
-/** A host with the git port and one disposable profile that brings the session's folder in. */
-const withRepository = async (state: string, profile: Record<string, unknown> = {}) => (await load(options(state, {
+/**
+ * A host with the git port and one disposable profile that brings the session's
+ * folder in.
+ *
+ * `lines`, where given, collects the plugin's own log - the daemon's log, which
+ * is where the profile's gate on the repository says what it left out.
+ */
+const withRepository = async (
+  state: string,
+  profile: Record<string, unknown> = {},
+  more: Partial<HostOptions> = {},
+  lines?: string[],
+) => (await load(options(state, {
   profiles: { claude: { title: 'Claude', image: 'node:22', disposable: true, sessionFolder: true, disposableDelay: 1000, ...profile } },
-}), [agentWith()], () => {}, { worktrees: gitWorktrees() })).options;
+}), [agentWith()], lines === undefined ? () => {} : (line) => { lines.push(line); }, { worktrees: gitWorktrees(), ...more })).options;
 
 const flagValue = (argv: readonly string[], flag: string): string | undefined => {
   const at = argv.indexOf(flag);
@@ -1294,7 +1336,7 @@ it('mounts a worktree session\'s git directory beside its folder, and runs the m
   await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
 
   const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
-  expect(box.mounts?.slice(0, 2)).toEqual([`${tree}:${tree}`, `${gitDir}:${gitDir}`]);
+  expect(box.mounts?.slice(0, 2)).toEqual([`${tree}:${tree}`, `${gitDir}:${gitDir}:ro`]);
   const made = held(state).calls.find((one) => one[0] === 'run') ?? [];
   expect(flagValue(made, '--user')).toBe(ME);
   expect(box.labels?.['ahpd.user']).toBe(ME);
@@ -1336,17 +1378,66 @@ it('mounts the repository root for a session in a subfolder, and starts it in th
   const { repo, gitDir } = repositoryIn(dir);
   const below = join(repo, 'src');
 
-  const loaded = await withRepository(state);
+  // The profile says `sessionRepository` as well, which is what lets the root
+  // the folder sits below reach the machine.
+  const loaded = await withRepository(state, { sessionRepository: true });
   const { open } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, below);
 
   const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
-  // The root brings the git directory, so it has no mount of its own; the
-  // read-only binds follow.
-  expect(box.mounts?.slice(0, 2)).toEqual([`${repo}:${repo}`, `${gitDir}/hooks:${gitDir}/hooks:ro`]);
+  // The root brings the git directory, and the git directory is a mount point
+  // of its own all the same, with what git reads pinned read-only over it.
+  expect(box.mounts?.slice(0, 3)).toEqual([`${repo}:${repo}`, `${gitDir}:${gitDir}`, `${gitDir}/commondir:${gitDir}/commondir:ro`]);
   expect(box.mounts).not.toContain(`${below}:${below}`);
-  expect(box.mounts).not.toContain(`${gitDir}:${gitDir}`);
   expect(box.workdir).toBe(below);
+});
+
+it('mounts the folder alone, with no git directory, where the profile does not say sessionRepository', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, gitDir } = repositoryUnder(join(dir, 'home'));
+  const scratch = join(repo, 'scratch');
+  mkdirSync(scratch);
+
+  const lines: string[] = [];
+  const loaded = await withRepository(state, {}, {}, lines);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, scratch);
+
+  // The folder the session works in reaches the machine - the profile said
+  // `sessionFolder` - and the repository it sits inside does not: the host's
+  // whole home is not the client's folder, so it is the profile saying
+  // `sessionRepository` that brings it, and without that there is no git
+  // directory either, since the one beside the root is not under the folder
+  // - decision `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${scratch}:${scratch}`]);
+  expect(box.mounts).not.toContain(`${repo}:${repo}`);
+  expect((box.mounts ?? []).some((one) => one.includes(gitDir))).toBe(false);
+  expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
+  expect(box.labels?.['ahpd.user']).toBeUndefined();
+  // And the line says what the profile does not allow.
+  expect(lines.filter((line) => line.includes(repo) && line.includes('sessionRepository'))).toHaveLength(1);
+});
+
+it('mounts the repository root where the profile says sessionRepository as well', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, gitDir } = repositoryUnder(join(dir, 'home'));
+  const scratch = join(repo, 'scratch');
+  mkdirSync(scratch);
+
+  const lines: string[] = [];
+  const loaded = await withRepository(state, { sessionRepository: true }, {}, lines);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, scratch);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts?.slice(0, 2)).toEqual([`${repo}:${repo}`, `${gitDir}:${gitDir}`]);
+  expect(box.mounts).not.toContain(`${scratch}:${scratch}`);
+  expect(box.workdir).toBe(scratch);
+  // Nothing was left out, so nothing says it was.
+  expect(lines.filter((line) => line.includes('sessionRepository'))).toEqual([]);
 });
 
 it('brings no git directory into a machine whose profile leaves the session folder out', async () => {
@@ -1363,12 +1454,15 @@ it('brings no git directory into a machine whose profile leaves the session fold
   expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
 });
 
-it('binds what git runs on the host read-only over the git directory, in order', async () => {
+it('mounts the git directory read-only, and writable only where a commit writes', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');
   const { tree, gitDir, entry } = repositoryIn(dir);
-  // Neither is there: no hooks here, and no `config.worktree` in a fresh entry.
+  // Neither is there: no hooks here, no reflog and no `objects/info` in one
+  // that was never packed, and no `config.worktree` in a fresh entry.
   rmSync(join(gitDir, 'hooks'), { recursive: true, force: true });
+  rmSync(join(gitDir, 'logs'), { recursive: true, force: true });
+  rmSync(join(gitDir, 'objects', 'info'), { recursive: true, force: true });
   expect(existsSync(join(entry, 'config.worktree'))).toBe(false);
 
   const loaded = await withRepository(state);
@@ -1378,7 +1472,11 @@ it('binds what git runs on the host read-only over the git directory, in order',
   const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
   expect(box.mounts).toEqual([
     `${tree}:${tree}`,
-    `${gitDir}:${gitDir}`,
+    `${gitDir}:${gitDir}:ro`,
+    `${gitDir}/objects:${gitDir}/objects`,
+    `${gitDir}/objects/info:${gitDir}/objects/info:ro`,
+    `${gitDir}/refs:${gitDir}/refs`,
+    `${gitDir}/logs:${gitDir}/logs`,
     `${gitDir}/hooks:${gitDir}/hooks:ro`,
     `${gitDir}/config:${gitDir}/config:ro`,
     `${gitDir}/worktrees:${gitDir}/worktrees:ro`,
@@ -1391,13 +1489,37 @@ it('binds what git runs on the host read-only over the git directory, in order',
   ]);
   // No bind names the other worktree's entry: the read-only `worktrees/` covers it.
   expect((box.mounts ?? []).some((one) => one.includes('/worktrees/other'))).toBe(false);
+  // The git directory itself is read-only, so nothing in it is writable but
+  // the three data directories and the session's own entry.
+  const writable = (box.mounts ?? [])
+    .filter((one) => !one.endsWith(':ro') && one.includes(gitDir))
+    .map((one) => one.slice(0, one.indexOf(':')));
+  expect(writable).toEqual([
+    `${gitDir}/objects`, `${gitDir}/refs`, `${gitDir}/logs`, entry,
+  ]);
   // Every source was there before the machine was made, made empty on the host.
   expect(readFileSync(join(entry, 'config.worktree'), 'utf8')).toBe('');
   expect(readdirSync(join(gitDir, 'hooks'))).toEqual([]);
+  expect(readdirSync(join(gitDir, 'logs'))).toEqual([]);
+  expect(readdirSync(join(gitDir, 'objects', 'info'))).toEqual([]);
   // And `modules/`, which the repository did not have, so nothing in the
   // machine can make one there.
   expect(readdirSync(join(gitDir, 'modules'))).toEqual([]);
   expect(box.labels?.['ahpd.worktree']).toBe(entry);
+});
+
+it('refuses a data directory of the git directory that is a link, which the machine could replace', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo, tree, gitDir } = repositoryIn(dir);
+  rmSync(join(gitDir, 'logs'), { recursive: true, force: true });
+  mkdirSync(join(repo, 'elsewhere'));
+  symlinkSync(join(repo, 'elsewhere'), join(gitDir, 'logs'));
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await expect(open('ahp-session:/one', { computer: 'disposable:claude' }, tree)).rejects.toThrow(/logs is a symbolic link/);
+  expect(held(state).machines).toEqual([]);
 });
 
 it('binds the repository\'s own modules read-only, leaving what is in them', async () => {
@@ -1431,6 +1553,70 @@ it('refuses a git directory whose hooks are a link, which the machine could repl
   expect(held(state).machines).toEqual([]);
 });
 
+/*
+ * host/65 p2: a machine is given the folder's own git directory, or none.
+ */
+
+it('refuses a folder whose own .git names another repository, and makes nothing in it', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+  const { gitDir: elsewhere } = elsewhereIn(dir);
+  // The folder's own `.git` names another repository's git directory, and that
+  // is what git then answers as this folder's common directory: the machine
+  // would be mounted somebody else's history, writable over it.
+  const commondir = join(repo, '.git', 'commondir');
+  writeFileSync(commondir, `${elsewhere}\n`);
+  const before = readdirSync(elsewhere).sort();
+
+  const lines: string[] = [];
+  const loaded = await withRepository(state, {}, { onEvent: (line) => lines.push(line) });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, repo);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${repo}:${repo}`]);
+  expect(held(state).calls.find((one) => one[0] === 'run')).not.toContain('--user');
+  // The line names the file that sent it there, and nothing was made in the
+  // repository it named.
+  expect(lines.filter((line) => line.includes(commondir))).toHaveLength(1);
+  expect(readdirSync(elsewhere).sort()).toEqual(before);
+});
+
+it('refuses a folder holding only a .git naming another repository, and makes nothing in it', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { gitDir: elsewhere } = elsewhereIn(dir);
+  const folder = join(dir, 'borrowed');
+  mkdirSync(join(folder, '.git'), { recursive: true });
+  const commondir = join(folder, '.git', 'commondir');
+  writeFileSync(commondir, `${elsewhere}\n`);
+  const before = readdirSync(elsewhere).sort();
+
+  const lines: string[] = [];
+  const loaded = await withRepository(state, {}, { onEvent: (line) => lines.push(line) });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, folder);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toEqual([`${folder}:${folder}`]);
+  expect(lines.filter((line) => line.includes(commondir))).toHaveLength(1);
+  expect(readdirSync(elsewhere).sort()).toEqual(before);
+});
+
+it('keeps the common directory of a worktree git made for the session', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts?.[1]).toBe(`${gitDir}:${gitDir}:ro`);
+});
+
 it('removes the session\'s own index.lock once its machine is gone, and not before', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const dir = realpathSync(temp());
@@ -1461,27 +1647,126 @@ it('removes the session\'s own index.lock once its machine is gone, and not befo
   expect(existsSync(join(gitDir, 'index.lock'))).toBe(true);
 });
 
-it('guards a session at the repository root, whose git directory is inside its folder', async () => {
+it('keeps an index.lock taken after the machine stopped, which is not the machine\'s to remove', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, entry } = repositoryIn(dir);
+
+  // The daemon's own log, whose line about the removal is written once the
+  // machine is gone and its lock has been looked at - the fixture's own write
+  // lands before that, so the machine leaving the state file is not the end.
+  const lines: string[] = [];
+  const loaded = await withRepository(state, {}, {}, lines);
+  const { open, dispose } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, tree);
+  await until(() => held(state).machines.length === 1);
+  await settle();
+
+  /*
+   * The machine stopped a minute ago - what a daemon restart, or a person's own
+   * `docker stop`, leaves behind - and the worktree's index was locked since:
+   * `ahpd`'s own check on the host, or a person committing there. That lock is
+   * not the machine's, and removing it would race whoever is holding it.
+   */
+  const before = held(state);
+  const box = before.machines[0] as NonNullable<Held['machines'][number]>;
+  box.state = 'exited';
+  box.stoppedAt = new Date(Date.now() - 60_000).toISOString();
+  writeFileSync(state, JSON.stringify(before));
+  writeFileSync(join(entry, 'index.lock'), '');
+
+  await dispose('ahp-session:/one');
+  await settle();
+  await vi.advanceTimersByTimeAsync(2000);
+  await until(() => lines.some((line) => line.includes('removed the disposable machine')));
+  await settle();
+
+  // The machine is gone, and the lock the host's git holds is still there.
+  expect(held(state).machines).toEqual([]);
+  expect(existsSync(join(entry, 'index.lock'))).toBe(true);
+});
+
+it('makes a main checkout\'s git directory a mount point, with what git reads pinned over it', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');
   const { repo, gitDir } = repositoryIn(dir);
+  // A fresh repository has no `packed-refs` until something packs it.
+  expect(existsSync(join(gitDir, 'packed-refs'))).toBe(false);
 
   const loaded = await withRepository(state);
   const { open } = await room(loaded);
   await open('ahp-session:/one', { computer: 'disposable:claude' }, repo);
 
-  // No second mount of the git directory, which the folder brings; the same
-  // read-only binds over it, and the host user.
+  /*
+   * The git directory's own mount is what makes it a mount point, so `mv .git
+   * .old` is refused rather than replacing it; it stays writable because a
+   * main checkout's `index`, `HEAD` and `COMMIT_EDITMSG` are files in its root
+   * that git writes as `<name>.lock` beside them and renames into place.
+   */
   const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
   expect(box.mounts).toEqual([
     `${repo}:${repo}`,
-    `${gitDir}/hooks:${gitDir}/hooks:ro`,
+    `${gitDir}:${gitDir}`,
+    `${gitDir}/commondir:${gitDir}/commondir:ro`,
+    `${gitDir}/config.worktree:${gitDir}/config.worktree:ro`,
     `${gitDir}/config:${gitDir}/config:ro`,
+    `${gitDir}/packed-refs:${gitDir}/packed-refs:ro`,
+    `${gitDir}/info:${gitDir}/info:ro`,
+    `${gitDir}/hooks:${gitDir}/hooks:ro`,
     `${gitDir}/worktrees:${gitDir}/worktrees:ro`,
-    `${gitDir}/modules:${gitDir}/modules:ro`,
+    `${gitDir}/objects/info:${gitDir}/objects/info:ro`,
   ]);
+  // Each pinned file was made on the host first: `commondir` naming the
+  // directory itself, since an empty one breaks git, and the other two empty.
+  expect(readFileSync(join(gitDir, 'commondir'), 'utf8')).toBe('.\n');
+  expect(readFileSync(join(gitDir, 'config.worktree'), 'utf8')).toBe('');
+  expect(readFileSync(join(gitDir, 'packed-refs'), 'utf8')).toBe('');
   expect(flagValue(held(state).calls.find((one) => one[0] === 'run') ?? [], '--user')).toBe(ME);
   expect(box.labels?.['ahpd.user']).toBe(ME);
+});
+
+it('binds a root session\'s git directory where its folder is reached, not where it really is', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+  // The session's folder is a link to the repository. git answers real paths,
+  // and the machine mounts the tree at the link, so every bind has to land
+  // there: a bind of the real path is a second directory in the machine, and
+  // the machine's own `<link>/.git` stays writable.
+  const link = join(dir, 'link');
+  symlinkSync(repo, link);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, link);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  const mounts = box.mounts ?? [];
+  expect(mounts[0]).toBe(`${link}:${link}`);
+  expect(mounts[1]).toBe(`${link}/.git:${link}/.git`);
+  expect(mounts).toContain(`${link}/.git/commondir:${link}/.git/commondir:ro`);
+  expect(mounts.some((one) => one.includes(`${repo}/.git`))).toBe(false);
+});
+
+it('binds a worktree session\'s git directory through the link its folder is reached by', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+  const link = join(dir, 'link');
+  symlinkSync(tree, link);
+
+  const loaded = await withRepository(state);
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, link);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  const mounts = box.mounts ?? [];
+  // The git directory is not inside the tree, so it is mounted where it is;
+  // the worktree's own `.git` file is the folder's spelling.
+  expect(mounts[0]).toBe(`${link}:${link}`);
+  expect(mounts[1]).toBe(`${gitDir}:${gitDir}:ro`);
+  expect(mounts.at(-1)).toBe(`${link}/.git:${link}/.git:ro`);
 });
 
 it('leaves a root session\'s git directory open where the profile says gitGuard open', async () => {

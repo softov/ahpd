@@ -97,12 +97,12 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Policies and automations are written owner-only](task-01-policies-and-automations-are-written-owner-only.md) | implemented | - |
-| [02 - The user file is written through a temp file of its own](task-02-the-user-file-is-written-through-a-temp-file-of-its-own.md) | implemented | - |
-| [03 - A runs cursor the host did not issue is refused](task-03-a-runs-cursor-the-host-did-not-issue-is-refused.md) | implemented | - |
-| [04 - One file URI reader and one writer](task-04-one-file-uri-reader-and-one-writer.md) | implemented | - |
-| [05 - Every file URI the host reads is decoded](task-05-every-file-uri-the-host-reads-is-decoded.md) | implemented | 04 |
-| [06 - A URI a provider cannot split is refused with one code](task-06-a-uri-a-provider-cannot-split-is-refused-with-one-code.md) | implemented | - |
+| [01 - Policies and automations are written owner-only](task-01-policies-and-automations-are-written-owner-only.md) | done | - |
+| [02 - The user file is written through a temp file of its own](task-02-the-user-file-is-written-through-a-temp-file-of-its-own.md) | done | - |
+| [03 - A runs cursor the host did not issue is refused](task-03-a-runs-cursor-the-host-did-not-issue-is-refused.md) | done | - |
+| [04 - One file URI reader and one writer](task-04-one-file-uri-reader-and-one-writer.md) | done | - |
+| [05 - Every file URI the host reads is decoded](task-05-every-file-uri-the-host-reads-is-decoded.md) | done | 04 |
+| [06 - A URI a provider cannot split is refused with one code](task-06-a-uri-a-provider-cannot-split-is-refused-with-one-code.md) | done | - |
 
 ## Risks and tradeoffs
 

@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { optionDefaults, storedSandbox } from './options.js';
-import { tail } from '@ahpd/sdk';
+import { tail, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
@@ -149,7 +149,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     activity: () => ctx.activity,
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
-    workingDirectories: () => [`file://${cwd}`, ...ctx.peers.map((one) => `file://${one}`)],
+    workingDirectories: () => [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
 
     sessionState: () => ({
       // No `resource`: it is declared on `SessionSummary` and not on
@@ -160,7 +160,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       lifecycle: 'ready',
       defaultChat: chatUri,
       chats: [{ resource: chatUri, title: ctx.title }],
-      workingDirectories: [`file://${cwd}`, ...ctx.peers.map((one) => `file://${one}`)],
+      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
       customizations: ctx.customizations,
       // What it is doing, only while it is doing something. The protocol has
       // a session mirror its default chat's, which is where this is set.
@@ -206,7 +206,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // A chat's own set, which may be narrower than its session's: the
       // process is rooted at the same place, and which peers it was given is
       // this chat's to say.
-      workingDirectories: [`file://${cwd}`, ...ctx.peers.map((one) => `file://${one}`)],
+      workingDirectories: [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
       // The newest page. A resumed session can be seeded with hundreds of
       // turns, and the snapshot is what a client waits on before it draws.
       ...tail(ctx.turns),

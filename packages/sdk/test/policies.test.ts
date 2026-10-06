@@ -13,7 +13,7 @@
  * restart and the other keeps nothing at all.
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -320,6 +320,20 @@ describe('the file policies are kept in', () => {
 
     // Readable by the account the daemon runs as and by nobody else on the
     // machine, which is what every other file the daemon keeps is.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('is owner-only even when a readable temp at its own name was left behind', async () => {
+    // What a process that had this pid before left world-readable. `mode` is
+    // applied when a file is created and not when one is opened, so a write that
+    // opens this temp keeps its 0644 - and the rename puts that on the real file.
+    const temporary = `${file}.${String(process.pid)}.tmp`;
+    writeFileSync(temporary, '{}');
+    chmodSync(temporary, 0o644);
+
+    const store = filePolicies({ file });
+    await store.put(rows()[0] as Policy);
+
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 });

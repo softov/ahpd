@@ -8,7 +8,7 @@ refs:
   - "[code://packages/sdk/src/automations.ts#L95-L125](../../../../packages/sdk/src/automations.ts#L95-L125) - `create` and `update`, where the count starts and resets"
   - "[code://packages/sdk/src/automations.ts#L60-L64](../../../../packages/sdk/src/automations.ts#L60-L64) - `entry()`'s `operations`, which drop `run` when disabled"
   - "[code://packages/sdk/src/automations.ts#L135-L138](../../../../packages/sdk/src/automations.ts#L135-L138) - `run()`'s gate, `found.definition.enabled === false` at :138"
-  - "[code://packages/sdk/src/host/automations.ts#L233-L246](../../../../packages/sdk/src/host/automations.ts#L233-L246) - `onDue`, a scheduled run's call into `run()` with a trigger origin"
+  - "[code://packages/sdk/src/host/automations.ts#L233-L246](../../../../packages/sdk/src/host/automations.ts#L233-L246) - `due`, a scheduled run's call into `run()` with a trigger origin"
   - "[code://packages/sdk/src/host/automations.ts#L299-L305](../../../../packages/sdk/src/host/automations.ts#L299-L305) - `runAutomation`, a manual run's call into `run()` and its \"or it is switched off\" refusal"
   - "[code://packages/sdk/test/automations.test.ts#L258-L268](../../../../packages/sdk/test/automations.test.ts#L258-L268) - `does not offer to run one that is switched off`, which this task inverts"
   - "[code://packages/sdk/test/automations.test.ts#L477-L492](../../../../packages/sdk/test/automations.test.ts#L477-L492) - a removal test that leans on `run` being absent from a disabled entry"

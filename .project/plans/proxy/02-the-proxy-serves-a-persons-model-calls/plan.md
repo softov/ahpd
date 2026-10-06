@@ -134,14 +134,14 @@ tool -> POST /v1/chat/completions | /v1/messages on the API's listener
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - /v1 answers in each dialect, and refuses in its own error shape](task-01-v1-answers-in-each-dialect.md) | implemented | - |
-| [02 - A caller is a person, root or a session, and may call](task-02-a-caller-is-somebody.md) | implemented | 01 |
-| [03 - A model name is routed to the first entry that can take the call](task-03-a-name-is-routed.md) | implemented | - |
-| [04 - The call goes out with the provider's key and streams back unchanged](task-04-the-call-streams-through.md) | implemented | 01, 03 |
-| [05 - A call ends when either side does, and on a timeout](task-05-a-call-ends-when-either-side-does.md) | implemented | 04 |
-| [06 - A policy decides the model, and the call is recorded](task-06-policy-and-usage.md) | implemented | 02, 04 |
-| [07 - GET /v1/models lists the names a caller may use](task-07-the-models-list.md) | implemented | 02, 03 |
-| [08 - Docs, and a real call through openrouter and LM Studio](task-08-docs-and-by-hand.md) | implemented | 05, 06, 07 |
+| [01 - /v1 answers in each dialect, and refuses in its own error shape](task-01-v1-answers-in-each-dialect.md) | done | - |
+| [02 - A caller is a person, root or a session, and may call](task-02-a-caller-is-somebody.md) | done | 01 |
+| [03 - A model name is routed to the first entry that can take the call](task-03-a-name-is-routed.md) | done | - |
+| [04 - The call goes out with the provider's key and streams back unchanged](task-04-the-call-streams-through.md) | done | 01, 03 |
+| [05 - A call ends when either side does, and on a timeout](task-05-a-call-ends-when-either-side-does.md) | done | 04 |
+| [06 - A policy decides the model, and the call is recorded](task-06-policy-and-usage.md) | done | 02, 04 |
+| [07 - GET /v1/models lists the names a caller may use](task-07-the-models-list.md) | done | 02, 03 |
+| [08 - Docs, and a real call through openrouter and LM Studio](task-08-docs-and-by-hand.md) | done | 05, 06, 07 |
 
 ## Risks and tradeoffs
 

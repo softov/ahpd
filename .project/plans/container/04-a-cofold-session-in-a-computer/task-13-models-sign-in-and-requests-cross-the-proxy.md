@@ -1,6 +1,6 @@
 ---
 title: Models, sign-in and the inner host's requests cross the proxy
-status: implemented
+status: done
 depends: [task-12-the-proxy-answers-only-what-it-knows.md]
 layer: "sdk"
 refs:

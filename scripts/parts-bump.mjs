@@ -26,6 +26,18 @@ const FILE = fileURLToPath(new URL('../packages/computer/images/versions.json', 
 /** The two platforms a part is built for, and the registry's name for each. */
 const PLATFORMS = { 'linux-x64': 'linux-x86_64', 'linux-arm64': 'linux-aarch64' };
 
+/**
+ * An exact version, a download url and a sha256, as the parts file has to hold
+ * them, copied from `packages/computer/src/parts.ts` rather than imported.
+ *
+ * Copied because this runs from `parts-bump.yml`, which installs nothing and
+ * builds nothing, so there is no built module to import - and a value this file
+ * writes without checking is one the next start refuses the whole file for.
+ */
+const EXACT = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?$/;
+const URL_SAFE = /^https:\/\/[A-Za-z0-9._~\/%+-]+$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+
 const argv = process.argv.slice(2);
 const dry = argv.includes('--dry-run');
 const registryAt = argv.indexOf('--registry');
@@ -64,11 +76,18 @@ const shaOf = async (url) => {
  * Dotted halves compare segment by segment, a missing segment is the older one
  * (`1.2` is not newer than `1.2.1`), and a release is newer than the prerelease
  * before it (`1.2.0` follows `1.2.0-rc.1`). A segment that is not a number
- * compares as a string, so a feed that answers `latest` is never taken for one.
+ * compares as a string, which is why the version is put to `EXACT` before it is
+ * written: a feed that answers `latest` compares as newer than any version.
+ *
+ * A prerelease is never what a part moves to. It is a version somebody is still
+ * working on, and moving to one would make every host that took the bump build
+ * an agent that may still change under the same version - the release it is a
+ * candidate for proposes itself a while later.
  */
 const newerThan = (next, held) => {
   const [one, tagOne = ''] = String(next).replace(/^v/, '').split('-');
   const [two, tagTwo = ''] = String(held).replace(/^v/, '').split('-');
+  if (tagOne !== '') return false;
   if (one !== two) {
     const left = one.split('.');
     const right = two.split('.');
@@ -82,7 +101,7 @@ const newerThan = (next, held) => {
       return Number(a) > Number(b);
     }
   }
-  return tagOne === '' && tagTwo !== '';
+  return tagTwo !== '';
 };
 
 /** What one part moves to, or the line that says why it does not. */
@@ -95,9 +114,11 @@ const bumpOf = async (part, entries) => {
   if (part.kind === 'npm') {
     const version = entry?.version ?? npmVersion(part.packages[0]);
     if (version === undefined) return { skipped: `npm says nothing about ${part.packages[0]}` };
-    return newerThan(version, part.version)
-      ? { version }
-      : { skipped: `the feed has ${version}, which is not newer than ${part.version}` };
+    if (!newerThan(version, part.version)) {
+      return { skipped: `the feed has ${version}, which is not newer than ${part.version}` };
+    }
+    if (!EXACT.test(version)) return { skipped: `the feed has ${version}, which is not one version` };
+    return { version };
   }
 
   if (part.kind !== 'archive') return { skipped: `a ${part.kind} part is fed by nothing here` };
@@ -105,12 +126,22 @@ const bumpOf = async (part, entries) => {
   if (!newerThan(entry.version, part.version)) {
     return { skipped: `the registry has ${entry.version}, which is not newer than ${part.version}` };
   }
+  if (!EXACT.test(entry.version)) {
+    return { skipped: `the registry has ${entry.version}, which is not one version` };
+  }
 
   const archives = {};
   for (const [platform, build] of Object.entries(PLATFORMS)) {
     const binary = entry.distribution?.binary?.[build];
     if (binary?.archive === undefined) return { skipped: `the registry has no ${build} build of ${entry.version}` };
-    archives[platform] = { url: binary.archive, sha256: binary.sha256 ?? await shaOf(binary.archive) };
+    if (!URL_SAFE.test(binary.archive)) {
+      return { skipped: `the ${build} archive is ${binary.archive}, which is not a plain https url` };
+    }
+    const sha256 = binary.sha256 ?? await shaOf(binary.archive);
+    if (!SHA256.test(sha256)) {
+      return { skipped: `the ${build} archive's sha256 is ${sha256}, which is not 64 hex digits` };
+    }
+    archives[platform] = { url: binary.archive, sha256 };
   }
   return { version: entry.version, archives };
 };

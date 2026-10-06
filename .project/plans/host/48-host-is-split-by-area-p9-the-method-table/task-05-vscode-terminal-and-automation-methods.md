@@ -1,6 +1,6 @@
 ---
 title: The vscode, diagnostic, terminal and automation methods move to their files
-status: implemented
+status: done
 depends: [task-01-the-classification-test-reads-every-file.md]
 layer: "sdk"
 refs:

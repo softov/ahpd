@@ -17,6 +17,7 @@ import { createMemoryStore, textOf } from '@cofold/agents';
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, ReasoningEffort, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
+import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath, splitModel } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
@@ -760,7 +761,7 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
           title: first === undefined ? record.sessionId : titleOf(textOf(first), record.sessionId),
           createdAt: record.createdAt,
           modifiedAt: record.updatedAt,
-          workingDirectories: record.workspace === undefined ? [] : [`file://${record.workspace}`],
+          workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],
         });
       }
       return listed;

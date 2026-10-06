@@ -7,6 +7,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
+import { fileUsers } from '../../sdk/src/users.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -141,10 +142,24 @@ const optionsOf = (devState: string, dockerState: string, more: Record<string, u
  * That directory is where the daemon keeps `computers.json`, which is where a
  * dev container's probed environment is kept - a load that defaulted to the
  * repository would write one there.
+ *
+ * `people` gives the host a users directory, which is what makes it a host more
+ * than one person uses: a plugin is told whether there is one, and reads
+ * nothing of it.
  */
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp()) => loadPlugins(
+const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp(), people = false) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
-  { base: { path: '/tmp/computer-devcontainer', agents, resources: fileResources() }, configDir, cwd: REPO, log: () => {} },
+  {
+    base: {
+      path: '/tmp/computer-devcontainer',
+      agents,
+      resources: fileResources(),
+      ...(people ? { users: fileUsers({ path: join(configDir, 'users.json') }) } : {}),
+    },
+    configDir,
+    cwd: REPO,
+    log: () => {},
+  },
 );
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
@@ -783,7 +798,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
         plugins: ['@ahpd/agent-cofold'],
       },
     }) }],
-    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.9.77' },
+    { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.10.4' },
   );
   expect(problems).toEqual([]);
   const closed: (string | undefined)[] = [];
@@ -793,7 +808,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
     { message: (t) => { said.push(t); }, output: () => {}, close: (why) => { closed.push(why); } },
   );
   expect(dockerHeld(dockerState).commands.map((one) => one.command.at(-1)))
-    .toContain('npm i -g @ahpd/server@0.9.77 --allow-scripts=node-pty');
+    .toContain('npm i -g @ahpd/server@0.10.4 --allow-scripts=node-pty');
   for (let i = 0; i < 600 && said.length === 0 && closed.length === 0; i++) await new Promise((r) => { setTimeout(r, 5); });
   await answered(dockerState, 2);
 });
@@ -855,6 +870,69 @@ it('refuses a folder outside the list on every route, and makes one inside it', 
     '--workspace-folder', allowed,
     '--id-label', 'ahpd.computer=1',
     '--id-label', `ahpd.devcontainer.folder=${allowed}`,
+    '--override-config', '<override>',
+  ]);
+  await answered(dockerState, 6);
+});
+
+/*
+ * Task 07: a host more than one person uses makes no dev container until its
+ * operator names the folders it may be made from.
+ */
+it('makes no dev container on a host with users until the operator names the folders', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  const options = optionsOf(devState, dockerState);
+  const { options: loaded } = await load(options, [], configDir, true);
+  const provider = providerOf(loaded);
+  const answerer = loaded.sessionConfigCompletions?.computer as NonNullable<typeof loaded.sessionConfigCompletions>['computer'];
+  const silent = { message: () => {}, output: () => {}, close: () => {} };
+  const computers = loaded.computers;
+  /** What the session route does when a session names this source. */
+  const starting = async (source: string): Promise<unknown> => {
+    if (computers?.create === undefined) throw new Error('the plugin registered no create on its computers port');
+    return computers.create({ source, session: 'ahp-session:/one', provider: 'echo' });
+  };
+  const named = /names the folders it may use in devcontainer\.folders/;
+
+  // Every route, with the one sentence: anybody who may write a
+  // `devcontainer.json` is otherwise anybody who may ask for `--privileged` on
+  // the host several people sign in to.
+  await expect(provider.write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(named);
+  await expect(starting(`devcontainer://${folder}`)).rejects.toThrow(named);
+  await expect(loaded.containers?.connect(
+    { connectionId: 'a', workspaceFolder: folder, name: 'Box' },
+    silent,
+  )).rejects.toThrow(named);
+  // The picker draws no row either, so the form cannot be filled in.
+  expect((await answerer({ property: 'computer', query: '', workingDirectory: `file://${folder}` }))
+    .some((one) => one.value.startsWith('devcontainer://'))).toBe(false);
+  expect(devHeld(devState).calls).toEqual([]);
+
+  // Naming the folder is the opting in, and it is then built as it always was.
+  const { options: naming } = await load(optionsOf(devState, dockerState, {
+    devcontainer: {
+      command: process.execPath,
+      args: [DEV],
+      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+      folders: [folder],
+    },
+  }), [], configDir, true);
+  await providerOf(naming).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(upOf(devState)).toEqual([
+    'up',
+    '--workspace-folder', folder,
+    '--id-label', 'ahpd.computer=1',
+    '--id-label', `ahpd.devcontainer.folder=${folder}`,
     '--override-config', '<override>',
   ]);
   await answered(dockerState, 6);
@@ -1673,7 +1751,11 @@ it('mounts a worktree folder\'s git directory through the override, and runs eac
 
   const config = overrideOf(devState)?.config ?? {};
   expect(config.mounts).toEqual([
-    `type=bind,source=${gitDir},target=${gitDir}`,
+    `type=bind,source=${gitDir},target=${gitDir},readonly`,
+    `type=bind,source=${gitDir}/objects,target=${gitDir}/objects`,
+    `type=bind,source=${gitDir}/objects/info,target=${gitDir}/objects/info,readonly`,
+    `type=bind,source=${gitDir}/refs,target=${gitDir}/refs`,
+    `type=bind,source=${gitDir}/logs,target=${gitDir}/logs`,
     `type=bind,source=${gitDir}/hooks,target=${gitDir}/hooks,readonly`,
     `type=bind,source=${gitDir}/config,target=${gitDir}/config,readonly`,
     `type=bind,source=${gitDir}/worktrees,target=${gitDir}/worktrees,readonly`,

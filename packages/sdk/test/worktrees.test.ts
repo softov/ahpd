@@ -9,7 +9,8 @@ import { gitWorktrees, worktreesOf } from '../src/repo/worktrees.js';
 import { memorySessions } from '../src/sessions.js';
 import { fileResources } from '../src/resources.js';
 import type { Peer } from '../src/types/rpc.js';
-import type { Worktrees } from '../src/types/worktrees.js';
+import type { ComputerPort, MachineSource } from '../src/types/computers.js';
+import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 
 /*
  * A working tree of a session's own.
@@ -1001,8 +1002,11 @@ describe('the git directory a folder belongs to', () => {
     const root = repository();
     const tree = join(root, 'tree');
     run(project(root), 'worktree', 'add', '-q', tree, 'release');
+    // Both directories, because a caller checks that the tree's own `.git`
+    // names the worktree entry git answers for it.
     await expect(gitWorktrees().gitDir?.(tree)).resolves.toEqual({
       gitDir: join(realpathSync(project(root)), '.git'),
+      worktreeDir: join(realpathSync(project(root)), '.git', 'worktrees', 'tree'),
       repository: realpathSync(tree),
     });
   });
@@ -1011,6 +1015,7 @@ describe('the git directory a folder belongs to', () => {
     const root = repository();
     await expect(gitWorktrees().gitDir?.(join(project(root), 'packages', 'app'))).resolves.toEqual({
       gitDir: join(realpathSync(project(root)), '.git'),
+      worktreeDir: join(realpathSync(project(root)), '.git'),
       repository: realpathSync(project(root)),
     });
   });
@@ -1025,5 +1030,56 @@ describe('the git directory a folder belongs to', () => {
     const root = repository();
     writeFileSync(join(project(root), '.git', 'config'), '[core\nbroken');
     await expect(gitWorktrees().gitDir?.(project(root))).rejects.toThrow(/config/);
+  });
+});
+
+describe('the git directory a machine for an isolated session is handed', () => {
+  /** The real port, with `gitDir` answering the lie instead of what git said. */
+  const lying = (lie: (found: GitDir) => GitDir): Worktrees => {
+    const base = gitWorktrees();
+    return {
+      ...base,
+      gitDir: async (dir) => {
+        const found = await base.gitDir?.(dir);
+        return found === undefined ? undefined : lie(found);
+      },
+    };
+  };
+
+  it('hands none where it is not the one the session was isolated from, and names it', async () => {
+    const root = repository();
+    const asked: MachineSource[] = [];
+    const lines: string[] = [];
+    const computers: ComputerPort = {
+      how: async () => undefined,
+      create: async (source) => { asked.push(source); return 'box'; },
+    };
+    const host = createHost({
+      path: root,
+      agents: [echo({ path: project(root), pace: 0 })],
+      // The git directory git answered is another repository's, which is what
+      // a `.git` naming one would make it: the session was isolated from a
+      // tree of `project`, so no other directory is the machine's to mount.
+      worktrees: lying((found) => ({ ...found, gitDir: join(root, 'elsewhere', '.git') })),
+      computers,
+      onEvent: (line) => { lines.push(line); },
+    });
+    const client = host.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: 'ahp-session:/borrowed',
+        provider: 'echo',
+        workingDirectories: [`file://${project(root)}`],
+        config: { isolation: 'worktree', branch: 'main', computer: 'disposable:box' },
+      },
+    });
+    for (let i = 0; i < 40; i++) await new Promise((r) => { setImmediate(r); });
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.folder).toBeDefined();
+    expect(asked[0]?.gitDir).toBeUndefined();
+    expect(lines.filter((line) => line.includes(join(root, 'elsewhere', '.git')))).toHaveLength(1);
   });
 });

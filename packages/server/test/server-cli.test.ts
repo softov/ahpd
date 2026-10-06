@@ -1035,6 +1035,24 @@ describe('user', () => {
     expect((await cli(['user', 'list', '--users', users])).stdout).toContain('ada');
   }, 20000);
 
+  it('takes --host and --port on the verb that prints an address, and on no other', async () => {
+    await cli(['user', 'add', 'ada', '--users', users]);
+    const printed = await cli(['user', 'token', 'ada', '--url', '--users', users, '--host', '10.0.0.5', '--port', '9310']);
+    expect(printed.code).toBe(0);
+    expect(printed.stdout.trim()).toMatch(/^ws:\/\/10\.0\.0\.5:9310\/\?tkn=/u);
+
+    // `--url` is the one place the address is read, so every other verb refuses
+    // it rather than accepting a port that would mean nothing.
+    for (const args of [
+      ['user', 'list', '--users', users, '--port', '9310'],
+      ['user', 'rm', 'ada', '--users', users, '--host', '10.0.0.5'],
+    ]) {
+      const refused = await cli(args);
+      expect(refused.code).toBe(2);
+      expect(refused.stderr).toMatch(/Unknown option --(port|host)/u);
+    }
+  }, 20000);
+
   it('takes --url on the verb that prints one, and on no other', async () => {
     await cli(['user', 'add', 'ada', '--users', users]);
     const printed = await cli(['user', 'token', 'ada', '--url', '--users', users]);
@@ -1071,6 +1089,18 @@ describe('vault', () => {
     const refused = await cli(['vault', 'delete', 'host:orders', '--port', '9310']);
     expect(refused.code).toBe(2);
     expect(refused.stderr).toContain('Unknown option --port');
+
+    // And the configuration is `vault list`'s alone: the two that write reach
+    // the vault beside the one this run reads, so a flag naming another would
+    // keep a secret in a store nothing else opens.
+    for (const args of [
+      ['vault', 'set', 'host:orders', '--config-file', config],
+      ['vault', 'delete', 'host:orders', '--config-file', config],
+    ]) {
+      const said = await cli(args);
+      expect(said.code).toBe(2);
+      expect(said.stderr).toContain('Unknown option --config-file');
+    }
   }, 20000);
 });
 

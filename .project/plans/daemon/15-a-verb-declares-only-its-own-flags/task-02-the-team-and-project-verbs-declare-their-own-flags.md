@@ -1,6 +1,6 @@
 ---
 title: The team and project verbs declare their own flags
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

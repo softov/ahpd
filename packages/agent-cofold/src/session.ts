@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { idOf } from '@ahpd/sdk';
+import { idOf, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -246,7 +246,7 @@ export function cofoldSession(
     activity: () => ctx.activity,
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
-    workingDirectories: () => [`file://${where}`],
+    workingDirectories: () => [uriOf(where)],
 
     sessionState: () => ({
       resource: start.uri,
@@ -256,7 +256,7 @@ export function cofoldSession(
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [`file://${where}`],
+      workingDirectories: [uriOf(where)],
       customizations: start.seedCustomizations ?? [],
       ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
       /*

@@ -1,6 +1,6 @@
 ---
 title: A provider's key refusal is the proxy's own error
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: shutdown needs config:change
-status: todo
+status: done
 depends: [task-01-a-method-in-neither-table-is-refused.md]
 layer: "sdk"
 refs:

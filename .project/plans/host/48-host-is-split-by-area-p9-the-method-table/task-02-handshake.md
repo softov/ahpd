@@ -1,6 +1,6 @@
 ---
 title: Introduction and sign-in are one file
-status: implemented
+status: done
 depends: [task-01-the-classification-test-reads-every-file.md]
 layer: "sdk"
 refs:

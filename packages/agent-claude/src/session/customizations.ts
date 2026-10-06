@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { McpServerState } from '@microsoft/agent-host-protocol';
+import { uriOf } from '@ahpd/sdk';
 import type { Bag, OnWire } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 
@@ -52,7 +53,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    * reads a directory's `children` rather than walking it.
    */
   const home = process.env.HOME ?? '';
-  const folder = (kind: string): string => `file://${home}/.claude/${kind}`;
+  const folder = (kind: string): string => uriOf(`${home}/.claude/${kind}`);
   const container = (kind: string, contents: string, children: Bag[]): Bag | undefined =>
     (children.length === 0 ? undefined : {
       type: 'directory',
@@ -195,7 +196,7 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
        * is a path segment here and a URI segment there.
        */
       uri: existsSync(path)
-        ? (plugin === undefined ? `file://${path}` : path)
+        ? (plugin === undefined ? uriOf(path) : path)
         : `${INTERNAL_AGENT}${encodeURIComponent(own)}`,
       enabled: true,
       ...(str(found.description) ? { description: str(found.description) as string } : {}),

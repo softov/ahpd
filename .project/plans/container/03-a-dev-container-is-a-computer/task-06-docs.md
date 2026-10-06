@@ -1,6 +1,6 @@
 ---
 title: Docs and the domain text
-status: implemented
+status: done
 depends: [task-03-the-form-offers-a-folder.md, task-08-only-allowed-folders-and-an-off-switch-for-every-route.md, task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "docs"
 refs:

@@ -8,7 +8,7 @@
  * idea `the-local-vault-is-encrypted`.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { scopeOf } from '@ahpd/sdk';
 import type { Vault } from '@ahpd/sdk';
@@ -102,6 +102,12 @@ const writeSaved = (file: string, secrets: Record<string, string>): void => {
   const body: Saved = { version: 1, secrets };
   mkdirSync(dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
+  // Removed before it is written, because `mode` is applied when a file is
+  // *created*: a temp this pid left readable - one of ours killed between the
+  // write and the rename, and this process given its pid back - would keep its
+  // 0644, and the rename would put that on the vault, which holds everybody's
+  // credentials.
+  rmSync(temporary, { force: true });
   writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`, { mode: OWNER_ONLY });
   renameSync(temporary, file);
 };

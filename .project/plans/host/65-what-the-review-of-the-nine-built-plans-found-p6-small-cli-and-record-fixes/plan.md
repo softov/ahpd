@@ -1,7 +1,7 @@
 ---
 title: Each verb takes only what it reads, and the records name the right things
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -58,11 +58,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Only user token takes --host and --port](task-01-only-user-token-takes-host-and-port.md) | todo | - |
-| [02 - vault set and delete refuse --config-file](task-02-vault-set-and-delete-refuse-config-file.md) | todo | - |
-| [03 - A plugin option path refuses by key, own keys only, never into a secret](task-03-a-plugin-option-path-refuses-by-key.md) | todo | - |
-| [04 - Action dispatch reads host state through ctx](task-04-action-dispatch-reads-host-state-through-ctx.md) | todo | - |
-| [05 - The reviewed plans' records name the right things](task-05-the-reviewed-plans-records-name-the-right-things.md) | todo | - |
+| [01 - Only user token takes --host and --port](task-01-only-user-token-takes-host-and-port.md) | done | - |
+| [02 - vault set and delete refuse --config-file](task-02-vault-set-and-delete-refuse-config-file.md) | done | - |
+| [03 - A plugin option path refuses by key, own keys only, never into a secret](task-03-a-plugin-option-path-refuses-by-key.md) | done | - |
+| [04 - Action dispatch reads host state through ctx](task-04-action-dispatch-reads-host-state-through-ctx.md) | done | - |
+| [05 - The reviewed plans' records name the right things](task-05-the-reviewed-plans-records-name-the-right-things.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -71,8 +71,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-only-user-token-takes-host-and-port.md](task-01-only-user-token-takes-host-and-port.md).
+- **Done so far:** all five tasks. 01-03 each with a case failing first and passing after; 04 as the plan's Risks says, by the grep alone; 05 with both validation greps. [implemented.md](implemented.md) is written.
+- **Next action:** Softov's review. Nothing is left to build.
 - **Open questions:** none.
 - **Watch out for:** task 05 edits other plans' records; it changes no task status, which waits on host/65's review.
 

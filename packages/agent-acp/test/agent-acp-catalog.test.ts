@@ -1,9 +1,10 @@
-import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
+import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { acpAgent } from '../src/index.js';
@@ -1100,6 +1101,23 @@ it('says when a command of the person\'s own ran, and how long it took', async (
   expect(typeof metaOf(ready)['ahpd.startedAt']).toBe('string');
   expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
   expect(timed(complete)).toBe(true);
+});
+
+it('reports the folder a session is in as a URI a host reads back as that folder', () => {
+  const { agent } = backend();
+  /*
+   * The session's own directory, as the host reads it: a folder called `C# a b`
+   * sent as `file:///…/C# a b` is a folder called `C` to a reader that takes
+   * `#` for a fragment, and one node reads `C# a b` where the name has a space.
+   * Nothing here runs a turn - the bridge reports the directory it was started
+   * in, and that is what a `!` command and a diff's base are read from.
+   */
+  const where = join(scratch(), 'C# a b');
+  mkdirSync(where);
+  const { session } = start(agent, 'uris', { workingDirectory: where });
+  const asked = [uriOf(where)];
+  expect(session.workingDirectories()).toEqual(asked);
+  expect((session.sessionState() as { workingDirectories: string[] }).workingDirectories).toEqual(asked);
 });
 
 it('never writes a bare timing key on a call', async () => {

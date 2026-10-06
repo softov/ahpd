@@ -1,6 +1,7 @@
 import { Status, idOf } from '../catalog.js';
 import { tail } from '../paging.js';
 import { RpcError } from '../rpc.js';
+import { uriOf } from '../fileuri.js';
 import { runState } from './automations.js';
 import { ROOT, isRootChannel, AUTOMATIONS, MARKS, chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { need } from './common.js';
@@ -382,7 +383,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
               one as unknown as { toolCallId: string; title: string; turns: Bag[] },
             )),
           ],
-          workingDirectories: wheres.get(nameOf(id)) ?? [`file://${options.path}`],
+          workingDirectories: wheres.get(nameOf(id)) ?? [uriOf(options.path)],
           activeClients: activeClientsOf(nameOf(id)),
           ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(nameOf(id)) } : {}),
           ...describes(nameOf(id)),

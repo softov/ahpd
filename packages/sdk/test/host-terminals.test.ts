@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { OpenedTerminal } from '../src/types/terminals.js';
 import { uriOf } from '../src/resources.js';
+import { localPath } from '../src/fileuri.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine,
   peer, sdk, settle,
@@ -405,6 +406,31 @@ describe('a shell on this machine', () => {
       // `my%20dir`, which is not the one the client picked and not one that
       // exists - so nothing starts there at all.
       expect(await spoken(p, uri, join(dir, 'my dir'))).toContain(join(dir, 'my dir'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports the directory it is in as the URI a client reads, not as a path with a raw hash in it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd terminals '));
+    try {
+      mkdirSync(join(dir, 'C#'));
+      const { client } = await opened();
+      const uri = 'ahp-terminal:/hashed';
+      const where = join(dir, 'C#');
+      await client.handle({
+        method: 'createTerminal',
+        params: { channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: uriOf(where) },
+      });
+      const found = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { cwd: string } };
+      };
+      // Built as `file://<dir>/C#`, a client that reads the state back the way
+      // this host reads a URI opens the folder above the one the shell is in -
+      // and one that hands it back verbatim is answered about a directory
+      // called `C`, which is not either.
+      expect(found.snapshot.state.cwd).toBe(uriOf(where));
+      expect(localPath(found.snapshot.state.cwd)).toBe(where);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

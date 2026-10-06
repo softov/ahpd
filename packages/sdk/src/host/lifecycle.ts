@@ -1,6 +1,7 @@
 import { RpcError } from '../rpc.js';
 import { computerId } from '../computers.js';
-import { localPath } from '../fileuri.js';
+import { deleteNested } from '../nested.js';
+import { localPath, uriOf } from '../fileuri.js';
 import { idOf } from '../catalog.js';
 import { join } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
@@ -284,6 +285,42 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   /**
+   * A nested session's copy inside its machine, gone.
+   *
+   * Only for a session this host is not running: a running one is disposed
+   * inside by its own close, which reaches the machine on the way down. What is
+   * left is a row this host lists from its record while the machine still holds
+   * the session - a stop whose dispose never landed, a daemon that was killed,
+   * a machine that came back - and the profile of that machine is what decides
+   * what happens to it: `inside` starts a host in the machine for the one
+   * question, `record` leaves the transcript where it is - decision
+   * `a-nested-host-is-configured-by-the-machine-profile-only`.
+   *
+   * The plugin the session's agent was registered by is what the host inside is
+   * started with, so a record whose plugin this daemon does not have ends with a
+   * line rather than with a host that serves nobody.
+   */
+  const deletedInside = async (uri: string): Promise<void> => {
+    const record = kept.nested?.(idOf(uri));
+    if (record === undefined) return;
+    const computers = options.computers;
+    const said = await computers?.nestedDelete?.(record.machine).catch(() => undefined);
+    if (said === 'record') return;
+    const plugin = options.agentPlugins?.[record.provider];
+    if (plugin === undefined) {
+      log(`${record.inner} is inside computer://${record.machine}, and this host does not know which plugin serves ${record.provider}, so nothing was deleted there`);
+      return;
+    }
+    await deleteNested({
+      id: record.machine,
+      plugins: [plugin],
+      sessionId: record.inner,
+      ...(computers === undefined ? {} : { computers }),
+      log,
+    });
+  };
+
+  /**
    * Whether this caller is allowed to delete this session.
    *
    * `session:write` says a caller may change sessions; it does not say whose.
@@ -354,6 +391,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const directory = dirOf(uri);
     if (held !== undefined) teardown(held, uri);
+    else await deletedInside(uri);
     const failure = await deleted(uri, agent, directory);
     if (held === undefined) {
       // Nothing was held, so nothing was torn down and what this host kept
@@ -406,9 +444,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     }
     const to = await isolated(uri, mine, from);
     const before = held.workingDirectory;
-    // Their names stay the session's while it starts again.
+    /*
+     * Their names stay the session's while it starts again, and so does the
+     * conversation: the backend is stopped without disposing the session it
+     * holds, because the one starting behind it resumes that session rather
+     * than making a new one.
+     *
+     * `stopping` is waited on before the new backend is started, so the two
+     * are never on this transcript at once - a host inside a machine takes a
+     * while to go, and until it has, it is still writing what it was doing.
+     */
+    const stopping: Promise<void>[] = [];
     for (const [chatUri, chat] of held.chats) {
-      chat.close();
+      stopping.push(Promise.resolve(chat.close(false)));
       byChat.drop(chatUri);
     }
     /*
@@ -459,6 +507,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         enteredIn.delete(uri);
         sessionMachines.delete(uri);
       }
+      // The last thing before the new backend: the old one's process is gone.
+      await Promise.all(stopping);
       spawn(
         held.agent,
         uri,
@@ -514,7 +564,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * by an addition would be a client briefly holding a session with no
      * directory at all.
      */
-    if (to !== undefined) dispatch(uri, { type: 'session/workingDirectoryReplaced', directory: `file://${to}` });
+    if (to !== undefined) dispatch(uri, { type: 'session/workingDirectoryReplaced', directory: uriOf(to) });
   };
 
   /**

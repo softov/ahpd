@@ -1,6 +1,6 @@
 ---
 title: A scheduled job proposes a bump
-status: implemented
+status: done
 depends: [task-01-the-versions-file.md]
 layer: "ci"
 refs:

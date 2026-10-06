@@ -83,10 +83,10 @@ createSession(isolation: worktree) -> isolated() -> worktree path -> placedIn(fo
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host knows a folder's git directory and hands it on](task-01-the-host-hands-on-the-git-directory.md) | implemented | - |
-| [02 - A machine mounts the git directory beside its folder](task-02-a-machine-mounts-the-git-directory.md) | implemented | 01 |
-| [03 - The machine cannot change what git runs on the host](task-03-the-machine-cannot-change-what-git-runs-on-the-host.md) | implemented | 02 |
-| [04 - Docs](task-04-docs.md) | implemented | 03 |
+| [01 - The host knows a folder's git directory and hands it on](task-01-the-host-hands-on-the-git-directory.md) | done | - |
+| [02 - A machine mounts the git directory beside its folder](task-02-a-machine-mounts-the-git-directory.md) | done | 01 |
+| [03 - The machine cannot change what git runs on the host](task-03-the-machine-cannot-change-what-git-runs-on-the-host.md) | done | 02 |
+| [04 - Docs](task-04-docs.md) | done | 03 |
 
 ## Risks and tradeoffs
 

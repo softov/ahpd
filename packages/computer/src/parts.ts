@@ -1,8 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { partTarget } from '@ahpd/sdk';
 import type { ComputerRuntime } from './runtime.js';
@@ -193,6 +193,9 @@ export const readParts = (path: string = versionsPath()): Part[] => {
 export const pinnedOf = (part: Part): string =>
   [part.version, ...(part.packages ?? []).flatMap((spec) => packageOf(spec).version ?? [])].join('-');
 
+/** A short hash of the Dockerfile text that builds an image, which its tag carries. */
+const fileHashOf = (dockerfile: string): string => createHash('sha256').update(dockerfile).digest('hex').slice(0, 12);
+
 /**
  * The image a part is built as, and the one place that is spelled.
  *
@@ -200,30 +203,58 @@ export const pinnedOf = (part: Part): string =>
  * inspect`. The `ahpd` part carries a hash of its own source beside the
  * version, because a checkout that changed its code has not changed its
  * version and would otherwise reuse the image built from the code before it -
- * the thing that hash is there for.
+ * the thing that hash is there for. And the Dockerfile's own text is in the tag
+ * with them, because an upgrade that changes how an image is written changes
+ * what is in it while the versions stand still, and the tag is the whole of
+ * what makes `ensurePart` reuse the image the older code built.
  */
-export const tagOf = (part: Part, sourceHash?: string): string => {
-  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${pinnedOf(part)}`;
+export const tagOf = (part: Part, sourceHash?: string, dockerfile?: string): string => {
+  const built = dockerfile === undefined ? '' : `-${fileHashOf(dockerfile)}`;
+  if (part.kind !== 'ahpd') return `ahpd-part/${part.id}:${pinnedOf(part)}${built}`;
   if (sourceHash === undefined || sourceHash === '') {
     throw new Error('the tag of the ahpd part carries a hash of its own source, and none was given to tag it with');
   }
-  return `ahpd-part/${part.id}:${part.version}-${sourceHash}`;
+  return `ahpd-part/${part.id}:${part.version}-${sourceHash}${built}`;
 };
 
 /**
- * What the joined image's tag is a hash of: the file's own bytes, and the ahpd
- * part's tag beside them.
+ * What the joined image's tag is a hash of: the file's own bytes, the ahpd
+ * part's tag beside them, the ids of the parts the image holds, and the
+ * Dockerfile the joined image is written from.
  *
  * So a version move and a change to this repository's own code both move the
- * joined image, and nothing else does. The parts are taken as an argument so a
- * caller that read its own file is hashed beside its own ahpd tag rather than
- * the one that ships.
+ * joined image, and so does a part that built this time and did not the last -
+ * an image made without one is not the image the file stands for, and reusing
+ * it would answer `missing: []` for a part it does not hold. The Dockerfile is
+ * there because it is what the image is: an upgrade that changes
+ * `joinedDockerfile`, or a part whose own Dockerfile moved and so is copied in
+ * under a new tag, is a different image at the same versions. The parts are
+ * taken as an argument so a caller that read its own file is hashed beside its
+ * own ahpd tag rather than the one that ships, and the held ids are sorted so
+ * the same image is the same tag whatever order they were built in.
+ *
+ * An ahpd part the file names and the image does not hold is folded in as
+ * `<id> unbuilt` and not by its tag: there is no source hash to write a tag
+ * with - that is why it is not in the image - and `unbuilt` is not a tag
+ * `tagOf` can produce, so an image made without the part cannot hash the same
+ * as one made with it. The held ids say that too; this says it in the term that
+ * otherwise names the part's own code.
  */
-export const hashOf = (sourceHash?: string, parts: Part[] = readParts()): string => {
+export const hashOf = (
+  sourceHash?: string,
+  parts: Part[] = readParts(),
+  held: readonly string[] = [],
+  dockerfile = '',
+): string => {
   const ahpd = parts.find((one) => one.kind === 'ahpd');
+  const ahpdTerm = ahpd === undefined
+    ? ''
+    : sourceHash === undefined || sourceHash === '' ? `${ahpd.id} unbuilt` : tagOf(ahpd, sourceHash);
   const hash = createHash('sha256')
     .update(readFileSync(versionsPath()))
-    .update(`\n${ahpd === undefined ? '' : tagOf(ahpd, sourceHash)}`)
+    .update(`\n${ahpdTerm}`)
+    .update(`\n${[...held].sort().join(',')}`)
+    .update(`\n${dockerfile}`)
     .digest('hex');
   return hash.slice(0, 12);
 };
@@ -304,18 +335,39 @@ const packOf = (root: string, name: string, into: string): { name: string; bytes
     const said = (packed.stderr.trim() || packed.stdout.trim()).split('\n').slice(-3).join(' ');
     throw new Error(`pnpm pack could not pack ${name}, which the release workflow runs after pnpm build: ${said}`);
   }
+  /*
+   * The tarball it says it wrote, which is where it wrote it.
+   *
+   * The last line of `pnpm pack`'s output is the tarball's path, and both
+   * shapes are read: an absolute one, which is what the real `pnpm` prints -
+   * joined onto nothing, because `join` reads a second absolute path as a
+   * relative one and the read then names the scratch directory twice over,
+   * which is `ENOENT` whatever the pack did - and a relative one, read against
+   * the directory the pack was asked to write into.
+   */
   const file = packed.stdout.trim().split('\n').pop() ?? '';
-  return { name: `${name.replace(/^@/, '').replace('/', '-')}.tgz`, bytes: readFileSync(join(into, file)) };
+  return { name: `${name.replace(/^@/, '').replace('/', '-')}.tgz`, bytes: readFileSync(resolve(into, file)) };
 };
 
 /** The tarballs a checkout builds the ahpd part from, and the hash their bytes make. */
 const packedOf = (root: string, part: Part): { tarballs: { name: string; bytes: Buffer }[]; plugins: { name: string; bytes: Buffer }[]; hash: string } => {
   const into = mkdtempSync(join(tmpdir(), 'ahpd-pack-'));
-  const tarballs = workspacePackages(root).map((name) => packOf(root, name, into));
-  const plugins = (part.plugins ?? []).map((name) => packOf(root, name, into));
-  const hash = createHash('sha256');
-  for (const one of [...tarballs, ...plugins]) hash.update(one.name).update(one.bytes);
-  return { tarballs, plugins, hash: hash.digest('hex').slice(0, 12) };
+  try {
+    const tarballs = workspacePackages(root).map((name) => packOf(root, name, into));
+    const plugins = (part.plugins ?? []).map((name) => packOf(root, name, into));
+    const hash = createHash('sha256');
+    for (const one of [...tarballs, ...plugins]) hash.update(one.name).update(one.bytes);
+    return { tarballs, plugins, hash: hash.digest('hex').slice(0, 12) };
+  }
+  finally {
+    /*
+     * The bytes are in memory by now, so the directory is removed the same way
+     * whether the pack worked: a machine that packed once per restart would
+     * otherwise leave a scratch directory per pack in the temp directory, and
+     * one that failed would leave one per attempt.
+     */
+    rmSync(into, { recursive: true, force: true });
+  }
 };
 
 /** The answer, packed once per process however many builds ask for it. */
@@ -330,15 +382,28 @@ let answered: Promise<AhpdSource> | undefined;
  * two builds in one process have to agree on them.
  */
 export const ahpdSourceOf = async (): Promise<AhpdSource> => {
-  answered ??= (async () => {
-    const part = readParts().find((one) => one.kind === 'ahpd');
-    if (part === undefined) throw new Error(`${versionsPath()} names no ahpd part`);
-    const root = checkoutRoot();
-    if (root === undefined) {
-      return { from: 'npm', version: part.version, hash: createHash('sha256').update(part.version).digest('hex').slice(0, 12) };
-    }
-    return { from: 'workspace', ...packedOf(root, part) };
-  })();
+  if (answered === undefined) {
+    const asked: Promise<AhpdSource> = (async () => {
+      const part = readParts().find((one) => one.kind === 'ahpd');
+      if (part === undefined) throw new Error(`${versionsPath()} names no ahpd part`);
+      const root = checkoutRoot();
+      if (root === undefined) {
+        return { from: 'npm', version: part.version, hash: createHash('sha256').update(part.version).digest('hex').slice(0, 12) };
+      }
+      return { from: 'workspace', ...packedOf(root, part) };
+    })();
+    answered = asked;
+    /*
+     * A pack that failed is not remembered.
+     *
+     * The pack runs before the daemon is built - `pnpm build` is what makes
+     * `prepack`'s `tsc -p .` resolve - so the first build after a start can be
+     * the one that fails, and a remembered refusal would be every ahpd part
+     * build until the next restart. The caller that met it still gets it; the
+     * next one asks again.
+     */
+    void asked.catch(() => { if (answered === asked) answered = undefined; });
+  }
   return answered;
 };
 
@@ -357,11 +422,16 @@ const tarFlag = (url: string): string => {
   throw new Error(`${url} is not a tar archive this can unpack`);
 };
 
-/** The tag of the `node` part, which every part installed by npm copies in. */
+/**
+ * The tag of the `node` part, which every part installed by npm copies in.
+ *
+ * It is the tag `ensurePart` builds the `node` part at, Dockerfile hash and all,
+ * because a `COPY --from` naming anything else is a stage Docker cannot resolve.
+ */
 const nodeTag = (): string => {
   const node = readParts().find((one) => one.kind === 'node');
   if (node === undefined) throw new Error(`${versionsPath()} names no node part, so nothing that needs Node can be built`);
-  return tagOf(node);
+  return tagOf(node, undefined, dockerfileOf(node));
 };
 
 /**
@@ -711,11 +781,15 @@ export const ensurePart = async (id: string, options: EnsureOptions): Promise<st
     await ensurePart(need, { ...options, parts });
   }
   const source = part.kind === 'ahpd' ? await ahpdSourceOf() : undefined;
-  const tag = tagOf(part, source?.hash);
+  // The Dockerfile is what the image is, so it is written once and is both what
+  // the tag hashes and what is built: an upgrade that changes how a part is
+  // written changes the image while the versions stand still.
+  const file = dockerfileOf(part, source);
+  const tag = tagOf(part, source?.hash, file);
   return once(tag, async () => {
     if (await options.runtime.hasImage(tag)) return tag;
     const files = source?.from === 'workspace' ? [...source.tarballs, ...source.plugins] : [];
-    await options.runtime.buildImage(tag, contextOf(dockerfileOf(part, source), files));
+    await options.runtime.buildImage(tag, contextOf(file, files));
     return tag;
   });
 };
@@ -726,7 +800,11 @@ export interface MadePart {
   id: string;
   /** The image it is mounted or filled from. */
   tag: string;
-  /** What the tag says after its name: the version, and for the ahpd part its source hash. */
+  /**
+   * What the tag says after its name: the version, the ahpd part's source hash
+   * and the hash of the Dockerfile that wrote the image, whichever of them the
+   * tag carries.
+   */
   version: string;
   /** The parts it cannot run without, which a machine leaving one out leaves this out with it. */
   requires?: string[];
@@ -764,8 +842,10 @@ export const IMAGE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sb
  * `ahpd-part-<id>-<version>`.
  *
  * The version is in the name, so a bump makes a new volume and the old one is
- * left for `docker volume prune`. A character Docker refuses in a volume name -
- * the `+` of a build suffix - is written `_`.
+ * left for `docker volume prune`. So is the Dockerfile's own hash, since a
+ * rebuild under a new tag fills a volume of its own rather than the one the
+ * older image filled. A character Docker refuses in a volume name - the `+` of
+ * a build suffix - is written `_`.
  */
 export const volumeOf = (part: MadePart): string =>
   `ahpd-part-${part.id}-${part.version.replace(/[^A-Za-z0-9_.-]/g, '_')}`;
@@ -914,12 +994,26 @@ export const ensureJoined = async (options: EnsureOptions): Promise<Joined> => {
     }
   }
   // The ahpd part's tag carries a hash of its own source, and the joined hash
-  // folds that tag in.
-  const hash = named.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf()).hash : undefined;
-  const tag = `ahpd-agents:${hashOf(hash, named)}`;
+  // folds that tag in - beside the ids of the parts that built, so an image
+  // made without one is a different image rather than this one reused. The
+  // Dockerfile is folded in too: it names the tag of every part it copies from,
+  // so a part whose own Dockerfile moved is written into the joined image under
+  // a tag this text now names, and the image is a different one at the same
+  // versions.
+  //
+  // Asked for only when the ahpd part is one of the parts that built. Its build
+  // asks for it too, so an ahpd part in the image has already answered it and
+  // this is the remembered answer. An ahpd part that did not build - a checkout
+  // with no `pnpm build`, which is what `prepack`'s `tsc -p .` needs - is in
+  // `missing` with its reason, and asking again here would throw the same
+  // refusal out of the whole join: no machine at all would be made, where the
+  // point of `missing` is that every machine not needing that part still is.
+  const hash = held.some((one) => one.kind === 'ahpd') ? (await ahpdSourceOf()).hash : undefined;
+  const file = joinedDockerfile(held, tags);
+  const tag = `ahpd-agents:${hashOf(hash, named, held.map((part) => part.id), file)}`;
   return once(tag, async () => {
     if (!await options.runtime.hasImage(tag)) {
-      await options.runtime.buildImage(tag, contextOf(joinedDockerfile(held, tags)));
+      await options.runtime.buildImage(tag, contextOf(file));
     }
     return { tag, parts: held, missing };
   });

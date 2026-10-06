@@ -2,7 +2,7 @@
 title: A dev container is a computer, listed and reachable without the connection that made it - implemented
 date: 2026-10-05
 refs:
-  - git://ae250ef
+  - git://52f98f6
   - "[code://packages/computer/src/devcontainer.ts](../../../../packages/computer/src/devcontainer.ts) - the relay, the probe, `execArgv`, masking and adoption"
   - "[code://packages/computer/src/runtime.ts](../../../../packages/computer/src/runtime.ts) - `up` with the override config, the listing, `exec`"
   - "[code://packages/computer/src/owners.ts](../../../../packages/computer/src/owners.ts) - the `computers.json` entry: owner, probe, adopted"

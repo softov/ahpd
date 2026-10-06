@@ -1,6 +1,6 @@
 ---
 title: The joined image's tag covers the parts inside it
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:
@@ -28,3 +28,9 @@ The joined image's tag is a hash of the file, the ahpd part's tag and the ids of
 - `pnpm exec vitest run packages/computer/test/computer-parts-build.test.ts`.
 
 ## Resume
+
+`hashOf` takes the ids of the parts the image holds as a third argument and hashes them, sorted, beside the file's bytes and the ahpd part's tag; `ensureJoined` passes `held.map((part) => part.id)` to it, so the tag of an image built without a part is the tag of an image built without a part.
+
+- The case is the last one in `packages/computer/test/computer-parts-build.test.ts`: the scripted docker fails `ahpd-part/goose:1.53.0` on the first `ensureJoined`, and the state file is rewritten without that failure before the second. Seen failing first: the second call answered the first run's tag, built nothing, and the Dockerfile recorded at that tag is the one holding `node,codex` - `expected 'FROM debian:bookworm-slim\nRUN apt-ge…' to contain 'COPY --from=ahpd-part/goose:1.53.0 /o…'`.
+- `held` is the argument name `hashOf` uses and the name of the test file's own reader of the scripted docker's state; the two are different scopes and the case reads correctly.
+- `npx tsc -b` clean, and `packages/computer` 19 files and 330 tests passed, so the defaulted `held` in `hashOf`'s signature left `computer-parts.test.ts`'s two-argument calls green.

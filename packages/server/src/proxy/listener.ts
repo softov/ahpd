@@ -181,12 +181,33 @@ const bodyOf = async (request: Request, limit: number): Promise<{ body: Record<s
   return { body: body as Record<string, unknown>, model };
 };
 
+/** The system's error code behind a failed fetch, when it gave one. */
+const codeOf = (error: unknown): string | undefined => {
+  const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
+  return typeof cause === 'object' && cause !== null && 'code' in cause ? String((cause as { code: unknown }).code) : undefined;
+};
+
 /** Why a fetch failed, as words that hold no URL and no header: the system's error code when it gave one. */
 const failureOf = (error: unknown): string => {
-  const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
-  const code = typeof cause === 'object' && cause !== null && 'code' in cause ? String((cause as { code: unknown }).code) : undefined;
+  const code = codeOf(error);
   return code === undefined ? 'unreachable' : `unreachable (${code})`;
 };
+
+/**
+ * The failures that mean the provider never received the call.
+ *
+ * A connection refused, a name that does not resolve, a host or network that
+ * is not reachable, a connect that timed out: nothing was sent, so trying the
+ * next candidate sends the call once.
+ *
+ * Every other failure is one the provider may have received - a socket reset
+ * after the body was read, an answer that never came - and asking the next
+ * candidate too would spend the call twice. `UND_ERR_CONNECT_TIMEOUT` is
+ * undici's, the client `fetch` uses; the rest are the system's own.
+ */
+const NEVER_ARRIVED = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH', 'UND_ERR_CONNECT_TIMEOUT',
+]);
 
 /**
  * The pools one record is charged to: the owner, the team and the project,
@@ -214,6 +235,86 @@ const costOf = (entry: ModelEntry, tokens: Tokens): number | undefined => {
   const read = tokens.input !== undefined || tokens.output !== undefined || tokens.cache !== undefined;
   if (!read) return undefined;
   return (prompt * (price.input ?? 0) + (tokens.output ?? 0) * (price.output ?? 0)) / 1_000_000;
+};
+
+/** How much of a provider's refusal is read for the log: enough for its sentence, not its whole body. */
+const REFUSAL_HELD = 4 * 1024;
+
+/** Up to `limit` characters of an answer's body, the rest cancelled: a body nobody is going to read is not left arriving. */
+const bodyBound = async (response: Response, limit: number): Promise<string> => {
+  const body = response.body;
+  if (body === null) return '';
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let held = '';
+  try {
+    while (held.length < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      held += decoder.decode(value, { stream: true });
+    }
+  }
+  catch { /* what was read is what there is */ }
+  finally { await reader.cancel().catch(() => undefined); }
+  return held.slice(0, limit);
+};
+
+/** One line of text, so what a provider said cannot break the log line it is written on. */
+const oneLine = (text: string): string => text.replace(/\s+/gu, ' ').trim();
+
+/** What a key-shaped run of text reads as once it is out of the log line. */
+const REDACTED = '[redacted]';
+
+/** The shortest value worth matching whole: anything less is a word, and replacing it would eat the sentence. */
+const SHORTEST_KEY = 8;
+
+/**
+ * A provider's words with anything key-shaped taken out.
+ *
+ * A refusal's sentence is about the key this host called with and often quotes
+ * it. The line is written to the daemon's log, which lives on disk and is
+ * carried off the machine with a bug report, so the key does not go in it.
+ * Four shapes come out: the value this host called the provider with, an
+ * `sk-`-prefixed value, a `Bearer` value, and a long run of token characters
+ * after the word `key`. A shape that is not matched is a sentence that stays
+ * whole; a sentence that is, says less than it did, which is the way round
+ * this has to err.
+ */
+const redact = (text: string, keys: readonly string[]): string => {
+  let out = text;
+  for (const key of keys) {
+    if (key.length >= SHORTEST_KEY) out = out.split(key).join(REDACTED);
+  }
+  return out
+    .replace(/sk-[A-Za-z0-9_-]+/gu, REDACTED)
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+/giu, `Bearer ${REDACTED}`)
+    .replace(/(key\b[^\p{L}\p{N}]{0,4})[A-Za-z0-9_-]{20,}/giu, `$1${REDACTED}`);
+};
+
+/**
+ * The provider's own words about a refusal, for the log.
+ *
+ * The caller is shown this host's sentence rather than the provider's, so the
+ * body is wanted only by whoever reads the daemon's log - and it is a
+ * provider's, which may be anything at all. At most `REFUSAL_HELD` of it is
+ * read and the rest cancelled. A JSON body's `error.message` is used when it
+ * has one, since that is where both dialects put their sentence; anything else
+ * is the body itself, on one line. What comes out is redacted against `keys`,
+ * the values this call was made with.
+ */
+const refusalWords = async (response: Response, keys: readonly string[]): Promise<string> => {
+  const held = await bodyBound(response, REFUSAL_HELD);
+  try {
+    const parsed = JSON.parse(held) as { error?: unknown; message?: unknown };
+    const error = parsed?.error;
+    const message = typeof error === 'string' ? error
+      : typeof error === 'object' && error !== null && typeof (error as { message?: unknown }).message === 'string'
+        ? (error as { message: string }).message
+        : typeof parsed?.message === 'string' ? parsed.message : undefined;
+    if (message !== undefined) return redact(oneLine(message), keys);
+  }
+  catch { /* not JSON: the body's own words are what there is */ }
+  return redact(oneLine(held), keys);
 };
 
 /** One call's caller, as what a policy checks and a record carries. */
@@ -317,7 +418,10 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
    * One attempt at one candidate: its status and headers, or why there were none.
    *
    * A caller who has hung up starts no attempt. A provider that sends no
-   * headers in time is not retried, since it may be doing the work.
+   * headers in time is not retried, since it may be doing the work - and one
+   * whose socket dropped after it read the call is not either, because it
+   * received the call. Only a failure in `NEVER_ARRIVED` is retried, which is
+   * why `retry` is set from the error's code and not from the failure.
    */
   const attempt = async (request: Request, dialect: Dialect, body: Record<string, unknown>, candidate: Candidate): Promise<Attempt> => {
     if (request.signal.aborted) return { kind: 'failed', why: 'not tried, the caller hung up', status: 502, retry: false };
@@ -340,7 +444,8 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     catch (error) {
       if (timedOut) return { kind: 'failed', why: `no answer within ${String(headersTimeout / 1000)} s`, status: 504, retry: false };
       if (request.signal.aborted) return { kind: 'failed', why: 'left when the caller hung up', status: 502, retry: false };
-      return { kind: 'failed', why: failureOf(error), status: 502, retry: true };
+      const code = codeOf(error);
+      return { kind: 'failed', why: failureOf(error), status: 502, retry: code !== undefined && NEVER_ARRIVED.has(code) };
     }
     finally {
       clearTimeout(timer);
@@ -392,6 +497,30 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
         return refuse({ status: tried.status, message });
       }
       const { response, controller } = tried;
+      /*
+       * A provider's 401 or 403 is about the key this host called it with and
+       * not the credential the caller arrived with, so it is not streamed back
+       * as it came: a client that read a 401 would ask its person to sign in
+       * again over the host's key, and the body can name the host's account -
+       * decision
+       * `the-proxy-answers-a-providers-key-refusal-with-its-own-error`. The
+       * caller gets this host's own error, and the provider's status and words
+       * go to the log, with anything key-shaped redacted out of it.
+       *
+       * Not tried elsewhere either: a key refusal is this host's own
+       * configuration, and the caller is told so with this host's error, not
+       * sent to another provider to be refused again - the loop retries only
+       * a connection that never arrived, a 429 and a 5xx.
+       */
+      if (response.status === 401 || response.status === 403) {
+        const words = await refusalWords(response, candidate.key === undefined ? [] : [candidate.key]);
+        left.push({
+          provider: candidate.provider,
+          why: words === '' ? String(response.status) : `${String(response.status)} ${words}`,
+        });
+        said('answered 502');
+        return refuse({ status: 502, message: `model ${name} on ${candidate.provider} refused this host's key` });
+      }
       if (!last && (response.status === 429 || response.status >= 500)) {
         await response.body?.cancel().catch(() => undefined);
         left.push({ provider: candidate.provider, why: String(response.status) });

@@ -1,6 +1,6 @@
 ---
 title: Deleting a nested session that is not running
-status: todo
+status: done
 depends: [task-01-a-restart-waits-for-the-old-inner-host.md]
 layer: "sdk, computer"
 refs:
@@ -34,3 +34,13 @@ With `inside` and no machine, the outer record is deleted and the log says the i
 - `pnpm exec vitest run packages/sdk/test/nested-*.test.ts packages/computer/test/computer-options.test.ts`.
 
 ## Resume
+
+Implemented. `nestedDelete: 'inside' | 'record'` is a profile key in the computer plugin's schema, read by the profile reader beside `secretUnreadable` and refused at load by name when it is neither, the same `answers` list that holds the other four two-valued keys. The sdk side is a `NestedDelete` type and a `nestedDelete?(id)` on `ComputerPort`, `deleteNested` in `nested.ts`, and `deletedInside` in `host/lifecycle.ts`, called from `removeSession`'s not-held branch before the backend's delete.
+
+`deleteNested` starts the machine's host through the port's `nested` seam, lists the inner host's sessions and disposes the one whose resource is the recorded inner id, bounded by `DISPOSE_WAIT`. Listing rather than opening is the point: a session this host is not running is one nobody asked to resume, and starting its agent only to delete it would be that resume. A machine that is not there, or a host that cannot be started, is a log line and not a throw, so the outer record is deleted either way: the machine's copy went with the machine, and the line says so. `record` returns before any of that.
+
+The cases are in `nested-proxy.test.ts`, where they failed first with the call site neutered: case 1 as `expected [ 'cofold:/kept' ] to deeply equal []` and case 3 with no line matching `computer://box`, while case 2 passed before and after, as the task's step 2 says it should. The plugin's refusal case failed first as `expected [ { spec: ... } ] to deeply equal []` with its `answers` entry removed.
+
+One thing met while writing the cases is worth keeping: `Host.close()` disposes inside the machines it holds today, `chat.close()` with no argument at `host.ts:844`, so stopping a host that ran a nested session leaves the machine with no copy of it. A case cannot reach "the outer host records it and the machine holds it" that way. `container/05 p9 task 05` is the unbuilt task that changes that call to `close('stopping')`, and this plan's task 05 does not touch `host.ts`, so the case stages the state the road to it leaves: `scriptedPort` gains `keep(channel)`, which puts a session in the machine's store with no host behind it, and `madeKeptAndStopped` says why in its comment.
+
+Gates: `npx tsc -b` clean, `pnpm exec vitest run packages/sdk/test/nested-proxy.test.ts packages/computer/test/computer-options.test.ts` 63 passed.

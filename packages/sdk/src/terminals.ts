@@ -247,7 +247,10 @@ export function createTerminal(options: TerminalOptions, pty?: SpawnPty): Termin
 
     state: () => ({
       title,
-      cwd: `file://${cwd}`,
+      // Encoded, because a client reads this the way it read the one it sent:
+      // `file://` and a raw path is a different folder the moment the path
+      // holds a space or a `#`.
+      cwd: uriOf(cwd),
       cols,
       rows,
       // One part, because without command detection there are no boundaries

@@ -898,6 +898,21 @@ const agentsSaid = (value: unknown): string[] =>
   (typeof value === 'string'
     ? value.split(',').map((one) => one.trim()).filter((one) => one !== '')
     : []);
+/**
+ * When the machine stopped, from the record `inspect` answered.
+ *
+ * Docker writes the moment into `State.FinishedAt`, and the zero time while the
+ * container is still up. A machine that is still up is stopped by the removal
+ * this is read for, which begins now - and so is one whose time cannot be read,
+ * which is a machine this cannot place rather than one that stopped at the
+ * epoch. Nothing but a lock's own time is decided by this.
+ */
+const stoppedAt = (found: Record<string, unknown>): Date => {
+  const state = (typeof found.State === 'object' && found.State !== null ? found.State : {}) as Record<string, unknown>;
+  const said = typeof state.FinishedAt === 'string' ? Date.parse(state.FinishedAt) : Number.NaN;
+  return Number.isFinite(said) && said > 0 ? new Date(said) : new Date();
+};
+
 /** The labels `docker inspect` recorded, as a flat record. */
 const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
   const config = (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
@@ -1748,9 +1763,34 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
    * `computer://<name>` write is reached by the name it was written under, and
    * an id Docker does not know is looked for by that label before any verb runs
    * - otherwise every verb past the make would have to be told both.
+   *
+   * The id itself is taken only for a container that is this host's - which is
+   * what the label is read for. `docker inspect <name>` answers for any
+   * container, image or volume with that name, and a lookup that took whatever
+   * answered would hand `stop`, `restart` and `rm -f` to something that is not
+   * a computer here. So the record is read, and a container that is not this
+   * host's is looked for again by the label its create wrote - which is the
+   * only name a dev container has that this host chose.
+   *
+   * A name that answers to something this host did not make is `undefined`:
+   * `inspect` reads that as a machine that is not there, which is what it
+   * already answers for a container Docker does not have, so nothing here
+   * tells a caller whether some other container holds the name.
    */
-  const containerOf = async (id: string): Promise<string> => {
-    if ((await ran(options, ['inspect', '--format', '{{json .}}', id])).code === 0) return id;
+  const containerOf = async (id: string): Promise<string | undefined> => {
+    const found = await recordOf(id);
+    /*
+     * The id itself, for a container that is this host's: one carrying this
+     * host's own label, or one the record beside the configuration says a
+     * connect adopted.
+     */
+    if (Object.keys(found).length > 0 && (ours(found, options.label) || adoptedIds().includes(id))) return id;
+    /*
+     * Otherwise the name a create gave it, which is the one label both routes
+     * share: a machine made under a name of its own is found above, and a dev
+     * container - which the CLI names for its folder, and which carries no
+     * label of this host's - is found here.
+     */
     const held = await rows(await must([
       'ps', '-a',
       '--filter', `label=${options.label}`,
@@ -1758,7 +1798,29 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       '--format', '{{json .}}',
     ]));
     const name = text(held[0]?.Names);
-    return name === '' ? id : name;
+    if (name !== '') return name;
+    /*
+     * Nothing of this host's answers, and something else does - another
+     * container, an image, a volume: not a computer here, and no name for
+     * Docker to be handed either.
+     */
+    if (Object.keys(found).length > 0) return undefined;
+    // Nothing by that name at all: the verb's own refusal is Docker's to say.
+    return id;
+  };
+
+  /**
+   * The same name for the verbs that run something at it.
+   *
+   * `inspect` answers a name this host did not make as a machine that is not
+   * there; a verb that would `stop`, `exec` or `rm -f` something cannot answer
+   * anything, so it refuses and says why rather than handing Docker a name that
+   * would run against whatever holds it.
+   */
+  const containerOrFail = async (id: string): Promise<string> => {
+    const at = await containerOf(id);
+    if (at === undefined) throw new Error(`${id} names a container this host did not make, and no computer is named that`);
+    return at;
   };
 
   return {
@@ -1846,7 +1908,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // The name a create gave, when that is what the caller holds: a listing
       // answers it, so every caller reading a listing back must be able to
       // hand that answer to anything that inspects.
-      const held = await ran(options, ['inspect', '--format', '{{json .}}', await containerOf(id)]);
+      const at = await containerOf(id);
+      // A name that answers to something this host did not make: not there, the
+      // way a name Docker does not have is, and answered without running
+      // anything at all.
+      if (at === undefined) return undefined;
+      const held = await ran(options, ['inspect', '--format', '{{json .}}', at]);
       // A machine that is not there is docker exiting non-zero, which is an
       // answer rather than a failure: the provider turns it into `-32008`.
       if (held.code !== 0) return undefined;
@@ -2144,8 +2211,8 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       return { id: spec.name, image, status: 'running', created: new Date().toISOString() };
     },
 
-    stop: async (id) => { await must(['stop', await containerOf(id)]); },
-    start: async (id) => { await must(['start', await containerOf(id)]); },
+    stop: async (id) => { await must(['stop', await containerOrFail(id)]); },
+    start: async (id) => { await must(['start', await containerOrFail(id)]); },
     /*
      * One `restart` rather than a stop and a start.
      *
@@ -2154,7 +2221,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * it was: a stop-then-start of its own would race anybody else acting on
      * the same machine between the two.
      */
-    restart: async (id) => { await must(['restart', await containerOf(id)]); },
+    restart: async (id) => { await must(['restart', await containerOrFail(id)]); },
     /*
      * Take one away, and with a machine made without a profile its state
      * volumes, which nothing else would ever mount: one per agent its label
@@ -2162,13 +2229,16 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * nothing to remove. A profile's state volumes outlive every machine.
      */
     remove: async (id) => {
-      const at = await containerOf(id);
+      const at = await containerOrFail(id);
       const found = await recordOf(at);
       const labels = labelsOf(found);
+      // Read before the removal, which is what makes a machine still up stop: a
+      // lock newer than this was taken after the machine was gone.
+      const stopped = stoppedAt(found);
       await must(['rm', '-f', at]);
       // The session's own worktree lock, which nothing can hold once the container is gone.
       const entry = labels[MACHINE_WORKTREE];
-      if (typeof entry === 'string' && entry !== '') await releaseLock(entry, options.log);
+      if (typeof entry === 'string' && entry !== '') await releaseLock(entry, stopped, options.log);
       if (labels[MACHINE_STATE] !== 'volume' || profileOf(found) !== undefined) return;
       const named = namedOf(found) ?? id;
       for (const provider of preparedFor(found)) {
@@ -2177,7 +2247,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     },
 
     exec: async (id, command, env) => {
-      const at = await containerOf(id);
+      const at = await containerOrFail(id);
       const given = byName(env ?? {});
       /*
        * A dev container is reached by the same `docker exec` as any other
@@ -2215,7 +2285,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * `undefined` rather than zeroes, which a gauge would draw as idle.
      */
     stats: async (id) => {
-      const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', await containerOf(id)]);
+      const at = await containerOf(id);
+      // A name that answers to something this host did not make is nothing to
+      // report, the way a machine that is not running is.
+      if (at === undefined) return undefined;
+      const held = await ran(options, ['stats', '--no-stream', '--format', '{{json .}}', at]);
       if (held.code !== 0) return undefined;
       const row = rows(held.stdout)[0];
       if (row === undefined) return undefined;

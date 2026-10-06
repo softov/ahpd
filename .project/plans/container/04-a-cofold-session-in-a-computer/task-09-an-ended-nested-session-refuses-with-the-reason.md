@@ -1,6 +1,6 @@
 ---
 title: An ended nested session refuses what follows with the reason
-status: implemented
+status: done
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:
@@ -36,4 +36,4 @@ After the inner host has ended, every client action on the nested session, a new
 Implemented 2026-10-06.
 `Session.ended?()` is new; `chatactions.ts` refuses every chat action on an ended session with that sentence, and the proxy's `sessionState` reports lifecycle `failed` with it.
 The process case failed before; the proxy case's "emits nothing" part held already and only `ended` was missing.
-In the fix turn `session/activeClientSet` is refused with the sentence too (its case failed before); read, archived and terminal actions are not, which is an open question in implemented.md.
+In the fix turn `session/activeClientSet` is refused with the sentence too (its case failed before); read, archived and terminal actions are not, which was the open question in implemented.md, answered on 2026-10-06: they stay allowed.

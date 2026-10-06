@@ -1,6 +1,6 @@
 ---
 title: The call goes out with the provider's key and streams back unchanged
-status: implemented
+status: done
 depends: [task-01-v1-answers-in-each-dialect.md, task-03-a-name-is-routed.md]
 layer: "server"
 refs:

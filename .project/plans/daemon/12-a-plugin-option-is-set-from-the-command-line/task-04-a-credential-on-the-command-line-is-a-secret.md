@@ -1,6 +1,6 @@
 ---
 title: A `$secret` on the command line, and everything after the plugin is a key path
-status: implemented
+status: done
 depends: [task-03-docs.md]
 layer: "server"
 refs:

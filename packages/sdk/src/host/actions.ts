@@ -31,10 +31,18 @@ export interface Actions {
 export function createActions(ctx: HostContext, conn: ConnectionContext): Actions {
   const { connection, tokensFor } = conn;
   const { refuse } = ctx;
+  /*
+   * Nothing here that the host rewrites after it is built: `advancedTools`,
+   * `contributed`, `contributing` and `restartNeeded` change while this
+   * connection is open - a config key is asked about, a plugin tool is
+   * contributed - so they are read as `ctx.<name>` where they are used. Bound
+   * here they would be the values from when the connection opened, and the
+   * read that took one would say so only by being wrong.
+   */
   const {
-    advancedTools, changed, channelKind, contributed, contributing, daemonKey, decided,
+    changed, channelKind, daemonKey, decided,
     dir, dirOf, dispatch, first, homeOf, kept, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, past, permitted, presence, relayed, restart, restartNeeded, retool,
+    ownerFor, owners, past, permitted, presence, relayed, restart, retool,
     rootConfig, served, sessionFor, sessions, starting, summaryMoved, terminals, toolDefinitions,
     value, waitingFor,
   } = ctx;

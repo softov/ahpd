@@ -1,6 +1,6 @@
 ---
 title: The docs say how the image gets ahpd and what a nested session does
-status: implemented
+status: done
 depends: [task-17-a-backend-names-its-nested-plugin.md, task-11-a-nested-session-resumes-by-id.md, task-12-the-proxy-answers-only-what-it-knows.md, task-13-models-sign-in-and-requests-cross-the-proxy.md, task-14-the-working-directory-is-the-machines.md, task-15-close-waits-for-the-inner-dispose.md]
 layer: "docs | sdk test"
 refs:

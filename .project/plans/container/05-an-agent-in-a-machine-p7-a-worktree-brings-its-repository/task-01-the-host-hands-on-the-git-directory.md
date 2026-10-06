@@ -1,6 +1,6 @@
 ---
 title: The host knows a folder's git directory and hands it on
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

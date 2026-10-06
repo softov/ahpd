@@ -4,8 +4,9 @@ status: superseded
 superseded-by: decisions/a-machine-commits-in-its-own-repository-and-the-host-fetches-it.md
 date: 2026-10-06
 refs:
-  - "[code://packages/computer/src/gitdir.ts#L115-L150](../../packages/computer/src/gitdir.ts#L115-L150) - `gitMounts`: today the git directory is read-write with four parts bound read-only over it"
-  - "[code://packages/computer/src/gitdir.ts#L170-L174](../../packages/computer/src/gitdir.ts#L170-L174) - `guardedMounts`, which leaves the git directory's own mount out for a root session"
+  - "[code://packages/computer/src/gitdir.ts#L191-L212](../../packages/computer/src/gitdir.ts#L191-L212) - `mainCheckoutBinds`: the root writable with the names git reads pinned read-only over it"
+  - "[code://packages/computer/src/gitdir.ts#L235-L277](../../packages/computer/src/gitdir.ts#L235-L277) - `gitMounts`: the read-only git directory and the data directories bound writable over it"
+  - "[code://packages/computer/src/gitdir.ts#L314-L320](../../packages/computer/src/gitdir.ts#L314-L320) - `guardedMounts`, which leaves the git directory's own mount out for a root session"
   - git://b677360 - container/05 p7, the guard this replaces
   - https://git-scm.com/docs/gitrepository-layout - which files are per worktree and which are shared, and what git reads for config and paths
 ---
@@ -29,12 +30,14 @@ Read-write over it, and nothing else:
 - `refs/` and `logs/`, where a commit moves a branch and appends its reflog;
 - the session's own worktree entry `worktrees/<name>/`, which holds its `HEAD`, `index`, `ORIG_HEAD`, `COMMIT_EDITMSG`, its own `refs/` and `logs/`, with its `commondir`, `gitdir` and `config.worktree` bound read-only again over it.
 
-A session on a main checkout is the one exception: its per-worktree files (`index`, `HEAD`, `ORIG_HEAD`, `COMMIT_EDITMSG`, `FETCH_HEAD`, `MERGE_*`, `AUTO_MERGE`) live in the git directory's root, and git writes each as `<name>.lock` there and renames it over, so for that session only the root is writable, with read-only binds pinned over `commondir` (holding `.`, which points git at the directory itself; an empty one breaks git), `config.worktree` (empty), `config`, `packed-refs`, `info/` and `hooks/`, each made on the host first where missing.
+A session on a main checkout is the one exception: its per-worktree files (`index`, `HEAD`, `ORIG_HEAD`, `COMMIT_EDITMSG`, `FETCH_HEAD`, `MERGE_*`, `AUTO_MERGE`) live in the git directory's root, and git writes each as `<name>.lock` there and renames it over, so for that session only the root is writable, with read-only binds pinned over `commondir` (holding `.`, which points git at the directory itself; an empty one breaks git), `config.worktree` (empty), `config`, `packed-refs`, `info/`, `hooks/`, `worktrees/` and `objects/info/`, each made on the host first where missing.
+`worktrees/` and `objects/info/` are pinned for the same reason as the names above them and one level down: a sibling worktree's `commondir` is a file a machine could rewrite to point that worktree at a directory of its own, whose `config` sets `core.fsmonitor` and is run by the host user's next git there, and `objects/info/alternates` names where git reads objects from.
+Both are read-only in a linked worktree already, and a main checkout pins them with the rest.
 
 For every other session, everything else stays read-only: the root and every file in it (`config`, `packed-refs`, `shallow`, and any `commondir` or `config.worktree` an agent would create there), `info/`, `hooks/`, `modules/`, `remotes/`, `branches/`, and every other worktree's entry.
 Whatever of these is missing and is bound on its own is made on the host first, as today.
 
-Source: Softov, 2026-10-06, asked "How should a machine's git directory be guarded, given the commondir hole?" and chose "Allowlist writable". For a main checkout he was asked "Under the git allowlist, a machine on a main checkout can read git but cannot add, commit or checkout. Keep that?" and answered "Also allow the root index", then "For a session on a main checkout to commit, the git directory's root must be writable. How?" and answered "Writable root, pinned files". The list itself is `(defaulted: what git 2.47 writes for add, commit and checkout in a linked worktree, read from the layout and checked by hand)`.
+Source: Softov, 2026-10-06, asked "How should a machine's git directory be guarded, given the commondir hole?" and chose "Allowlist writable". For a main checkout he was asked "Under the git allowlist, a machine on a main checkout can read git but cannot add, commit or checkout. Keep that?" and answered "Also allow the root index", then "For a session on a main checkout to commit, the git directory's root must be writable. How?" and answered "Writable root, pinned files". The list itself is `(defaulted: what git 2.47 writes for add, commit and checkout in a linked worktree, read from the layout and checked by hand)`; its last two main-checkout names, `worktrees/` and `objects/info/`, came from his review of 2026-10-06, which reproduced the sibling worktree's `commondir` with git 2.47.3, and are under host/65 p2.
 
 ## Consequences
 

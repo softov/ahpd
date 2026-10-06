@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { createHost, ROOT } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { claimedBy } from '../src/runtime.js';
+import { keepProbe, ownedOf, OWNERS_FILE } from '../src/owners.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -110,19 +111,28 @@ const base = (): HostOptions => ({
 });
 
 /** The Docker fixture as the runtime, and optionally the CLI fixture too. */
-const optionsOf = (dockerState: string, devState?: string, more: Record<string, unknown> = {}): Record<string, unknown> => ({
-  command: process.execPath,
-  args: [DOCKER],
-  env: { DOCKER_FAKE_STATE: dockerState },
-  ...(devState === undefined ? {} : {
-    devcontainer: {
-      command: process.execPath,
-      args: [DEV],
-      env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
-    },
-  }),
-  ...more,
-});
+const optionsOf = (dockerState: string, devState?: string, more: Record<string, unknown> = {}): Record<string, unknown> => {
+  const { folders, ...rest } = more;
+  return {
+    command: process.execPath,
+    args: [DOCKER],
+    env: { DOCKER_FAKE_STATE: dockerState },
+    ...(devState === undefined ? {} : {
+      devcontainer: {
+        command: process.execPath,
+        args: [DEV],
+        env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+        // `base()` below has a users directory, and a host more than one person
+        // signs in to makes dev containers only from the folders its operator
+        // names - decision
+        // `dev-containers-need-allowed-folders-on-a-host-with-users`. A case
+        // here names the folder it means to build in.
+        ...(Array.isArray(folders) ? { folders } : {}),
+      },
+    }),
+    ...rest,
+  };
+};
 
 const load = (pluginOptions: Record<string, unknown>, configDir = REPO) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
@@ -221,7 +231,7 @@ it('keeps the Dev Container CLI on the folder identity and records the owner bes
   mkdirSync(join(folder, '.devcontainer'), { recursive: true });
   writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
 
-  const { options } = await load(optionsOf(dockerState, devState), configDir);
+  const { options } = await load(optionsOf(dockerState, devState, { folders: [folder] }), configDir);
 
   const client = await serving(options);
   await client.handle({
@@ -272,7 +282,7 @@ it('forgets the record of a machine the CLI made once it is removed', async () =
   mkdirSync(join(folder, '.devcontainer'), { recursive: true });
   writeFileSync(join(folder, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
 
-  const { options } = await load(optionsOf(dockerState, devState), configDir);
+  const { options } = await load(optionsOf(dockerState, devState, { folders: [folder] }), configDir);
   const client = await serving(options);
   await client.handle({
     method: 'createSession',
@@ -296,4 +306,46 @@ it('forgets the record of a machine the CLI made once it is removed', async () =
   // An entry for a machine that is gone is a claim on an id nothing holds, and
   // the folder's next container would be made and charged to the last one.
   expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({});
+});
+
+it('writes the file private even when a readable scratch at its own name was left behind', () => {
+  const dir = temp();
+  const configDir = join(dir, 'config');
+  mkdirSync(configDir, { recursive: true });
+  const path = join(configDir, OWNERS_FILE);
+  // What a process that had this pid before left world-readable. `mode` is
+  // applied when a file is created and not when one is opened, so a write that
+  // opened this scratch would keep its 0644 - and the rename puts that on the
+  // file, which holds whose each machine is and the environment probed out of
+  // that person's shell.
+  const scratch = `${path}.${String(process.pid)}.tmp`;
+  writeFileSync(scratch, '{}');
+  chmodSync(scratch, 0o644);
+
+  keepProbe(configDir, 'abc123', { container: 'abc123', env: { TOKEN: 'x' } }, () => {});
+
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+});
+
+it('does not write over a computers file it could not read', () => {
+  const dir = temp();
+  const configDir = join(dir, 'config');
+  mkdirSync(configDir, { recursive: true });
+  const path = join(configDir, OWNERS_FILE);
+  // Two machines' records and a trailing comma: whoever wrote it last was
+  // interrupted, or edited it by hand. What it holds is not knowable here, and
+  // that is the point - the write is the whole file, so making one from a read
+  // that failed would drop every machine this daemon cannot name.
+  const before = '{\n  "one": { "owner": "user:ana" },\n  "two": { "owner": "user:bo" },\n}\n';
+  writeFileSync(path, before);
+
+  const lines: string[] = [];
+  keepProbe(configDir, 'three', { container: 'abc123', env: {} }, (line) => lines.push(line));
+
+  expect(readFileSync(path, 'utf8')).toBe(before);
+  expect(lines.join('\n')).toContain(path);
+  // And the readers answer nothing for it, as they did before: a machine whose
+  // record cannot be read is charged to the host rather than to a guess.
+  expect(ownedOf(configDir, 'one', () => {})).toBeUndefined();
+  expect(lines.join('\n')).toContain('could not read');
 });

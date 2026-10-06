@@ -1,6 +1,6 @@
 ---
 title: A part image per kind
-status: implemented
+status: done
 depends: [task-01-the-versions-file.md]
 layer: "computer"
 refs:

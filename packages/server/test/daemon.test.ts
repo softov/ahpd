@@ -14,8 +14,11 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { announcementOf, claim, forget, logSince, readyUrl, recordOf, running, start, statusLine, stop } from '../src/daemon.js';
-import { isIdentifier, hostId, namedIssuer, personalUrl, signInIdentifier } from '../src/config.js';
+import { automationsPath, isIdentifier, hostId, namedIssuer, personalUrl, policiesPath, signInIdentifier, vaultPath } from '../src/config.js';
 import type { Running } from '../src/daemon.js';
+
+const REPO = join(import.meta.dirname, '../../..');
+const MAIN = 'packages/server/src/main.ts';
 
 const ANNOUNCED = 'ahpd on ws://127.0.0.1:9187 (node), sessions in /a, /b\nautomations in /c, schedules fire\n';
 
@@ -427,4 +430,71 @@ describe('hostId', () => {
       vi.resetModules();
     }
   });
+});
+
+/*
+ * The scratch files a writer that died left behind.
+ *
+ * Every file this daemon writes whole goes to `<file>.<pid>.tmp` and is renamed
+ * over the real one, so a process killed between the write and the rename leaves
+ * its half-written scratch beside it - and one of those files is the users file,
+ * which holds token hashes. As a process, because what is under test is the
+ * daemon's own start and the only thing that can see it from outside is the
+ * configuration directory it was given.
+ */
+describe('the temp files beside what the daemon writes whole', () => {
+  let home: string;
+  let had: string | undefined;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'ahpd-sweep-'));
+    had = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = home;
+    mkdirSync(join(home, 'ahpd'), { recursive: true });
+  });
+  afterEach(() => {
+    if (had === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = had;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  /** A pid no process can have: above 2^22, the highest `pid_max` Linux allows. */
+  const NEVER = 2 ** 22 + 1;
+
+  /** One daemon over stdio, let go of at once, and the code it left with. */
+  const oneShot = (argv: string[]): Promise<number | null> => {
+    // A host with no backend refuses to start, and the backend is not what this
+    // case is about: an echo backend is the least that lets a daemon reach its
+    // own startup.
+    const config = join(home, 'config.json');
+    writeFileSync(config, `${JSON.stringify({ plugins: [join(import.meta.dirname, 'fixtures', 'plugin-echo')] })}\n`);
+    const child = spawn(process.execPath, [MAIN, '--stdio', '--no-update-check', '--config-file', config, ...argv], {
+      cwd: REPO,
+      env: { ...process.env, XDG_CONFIG_HOME: home, CI: '1', NODE_OPTIONS: '--conditions development --import ./scripts/dev.mjs' },
+      stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    // A stdio host serves until its client goes away, and this case is what the
+    // daemon did before it left rather than the socket it would then hold open.
+    child.stdin.end();
+    return new Promise((done) => {
+      const timer = setTimeout(() => { child.kill(); }, 20000);
+      child.on('exit', (code) => { clearTimeout(timer); done(code); });
+    });
+  };
+
+  it('clears the scratch of a writer that is gone, beside every file the daemon writes whole', async () => {
+    const users = join(home, 'users.json');
+    const whole = [policiesPath(), automationsPath(), join(home, 'ahpd', 'computers.json'), vaultPath()];
+    const gone = [...whole, users].map((path) => `${path}.${String(NEVER)}.tmp`);
+    // A pid alive for the whole case is a writer still in the middle of its own.
+    const live = `${policiesPath()}.${String(process.ppid)}.tmp`;
+    // Neither a pid, nor one of the files the daemon writes whole.
+    const bare = join(home, 'ahpd', 'users.json.tmp');
+    const stranger = join(home, 'ahpd', 'notes.json.7.tmp');
+    for (const path of [...gone, live, bare, stranger]) writeFileSync(path, '{');
+    writeFileSync(users, '{"people":[]}\n');
+
+    expect(await oneShot([`--users=${users}`])).toBe(0);
+
+    for (const path of gone) expect(existsSync(path)).toBe(false);
+    for (const path of [live, bare, stranger]) expect(existsSync(path)).toBe(true);
+  }, 30000);
 });

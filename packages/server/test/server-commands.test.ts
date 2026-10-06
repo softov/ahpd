@@ -271,19 +271,53 @@ describe('--plugin-option', () => {
       .toEqual([{ name: 'a', options: { x: { n: 1, s: 't', o: { k: [1] } } } }]);
   });
 
-  it('refuses a key path going through something that is not an object, naming it', () => {
-    writeFileSync(config, JSON.stringify({ plugins: [{ name: 'a', options: { presets: 5, list: [1], s: 'x' } }] }));
-    for (const [typed, where, held] of [['a.presets.x.model=1', 'presets', '5'], ['a.list.0=1', 'list', '[1]'], ['a.s.x=1', 's', '"x"']] as const) {
-      expect(() => plugins({ pluginOptions: [typed] }))
-        .toThrow(`--plugin-option sets ${typed}, and ${where} holds ${held}, which is not an object the rest of the path could be set in.`);
+  it('refuses a key path going through something that is not an object, naming the key and not the value', () => {
+    writeFileSync(config, JSON.stringify({ plugins: [{ name: 'a', options: { presets: 5, list: [1], s: 'tok-live-9f2c' } }] }));
+    for (const [typed, path, where, kind] of [
+      ['a.presets.x.model=sk-live-9f2c', 'a.presets.x.model', 'presets', 'a number'],
+      ['a.list.0=sk-live-9f2c', 'a.list.0', 'list', 'a list'],
+      ['a.s.x=sk-live-9f2c', 'a.s.x', 's', 'a string'],
+    ] as const) {
+      const said = (() => {
+        try { plugins({ pluginOptions: [typed] }); return ''; }
+        catch (error) { return (error as Error).message; }
+      })();
+      // The message names the path that was set, and nothing of the value it
+      // was being set to, which is a credential more often than not.
+      expect(said).toBe(`--plugin-option sets ${path}, and ${where} holds ${kind}, which is not an object the rest of the path could be set in.`);
+      expect(said).not.toContain('sk-live-9f2c');
+      expect(said).not.toContain('tok-live-9f2c');
+      expect(said).not.toContain('[1]');
     }
+  });
+
+  it('sets a key under a name that is an object\'s own rather than one it inherits', () => {
+    writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
+    // `toString` is on every object's prototype and on none of the options, so a
+    // path through it makes a key rather than reading a function.
+    expect(plugins({ pluginOptions: ['a.toString.x=1'] })).toEqual([{ name: 'a', options: { toString: { x: 1 } } }]);
+  });
+
+  it('refuses to set a key inside a reference to a secret', () => {
+    writeFileSync(config, JSON.stringify({ plugins: [{ name: 'a', options: { key: { $secret: 'host:k' } } }] }));
+    // The object would still be there beside `x` and would no longer be a
+    // reference at all, so the value would be read as a plain object.
+    expect(() => plugins({ pluginOptions: ['a.key.x=sk-live-9f2c'] }))
+      .toThrow('--plugin-option sets a.key.x, and key is a reference to the secret host:k: a key set inside it would leave the reference behind, so it is set as a whole or not at all.');
+    // Set whole it is a reference like any other.
+    expect(plugins({ pluginOptions: ['a.key={"$secret":"host:k"}'] }))
+      .toEqual([{ name: 'a', options: { key: { $secret: 'host:k' } } }]);
   });
 
   it('refuses a key path through an object\'s prototype', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
-    for (const [typed, key] of [['a.__proto__.x=1', '__proto__'], ['a.constructor.prototype.x=1', 'constructor'], ['a.x.prototype=1', 'prototype']] as const) {
+    for (const [typed, path, key] of [
+      ['a.__proto__.x=sk-live-9f2c', 'a.__proto__.x', '__proto__'],
+      ['a.constructor.prototype.x=sk-live-9f2c', 'a.constructor.prototype.x', 'constructor'],
+      ['a.x.prototype=sk-live-9f2c', 'a.x.prototype', 'prototype'],
+    ] as const) {
       expect(() => plugins({ pluginOptions: [typed] }))
-        .toThrow(`--plugin-option sets ${typed}, and ${key} is not a key an option can be set under.`);
+        .toThrow(`--plugin-option sets ${path}, and ${key} is not a key an option can be set under.`);
     }
   });
 
@@ -313,8 +347,15 @@ describe('--plugin-option', () => {
 
   it('refuses one that is not <plugin>.<key>=<value>', () => {
     writeFileSync(config, JSON.stringify({ plugins: ['a'] }));
-    for (const bad of ['a.k', 'ak=1', '.k=1', 'a.=1', 'a.b.=1', '=1']) {
-      expect(() => plugins({ pluginOptions: [bad] })).toThrow(`--plugin-option takes <plugin>.<key>=<value>, not ${bad}`);
+    // What is quoted is the path, or that there is none: never the value, so
+    // a flag written as `a..apikey=sk-live-9f2c` names no key and no key text
+    // either.
+    for (const [bad, shown] of [
+      ['a.k', 'a.k'], ['ak=1', 'ak'], ['.k=1', '.k'], ['a.=1', 'a.'], ['a.b.=1', 'a.b.'], ['=1', 'an empty path'],
+      ['a..apikey=sk-live-9f2c', 'a..apikey'],
+    ] as const) {
+      expect(() => plugins({ pluginOptions: [bad] })).toThrow(`--plugin-option takes <plugin>.<key>=<value>, not ${shown}`);
+      expect(() => plugins({ pluginOptions: [bad] })).not.toThrow('sk-live-9f2c');
     }
   });
 
@@ -609,10 +650,11 @@ describe('teams, projects and memberships', () => {
     const where = ['--config-file', '--users'];
     // Where the file is, which every verb of a subject reads, and nothing more.
     for (const id of ['user.list', 'user.rm', 'user.member', 'user.primary']) {
-      expect(offered(id)).toEqual(expect.arrayContaining([...where, '--host', '--port']));
+      expect(offered(id)).toEqual(expect.arrayContaining(where));
     }
-    // The record, the issuer and the roles are `user add`'s, and the URL is
-    // `user token`'s alone: no other verb reads any of them.
+    // The record, the issuer and the roles are `user add`'s, the URL is
+    // `user token`'s, and the address is read only where that URL is printed: no
+    // other verb reads any of them.
     for (const id of ['user.list', 'user.rm', 'user.member', 'user.primary']) {
       expect(offered(id)).not.toContain('--issuer');
       expect(offered(id)).not.toContain('--role');
@@ -620,7 +662,11 @@ describe('teams, projects and memberships', () => {
     }
     expect(offered('user.add')).toEqual(expect.arrayContaining([...where, '--issuer', '--role', '--membership', '--primary']));
     expect(offered('user.add')).not.toContain('--url');
-    expect(offered('user.token')).toEqual(expect.arrayContaining([...where, '--url']));
+    expect(offered('user.token')).toEqual(expect.arrayContaining([...where, '--url', '--host', '--port']));
+    for (const id of ['user.list', 'user.rm', 'user.member', 'user.primary', 'user.add']) {
+      expect(offered(id)).not.toContain('--host');
+      expect(offered(id)).not.toContain('--port');
+    }
     // The title names a team or a project, so it is the naming verb's.
     for (const what of ['team', 'project']) {
       expect(offered(`${what}.add`)).toEqual(expect.arrayContaining([...where, '--title']));
@@ -629,8 +675,17 @@ describe('teams, projects and memberships', () => {
         expect(offered(id)).not.toContain('--title');
       }
     }
-    // The vault takes where it is and none of the other daemon flags.
-    for (const id of ['vault.set', 'vault.delete', 'vault.list']) expect(offered(id)).toEqual(['--config-file']);
+    // Where the vault is is `vault list`'s: the two verbs that write reach the
+    // vault beside this run's configuration and read no flag for it, and none
+    // of the three takes another daemon flag.
+    expect(offered('vault.list')).toEqual(['--config-file']);
+    for (const id of ['vault.set', 'vault.delete']) {
+      expect(offered(id)).not.toContain('--config-file');
+    }
+    for (const id of ['vault.set', 'vault.delete', 'vault.list']) {
+      expect(offered(id)).not.toContain('--host');
+      expect(offered(id)).not.toContain('--port');
+    }
   });
 
   it('publishes what a request may set, and never the daemon\'s own file or address', () => {

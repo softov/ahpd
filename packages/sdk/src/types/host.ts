@@ -790,6 +790,16 @@ export interface Host {
     handle(request: Request): Promise<unknown>;
     /** Drop this client's subscriptions and state. */
     close(): void;
+    /**
+     * The names of the handlers this connection is served from.
+     *
+     * The table is built per connection, so this is where a caller outside the
+     * host can see what it holds. The suite reads it to assert that every one
+     * of them is classified in `GATE`: a handler added and classified nowhere
+     * is a method nobody decided about, and a test that fails on the next run
+     * is how that is caught rather than the method being served to anybody.
+     */
+    methods: readonly string[];
   };
   /** How many clients are currently connected. */
   connections(): number;

@@ -74,7 +74,12 @@ export function gitWorktrees(): Worktrees {
 
     gitDir: async (dir) => {
       /*
-       * One call for both answers, under the same limit as `repository`.
+       * One call for all three answers, under the same limit as `repository`.
+       *
+       * Both git directories, because they differ for a linked worktree and
+       * they are what a caller checks the tree's own `.git` against: the
+       * directory for a main checkout is the common one, and for a worktree
+       * it is the entry the tree's `.git` file names.
        *
        * Outside a repository is the one refusal answered as nothing; anything
        * else git says - a config it cannot read, an owner it does not trust -
@@ -82,15 +87,15 @@ export function gitWorktrees(): Worktrees {
        */
       let said: string;
       try {
-        said = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--show-toplevel'], 5_000);
+        said = await git(dir, ['rev-parse', '--path-format=absolute', '--git-common-dir', '--absolute-git-dir', '--show-toplevel'], 5_000);
       }
       catch (error) {
         if (/not a git repository/i.test((error as Error).message)) return undefined;
         throw error;
       }
-      const [common, top] = said.split('\n').map((line) => line.trim());
-      if (common === undefined || common === '' || top === undefined || top === '') return undefined;
-      return { gitDir: common, repository: top };
+      const [common, own, top] = said.split('\n').map((line) => line.trim());
+      if (common === undefined || common === '' || own === undefined || own === '' || top === undefined || top === '') return undefined;
+      return { gitDir: common, worktreeDir: own, repository: top };
     },
 
     branches: async (repository) => {

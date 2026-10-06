@@ -10,6 +10,7 @@ import type {
 } from './types/changes.js';
 import type { PullRequests } from './types/github.js';
 import { gitArgv } from './repo/hardened.js';
+import { uriOf } from './fileuri.js';
 
 /**
  * How many lines a file has, for one git will not count.
@@ -495,7 +496,13 @@ export function gitChanges(): ChangesetSource {
   const rowsOf = (session: string, turn: string, files: Map<string, Captured>): ChangesetFile[] => {
     const ticked = reviewed.get(reviewKey(session, turn));
     return [...files].map(([path, sides]) => {
-      const uri = `file://${path}`;
+      /*
+       * One builder, because this URI is three things at once: the row's `id`,
+       * the key a tick is remembered under, and what a client hands back. A
+       * path holding a space or a `#` is a different file under each spelling,
+       * so the three have to agree.
+       */
+      const uri = uriOf(path);
       const before = capturedUri(session, turn, path, 'before');
       const after = capturedUri(session, turn, path, 'after');
       if (sides.before !== undefined) kept.set(sideKey(session, turn, 'before', path), sides.before);
@@ -610,7 +617,7 @@ export function gitChanges(): ChangesetSource {
       // index nor HEAD: it is a working-tree change and never a staged one.
       const staged = (code[0] ?? ' ') !== ' ' && (code[0] ?? ' ') !== '?';
       const unstaged = (code[1] ?? ' ') !== ' ';
-      const uri = `file://${dir}/${path}`;
+      const uri = uriOf(`${dir}/${path}`);
       // An untracked file is in no diff against HEAD, so git reports nothing
       // for it. Every line of it is an addition, which is what it is.
       const count = counts.get(fromRoot) ?? (fresh
@@ -670,7 +677,7 @@ export function gitChanges(): ChangesetSource {
 
   /** What the reference client checks a prepared form against before submitting it. */
   const contextOf = (dir: string, repo: { owner: string; repo: string }, at: { branch: string; base: string; upstream?: string }) => ({
-    workingDirectory: `file://${dir}`,
+    workingDirectory: uriOf(dir),
     repository: `${repo.owner}/${repo.repo}`,
     branchName: at.branch,
     baseBranchName: at.base,
@@ -945,7 +952,9 @@ export function gitChanges(): ChangesetSource {
          */
         if (phase === 'after') {
           for (const scope of [turnId, 'session']) {
-            reviewed.get(reviewKey(session, scope))?.delete(`file://${path}`);
+            // The same builder the row was minted with, or the tick keeps
+            // standing against a URI the tick was never made under.
+            reviewed.get(reviewKey(session, scope))?.delete(uriOf(path));
           }
         }
       })().catch(() => {}),

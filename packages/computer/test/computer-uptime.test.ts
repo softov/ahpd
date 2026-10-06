@@ -380,6 +380,8 @@ it('charges a relay container to whoever connected and metered it from the conne
       // A host inside with no backend would not start, so the launcher refuses
       // a connect rather than building one.
       plugins: ['@ahpd/agent-cofold'],
+      // This host signs people in, so the folders it may build from are named.
+      folders: [folder],
       env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: held },
     },
   }, configDir);
@@ -459,6 +461,8 @@ it('records an adopted container, lists, inspects and meters it, and forgets it 
       args: [DEV],
       plugins: ['@ahpd/agent-cofold'],
       install: false,
+      // This host signs people in, so the folders it may build from are named.
+      folders: [folder],
       env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: held },
     },
   }, configDir);
@@ -504,7 +508,14 @@ it('records an adopted container, lists, inspects and meters it, and forgets it 
   await provider.remove(`computer://${id}`);
   expect(dockerHeld(held).machines).toEqual([]);
   expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8'))).toEqual({});
-});
+  /*
+   * Twice the default, because this case is not waiting on anything: it drives
+   * two connects, an adoption, a start, a listing, a read, a stop and a removal
+   * through the fixture's own processes, and every one of those is a spawn. Five
+   * seconds is the whole budget the file's `until` polls within, so a case that
+   * spawns this much fails on a loaded machine and passes on an idle one.
+   */
+}, 20_000);
 
 it('closes every open stretch when the daemon stops', async () => {
   const dir = temp();

@@ -1,6 +1,6 @@
 ---
 title: The joined image
-status: implemented
+status: done
 depends: [task-02-a-part-image-per-kind.md]
 layer: "computer"
 refs:

@@ -40,7 +40,7 @@ import {
   toolServers,
   usageProvider,
 } from '@ahpd/sdk';
-import { DETACHED_ENV, forget, running, start as startDaemon } from '../daemon.js';
+import { DETACHED_ENV, forget, running, start as startDaemon, sweepTemps } from '../daemon.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
 import { automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
@@ -137,6 +137,25 @@ export function daemonSessions(told: (message: string) => void): SessionStore {
 }
 
 /**
+ * Every file this daemon writes whole, beside which a writer that died leaves
+ * its scratch.
+ *
+ * The users file is wherever the operator pointed `--users`; the rest are under
+ * the configuration directory, the machine owners and the vault included. The
+ * owners file is the computer plugin's and the vault is this daemon's own port
+ * until a plugin registers one, and this daemon's own start is the only place
+ * that knows all five at once - which is why the sweep happens here rather than
+ * beside any one of the writers.
+ */
+export const wholeFiles = (users?: string): string[] => [
+  ...(users === undefined ? [] : [users]),
+  policiesPath(),
+  automationsPath(),
+  join(configDir(), 'computers.json'),
+  vaultPath(),
+];
+
+/**
  * One host, one working directory, one port.
  *
  * A second directory is a second daemon rather than a flag, because the working
@@ -231,6 +250,17 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       trustToken: options.trustToken,
       onProblem: (line) => process.stderr.write(`${line}\n`),
     });
+
+  /*
+   * The scratch of writers that are gone, cleared once at the start.
+   *
+   * Every one of these files is written whole beside itself and renamed over,
+   * so a process killed between the write and the rename leaves
+   * `<file>.<pid>.tmp` behind, and nothing else ever removes it - the users
+   * file among them, which holds token hashes in a file nobody reads. The
+   * daemon's own record is swept where it is written, in `claim`.
+   */
+  sweepTemps(wholeFiles(options.users));
 
   /*
    * The HTTP API, when the configuration asked for one.

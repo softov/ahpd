@@ -390,6 +390,15 @@ export interface LoadOneOptions {
    */
   hostId?: string;
   /**
+   * Whether the host verifies people, read from the base's `users` port.
+   *
+   * A fact about the host rather than about the plugin, and one the loader
+   * knows before anything applies: a plugin narrows what it does on a host more
+   * than one person uses, where it would ask nothing of a host with one person
+   * on it - decision `dev-containers-need-allowed-folders-on-a-host-with-users`.
+   */
+  users?: boolean;
+  /**
    * Where a plugin's usage records go, read when one is written.
    *
    * A function for the reason `agents` is one: the port belongs to the host and
@@ -736,6 +745,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     version: options.version,
     hostName: options.hostName ?? 'host',
     configDir: options.configDir,
+    ...(options.users === true ? { hasUsers: true } : {}),
     ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
     log: options.log,
     say: options.say ?? (() => {}),
@@ -936,6 +946,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       agents: () => known,
       ...(options.base.hostName === undefined ? {} : { hostName: options.base.hostName }),
       ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
+      ...(options.base.users === undefined ? {} : { users: true }),
       usage: () => reached?.usage,
       vault: vaultInForce,
       sessions: () => hosted.then((host) => host.sessions),

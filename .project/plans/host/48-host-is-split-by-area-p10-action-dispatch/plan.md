@@ -42,8 +42,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - applyDispatch is one file](task-01-actions.md) | implemented | - |
-| [02 - A session's and a chat's actions are one file](task-02-chat-actions.md) | implemented | 01 |
+| [01 - applyDispatch is one file](task-01-actions.md) | done | - |
+| [02 - A session's and a chat's actions are one file](task-02-chat-actions.md) | done | 01 |
 
 ## Resume state
 

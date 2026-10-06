@@ -86,12 +86,12 @@ build-joined -> every part -> ahpd-agents:<hash of versions.json + the ahpd part
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The versions file and its reader](task-01-the-versions-file.md) | implemented | - |
-| [02 - A part image per kind](task-02-a-part-image-per-kind.md) | implemented | 01 |
-| [03 - A part is built the first time it is asked for](task-03-built-on-first-use.md) | implemented | 02 |
-| [04 - The joined image](task-04-the-joined-image.md) | implemented | 02 |
-| [05 - A scheduled job proposes a bump](task-05-a-bump-job.md) | implemented | 01 |
-| [06 - A person can build ahead, and the docs say how](task-06-build-ahead-and-docs.md) | implemented | 03, 04 |
+| [01 - The versions file and its reader](task-01-the-versions-file.md) | done | - |
+| [02 - A part image per kind](task-02-a-part-image-per-kind.md) | done | 01 |
+| [03 - A part is built the first time it is asked for](task-03-built-on-first-use.md) | done | 02 |
+| [04 - The joined image](task-04-the-joined-image.md) | done | 02 |
+| [05 - A scheduled job proposes a bump](task-05-a-bump-job.md) | done | 01 |
+| [06 - A person can build ahead, and the docs say how](task-06-build-ahead-and-docs.md) | done | 03, 04 |
 
 ## Risks and tradeoffs
 

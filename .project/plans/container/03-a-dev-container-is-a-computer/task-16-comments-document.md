@@ -1,6 +1,6 @@
 ---
 title: The comments in this plan's code document
-status: implemented
+status: done
 depends: [task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "sdk | computer"
 refs:

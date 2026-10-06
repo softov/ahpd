@@ -96,23 +96,23 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A computer can start a nested host](task-01-a-computer-starts-a-nested-host.md) | implemented | - |
-| [02 - The proxy opens an inner session and forwards turns](task-02-the-proxy-forwards-turns.md) | implemented | 01 |
-| [03 - The proxy forwards asks, config, cancel and the end](task-03-the-proxy-forwards-the-rest.md) | implemented | 02 |
-| [04 - A backend that runs nested is proxied instead of refused](task-04-nested-instead-of-refused.md) | implemented | 03 |
-| [05 - A nested start that fails says why](task-05-a-failed-start-says-why.md) | implemented | 04 |
-| [06 - Docs](task-06-docs.md) | implemented | 05 |
-| [07 - The inner host's pipes cannot crash the daemon](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md) | implemented | 06 |
-| [08 - The stderr tail and the stdout framing are bounded](task-08-the-stderr-tail-and-stdout-framing-are-bounded.md) | implemented | 07 |
-| [09 - An ended nested session refuses what follows with the reason](task-09-an-ended-nested-session-refuses-with-the-reason.md) | implemented | 07 |
-| [10 - Inner chat URIs are rewritten to the outer ones](task-10-inner-chat-uris-are-rewritten.md) | implemented | 07 |
-| [11 - A nested session resumes the inner transcript by id](task-11-a-nested-session-resumes-by-id.md) | implemented | 09 |
-| [12 - The proxy answers only what it knows](task-12-the-proxy-answers-only-what-it-knows.md) | implemented | 10 |
-| [13 - Models, sign-in and the inner host's requests cross the proxy](task-13-models-sign-in-and-requests-cross-the-proxy.md) | implemented | 12 |
-| [14 - The inner session works in the machine's directory](task-14-the-working-directory-is-the-machines.md) | implemented | 07 |
-| [15 - Close waits for the inner session to be disposed](task-15-close-waits-for-the-inner-dispose.md) | implemented | 07 |
-| [16 - The docs say how the image gets ahpd and what a nested session does](task-16-docs-for-the-fixes.md) | implemented | 11, 12, 13, 14, 15, 17 |
-| [17 - A backend that runs nested names its plugin, and the inner host is configured by the profile only](task-17-a-backend-names-its-nested-plugin.md) | implemented | 06 |
+| [01 - A computer can start a nested host](task-01-a-computer-starts-a-nested-host.md) | done | - |
+| [02 - The proxy opens an inner session and forwards turns](task-02-the-proxy-forwards-turns.md) | done | 01 |
+| [03 - The proxy forwards asks, config, cancel and the end](task-03-the-proxy-forwards-the-rest.md) | done | 02 |
+| [04 - A backend that runs nested is proxied instead of refused](task-04-nested-instead-of-refused.md) | done | 03 |
+| [05 - A nested start that fails says why](task-05-a-failed-start-says-why.md) | done | 04 |
+| [06 - Docs](task-06-docs.md) | done | 05 |
+| [07 - The inner host's pipes cannot crash the daemon](task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md) | done | 06 |
+| [08 - The stderr tail and the stdout framing are bounded](task-08-the-stderr-tail-and-stdout-framing-are-bounded.md) | done | 07 |
+| [09 - An ended nested session refuses what follows with the reason](task-09-an-ended-nested-session-refuses-with-the-reason.md) | done | 07 |
+| [10 - Inner chat URIs are rewritten to the outer ones](task-10-inner-chat-uris-are-rewritten.md) | done | 07 |
+| [11 - A nested session resumes the inner transcript by id](task-11-a-nested-session-resumes-by-id.md) | done | 09 |
+| [12 - The proxy answers only what it knows](task-12-the-proxy-answers-only-what-it-knows.md) | done | 10 |
+| [13 - Models, sign-in and the inner host's requests cross the proxy](task-13-models-sign-in-and-requests-cross-the-proxy.md) | done | 12 |
+| [14 - The inner session works in the machine's directory](task-14-the-working-directory-is-the-machines.md) | done | 07 |
+| [15 - Close waits for the inner session to be disposed](task-15-close-waits-for-the-inner-dispose.md) | done | 07 |
+| [16 - The docs say how the image gets ahpd and what a nested session does](task-16-docs-for-the-fixes.md) | done | 11, 12, 13, 14, 15, 17 |
+| [17 - A backend that runs nested names its plugin, and the inner host is configured by the profile only](task-17-a-backend-names-its-nested-plugin.md) | done | 06 |
 
 ## Risks and tradeoffs
 
@@ -125,7 +125,7 @@ process exits                    -> [new] the session ends with the stderr tail 
 
 - **Done so far:** tasks 01 to 06 implemented on 2026-09-26; tasks 07 to 17 implemented on 2026-10-06, as [implemented.md](implemented.md) says.
 - **Done in the fix turn (2026-10-06):** Softov's three answers, in the table above, are built: `Agent.variant`, the nested session record, and inner subagent chats served outside.
-- **Next action:** Softov's review, and the open question in [implemented.md](implemented.md) about read, archive and terminal actions on an ended session.
+- **Next action:** Softov's review, as [implemented.md](implemented.md) says.
 - **Watch out for:** a failure must end the session with a sentence and never hang or throw; a pipe or process behaviour is proved in `packages/sdk/test/nested-process.test.ts` against a real child. The inner host's protocol version must be the outer's; it is refused at `initialize`. An action a future protocol adds is forwarded without being mirrored rather than ending the session.
 
 ## Final verification checklist

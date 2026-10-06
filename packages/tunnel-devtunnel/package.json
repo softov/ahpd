@@ -1,6 +1,6 @@
 {
   "name": "@ahpd/tunnel-devtunnel",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "description": "A Dev Tunnel plugin for ahpd: forwards the bound port through a Microsoft Dev Tunnel so VS Code can find and reach the daemon from anywhere",
   "keywords": [

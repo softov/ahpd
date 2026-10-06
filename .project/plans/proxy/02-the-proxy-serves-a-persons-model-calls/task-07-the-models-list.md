@@ -1,6 +1,6 @@
 ---
 title: GET /v1/models lists the names a caller may use
-status: implemented
+status: done
 depends: [task-02-a-caller-is-somebody.md, task-03-a-name-is-routed.md]
 layer: "server"
 refs:

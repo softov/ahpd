@@ -1,6 +1,6 @@
 ---
 title: Docs name the plugin commands and the flag
-status: implemented
+status: done
 depends: [task-01-plugin-config-enable-and-disable.md, task-02-plugin-option.md]
 layer: "docs"
 refs:

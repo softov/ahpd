@@ -67,10 +67,10 @@ The files read are the `refs` above.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `ahpd plugin config`, `enable` and `disable`](task-01-plugin-config-enable-and-disable.md) | implemented | - |
-| [02 - `--plugin-option`](task-02-plugin-option.md) | implemented | - |
-| [03 - Docs](task-03-docs.md) | implemented | 01, 02 |
-| [04 - A credential on the command line is a `$secret`](task-04-a-credential-on-the-command-line-is-a-secret.md) | implemented | 03 |
+| [01 - `ahpd plugin config`, `enable` and `disable`](task-01-plugin-config-enable-and-disable.md) | done | - |
+| [02 - `--plugin-option`](task-02-plugin-option.md) | done | - |
+| [03 - Docs](task-03-docs.md) | done | 01, 02 |
+| [04 - A credential on the command line is a `$secret`](task-04-a-credential-on-the-command-line-is-a-secret.md) | done | 03 |
 
 ## Risks and tradeoffs
 

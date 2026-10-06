@@ -904,7 +904,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         return { items: found.map((name) => ({ value: name, label: name })) };
       }
       if (property !== 'branch' || !port) return { items: [] };
-      const where = localPath(asked ?? `file://${dir}`);
+      // The client's URI is decoded; the host's own directory is already a
+      // path, so it is the fallback rather than a URI built to be read back.
+      const where = asked === undefined ? dir : localPath(asked);
       const repository = await port.repository(where).catch(() => undefined);
       if (repository === undefined) return { items: [] };
       const query = typeof params.query === 'string' ? params.query.toLowerCase() : '';

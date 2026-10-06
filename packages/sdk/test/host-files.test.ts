@@ -551,14 +551,14 @@ describe('the repository a session\'s machine is handed', () => {
   };
 
   it('hands a worktree session the git directory it belongs to', async () => {
-    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', repository: dir }));
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', worktreeDir: '/repo/.git/worktrees/tree', repository: dir }));
     await start(root);
     expect(asked[0]).toMatchObject({ folder: root, gitDir: '/repo/.git' });
     expect(asked[0]?.repository).toBeUndefined();
   });
 
   it('hands a session at the repository root its git directory, and no root', async () => {
-    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '.git'), repository: dir }));
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '.git'), worktreeDir: join(dir, '.git'), repository: dir }));
     await start(root);
     // Inside the folder, so it adds no mount; the machine still guards it.
     expect(asked[0]).toMatchObject({ folder: root, gitDir: join(root, '.git') });
@@ -566,7 +566,7 @@ describe('the repository a session\'s machine is handed', () => {
   });
 
   it('hands a session in a subfolder the repository root to mount', async () => {
-    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '..', '.git'), repository: join(dir, '..') }));
+    const { root, asked, start } = await hosted(async (dir) => ({ gitDir: join(dir, '..', '.git'), worktreeDir: join(dir, '..', '.git'), repository: join(dir, '..') }));
     const below = join(root, 'src');
     mkdirSync(below);
     await start(below);
@@ -585,7 +585,7 @@ describe('the repository a session\'s machine is handed', () => {
   });
 
   it('asks about a dev container\'s own folder', async () => {
-    const { root, asked, questions, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', repository: dir }));
+    const { root, asked, questions, start } = await hosted(async (dir) => ({ gitDir: '/repo/.git', worktreeDir: '/repo/.git/worktrees/tree', repository: dir }));
     const other = join(root, 'other');
     mkdirSync(other);
     await start(root, `devcontainer://${other}`);

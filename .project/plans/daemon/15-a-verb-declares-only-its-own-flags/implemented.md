@@ -33,4 +33,4 @@ Each `user`, `team`, `project` and `vault` verb now declares only the flags its 
 ## Left for later
 
 - Declaring `effect` and `resource` on these commands, which the decision locks to the plan after the cofold release that adds them.
-- `--config-file` on `vault set` and `vault delete`, which neither reads: taking it off them would need the vault to be opened by flag rather than by the configuration directory, which is a behaviour change and not this plan's.
+- `--config-file` on `vault set` and `vault delete`, which neither reads: taken off them by [host/65 p6 task 02](../../host/65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/task-02-vault-set-and-delete-refuse-config-file.md), which is the declaration this line first took for a behaviour change.

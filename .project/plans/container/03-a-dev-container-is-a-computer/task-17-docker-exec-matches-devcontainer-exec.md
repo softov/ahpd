@@ -1,6 +1,6 @@
 ---
 title: docker exec built from the metadata label matches devcontainer exec against the real CLI
-status: implemented
+status: done
 depends: []
 layer: "manual"
 refs:

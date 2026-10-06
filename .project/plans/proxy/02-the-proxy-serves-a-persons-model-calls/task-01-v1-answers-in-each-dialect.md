@@ -1,6 +1,6 @@
 ---
 title: /v1 answers in each dialect, and refuses in its own error shape
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

@@ -62,6 +62,14 @@ export interface Worktree {
 export interface GitDir {
   /** The common git directory, absolute: the main repository's `.git` for every worktree of it. */
   gitDir: string;
+  /**
+   * The tree's own git directory, absolute: the `.git` of a main checkout, and
+   * `<gitDir>/worktrees/<name>` for a linked worktree.
+   *
+   * Both, because the two are what a caller checks a folder against: the tree's
+   * own `.git` is a directory naming the first, or a file naming this one.
+   */
+  worktreeDir: string;
   /** The root of the tree the directory is in: the worktree's own root for a linked worktree. */
   repository: string;
 }
@@ -89,7 +97,7 @@ export interface Worktrees {
   repository(dir: string): Promise<string | undefined>;
 
   /**
-   * The repository's common git directory and its root, for a directory in one.
+   * The repository's git directories and its root, for a directory in one.
    *
    * What a machine needs beside a session's folder for git to work inside it:
    * a linked worktree's `.git` is a file naming the main repository's git
@@ -97,6 +105,10 @@ export interface Worktrees {
    * above itself. Undefined outside a repository; a rejection, in git's own
    * words, for a folder git refuses. Optional, so a port that makes no
    * worktrees need not answer it.
+   *
+   * The answer is git's, not a check: a `.git` that names another repository
+   * makes git answer that one, and a caller that mounts the answer has to
+   * compare it against the folder itself.
    */
   gitDir?(dir: string): Promise<GitDir | undefined>;
 

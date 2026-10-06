@@ -1,7 +1,7 @@
 import { RpcError } from '../rpc.js';
 import { computerSource } from '../computers.js';
 import { isRootChannel, schemeOf } from './channels.js';
-import { NEEDS, channelRead, refusalReason } from './gate.js';
+import { NEEDS, UNGATED, channelRead, refusalReason } from './gate.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -111,7 +111,22 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
       if (computerSource(config.computer) !== undefined) return ['session:create', 'computer:write'];
     }
     const plain = NEEDS[method];
-    if (plain === undefined) return undefined;
+    if (plain === undefined) {
+      /*
+       * A method in `UNGATED` needs nothing, and one in neither table is a
+       * method this host serves that nobody decided about.
+       *
+       * That one is refused rather than served. Read as "needs no grant", as
+       * it was, an entry nobody wrote is the widest answer there is - which
+       * is how `shutdown`, in neither table, came to be served to any
+       * connection that had completed a handshake, and `shutdown` is `SIGTERM`
+       * to the daemon - decision `shutdown-needs-config-change`. Refused by
+       * omission, a method added later is one the suite names on the next run
+       * instead.
+       */
+      if (UNGATED.has(method)) return undefined;
+      throw new RpcError(-32009, `This host has classified ${method} nowhere, so it serves it to nobody`);
+    }
     const at = plain.indexOf(':');
     const subject = plain.slice(0, at);
     const operation = plain.slice(at + 1);

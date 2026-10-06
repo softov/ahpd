@@ -1,6 +1,6 @@
 ---
 title: The computer form offers a folder as a flat source choice
-status: implemented
+status: done
 depends: [task-01-made-from-a-folder.md]
 layer: "computer"
 refs:

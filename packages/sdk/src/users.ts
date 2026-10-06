@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { same } from './listen.js';
 import { issuerFrom } from './issuers.js';
@@ -681,6 +681,11 @@ export function fileUsers(options: FileUserOptions): Users {
     // place. The same form every other writer here uses, and the one the
     // daemon's temp sweeper knows.
     const loose = `${options.path}.${String(process.pid)}.tmp`;
+    // Removed before it is written, because `mode` is applied when a file is
+    // *created*: a temp this pid left readable - one of ours killed between the
+    // write and the rename, and this process given its pid back - would keep its
+    // 0644, and the rename would put that on the real file.
+    rmSync(loose, { force: true });
     // 0600: the file holds hashes rather than secrets, and who may read it is
     // still nobody but the account the daemon runs as.
     writeFileSync(loose, `${JSON.stringify({

@@ -1,6 +1,6 @@
 ---
 title: The proxy opens an inner session and forwards turns
-status: implemented
+status: done
 depends: [task-01-a-computer-starts-a-nested-host.md]
 layer: "sdk"
 refs:

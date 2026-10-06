@@ -1,6 +1,6 @@
 ---
 title: The name a create gives a dev container is kept for it
-status: implemented
+status: done
 depends: [task-07-the-fake-cli-behaves-like-the-real-one.md, task-09-read-only-needs-through-an-override-config.md]
 layer: "computer"
 refs:

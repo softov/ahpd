@@ -1,6 +1,6 @@
 ---
 title: The picker offers the session folder's dev container
-status: implemented
+status: done
 depends: [task-02-reached-through-devcontainer-exec.md]
 layer: "computer | sdk"
 refs:

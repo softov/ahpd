@@ -1,6 +1,6 @@
 ---
 title: vault set and delete refuse --config-file
-status: todo
+status: done
 depends: []
 layer: "server"
 refs:
@@ -32,3 +32,9 @@ refs:
 - `pnpm exec vitest run packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts`.
 
 ## Resume
+
+Implemented. `declareVault` keeps `fields` for `vault list` and spreads `writing`, an empty record, into the two that write - the shape the file already used for a served daemon, where `fields` is `{}` so no flag could name another store. The comment above it says why the file is the listing's: a listing reads a configuration to say where a name is referenced before it is set, and the two that write reach `vaultPath()`.
+
+Both cases failed first. The flag declaration case failed with `expected [ '--config-file' ] to not include '--config-file'`, and the CLI case ran the verb and was answered `vault set takes no value on the line: pipe the value on standard input` rather than `Unknown option --config-file`, which is the flag being accepted and read by nothing.
+
+Gates: `npx tsc -b` clean, `pnpm exec vitest run packages/server/test/server-commands.test.ts packages/server/test/server-cli.test.ts` 108 passed.

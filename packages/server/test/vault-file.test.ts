@@ -8,7 +8,7 @@
  * nobody else, and a file that is not a vault is refused rather than replaced.
  */
 
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -51,6 +51,20 @@ it('makes the file at a mode only its owner may read', async () => {
   // would otherwise take from whatever mode that file had.
   writeFileSync(file, JSON.stringify({ version: 1, secrets: {} }), { mode: 0o644 });
   await fileVault({ file }).set('host:x', 'a-token');
+  expect(statSync(file).mode & 0o777).toBe(0o600);
+});
+
+it('writes the file private even when a readable temp at its own name was left behind', async () => {
+  await fileVault({ file }).set('host:x', 'a-token');
+  // What a process that had this pid before left world-readable. `mode` is
+  // applied when a file is created and not when one is opened, so a write that
+  // opened this temp would keep its 0644 - and the rename puts that on the
+  // vault, which holds everybody's credentials.
+  const temporary = `${file}.${String(process.pid)}.tmp`;
+  writeFileSync(temporary, '{}');
+  chmodSync(temporary, 0o644);
+  await fileVault({ file }).set('host:y', 'another-token');
+
   expect(statSync(file).mode & 0o777).toBe(0o600);
 });
 

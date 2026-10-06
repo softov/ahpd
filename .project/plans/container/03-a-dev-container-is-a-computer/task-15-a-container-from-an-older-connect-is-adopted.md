@@ -1,6 +1,6 @@
 ---
 title: A container made by an older connect is adopted by its folder
-status: implemented
+status: done
 depends: [task-10-the-name-given-is-a-label.md]
 layer: "computer"
 refs:

@@ -316,6 +316,51 @@ describe('the host\'s channels, in the form VS Code prints them', () => {
   });
 });
 
+describe('the directory a session\'s changesets are of', () => {
+  /**
+   * A host rooted in a repository whose folder holds a `#`, and a session in it.
+   *
+   * The working directory the backend reports is the one it was started in,
+   * which the echo agent spells the way a harness spells its own `cwd`:
+   * `file://` and the path as it is. The changeset's directory is that URI read
+   * back, so a reader that stops at the `#` answers a folder the session is not
+   * in - and a folder that does not exist has no changeset at all.
+   */
+  const hashed = async () => {
+    const root = scratch();
+    const where = join(root, 'C#', 'app');
+    mkdirSync(where, { recursive: true });
+    execFileSync('git', ['init', '-q', '-b', 'main', where]);
+    git(where, 'config', 'user.email', 'test@example.com');
+    git(where, 'config', 'user.name', 'Test');
+    writeFileSync(join(where, 'tracked.txt'), 'one\n');
+    git(where, 'add', '-A');
+    git(where, 'commit', '-q', '-m', 'first');
+    // Dirty, so the working tree is worth a changeset at all.
+    writeFileSync(join(where, 'tracked.txt'), 'two\n');
+    const changes = gitChanges();
+    const host = createHost({ path: where, agents: [echo({ path: where })], changes });
+    const client = host.accept({
+      send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    });
+    await client.handle({ method: 'initialize', params: { clientId: 'hashed', protocolVersions: ['0.9.0'] } });
+    const uri = 'ahp-session:/hashed';
+    // No working directories given: the session works where the host is.
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    await changes.refresh?.(where);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { changesets?: { uriTemplate: string }[] } };
+    }).snapshot.state;
+    return { where, state };
+  };
+
+  it('is the folder the session is in, hash and all, so its changesets are there', async () => {
+    const { where, state } = await hashed();
+    expect(state.changesets?.map((one) => one.uriTemplate)).toContain('ahp-session:/hashed/changeset/uncommitted');
+    expect(where).toContain('C#');
+  });
+});
+
 describe('file:, a target an operation names', () => {
   /** `discard` on one resource of a directory's uncommitted changes. */
   const discard = (dir: string, resource: string) => {

@@ -17,6 +17,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
+import { secretRef } from '@ahpd/sdk';
 import type { McpServer, PluginSpec } from '@ahpd/sdk';
 import type { Config, HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
@@ -217,6 +218,38 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
+ * A `--plugin-option` as it was written up to its `=`: the path, and nothing
+ * of the value after it.
+ *
+ * Every refusal about one of these quotes this and not the flag as typed. What
+ * is set is an option some plugin is configured with, which is a credential
+ * more often than not, and a refusal is printed on a terminal and written to a
+ * log - so the message names the path and never what was being set there. A
+ * flag written with no `=` holds no value to leave out, and is the text itself.
+ */
+const pathOf = (typed: string): string => {
+  const equals = typed.indexOf('=');
+  return equals === -1 ? typed : typed.slice(0, equals);
+};
+
+/**
+ * What a value is, for a refusal that says the kind rather than the value.
+ *
+ * A refusal is printed on a terminal and written to a log, and what a
+ * `--plugin-option` path runs into is an option some plugin is configured with,
+ * which is a credential more often than not. So the message says what the value
+ * is and never what it holds.
+ */
+const kindOf = (value: unknown): string => {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'a list';
+  if (typeof value === 'string') return 'a string';
+  if (typeof value === 'number') return 'a number';
+  if (typeof value === 'boolean') return 'a boolean';
+  return `a ${typeof value}`;
+};
+
+/**
  * `options` with `value` set at `path`, as an object none of the input holds.
  *
  * A key on the way down that is not there is made, the way `mkdir -p` makes
@@ -224,25 +257,40 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
  * heard of. One that is there and is not a plain object is refused rather than
  * replaced, because setting into it would drop whatever it holds.
  *
- * `typed` is the flag as it was written, which the refusal quotes.
+ * What is there is read as an own key of the options and nothing else: a path
+ * through `toString` or `constructor` is a key being made, not a function being
+ * read, the way the `UNSETTABLE` keys are refused rather than written.
+ *
+ * A key inside a `$secret` reference is refused too, because the object would
+ * still be there beside the key and would no longer be a reference at all: the
+ * secret would be handed to the plugin as a plain object holding its name. Set
+ * whole it is a value like any other, which is the branch above.
+ *
+ * `spelled` is the path as it was written, which the refusal quotes: the
+ * `<plugin>.<key>` and not the `=value` after it, which is what `pathOf` is
+ * for.
  */
 /** Keys that name an object's prototype rather than a value it holds. */
 const UNSETTABLE = new Set(['__proto__', 'constructor', 'prototype']);
 
-const setAt = (options: Record<string, unknown> | undefined, path: readonly string[], value: unknown, typed: string): Record<string, unknown> => {
+const setAt = (options: Record<string, unknown> | undefined, path: readonly string[], value: unknown, spelled: string): Record<string, unknown> => {
   const [key, ...rest] = path as [string, ...string[]];
-  if (UNSETTABLE.has(key)) stop(`--plugin-option sets ${typed}, and ${key} is not a key an option can be set under.`);
+  if (UNSETTABLE.has(key)) stop(`--plugin-option sets ${spelled}, and ${key} is not a key an option can be set under.`);
   const here: Record<string, unknown> = { ...options };
   if (rest.length === 0) {
     here[key] = value;
     return here;
   }
-  const held = here[key];
+  const where = path.slice(0, path.length - rest.length).join('.');
+  const held = Object.hasOwn(here, key) ? here[key] : undefined;
   if (held !== undefined && !isObject(held)) {
-    const where = path.slice(0, path.length - rest.length).join('.');
-    stop(`--plugin-option sets ${typed}, and ${where} holds ${JSON.stringify(held)}, which is not an object the rest of the path could be set in.`);
+    stop(`--plugin-option sets ${spelled}, and ${where} holds ${kindOf(held)}, which is not an object the rest of the path could be set in.`);
   }
-  here[key] = setAt(isObject(held) ? held : undefined, rest, value, typed);
+  const named = secretRef(held);
+  if (named !== undefined) {
+    stop(`--plugin-option sets ${spelled}, and ${where} is a reference to the secret ${named}: a key set inside it would leave the reference behind, so it is set as a whole or not at all.`);
+  }
+  here[key] = setAt(isObject(held) ? held : undefined, rest, value, spelled);
   return here;
 };
 
@@ -490,8 +538,6 @@ export const configSchema: { type: 'object'; properties: Record<ConfigKey, JsonS
 export const userAt = {
   configFile: serverFields.configFile,
   users: serverFields.users,
-  host: serverFields.host,
-  port: serverFields.port,
 } satisfies Record<string, Field>;
 
 /** The record fields a whole person is created with, in one go. */
@@ -529,9 +575,18 @@ export const userAddFields = {
   ...recordFields,
 } satisfies Record<string, Field>;
 
-/** What `user token` takes: where the file is, and the flag it prints the whole URL with. */
+/**
+ * What `user token` takes: where the file is, the flag it prints the whole URL
+ * with, and the address that URL names.
+ *
+ * The address is this verb's alone: a daemon started with `--host` and `--port`
+ * rather than with a configuration file is named by nothing else, and a verb
+ * that took one and read it by nothing would accept a port that means nothing.
+ */
 export const userTokenFields = {
   ...userAt,
+  host: serverFields.host,
+  port: serverFields.port,
   url: {
     type: 'boolean',
     description: 'Print the whole ws:// URL a client can be given.',
@@ -756,19 +811,26 @@ const noCwd = input['noCwd'] === true;
         named = name;
       }
     });
+    /*
+     * What the flag was written as, up to its `=`. Every refusal about this
+     * one quotes the path and never the value: what is being set is an option
+     * a plugin is configured with, which is a credential more often than not,
+     * and a refusal is printed on a terminal and written to a log.
+     */
+    const spelled = pathOf(typedOption);
     if (at === -1) {
       // Nothing this run loads is named here, so the first dot says which name was meant.
       const dot = head.indexOf('.');
-      if (equals === -1 || dot <= 0) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
+      if (equals === -1 || dot <= 0) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${spelled === '' ? 'an empty path' : spelled}.`);
       stop(`--plugin-option names ${head.slice(0, dot)}, which is not a plugin this run loads.`);
     }
     const spec = plugins[at] as PluginSpec;
     const path = head.slice(named.length + 1).split('.');
-    if (path.some((key) => key === '')) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${typedOption}.`);
+    if (path.some((key) => key === '')) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${spelled}.`);
     const value = typedValue(typedOption.slice(equals + 1));
     plugins[at] = typeof spec === 'string'
-      ? { name: spec, options: setAt(undefined, path, value, typedOption) }
-      : { ...spec, options: setAt(spec.options, path, value, typedOption) };
+      ? { name: spec, options: setAt(undefined, path, value, spelled) }
+      : { ...spec, options: setAt(spec.options, path, value, spelled) };
   }
 
   const paths = [...given('paths') ?? []];

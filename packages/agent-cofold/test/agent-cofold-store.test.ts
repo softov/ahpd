@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -8,6 +8,7 @@ import { createFileStore } from '@cofold/store-file';
 import type { Message, MessageSource, ModelAdapter, ModelReply, ModelStreamEvent, Policy, RunEvent, Store } from '@cofold/agents';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
+import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
@@ -145,6 +146,27 @@ it('lists a session that was created and torn down, with its workspace and title
   // The timestamps are the store's, so a row says when the conversation moved.
   expect(Date.parse(String(listed?.[0]?.createdAt))).not.toBeNaN();
   expect(Date.parse(String(listed?.[0]?.modifiedAt))).not.toBeNaN();
+});
+
+it('reports the folder a session works in as a URI a host reads back as that folder', () => {
+  /*
+   * The session's own directory, as the host reads it back. `file://` with the
+   * path as it is puts a raw `#` on the wire, and a reader that takes `#` for a
+   * fragment - which is what node and every client do - opens `C` where the
+   * folder is called `C# a b`, and opens `C# a b` where the real name has a
+   * space in it. This is the directory a turn's tools and a diff's base come
+   * from, so both wrong answers are commands run somewhere else.
+   */
+  const { root } = place();
+  const where = join(root, 'C# a b');
+  mkdirSync(where, { recursive: true });
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'uris', where);
+  const asked = [uriOf(where)];
+  expect(one.session.workingDirectories()).toEqual(asked);
+  expect((one.session.sessionState() as { workingDirectories: string[] }).workingDirectories).toEqual(asked);
+  one.session.close();
 });
 
 /** One model step as a script gives it: the deltas it streams, then the reply they add up to. */

@@ -128,9 +128,9 @@ Estimated at 1,500 to 2,000 lines.
 | [p6 - The catalogue, past sessions and snapshots are files of their own](../48-host-is-split-by-area-p6-catalogue-and-transcripts/plan.md) | done | p3, p5 |
 | [p7 - Starting, restarting and removing a session are files of their own](../48-host-is-split-by-area-p7-session-lifecycle/plan.md) | done | p6 |
 | [p8 - Session tools, terminals and automations are files of their own](../48-host-is-split-by-area-p8-tools-terminals-and-automations/plan.md) | done | p7 |
-| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | implemented | p8 |
-| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | implemented | p9 |
-| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | implemented | p10 |
+| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | done | p8 |
+| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | done | p9 |
+| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | done | p10 |
 
 ## Risks and tradeoffs
 

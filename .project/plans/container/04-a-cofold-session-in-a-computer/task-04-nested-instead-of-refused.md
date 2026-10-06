@@ -1,6 +1,6 @@
 ---
 title: A backend that runs nested is proxied instead of refused
-status: implemented
+status: done
 depends: [task-03-the-proxy-forwards-the-rest.md]
 layer: "sdk | agent-cofold"
 refs:

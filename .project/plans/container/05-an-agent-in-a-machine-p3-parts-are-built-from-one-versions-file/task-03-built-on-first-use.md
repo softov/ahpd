@@ -1,6 +1,6 @@
 ---
 title: A part is built the first time it is asked for
-status: implemented
+status: done
 depends: [task-02-a-part-image-per-kind.md]
 layer: "computer"
 refs:

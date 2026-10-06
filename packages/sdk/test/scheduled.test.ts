@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, existsSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, existsSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, describe } from 'vitest';
@@ -197,6 +197,29 @@ describe('across a restart', () => {
 
     // Readable by the account the daemon runs as and by nobody else on the
     // machine, which is what every other file the daemon keeps is.
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it('is owner-only even when a readable temp at its own name was left behind', () => {
+    /*
+     * A change here is written twice - once when the clock is caught up and
+     * once with the stamp - and the last of the two is what leaves the file, so
+     * the readable temp is put back between them. That is what a process with
+     * this pid that died before its own last write would have left, and `mode`
+     * applies when a file is created rather than when one is opened, so a write
+     * that opens it keeps its 0644 - and the rename puts that on the real file.
+     */
+    const temporary = `${file}.${String(process.pid)}.tmp`;
+    const leaveReadable = (): void => {
+      writeFileSync(temporary, '{}');
+      chmodSync(temporary, 0o644);
+    };
+    const clock = clockwork();
+    const one = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+    one.onChanged?.(leaveReadable);
+
+    one.create(ONE, nightly());
+
     expect(statSync(file).mode & 0o777).toBe(0o600);
   });
 

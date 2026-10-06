@@ -1,6 +1,6 @@
 ---
 title: The inner session works in the machine's directory
-status: implemented
+status: done
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "computer | sdk"
 refs:

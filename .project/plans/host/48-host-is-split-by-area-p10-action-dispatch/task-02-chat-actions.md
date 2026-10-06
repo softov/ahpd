@@ -1,6 +1,6 @@
 ---
 title: A session's and a chat's actions are one file
-status: implemented
+status: done
 depends: [task-01-actions.md]
 layer: "sdk"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The stderr tail and the stdout framing are bounded
-status: implemented
+status: done
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:

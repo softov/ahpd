@@ -48,11 +48,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The handler classification test reads every file that holds handlers](task-01-the-classification-test-reads-every-file.md) | implemented | - |
-| [02 - Introduction and sign-in are one file](task-02-handshake.md) | implemented | 01 |
-| [03 - The resource methods are one file](task-03-resource-methods.md) | implemented | 01 |
-| [04 - The session methods are one file](task-04-session-methods.md) | implemented | 01 |
-| [05 - The vscode, diagnostic, terminal and automation methods move to their files](task-05-vscode-terminal-and-automation-methods.md) | implemented | 01 |
+| [01 - The handler classification test reads every file that holds handlers](task-01-the-classification-test-reads-every-file.md) | done | - |
+| [02 - Introduction and sign-in are one file](task-02-handshake.md) | done | 01 |
+| [03 - The resource methods are one file](task-03-resource-methods.md) | done | 01 |
+| [04 - The session methods are one file](task-04-session-methods.md) | done | 01 |
+| [05 - The vscode, diagnostic, terminal and automation methods move to their files](task-05-vscode-terminal-and-automation-methods.md) | done | 01 |
 
 ## Risks and tradeoffs
 

@@ -1,6 +1,6 @@
 ---
 title: A method in neither table is refused
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

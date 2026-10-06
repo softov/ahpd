@@ -1,6 +1,6 @@
 import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../artifacttools.js';
 import { idOf } from '../catalog.js';
-import { localPath } from '../fileuri.js';
+import { localPath, uriOf } from '../fileuri.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
 
@@ -69,7 +69,7 @@ export function createFacts(ctx: HostContext): Facts {
     // string for both, so a client that reads the key it was given and a
     // client that derives the key from the working directory arrive at the
     // same entry.
-    const folder = `file://${dir}`;
+    const folder = uriOf(dir);
     return {
       ...told,
       /*
@@ -169,7 +169,7 @@ export function createFacts(ctx: HostContext): Facts {
      * here rather than with `basename` because it is a string and this file
      * is the protocol.
      */
-    const project = { uri: `file://${dir}`, displayName: dir.split('/').filter(Boolean).pop() ?? dir };
+    const project = { uri: uriOf(dir), displayName: dir.split('/').filter(Boolean).pop() ?? dir };
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const told = metaOf(uri);

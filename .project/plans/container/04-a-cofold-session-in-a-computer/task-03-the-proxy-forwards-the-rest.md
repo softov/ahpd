@@ -1,6 +1,6 @@
 ---
 title: The proxy forwards asks, config, cancel and the end
-status: implemented
+status: done
 depends: [task-02-the-proxy-forwards-turns.md]
 layer: "sdk"
 refs:

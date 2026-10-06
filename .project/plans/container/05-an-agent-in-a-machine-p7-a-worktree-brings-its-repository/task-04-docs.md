@@ -1,6 +1,6 @@
 ---
 title: The docs say a worktree session commits from inside
-status: implemented
+status: done
 depends: [task-03-the-machine-cannot-change-what-git-runs-on-the-host.md]
 layer: "docs"
 refs:

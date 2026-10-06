@@ -54,9 +54,25 @@ describe('localPath', () => {
     }
   });
 
+  it('reads a literal hash and question mark as part of the path, as a builder writing no encoding writes them', () => {
+    /*
+     * Node's reader takes `#...` as a fragment and `?...` as a query, and
+     * answers the folder above the character. A builder that writes the path
+     * as it is - an agent handing over its own `cwd`, a shell's OSC 7 - puts
+     * the literal character in the URI, and a session in `~/src/C#/app` would
+     * then have every command run in `~/src/C`.
+     */
+    expect(localPath('file:///home/u/src/C#/app')).toBe('/home/u/src/C#/app');
+    expect(localPath('file:///a/b?c')).toBe('/a/b?c');
+  });
+
   it('round-trips a path whose name had to be encoded', () => {
-    for (const path of ['/home/a/my dir', '/home/a/has#hash', '/home/a/100%', '/home/a/café'])
+    for (const path of ['/home/a/my dir', '/home/a/has#hash', '/home/a/query?mark', '/home/a/100%', '/home/a/café'])
       expect(localPath(uriOf(path))).toBe(path);
+  });
+
+  it('round-trips both characters at once, as `localPath(uriOf(p))` is `p`', () => {
+    expect(localPath(uriOf('/a/C#/x?y'))).toBe('/a/C#/x?y');
   });
 });
 

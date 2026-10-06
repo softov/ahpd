@@ -1,6 +1,6 @@
 ---
 title: Paths are compared real
-status: todo
+status: done
 depends: [task-01-the-git-directory-is-read-only-but-what-a-commit-writes.md]
 layer: "computer, sdk"
 refs:

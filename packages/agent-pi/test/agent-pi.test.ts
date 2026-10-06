@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machine.js';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
@@ -38,6 +39,26 @@ it('publishes the schema the host handed it, so a contributed key reaches the se
   const properties = ((state.config as Bag).schema as Bag).properties as Bag;
   expect(properties.computer).toEqual(computer);
   expect(properties.projectTrust).toBeDefined();
+});
+
+it('reports the folder it works in as a URI a host reads back as that folder', () => {
+  /*
+   * `` `file://${where}` `` is the path as it is, and a folder whose name holds
+   * a `#` or a space is a different folder to a reader that takes `#` for a
+   * fragment and to one that takes the text literally: the host reads the URI
+   * back with `localPath`, and a command it runs for the session runs where the
+   * host read rather than where pi works.
+   */
+  const root = mkdtempSync(join(tmpdir(), 'ahpd-pi-uris-'));
+  const where = join(root, 'C# a b');
+  mkdirSync(where);
+  try {
+    const { session } = opened({ workingDirectory: where });
+    expect(session.workingDirectories()).toEqual([uriOf(where)]);
+    expect((session.sessionState() as Bag).workingDirectories).toEqual([uriOf(where)]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // Models ------------------------------------------------------------------

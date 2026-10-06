@@ -172,6 +172,15 @@ export interface KeptFor {
 }
 
 /**
+ * What deleting a nested session that is not running does to its copy inside.
+ *
+ * `inside` starts a host in the session's machine and disposes the session
+ * there, which is what a session that is running gets from its own close;
+ * `record` leaves the copy where it is, the machine's to keep.
+ */
+export type NestedDelete = 'inside' | 'record';
+
+/**
  * One machine, reached as a process.
  *
  * `how` answers the descriptor, or nothing when there is no machine with that
@@ -236,6 +245,23 @@ export interface ComputerPort {
    * Absent on a port whose runtime has no way to start one.
    */
   nested?(id: string, asked: NestedStart): Promise<NestedSpawn | undefined>;
+  /**
+   * What deleting a nested session that is not running does to the machine's
+   * copy of it, as the machine's own profile says.
+   *
+   * A session no host is running has no close to dispose it, so the host starts
+   * a host inside the machine for exactly this, unless the machine's operator
+   * said `record`: a transcript the machine keeps is a session that comes back
+   * where it was left, which is what a profile for a machine somebody works in
+   * by hand wants - decision `a-nested-host-is-configured-by-the-machine-profile-only`.
+   *
+   * Undefined for a machine that is not there, and for a profile that says
+   * nothing - which is `inside`, the same answer a port that keeps no such
+   * record gives. Absent on a port that cannot start a host inside a machine at
+   * all, which is not the same as `record`: the delete is attempted, cannot
+   * reach the copy, and says so in a line, so the record still goes.
+   */
+  nestedDelete?(id: string): Promise<NestedDelete | undefined>;
   /**
    * Make a machine from a source a session named, and answer its id.
    *

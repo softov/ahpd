@@ -1,6 +1,6 @@
 ---
 title: A computer can be made from a folder's devcontainer.json
-status: implemented
+status: done
 depends: []
 layer: "computer"
 refs:

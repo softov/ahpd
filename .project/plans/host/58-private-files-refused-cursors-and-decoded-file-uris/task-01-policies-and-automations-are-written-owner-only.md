@@ -1,6 +1,6 @@
 ---
 title: Policies and automations are written owner-only
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

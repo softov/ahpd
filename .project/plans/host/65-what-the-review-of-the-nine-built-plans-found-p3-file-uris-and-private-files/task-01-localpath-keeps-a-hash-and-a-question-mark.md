@@ -1,6 +1,6 @@
 ---
 title: localPath keeps a # and a ?
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

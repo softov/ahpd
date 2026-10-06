@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import { createHost, ROOT } from '../src/host.js';
+import { createHost, GATE, ROOT } from '../src/host.js';
 import { uriOf } from '../src/resources.js';
 import { fileUsers } from '../src/users.js';
 import { memoryAutomations } from '../src/automations.js';
@@ -114,6 +114,117 @@ it('refuses nothing at all with no user directory', async () => {
   // Past the gate and refused for the reason it always was: this host has no
   // automation store, which is `-32601` and not a permission.
   expect(await call(client, 'runAutomation', { channel: 'ahp-automations://', automation: 'x' })).toMatchObject({ code: -32601 });
+});
+
+/** A turn of the loop, so a `shutdown` that answered first has stopped by now. */
+const tick = (): Promise<void> => new Promise((done) => { setTimeout(done, 20); });
+
+it('does not let a connection that is nobody stop the daemon', async () => {
+  /*
+   * `shutdown` was served and classified nowhere, so any connection that had
+   * completed a handshake could stop the daemon - and in the daemon it is
+   * `SIGTERM`, so it takes every session on the machine with it. It has a
+   * grant now: decision `shutdown-needs-config-change`.
+   */
+  let stopped = 0;
+  const made = host({
+    users: directory({ m: ['file:read'] }),
+    diagnostics: { shutdown: () => { stopped += 1; } },
+  });
+  const client = made.accept(peer());
+  await hello(client);
+
+  // Refused before it is asked for a grant, because it is first nobody: the
+  // sign-in is what a connection that has not introduced itself is owed.
+  expect(await call(client, 'shutdown', {})).toMatchObject({ code: -32007 });
+  await tick();
+  expect(stopped).toBe(0);
+
+  // And a name the host serves no handler for keeps the answer it always had:
+  // the refusal above is a gate's, not a missing method's.
+  expect(await call(client, 'nothingAtAll', {})).toMatchObject({ code: -32601 });
+});
+
+it('refuses a served method nobody classified, rather than serving it to anybody', async () => {
+  /*
+   * The branch the whole fix turns on. `capabilityFor` read the absent row as
+   * "needs no grant", so an entry nobody wrote was the widest answer there is
+   * rather than the narrowest - which is how `shutdown` reached a connection
+   * that had not signed in.
+   *
+   * Every method this host serves is classified now, so the only way to stand
+   * in the state the fix guards against is to take a row away, which is what a
+   * handler added later and classified nowhere would be. It is put back in a
+   * `finally`, because the table is the module's and the tests after this one
+   * read it.
+   */
+  let stopped = 0;
+  const made = host({
+    users: directory({ m: ['file:read'] }),
+    diagnostics: { shutdown: () => { stopped += 1; } },
+  });
+  const client = made.accept(peer());
+  await hello(client, 'm'); await signIn(client, 'm');
+
+  const row = GATE.NEEDS['shutdown'];
+  delete GATE.NEEDS['shutdown'];
+  try {
+    expect(await call(client, 'shutdown', {})).toMatchObject({
+      code: -32009,
+      message: 'This host has classified shutdown nowhere, so it serves it to nobody',
+    });
+  }
+  finally {
+    if (row !== undefined) GATE.NEEDS['shutdown'] = row;
+  }
+  await tick();
+  expect(stopped).toBe(0);
+});
+
+it('gates shutdown on config:change and the managed-settings read on diagnostics:network', async () => {
+  /*
+   * Both were served and classified nowhere, so every connection that had
+   * completed a handshake reached them: `shutdown` is `SIGTERM` to the daemon,
+   * and the managed settings are the window's own troubleshooting pane -
+   * decision `shutdown-needs-config-change`.
+   */
+  let stopped = 0;
+  const made = host({
+    users: directory({ m: ['file:read'], g: ['session:read'] }),
+    diagnostics: { shutdown: () => { stopped += 1; } },
+  });
+
+  // A member may not stop the daemon, and is told which grant it lacks rather
+  // than that nobody classified the method.
+  const member = made.accept(peer());
+  await hello(member, 'm'); await signIn(member, 'm');
+  expect(await call(member, 'shutdown', {}))
+    .toMatchObject({ code: -32009, message: 'm may not config:change here' });
+  await tick();
+  expect(stopped).toBe(0);
+
+  // A person holding it may, which is what the grant is for.
+  const keeper = await holding(made, 'c', ['config:change']);
+  expect(await call(keeper.client, 'shutdown', {})).toEqual({ result: {} });
+  await tick();
+  expect(stopped).toBe(1);
+
+  // And the door's own connection always may, as it may everything.
+  const door = made.accept(peer(), undefined, true);
+  await hello(door);
+  expect(await call(door, 'shutdown', {})).toEqual({ result: {} });
+  await tick();
+  expect(stopped).toBe(2);
+
+  // The managed-settings read is asked beside `getNetworkDiagnosticsInfo`, for
+  // the same pane, so it needs what that one needs.
+  const guest = made.accept(peer());
+  await hello(guest, 'g'); await signIn(guest, 'g');
+  expect(await call(guest, 'getManagedSettingsDiagnostics', {}))
+    .toMatchObject({ code: -32009, message: 'g may not diagnostics:network here' });
+
+  const troubleshooter = await holding(made, 'd', ['diagnostics:network']);
+  expect(await call(troubleshooter.client, 'getManagedSettingsDiagnostics', {})).toEqual({ result: [] });
 });
 
 it('asks a connection to sign in before it may do anything, and serves the way in', async () => {

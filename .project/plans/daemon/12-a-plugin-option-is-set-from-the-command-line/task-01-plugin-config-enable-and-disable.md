@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin config`, `enable` and `disable`"
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

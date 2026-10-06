@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: implemented
+status: done
 depends: [task-05-a-failed-start-says-why.md]
 layer: "docs"
 refs:

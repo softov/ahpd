@@ -370,6 +370,14 @@ const recordOf = (found) => ({
   State: {
     Status: found.state ?? 'running',
     Running: (found.state ?? 'running') === 'running',
+    /*
+     * When it stopped, as Docker records it: the zero time while the container
+     * is up, and the moment it went down once it has - which is what a caller
+     * reads to tell a machine that is still running from one that has gone. A
+     * `stop` writes the time, and a test that wants a stop further back seeds
+     * `stoppedAt` on the machine.
+     */
+    FinishedAt: found.stoppedAt ?? '0001-01-01T00:00:00Z',
   },
   // The label the provider puts on its own, because the provider now reads
   // it back: a container without it is not a computer, and a fixture that
@@ -742,8 +750,12 @@ if (verb === 'start' || verb === 'restart') {
 if (verb === 'stop') {
   const found = named(args[args.length - 1]);
   // Recorded, so a `state` read after a stop answers what actually happened
-  // rather than the status the machine was made with.
-  if (found !== undefined) found.state = 'exited';
+  // rather than the status the machine was made with - and so does the record:
+  // a container that has stopped carries the moment it did.
+  if (found !== undefined) {
+    found.state = 'exited';
+    found.stoppedAt = new Date().toISOString();
+  }
   keep();
   process.stdout.write(`${args[1]}\n`);
   process.exit(0);

@@ -1,6 +1,6 @@
 ---
 title: The proxy is documented, and a real call goes through openrouter and LM Studio
-status: implemented
+status: done
 depends: [task-05-a-call-ends-when-either-side-does.md, task-06-policy-and-usage.md, task-07-the-models-list.md]
 layer: "docs"
 refs:

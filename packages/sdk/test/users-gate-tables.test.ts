@@ -1,49 +1,28 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import { expect, it } from 'vitest';
 import { GATE } from '../src/host.js';
 import { GROUPS, OPERATIONS, groupOf, holds } from '../src/users.js';
+import { host, peer } from './users-gate-helpers.js';
 import type { Grant } from '../src/types/users.js';
 
-const REPO = join(import.meta.dirname, '../../..');
-
-/**
- * Every handler key in `source`, whose table is written at `indent` spaces.
- *
- * The second pattern is the quoted ones, which are the reference client's
- * extension methods. They were served and classified nowhere: the pattern above
- * reads a bare identifier, and every `vscode/*` handler is a string key, so
- * nine methods nobody decided about passed this test. The pattern for them
- * takes any parameter list, because a method that ignores its params is still
- * a method - and only quoted keys, because inside a handler's own body there
- * are object literals whose members look exactly like this and are not
- * methods of this host.
- */
-const handlerKeys = (source: string, indent: number): string[] => {
-  const bare = new RegExp(`^ {${indent}}([a-zA-Z][A-Za-z0-9]*): (?:async )?\\(params\\)`, 'gm');
-  const quoted = new RegExp(`^ {${indent}}'([^']+)': (?:async )?\\([^)]*\\)\\s*=>`, 'gm');
-  return [...source.matchAll(bare), ...source.matchAll(quoted)].map((one) => one[1] as string);
-};
-
 /** How many methods the host serves. A method added is a number raised here. */
-const SERVED = 45;
+const SERVED = 47;
 
 it('classifies every handler the host serves', () => {
   /*
-   * Read out of the source, because the literal is rebuilt per connection and
-   * there is no other list. A handler added and classified nowhere is a method
-   * nobody decided about, and this fails on the next run rather than serving it
-   * to anybody - which is the property `needsWrite` did not have.
+   * Read off the table the host actually builds, which is the only list there
+   * is: it is assembled per connection out of the families under `host/` and
+   * there is nothing on disk that says what it holds. A handler added and
+   * classified nowhere is a method nobody decided about, and this fails on the
+   * next run rather than serving it to anybody - which is the property
+   * `needsWrite` did not have.
    *
-   * The methods are in `host.ts` and in the families beside it under `host/`,
-   * and each table is read at the indent it is written in.
+   * The table was read out of the source before, by a pattern that needed a
+   * `(params)` parameter, so `ping`, `shutdown`, `getManagedSettingsDiagnostics`
+   * and `getNetworkDiagnosticsInfo` - a method that ignores its params is still
+   * a method - were never seen at all.
    */
-  const family = join(REPO, 'packages/sdk/src/host');
-  const served = [
-    ...handlerKeys(readFileSync(join(REPO, 'packages/sdk/src/host.ts'), 'utf8'), 8),
-    ...readdirSync(family).flatMap((name) => handlerKeys(readFileSync(join(family, name), 'utf8'), 4)),
-  ];
+  const { methods: served } = host().accept(peer());
   expect(served.length).toBe(SERVED);
 
   const classified = new Set([...Object.keys(GATE.NEEDS), ...GATE.UNGATED]);

@@ -129,6 +129,17 @@ export interface PluginContext {
    * with it, which matches every daemon that also labels nothing.
    */
   readonly hostId?: string;
+  /**
+   * Whether this host verifies people, which is what makes it a host more than
+   * one person uses.
+   *
+   * Absent is "nobody signs in here", which is the install that never
+   * configured people and a loader in a test that named none. Read from the
+   * base's `users` port, so a plugin cannot be told one thing about the host it
+   * is being folded into and handed another - decision
+   * `dev-containers-need-allowed-folders-on-a-host-with-users`.
+   */
+  readonly hasUsers?: boolean;
   /** One line to the daemon's log. */
   log(message: string): void;
   /**

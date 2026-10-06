@@ -1,6 +1,6 @@
 ---
 title: A dev container carries the agents it was made for and the body's limits
-status: implemented
+status: done
 depends: [task-09-read-only-needs-through-an-override-config.md]
 layer: "computer"
 refs:

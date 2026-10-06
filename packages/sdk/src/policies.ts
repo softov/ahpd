@@ -11,7 +11,7 @@
  * scheme and `decide` name a row they were handed.
  */
 
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { RpcError } from './rpc.js';
 import type {
@@ -324,6 +324,11 @@ export function filePolicies(options: FilePoliciesOptions): Policies {
       // Written beside and moved into place, so a daemon killed mid-write
       // leaves the last good file rather than half of this one.
       const temporary = `${file}.${process.pid}.tmp`;
+      // Removed before it is written, because `mode` is applied when a file is
+      // *created*: a temp this pid left readable - one of ours killed between
+      // the write and the rename, and this process given its pid back - would
+      // keep its 0644, and the rename would put that on the real file.
+      rmSync(temporary, { force: true });
       // 0600, as the daemon's own records are: this names who may use what,
       // and that is not everybody's business on a host with more than one
       // person on it.

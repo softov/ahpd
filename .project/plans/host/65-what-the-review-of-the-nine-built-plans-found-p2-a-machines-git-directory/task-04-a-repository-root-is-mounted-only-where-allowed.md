@@ -1,6 +1,6 @@
 ---
 title: A repository root is mounted only where the profile allows it
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:

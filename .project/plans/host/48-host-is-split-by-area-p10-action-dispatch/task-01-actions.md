@@ -1,6 +1,6 @@
 ---
 title: applyDispatch is one file
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

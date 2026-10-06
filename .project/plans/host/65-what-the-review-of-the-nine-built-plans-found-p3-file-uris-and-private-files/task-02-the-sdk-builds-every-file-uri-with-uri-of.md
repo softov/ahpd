@@ -1,6 +1,6 @@
 ---
 title: The sdk builds every file URI with uriOf
-status: todo
+status: done
 depends: [task-01-localpath-keeps-a-hash-and-a-question-mark.md]
 layer: "sdk"
 refs:

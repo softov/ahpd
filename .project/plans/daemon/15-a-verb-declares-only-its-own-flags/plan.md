@@ -59,9 +59,9 @@ No decision file: this is a fix.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The user verbs declare their own flags](task-01-the-user-verbs-declare-their-own-flags.md) | implemented | - |
-| [02 - The team and project verbs declare their own flags](task-02-the-team-and-project-verbs-declare-their-own-flags.md) | implemented | - |
-| [03 - The vault verbs declare their own flags](task-03-the-vault-verbs-declare-their-own-flags.md) | implemented | - |
+| [01 - The user verbs declare their own flags](task-01-the-user-verbs-declare-their-own-flags.md) | done | - |
+| [02 - The team and project verbs declare their own flags](task-02-the-team-and-project-verbs-declare-their-own-flags.md) | done | - |
+| [03 - The vault verbs declare their own flags](task-03-the-vault-verbs-declare-their-own-flags.md) | done | - |
 
 ## Risks and tradeoffs
 

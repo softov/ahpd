@@ -1,6 +1,6 @@
 ---
 title: A nested host loads the plugin that registered the agent, and the inner host is configured by the profile only
-status: implemented
+status: done
 depends: [task-06-docs.md]
 layer: "sdk | agent-cofold"
 refs:

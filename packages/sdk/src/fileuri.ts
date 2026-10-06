@@ -45,6 +45,14 @@ const pathPart = (value: string): string => {
  * encoded slash all fall back to the URI's own text after the scheme: a folder
  * really called `100%` is what that is, and no caller of this ever threw on a
  * URI before, so none may start.
+ *
+ * A literal `#` and a literal `?` are part of the path. A builder that writes a
+ * path into a URI without encoding it - an agent handing over its own `cwd`, a
+ * shell's OSC 7 - puts the character in as it is, and a folder really called
+ * `C#` or `x?y` is what that names. Node reads `#...` as a fragment and `?...`
+ * as a query and answers the folder above them, so the two are escaped here and
+ * decoded back by the same reader, which is the other half of what `uriOf`
+ * writes: `%23` and `%3F`.
  */
 export const localPath = (value: string): string => {
   if (!value.startsWith(SCHEME)) return value;
@@ -58,8 +66,9 @@ export const localPath = (value: string): string => {
    * decoding it into a separator, and a URI with an authority must not
    * decode differently from one without.
    */
+  const escaped = path.replaceAll('#', '%23').replaceAll('?', '%3F');
   try {
-    const decoded = fileURLToPath(`${SCHEME}${path}`);
+    const decoded = fileURLToPath(`${SCHEME}${escaped}`);
     /*
      * A NUL is not a path. `%00` decodes to one, and a string carrying one is
      * a comparison and a log line nothing can read, so the text it came from

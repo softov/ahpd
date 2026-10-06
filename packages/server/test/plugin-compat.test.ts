@@ -62,7 +62,7 @@ describe('a plugin that declares a range', () => {
 
     expect(loaded).toEqual([]);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toContain('^0.10.0');
+    expect(problems[0]).toContain('^0.11.0');
     expect(problems[0]).toContain(sdkVersion());
     expect((globalThis as Record<string, unknown>).__pluginIncompatibleImported).toBeUndefined();
   });
@@ -110,12 +110,13 @@ describe('a plugin that names the oldest sdk it needs', () => {
 
   /*
    * Each package's floor is the first sdk that exports what it imports: the
-   * agents and the computer read `callTimes`, `startOf`, `withCallTimes` or
-   * `secretRef`, which 0.9 added, and the tunnel reads nothing newer than 0.8.
+   * four agents read `uriOf`, which 0.10 added, the computer reads `callTimes`,
+   * `startOf`, `withCallTimes` and `secretRef` (0.9) and `hasUsers` on its
+   * plugin context (0.10), and the tunnel reads nothing newer than 0.8.
    */
   it.each([
-    ['agent-acp', '>=0.9'], ['agent-claude', '>=0.9'], ['agent-cofold', '>=0.9'], ['agent-pi', '>=0.9'],
-    ['computer', '>=0.9'], ['tunnel-devtunnel', '>=0.8'],
+    ['agent-acp', '>=0.10'], ['agent-claude', '>=0.10'], ['agent-cofold', '>=0.10'], ['agent-pi', '>=0.10'],
+    ['computer', '>=0.10'], ['tunnel-devtunnel', '>=0.8'],
   ])(
     'declares @ahpd/%s as taking any sdk from %s on',
     (name, floor) => {
@@ -123,7 +124,9 @@ describe('a plugin that names the oldest sdk it needs', () => {
         peerDependencies: Record<string, string>;
       };
       expect(manifest.peerDependencies['@ahpd/sdk']).toBe(floor);
-      expect(satisfies('0.9.0', manifest.peerDependencies['@ahpd/sdk'] as string)).toBe(true);
+      // The sdk this workspace builds is one every package on the list can be
+      // run against, whatever each floor is.
+      expect(satisfies(sdkVersion(), manifest.peerDependencies['@ahpd/sdk'] as string)).toBe(true);
     },
   );
 });

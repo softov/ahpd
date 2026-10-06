@@ -1,6 +1,6 @@
 ---
 title: VS Code's connect finds or makes the same computer
-status: implemented
+status: done
 depends: [task-02-reached-through-devcontainer-exec.md]
 layer: "sdk | computer"
 refs:

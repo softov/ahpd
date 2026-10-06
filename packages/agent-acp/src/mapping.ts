@@ -15,7 +15,7 @@
  */
 
 import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
-import { callTimes, withCallTimes } from '@ahpd/sdk';
+import { callTimes, uriOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
 
@@ -296,7 +296,7 @@ const heldContent = (part: Bag | undefined): Bag[] => {
  * never given.
  */
 const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
-  const uri = `file://${diff.path}`;
+  const uri = uriOf(diff.path);
   if (turn.reach !== undefined && turn.reach.within(diff.path)) {
     turn.reach.changed(diff.path, diff.oldText ?? undefined);
   }

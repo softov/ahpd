@@ -121,6 +121,11 @@ export const optionsSchema = {
             enum: ['bind', 'open'],
             description: "How a git directory in a session's machine is guarded: bind, what git on the host runs read-only and every command as the host user, or open, all of it writable. bind when absent.",
           },
+          nestedDelete: {
+            type: 'string',
+            enum: ['inside', 'record'],
+            description: "Deleting a session that ran in a machine from this profile and is not running: inside, start the machine's own host to dispose that session there too, or record, delete it here and leave the machine's copy. inside when absent.",
+          },
         },
       },
       description: 'The named sets a person picks from when making a machine.',
@@ -215,6 +220,11 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // somewhere else - decision
       // `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
       ...(said.sessionFolder === true ? { sessionFolder: true } : {}),
+      // And whether the repository that folder sits inside comes with it, the
+      // root a folder below it would otherwise mount in its place. The same
+      // gate one step wider, from the same decision: the folder being the
+      // client's does not make the whole repository the client's.
+      ...(said.sessionRepository === true ? { sessionRepository: true } : {}),
       // What a command into one of its machines does when a vault-named value
       // cannot be read again. Absent is `fail`.
       ...(said.secretUnreadable === 'fail' || said.secretUnreadable === 'drop' ? { secretUnreadable: said.secretUnreadable } : {}),
@@ -224,6 +234,9 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
       // How a git directory in its machines is guarded. Absent is `bind`.
       ...(said.gitGuard === 'bind' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
+      // What deleting one of its machines' sessions when it is not running
+      // does to the machine's own copy. Absent is `inside`.
+      ...(said.nestedDelete === 'inside' || said.nestedDelete === 'record' ? { nestedDelete: said.nestedDelete } : {}),
     };
   }
   return Object.keys(held).length === 0 ? undefined : held;
@@ -376,16 +389,17 @@ export const apply: Plugin['apply'] = (host, options) => {
     one.parts = one.parts.filter((part) => partIds.has(part));
   }
   /*
-   * A `secretUnreadable`, `state`, `stateScope` or `gitGuard` that is neither of its two
-   * answers is fatal here rather than dropped: the loader's check does not
-   * reach into a profile, and a value read as the default would make a machine
-   * other than the one its operator asked for.
+   * A `secretUnreadable`, `state`, `stateScope`, `gitGuard` or `nestedDelete`
+   * that is neither of its two answers is fatal here rather than dropped: the
+   * loader's check does not reach into a profile, and a value read as the
+   * default would make a machine other than the one its operator asked for.
    */
   const answers: [field: string, values: [string, string]][] = [
     ['secretUnreadable', ['fail', 'drop']],
     ['state', ['volume', 'host']],
     ['stateScope', ['owner', 'shared']],
     ['gitGuard', ['bind', 'open']],
+    ['nestedDelete', ['inside', 'record']],
   ];
   for (const [key, one] of Object.entries(options.profiles as Record<string, unknown> | undefined ?? {})) {
     for (const [field, values] of answers) {
@@ -444,7 +458,9 @@ export const apply: Plugin['apply'] = (host, options) => {
    *
    * Absent allows any, as an unset `images` does: a definition is a recipe the
    * folder's owner wrote, and an operator on a host with one person on it has
-   * nothing to narrow. Naming a set is the opting in.
+   * nothing to narrow. Naming a set is the opting in. On a host with a users
+   * directory absent allows none until the operator names them, which
+   * `folderFor` says.
    */
   const containerFolders = words(held.folders);
   for (const one of containerFolders ?? []) {
@@ -482,6 +498,16 @@ export const apply: Plugin['apply'] = (host, options) => {
     const here = resolved(folder);
     if (container === false) {
       return { refusal: `Dev containers are switched off on this host, so ${here} makes no computer` };
+    }
+    /*
+     * A host more than one person signs in to names the folders first: a
+     * `devcontainer.json` may ask for `--privileged` and mounts, so an unset
+     * list would make anybody holding `computer:write` the host by way of a
+     * file they wrote - decision
+     * `dev-containers-need-allowed-folders-on-a-host-with-users`.
+     */
+    if (host.hasUsers === true && containerFolders === undefined) {
+      return { refusal: `This host has a users directory, so no dev container is made from ${here} until its operator names the folders it may use in devcontainer.folders` };
     }
     if (containerFolders === undefined) return here;
     if (containerFolders.some((one) => resolved(one) === here)) return here;
@@ -923,8 +949,25 @@ export const apply: Plugin['apply'] = (host, options) => {
     asked: MachineSource,
     root: string | undefined,
     guard: GitGuard = 'bind',
+    repository = false,
   ): Pick<MachineSpec, 'gitDir' | 'repository' | 'user' | 'gitGuard'> => {
     if (root === undefined) return {};
+    /*
+     * The folder is below a repository's root, and that root is not the
+     * session's folder: a session working in `~/.config/nvim` would otherwise
+     * mount the whole of `$HOME` read-write, because the root is what the
+     * runtime mounts in place of the folder. It reaches the machine only where
+     * the profile says `sessionRepository`, and without it neither the root nor
+     * the git directory beside it does - that directory is not under the folder
+     * either, so mounting it alone would put part of a repository the session
+     * cannot see inside the machine. The folder itself still reaches the
+     * machine where the profile says `sessionFolder` - decision
+     * `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
+     */
+    if (asked.repository !== undefined && !repository) {
+      noted(`the profile does not say sessionRepository, so ${asked.folder} is mounted without ${asked.repository}, the repository it is in, and without its git directory`);
+      return {};
+    }
     const tree = asked.repository ?? root;
     if (asked.gitDir === undefined) return asked.repository === undefined ? {} : { repository: asked.repository };
     const user = runsAsHost(asked.gitDir, tree, guard) ? hostUser() : undefined;
@@ -1048,9 +1091,26 @@ export const apply: Plugin['apply'] = (host, options) => {
     return { ...spawn, ...(inside === undefined ? {} : { workingDirectory: inside }) };
   };
 
+  /*
+   * What deleting one of its machines' sessions when it is not running does to
+   * the copy inside, read from the same label `nestedHost` reads its `host`
+   * from.
+   *
+   * Undefined for a machine that is not there, which is the same answer a
+   * machine whose profile says nothing gives - the host reads both as
+   * `inside`, and a machine that has gone is a copy that went with it.
+   */
+  const nestedDelete: NonNullable<ComputerPort['nestedDelete']> = async (id) => {
+    const held = await made.inspect(id);
+    if (held === undefined) return undefined;
+    const key = profileOf(held);
+    return key === undefined ? undefined : profiles?.[key]?.nestedDelete;
+  };
+
   host.registerComputers({
     how: reach,
     nested: nestedHost,
+    nestedDelete,
     /*
      * The agents one was prepared for, read back from its own label.
      *
@@ -1297,9 +1357,15 @@ export const apply: Plugin['apply'] = (host, options) => {
           await made.run({
             ...spec,
             label,
-            // The repository the session's folder belongs to, behind the same
-            // gate as the folder.
-            ...withGit(asked, profile.sessionFolder === true ? asked.folder : undefined, profile.gitGuard),
+            // The repository the session's folder belongs to, behind a gate of
+            // its own: `sessionRepository` for the root it sits below and the
+            // git directory beside it, `sessionFolder` for the folder.
+            ...withGit(
+              asked,
+              profile.sessionFolder === true ? asked.folder : undefined,
+              profile.gitGuard,
+              profile.sessionRepository === true,
+            ),
             disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
             // The session this machine is made for, which is what a daemon
             // restarting finds it by, and the daemon making it, which is what

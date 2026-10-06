@@ -1,6 +1,6 @@
 ---
 title: The git directory is read-only but what a commit writes
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:

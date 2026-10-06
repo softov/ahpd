@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
 import { computersFor, machineRefusal } from '../../sdk/src/computers.js';
-import { pinnedOf, readParts } from '../src/parts.js';
+import { dockerfileOf, readParts, tagOf } from '../src/parts.js';
+import type { Part } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
@@ -623,6 +624,36 @@ it('the scripted docker refuses two mounts at one target, as Docker does', async
   })).rejects.toThrow(/Duplicate mount point: \/shared/);
 });
 
+it('finds a computer by its own name before a container that merely has it', async () => {
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  writeFileSync(state, JSON.stringify({
+    machines: [
+      // Somebody else's container, named what this host's machine is named:
+      // `bare` is a container with none of this host's labels on it.
+      { name: 'web', image: 'nginx:latest', labels: {}, bare: true },
+      // This host's, which Docker knows by the name the CLI gave it and the
+      // host by the name the create gave it.
+      { name: 'ahpd-computer-1a2b3c4d', image: 'node:22', labels: { 'ahpd.computer': '1', 'ahpd.name': 'web' } },
+    ],
+    calls: [],
+  }));
+  const runtime = dockerRuntime({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    label: 'ahpd.computer=1',
+  });
+
+  // `docker inspect web` succeeds for a container, an image or a volume named
+  // that, so a lookup that asks it first runs every verb - `rm -f` among them -
+  // on whatever answered.
+  await runtime.remove('web');
+  const held = JSON.parse(readFileSync(state, 'utf8')) as Held;
+  expect(held.calls.filter((one) => one[0] === 'rm')).toEqual([['rm', '-f', 'ahpd-computer-1a2b3c4d']]);
+  expect(held.machines.map((one) => one.name)).toEqual(['web']);
+});
+
 it('offers a machine only to the agents it was prepared for', async () => {
   const dir = temp();
   const state = join(dir, 'docker.json');
@@ -1157,7 +1188,17 @@ it('reads a machine with no recorded needs again from the needs its agents decla
  * it has. A part that will not build is left out, and only a session whose
  * agent needs it is refused.
  */
-const PARTS = new Map(readParts().map((one) => [one.id, one.kind === 'ahpd' ? one.version : pinnedOf(one)]));
+/*
+ * What a part's tag says after its name: the version, and the short hash of the
+ * Dockerfile that writes it. It is read out of `tagOf` rather than spelled,
+ * because the hash is a hash of text these cases do not hold.
+ */
+const versionOf = (one: Part): string => {
+  if (one.kind === 'ahpd') return one.version;
+  const tag = tagOf(one, undefined, dockerfileOf(one));
+  return tag.slice(tag.lastIndexOf(':') + 1);
+};
+const PARTS = new Map(readParts().map((one) => [one.id, versionOf(one)]));
 const at = (id: string): string => `${id}@${PARTS.get(id) ?? ''}`;
 const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 

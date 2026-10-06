@@ -1,6 +1,6 @@
 ---
 title: A machine mounts the git directory beside its folder
-status: implemented
+status: done
 depends: [task-01-the-host-hands-on-the-git-directory.md]
 layer: "computer"
 refs:

@@ -2,7 +2,7 @@
 
 import { spawn } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
 
 /** What a detached daemon records about itself. */
@@ -121,25 +121,41 @@ const recorded = (): Running | undefined => {
   catch { return undefined; }
 };
 
-/** The temp file a process writes the record to before renaming it into place, by its pid. */
-const TEMP = /^daemon\.json\.(\d+)\.tmp$/u;
+/**
+ * The temp file a writer leaves beside the file it replaces whole.
+ *
+ * Every writer here names its scratch the same way - the daemon's own record,
+ * the users file, the policies, the automations, the machine owners, the vault -
+ * so one pattern reads them all, and the pid in the name is what says whether
+ * the process that wrote it is still there.
+ */
+const TEMP = /^(.+)\.(\d+)\.tmp$/u;
 
 /**
- * Remove the temp files of processes that are gone.
+ * Remove the temp files of processes that are gone, beside each file named.
  *
- * A temp is named by its writer's pid, so one process leaves at most one, and
- * only when it died between the write and the rename; this clears those.
+ * A temp is named by its writer's pid, so one process leaves at most one per
+ * file, and only when it died between the write and the rename; this clears
+ * those. The file itself need not exist: a writer killed before its first
+ * rename leaves the scratch and nothing else, and clearing it is the point.
  */
-const sweepTemps = (): void => {
-  const dir = dirname(daemonPath());
-  let names: string[];
-  try { names = readdirSync(dir); }
-  catch { return; }
-  for (const name of names) {
-    const pid = Number(TEMP.exec(name)?.[1]);
-    if (!Number.isInteger(pid) || pid === process.pid || present(pid)) continue;
-    try { unlinkSync(join(dir, name)); }
-    catch { /* another process swept it first */ }
+export const sweepTemps = (beside: readonly string[]): void => {
+  for (const file of beside) {
+    const dir = dirname(file);
+    const name = basename(file);
+    let names: string[];
+    try { names = readdirSync(dir); }
+    catch { continue; }
+    for (const found of names) {
+      const match = TEMP.exec(found);
+      // Only this file's own scratch: `notes.json.7.tmp` beside the policies is
+      // somebody else's, whatever its shape.
+      if (match === null || match[1] !== name) continue;
+      const pid = Number(match[2]);
+      if (!Number.isInteger(pid) || pid === process.pid || present(pid)) continue;
+      try { unlinkSync(join(dir, found)); }
+      catch { /* another process swept it first */ }
+    }
   }
 };
 
@@ -393,7 +409,7 @@ export async function start(argv: string[], self: string, token?: string, replac
 export function claim(record: Running, replacing?: number): Running | undefined {
   const already = recorded();
   if (already !== undefined && already.pid !== replacing && alive(already.pid)) return already;
-  sweepTemps();
+  sweepTemps([daemonPath()]);
   // Written whole beside it and renamed over it, so a reader never sees half a record.
   const written = `${daemonPath()}.${String(process.pid)}.tmp`;
   writeFileSync(written, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });

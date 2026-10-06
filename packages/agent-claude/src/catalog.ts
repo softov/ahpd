@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import { uriOf } from '@ahpd/sdk';
 import type { Listed } from '@ahpd/sdk';
 
 /**
@@ -27,7 +28,7 @@ const listed = (info: SDKSessionInfo, dir: string): Listed => ({
   title: info.customTitle ?? info.summary ?? info.firstPrompt ?? 'Session',
   createdAt: new Date(info.createdAt ?? info.lastModified).toISOString(),
   modifiedAt: new Date(info.lastModified).toISOString(),
-  workingDirectories: [`file://${info.cwd ?? dir}`],
+  workingDirectories: [uriOf(info.cwd ?? dir)],
 });
 
 export async function catalogue(dir: string): Promise<Listed[]> {

@@ -136,9 +136,18 @@ export interface SecretRow {
 }
 
 export const declareVault = (registry: Registry<object>, served?: ServedFacts): Command[] => {
-  // Where the vault is, and no other daemon flag; served, the daemon's own, so
-  // no field could name another.
+  /*
+   * Where the vault is, and no other daemon flag; served, the daemon's own, so
+   * no field could name another.
+   *
+   * It is `vault list`'s alone among the three. A listing reads a configuration
+   * to say where a name is referenced before it is set, and the two that write
+   * reach `vaultPath()` - the vault beside the configuration this run reads - so
+   * a flag naming another file would keep a secret in a store nothing else
+   * opens, and one that took the flag and read it by nothing is worse still.
+   */
   const fields = served === undefined ? vaultAt : {};
+  const writing = {};
 
   const set = registry.action({
     id: 'vault.set',
@@ -146,7 +155,7 @@ export const declareVault = (registry: Registry<object>, served?: ServedFacts): 
     description: 'At a terminal the value is standard input, pipe the value on standard input, and never the command line. Over /api it is the body\'s "value".',
     surfaces: { cli: { pattern: ['vault', 'set', ':name'] }, http: { method: 'POST', path: '/vault/set/{name}' } },
     input: {
-      ...fields,
+      ...writing,
       name: { type: 'string', description: 'The name to keep it under, as host:<name>, team:<team>/<name> or user:<id>/<name>.' },
       ...(served === undefined ? {} : { value: { type: 'string', description: 'The value to keep. No verb here ever answers it.' } }),
     },
@@ -182,7 +191,7 @@ export const declareVault = (registry: Registry<object>, served?: ServedFacts): 
     summary: 'Take a name out',
     description: 'A name the vault does not hold is a conflict, so a script can tell an absent name from a taken one.',
     surfaces: { cli: { pattern: ['vault', 'delete', ':name'] }, http: { method: 'POST', path: '/vault/delete/{name}' } },
-    input: { ...fields, name: { type: 'string', description: 'The name to take out.' } },
+    input: { ...writing, name: { type: 'string', description: 'The name to take out.' } },
     scopes: [],
     run: async (context) => {
       bounded(context, []);

@@ -1,6 +1,6 @@
 ---
 title: A call ends when either side does, and on a timeout
-status: implemented
+status: done
 depends: [task-04-the-call-streams-through.md]
 layer: "server"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: The gate refuses a method it does not know, and the proxy sends a call once
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -67,10 +67,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A method in neither table is refused](task-01-a-method-in-neither-table-is-refused.md) | todo | - |
-| [02 - shutdown needs config:change](task-02-shutdown-needs-config-change.md) | todo | 01 |
-| [03 - Only a call that never connected goes to the next provider](task-03-only-a-call-that-never-connected-is-retried.md) | todo | - |
-| [04 - A provider's key refusal is the proxy's own error](task-04-a-providers-key-refusal-is-the-proxys-own-error.md) | todo | - |
+| [01 - A method in neither table is refused](task-01-a-method-in-neither-table-is-refused.md) | done | - |
+| [02 - shutdown needs config:change](task-02-shutdown-needs-config-change.md) | done | 01 |
+| [03 - Only a call that never connected goes to the next provider](task-03-only-a-call-that-never-connected-is-retried.md) | done | - |
+| [04 - A provider's key refusal is the proxy's own error](task-04-a-providers-key-refusal-is-the-proxys-own-error.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -78,8 +78,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-method-in-neither-table-is-refused.md](task-01-a-method-in-neither-table-is-refused.md).
+- **Done so far:** all four tasks, each with its case failing first and passing after - [implemented.md](implemented.md).
+- **Next action:** none; the plan awaits review.
 - **Open questions:** none.
 - **Watch out for:** an unknown method is `-32601` before the gate (host.ts:1030-1035) and stays so; only a served method reaches the fail-closed refusal.
 

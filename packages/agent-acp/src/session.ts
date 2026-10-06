@@ -24,7 +24,7 @@
  */
 
 import { resolve } from 'node:path';
-import { Status } from '@ahpd/sdk';
+import { Status, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createConfig } from './session/config.js';
@@ -181,7 +181,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       touch();
     },
     modifiedAt: () => modified,
-    workingDirectories: () => [`file://${where}`],
+    workingDirectories: () => [uriOf(where)],
 
     sessionState: () => ({
       resource: start.uri,
@@ -191,7 +191,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title: ctx.title }],
-      workingDirectories: [`file://${where}`],
+      workingDirectories: [uriOf(where)],
       customizations: [...seeds, ...ctx.commands],
       ...(activity !== undefined ? { activity } : {}),
       // The schema *and* what is in force: a client reads

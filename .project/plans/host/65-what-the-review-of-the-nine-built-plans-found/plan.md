@@ -1,7 +1,7 @@
 ---
 title: What the review of the nine built plans found is fixed
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -105,12 +105,12 @@ Every finding was read in the code at `e1c4ccc` before its task was written; whe
 
 | Child plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The gate refuses a method it does not know, and the proxy sends a call once](../65-what-the-review-of-the-nine-built-plans-found-p1-the-gate-and-the-proxy/plan.md) | planned | - |
-| [p2 - A machine cannot change what git on the host runs, or reach another repository](../65-what-the-review-of-the-nine-built-plans-found-p2-a-machines-git-directory/plan.md) | planned | - |
-| [p3 - A file URI keeps every character of its path, and every temp file is private and swept](../65-what-the-review-of-the-nine-built-plans-found-p3-file-uris-and-private-files/plan.md) | planned | - |
-| [p4 - An image holds what its tag says](../65-what-the-review-of-the-nine-built-plans-found-p4-parts/plan.md) | planned | - |
-| [p5 - A nested host has one process per session, and a dev container is made only where it is allowed](../65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/plan.md) | planned | - |
-| [p6 - Each verb takes only what it reads, and the records name the right things](../65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/plan.md) | planned | - |
+| [p1 - The gate refuses a method it does not know, and the proxy sends a call once](../65-what-the-review-of-the-nine-built-plans-found-p1-the-gate-and-the-proxy/plan.md) | built | - |
+| [p2 - A machine cannot change what git on the host runs, or reach another repository](../65-what-the-review-of-the-nine-built-plans-found-p2-a-machines-git-directory/plan.md) | built | - |
+| [p3 - A file URI keeps every character of its path, and every temp file is private and swept](../65-what-the-review-of-the-nine-built-plans-found-p3-file-uris-and-private-files/plan.md) | built (the workspace is at 0.10.0) | - |
+| [p4 - An image holds what its tag says](../65-what-the-review-of-the-nine-built-plans-found-p4-parts/plan.md) | built | - |
+| [p5 - A nested host has one process per session, and a dev container is made only where it is allowed](../65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/plan.md) | built | - |
+| [p6 - Each verb takes only what it reads, and the records name the right things](../65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/plan.md) | built | - |
 
 ## Risks and tradeoffs
 
@@ -119,9 +119,9 @@ Every finding was read in the code at `e1c4ccc` before its task was written; whe
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** p1, the gate; then p2. The others are independent.
-- **Open questions:** none.
+- **Done so far:** p1, p2 and p3, each built with every task's case failing first and passing after - [p1 implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p1-the-gate-and-the-proxy/implemented.md), [p2 implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p2-a-machines-git-directory/implemented.md), [p3 implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p3-file-uris-and-private-files/implemented.md). p3's task 03 was blocked on one number and is `implemented` now: Softov answered 0.10.0, so the four agents' `@ahpd/sdk` peer range is `>=0.10` and the eight workspace packages are 0.10.0. p4 is built, all four tasks implemented with their cases failing first - [p4 implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p4-parts/implemented.md); its task 03 was blocked on whether it takes the `packOf` read too, Softov answered yes, and a checkout can now pack its own ahpd part. p5's tasks 01 through 08 are implemented with their cases failing first, and its [implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/implemented.md) records the package gates; the whole-package run caught one thing no p5 task's file named, and `containerOf` answering `undefined` for a name this host did not make is the fix. p6 is built too: its five tasks are implemented and its [implemented.md](../65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/implemented.md) records the gates. Every child is built.
+- **Next action:** Softov's review of this plan; the reviewed plans' task statuses are set `done` after it. [implemented.md](implemented.md) records every gate: `npx tsc -b`, `pnpm boundary`, and `pnpm test` for `packages/sdk` (106 files, 1496 tests), `packages/server` (38 files, 735 tests) and `packages/computer` (17 files, 285 tests), plus the four agents. `pnpm build` was not run: it writes the eight packages' tracked `dist`, which no task in this plan asked for, and no child ran it either.
+- **Open questions:** none. Both were answered by Softov on 2026-10-06: the next published workspace version (0.10.0, under p3 task 03, which host/59 task 05 also waited on) and whether p4 task 03 takes the `packOf` read too (yes - that is a row in p4's second table).
 - **Watch out for:** every task starts with a test that fails on the code before it; a fix with no failing test first is not done. The reviewed plans' task statuses stay as they are until this plan is reviewed.
 
 ## Final verification checklist

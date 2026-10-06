@@ -1,6 +1,6 @@
 ---
 title: Every command reaches a dev container by docker exec
-status: implemented
+status: done
 depends: [task-17-docker-exec-matches-devcontainer-exec.md]
 layer: "computer"
 refs:

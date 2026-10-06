@@ -1,6 +1,6 @@
 ---
 title: The reviewed plans' records name the right things
-status: todo
+status: done
 depends: []
 layer: "docs"
 refs:
@@ -36,3 +36,14 @@ Each record the review found wrong says what is true: the function a ref names, 
 - `rg -n "onDue" .project/plans/host/44-*p2*` finds only the plan's search line; `rg -n "ae250ef|2cb298d" .project/plans/*/0*/implemented.md` finds only container/03's line 25.
 
 ## Resume
+
+Implemented, six records, no task status touched in any of the plans they belong to.
+
+- host/44 p2 task 02's ref note names `due`, the function at `packages/sdk/src/host/automations.ts:233`, where it named `onDue` - the option the host registers that body as, at `host.ts:814`.
+- container/04's Next action is Softov's review alone; the question it also pointed at is answered in `implemented.md`'s Open questions.
+- container/04 task 09's Resume line says the same question was answered, and how: read, archived and terminal actions stay allowed, as Softov chose on 2026-10-06.
+- container/03's `implemented.md` ref is `git://52f98f6`, "container/03: a dev container is a computer, reached by docker exec"; `git://ae250ef` stays where line 25 says it belongs, as the 0.9.0 base it was rebased onto.
+- proxy/02's `implemented.md` ref is `git://3e93f6a`, "proxy/02: the proxy serves a person's model calls", where it named the plan commit `git://2cb298d`.
+- daemon/15's remaining `--config-file` line points at [host/65 p6 task 02](task-02-vault-set-and-delete-refuse-config-file.md) and says the fix was a declaration rather than the behaviour change that line took it for.
+
+Both validation greps run: `rg -n "onDue" .project/plans/host/44-*p2*` finds only the plan's own search line, and `rg -n "ae250ef|2cb298d" .project/plans/*/0*/implemented.md` finds only container/03's line 25.

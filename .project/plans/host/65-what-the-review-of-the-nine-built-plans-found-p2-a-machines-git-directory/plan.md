@@ -1,7 +1,7 @@
 ---
 title: A machine cannot change what git on the host runs, or reach another repository
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -83,11 +83,11 @@ placedIn -> repositoryOf(folder) -> worktrees.gitDir -> { gitDir, repository? }
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The git directory is read-only but what a commit writes](task-01-the-git-directory-is-read-only-but-what-a-commit-writes.md) | todo | - |
-| [02 - A session's git directory is its folder's own](task-02-a-sessions-git-directory-is-its-folders-own.md) | todo | - |
-| [03 - Paths are compared real](task-03-paths-are-compared-real.md) | todo | 01 |
-| [04 - A repository root is mounted only where the profile allows it](task-04-a-repository-root-is-mounted-only-where-allowed.md) | todo | - |
-| [05 - A lock is removed only when it is the machine's](task-05-a-lock-is-removed-only-when-it-is-the-machines.md) | todo | - |
+| [01 - The git directory is read-only but what a commit writes](task-01-the-git-directory-is-read-only-but-what-a-commit-writes.md) | done | - |
+| [02 - A session's git directory is its folder's own](task-02-a-sessions-git-directory-is-its-folders-own.md) | done | - |
+| [03 - Paths are compared real](task-03-paths-are-compared-real.md) | done | 01 |
+| [04 - A repository root is mounted only where the profile allows it](task-04-a-repository-root-is-mounted-only-where-allowed.md) | done | - |
+| [05 - A lock is removed only when it is the machine's](task-05-a-lock-is-removed-only-when-it-is-the-machines.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -97,14 +97,14 @@ placedIn -> repositoryOf(folder) -> worktrees.gitDir -> { gitDir, repository? }
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-git-directory-is-read-only-but-what-a-commit-writes.md](task-01-the-git-directory-is-read-only-but-what-a-commit-writes.md).
+- **Done so far:** all five tasks, each with its case failing first and passing after - [implemented.md](implemented.md).
+- **Next action:** none; the plan awaits review.
 - **Open questions:** none. The main checkout is answered in the decision: its root is writable, with `commondir`, `config.worktree`, `config`, `packed-refs`, `info/` and `hooks/` pinned read-only.
 - **Watch out for:** p7's tests in `computer-disposable.test.ts:1366-1515` pin today's binds; change them with the decision, not around it.
 
 ## Final verification checklist
 
-- [ ] Each task's case fails on the code before it and passes after.
-- [ ] By hand, a disposable session with `isolation: worktree` commits in its machine, and `echo x > <gitDir>/commondir` in the machine fails.
-- [ ] `docs/COMPUTER.md` says what is writable.
-- [ ] `plans/index.md` updated.
+- [x] Each task's case fails on the code before it and passes after.
+- [x] By hand, a disposable session with `isolation: worktree` commits in its machine, and `echo x > <gitDir>/commondir` in the machine fails - as `computer-git-guard.test.ts` against real Docker rather than typed at a prompt; see implemented.md.
+- [x] `docs/COMPUTER.md` says what is writable.
+- [x] `plans/index.md` updated.

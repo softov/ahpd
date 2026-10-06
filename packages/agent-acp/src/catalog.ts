@@ -15,6 +15,7 @@
  */
 
 import type { AgentCapabilities, ContentBlock, ListSessionsRequest, SessionInfo, SessionUpdate } from '@agentclientprotocol/sdk';
+import { uriOf } from '@ahpd/sdk';
 import type { Listed } from '@ahpd/sdk';
 import { connectAcp } from './connection.js';
 import { replayedTurns } from './transcript.js';
@@ -80,7 +81,7 @@ const listedOf = (session: WatchedSession): Listed => ({
   title: session.title,
   createdAt: session.createdAt,
   modifiedAt: session.modifiedAt,
-  workingDirectories: [session.cwd, ...session.additional].map((directory) => `file://${directory}`),
+  workingDirectories: [session.cwd, ...session.additional].map((directory) => uriOf(directory)),
 });
 
 /**
@@ -98,7 +99,7 @@ const listedFrom = (info: SessionInfo, now: string): Listed => {
     title: info.title ?? info.sessionId,
     createdAt: at,
     modifiedAt: at,
-    workingDirectories: [info.cwd, ...(info.additionalDirectories ?? [])].map((directory) => `file://${directory}`),
+    workingDirectories: [info.cwd, ...(info.additionalDirectories ?? [])].map((directory) => uriOf(directory)),
   };
 };
 

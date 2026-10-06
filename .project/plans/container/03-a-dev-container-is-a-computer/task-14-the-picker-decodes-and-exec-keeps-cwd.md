@@ -1,6 +1,6 @@
 ---
 title: The picker decodes the session folder, and a dev container keeps the working directory asked for
-status: implemented
+status: done
 depends: [task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "computer"
 refs:

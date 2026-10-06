@@ -1,6 +1,6 @@
 ---
 title: Read-only needs reach a dev container through an override config
-status: implemented
+status: done
 depends: [task-07-the-fake-cli-behaves-like-the-real-one.md]
 layer: "computer"
 refs:

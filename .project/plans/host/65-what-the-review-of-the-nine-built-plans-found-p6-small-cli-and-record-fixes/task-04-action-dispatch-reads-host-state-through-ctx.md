@@ -1,6 +1,6 @@
 ---
 title: Action dispatch reads host state through ctx
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -26,3 +26,7 @@ refs:
 - `pnpm typecheck` passes; `rg -nw "advancedTools|contributed|contributing|restartNeeded" packages/sdk/src/host/actions.ts` finds only `ctx.` reads and comments.
 
 ## Resume
+
+Implemented. The four names are gone from the destructuring, and the comment left in their place says why the rest is bound and they are not: they change while a connection is open, so a bound copy would be the value from when it opened. No case could fail first, as the plan's Risks says; the check is the grep, which now finds only `ctx.` reads, the write at 358 through `ctx`, and comments.
+
+Gates: `npx tsc -b` clean, and the sdk package's tests.

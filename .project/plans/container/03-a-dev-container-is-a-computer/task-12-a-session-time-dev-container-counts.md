@@ -1,6 +1,6 @@
 ---
 title: A dev container made at session start needs computer:write
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

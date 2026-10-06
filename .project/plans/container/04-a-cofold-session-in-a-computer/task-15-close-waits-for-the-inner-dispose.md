@@ -1,6 +1,6 @@
 ---
 title: Close waits for the inner session to be disposed
-status: implemented
+status: done
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:

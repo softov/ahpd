@@ -110,7 +110,7 @@ describe('describePlugin', () => {
     const row = await listing('./fixtures/plugin-incompatible');
 
     expect(row.state).toBe('incompatible');
-    expect(row.problem).toContain('^0.10.0');
+    expect(row.problem).toContain('^0.11.0');
     expect(row.problem).toContain(sdkVersion());
     expect((globalThis as Record<string, unknown>).__pluginIncompatibleImported).toBeUndefined();
   });

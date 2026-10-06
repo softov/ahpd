@@ -1,9 +1,10 @@
 import { spawn as startProcess } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { uriOf } from '../src/fileuri.js';
 import { createHost } from '../src/host.js';
 import { chatUriFor } from '../src/host/channels.js';
 import { nestedAgent } from '../src/nested.js';
@@ -120,6 +121,20 @@ const proxy = (open: () => ChildProcessWithoutNullStreams | Promise<ChildProcess
   nestedAgent(PROVIDER, { plugins: [FIXTURE], start: async () => await open() as unknown as NestedHost, timeoutMs: PATIENCE });
 
 /**
+ * The proxy as a backend a host serves with more than one directory.
+ *
+ * A restart that adds a directory is what these cases are about, and a host
+ * refuses `session/workingDirectorySet` for a backend that works in one - so
+ * the agent the host is given has to say it takes several. Everything else is
+ * what the string form of `nestedAgent` puts on an agent itself.
+ */
+const manyDirectories = (open: () => ChildProcessWithoutNullStreams | Promise<ChildProcessWithoutNullStreams>) =>
+  nestedAgent(
+    { provider: PROVIDER, displayName: PROVIDER, multipleDirectories: true, schema: () => ({ properties: {} }), defaults: () => ({}) } as unknown as Agent,
+    { plugins: [FIXTURE], start: async () => await open() as unknown as NestedHost, timeoutMs: PATIENCE },
+  );
+
+/**
  * An outer host serving the proxy, with one client watching a nested session.
  *
  * The client is a peer that keeps every notification, so a case reads what the
@@ -231,6 +246,78 @@ it('every chat a turn through a real inner host names is the outer chat', async 
   await served.host.close();
 }, 40_000);
 
+it('a restart waits for the inner host it replaces, and resumes its conversation', async () => {
+  const env = home();
+  const started: ChildProcessWithoutNullStreams[] = [];
+  /** Set when the first process's own `close` arrived. */
+  let firstGone = false;
+  /** Set when a second process was asked for while the first was still there. */
+  let replacedTooEarly = false;
+  const served = await outer(manyDirectories(() => {
+    const one = ahpd(env);
+    started.push(one);
+    if (started.length > 1 && !firstGone) replacedTooEarly = true;
+    one.once('close', () => { if (one === started[0]) firstGone = true; });
+    return one;
+  }));
+
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words' } });
+  await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete'));
+
+  /** What the inner host has written down about the session it is running. */
+  const kept = (): Bag[] => {
+    try {
+      const file = join(env.XDG_STATE_HOME as string, 'nested-echo', 'nested-outer.json');
+      return (JSON.parse(readFileSync(file, 'utf8')) as Bag).turns as Bag[];
+    }
+    catch { return []; }
+  };
+  await until(() => kept().length === 1);
+  expect(kept().map((turn) => turn.message?.text)).toEqual(['first words']);
+
+  const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-elsewhere-'));
+  made.push(elsewhere);
+  served.dispatch(served.uri, { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) });
+  // The host hands the action back once the restart behind it is over, so this
+  // is the moment both processes have had their say.
+  await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/workingDirectorySet'));
+
+  expect(started).toHaveLength(2);
+  // The one it replaces is gone before the one that replaces it is started:
+  // two hosts on one session would both write the transcript under it.
+  expect(replacedTooEarly).toBe(false);
+
+  // And the new one continues the conversation rather than starting another.
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second words' } });
+  await until(() => kept().length === 2);
+  expect(kept().map((turn) => turn.message?.text)).toEqual(['first words', 'second words']);
+  await served.host.close();
+}, 60_000);
+
+it('a restart before the first turn starts a session the inner host does not hold', async () => {
+  const env = home();
+  const started: ChildProcessWithoutNullStreams[] = [];
+  const served = await outer(manyDirectories(() => {
+    const one = ahpd(env);
+    started.push(one);
+    return one;
+  }));
+
+  const elsewhere = mkdtempSync(join(tmpdir(), 'ahpd-nested-elsewhere-'));
+  made.push(elsewhere);
+  served.dispatch(served.uri, { type: 'session/workingDirectorySet', directory: uriOf(elsewhere) });
+  await until(() => served.on(served.uri).some(({ action }) => action.type === 'session/workingDirectorySet'));
+  expect(started).toHaveLength(2);
+
+  served.dispatch(served.chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first words' } });
+  // The turn ends either way, so the case reads what happened rather than
+  // waiting out a turn that nothing is going to answer.
+  await until(() => served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete' || action.type === 'chat/error'));
+  expect(served.on(served.uri).filter(({ action }) => action.type === 'session/creationFailed')).toEqual([]);
+  expect(served.on(served.chatUri).some(({ action }) => action.type === 'chat/turnComplete')).toBe(true);
+  await served.host.close();
+}, 60_000);
+
 it('a resumed session continues the transcript the inner host kept under its id', async () => {
   const env = home();
   const first = recorder();
@@ -253,15 +340,59 @@ it('a resumed session continues the transcript the inner host kept under its id'
   two.close();
 }, 60_000);
 
-it('a resume the inner host has no transcript for ends with a sentence naming the id', async () => {
+it('a resume the inner host has no transcript for makes the session there', async () => {
+  const env = home();
   const { emit, of, has } = recorder();
-  const session = proxy(() => ahpd(home())).create(start(emit, { resume: 'never-ran-here' }));
-  await until(() => has('session/creationFailed'));
-  const said = String(of('session/creationFailed')?.error?.message);
-  expect(said).toMatch(/never-ran-here/);
-  expect(said).toMatch(/computer:\/\/box/);
+  const session = proxy(() => ahpd(env)).create(start(emit, { resume: 'never-ran-here' }));
+  /*
+   * The resume names an id the machine has nothing under - a session made
+   * before the machine was, or one whose machine has gone. The inner host
+   * answers the subscribe with `No agent for session`, and the session is made
+   * there under that same id rather than the turn being refused.
+   */
+  session.begin('t1', 'first words');
+  await until(() => has('chat/turnComplete') || has('session/creationFailed'));
+  expect(of('session/creationFailed')).toBeUndefined();
+  expect(has('chat/turnComplete')).toBe(true);
+  expect(session.agentId()).toBe('never-ran-here');
+  // And the inner host kept it under the resumed id, which is where the next
+  // resume looks for it.
+  await until(() => {
+    try {
+      const kept = JSON.parse(readFileSync(join(env.XDG_STATE_HOME as string, 'nested-echo', 'never-ran-here.json'), 'utf8')) as Bag;
+      return (kept.turns as Bag[]).length === 1;
+    }
+    catch { return false; }
+  });
   session.close();
-}, 40_000);
+}, 60_000);
+
+it('a restart goes on once the process is gone, with its pipes still held open', async () => {
+  const lines: string[] = [];
+  const { emit } = recorder();
+  /*
+   * A machine whose host leaves something behind that inherits its stdout: the
+   * process is gone at once, and the pipes this host reads stay open until that
+   * something lets go - so `close` says nothing for seconds, and the process's
+   * own `exit` is the only word that it has gone.
+   */
+  const inner = shell('sleep 8 & exit 0');
+  const session = nestedAgent(PROVIDER, {
+    plugins: [FIXTURE],
+    start: async () => inner as unknown as NestedHost,
+    timeoutMs: PATIENCE,
+    log: (line) => lines.push(line),
+  }).create(start(emit));
+  await until(() => inner.exitCode !== null);
+
+  const waited = await Promise.race([
+    Promise.resolve(session.close(false)).then(() => 'gone'),
+    new Promise((resolve) => { setTimeout(() => resolve('still open'), 6_000); }),
+  ]);
+  expect(waited).toBe('gone');
+  // And not by the bound: the process itself said it had gone.
+  expect(lines.some((line) => line.includes('is still there'))).toBe(false);
+}, 30_000);
 
 it('a closed session stops an inner host that will not take SIGTERM, within the bound', async () => {
   const { emit, has } = recorder();

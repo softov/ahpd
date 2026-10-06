@@ -43,9 +43,10 @@ export const bounded = (context: Pick<CommandContext, 'request' | 'surface'>, gr
 /**
  * The directory, its path and the address a URL would name.
  *
- * `--host` and `--port` here are for the daemon that was started with those
- * flags rather than with a configuration file, so `user token --url` names
- * where it actually is. The configuration's issuer is passed too, so
+ * The address is read for the daemon that was started with `--host` and
+ * `--port` rather than with a configuration file, so `user token --url` names
+ * where it actually is; those two are that verb's flags alone, and every other
+ * verb is refused them. The configuration's issuer is passed too, so
  * `user list` says where a record that names none signs in; nothing here asks
  * a network. Served, the daemon's own directory and bound address are used, and
  * a daemon with no directory refuses.

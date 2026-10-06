@@ -2,6 +2,7 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, SessionInputRequestKind } from '@microsoft/agent-host-protocol';
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
 import { computerId, computersFor } from '../computers.js';
+import { uriOf } from '../fileuri.js';
 import { nestedAgent } from '../nested.js';
 import { idOf, uriFor, Status } from '../catalog.js';
 import { meter } from '../meter.js';
@@ -763,7 +764,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         title: named_ ?? was?.title ?? session.title(),
         createdAt: was?.createdAt ?? now,
         modifiedAt: now,
-        workingDirectories: workingDirectory !== undefined ? [`file://${workingDirectory}`] : was?.workingDirectories ?? [],
+        workingDirectories: workingDirectory !== undefined ? [uriOf(workingDirectory)] : was?.workingDirectories ?? [],
       });
     }
     return session;

@@ -1,6 +1,6 @@
 ---
 title: The inner host's pipes cannot crash the daemon
-status: implemented
+status: done
 depends: [task-06-docs.md]
 layer: "sdk | test"
 refs:

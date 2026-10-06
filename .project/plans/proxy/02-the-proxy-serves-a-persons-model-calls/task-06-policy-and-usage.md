@@ -1,6 +1,6 @@
 ---
 title: A policy decides the model, and the call is recorded
-status: implemented
+status: done
 depends: [task-02-a-caller-is-somebody.md, task-04-the-call-streams-through.md]
 layer: "server"
 refs:

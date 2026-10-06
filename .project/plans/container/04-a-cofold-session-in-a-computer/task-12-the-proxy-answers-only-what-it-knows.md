@@ -1,6 +1,6 @@
 ---
 title: The proxy answers only what it knows
-status: implemented
+status: done
 depends: [task-10-inner-chat-uris-are-rewritten.md]
 layer: "sdk | test"
 refs:

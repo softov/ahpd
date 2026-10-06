@@ -1,6 +1,6 @@
 ---
 title: The fake Dev Container CLI and the fake Docker refuse what the real ones refuse
-status: implemented
+status: done
 depends: [task-18-every-command-reaches-it-by-docker-exec.md]
 layer: "tests"
 refs:

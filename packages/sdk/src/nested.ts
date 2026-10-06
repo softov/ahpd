@@ -41,11 +41,12 @@
 import { spawn as startProcess } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
-import { AhpClient } from '@microsoft/agent-host-protocol/client';
+import { AhpClient, RpcError } from '@microsoft/agent-host-protocol/client';
 import type { AhpTransport, Subscription, TransportFrame } from '@microsoft/agent-host-protocol/client';
 import { chatReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState, RootAction, RootState, SessionAction, SessionState, StateAction } from '@microsoft/agent-host-protocol';
 import { idOf } from './catalog.js';
+import { uriOf } from './fileuri.js';
 import { subagentChatUri } from './host/channels.js';
 import { ANSWER_TIMEOUT } from './rpc.js';
 import { computerId } from './computers.js';
@@ -69,8 +70,34 @@ const KILL_AFTER = 3_000;
 /** How long closing waits for the inner host to dispose its session before stopping it. */
 const DISPOSE_WAIT = 3_000;
 
+/**
+ * How much longer than `KILL_AFTER` a restart waits for the host inside to go.
+ *
+ * `SIGKILL` cannot be caught, so a process that is still there a second after
+ * it is one nothing here can end - caught in a syscall, or with the pipes this
+ * host reads held open by something it started, which is a program that
+ * misbehaves and is no reason for a machine never to start again. What a
+ * restart needs is that the host it is replacing is not writing the transcript
+ * the new one takes over, and one that has been `SIGKILL`ed and has not gone a
+ * second later is not writing it.
+ */
+const GONE_MARGIN = 1_000;
+
+/** How long a restart waits for a host inside - one still starting, or one it stopped - before going on without it. */
+const HANDOVER_WAIT = KILL_AFTER + GONE_MARGIN;
+
 /** The inner host's root channel, where the agents it serves are listed. */
 const ROOT = 'ahp-root://';
+
+/**
+ * The protocol's code for a session a host does not serve.
+ *
+ * It is what the inner host answers a subscribe with - `No agent for session
+ * ...` - for a session that is neither running nor in its catalogue
+ * (`snapshots.ts`), which is the same answer it gives for one it holds
+ * nothing of.
+ */
+const NO_AGENT = -32001;
 
 /** The session actions about one chat in the session's catalogue. */
 const CATALOGUE = new Set(['session/chatAdded', 'session/chatUpdated', 'session/chatRemoved', 'session/defaultChatChanged']);
@@ -333,7 +360,7 @@ const holds = (list: unknown, id: string): boolean => Array.isArray(list) && lis
 });
 
 /** A `file://` URI for a path, as a session's working directories are spelled. */
-const fileUri = (path: string): string => `file://${path}`;
+const fileUri = (path: string): string => uriOf(path);
 
 /**
  * One proxied session.
@@ -372,12 +399,19 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   let host: NestedHost | undefined;
   /** Whether the inner host's process has gone, so it is not signalled again. */
   let exited = false;
+  /** Resolves when the process has gone - its own `exit`, its pipes closing, or an error - so a caller can wait for the process and not the request. */
+  let onGone: () => void = () => { /* nothing waits before one is started */ };
+  const gone = new Promise<void>((resolve) => { onGone = resolve; });
   let root: RootState | undefined;
   let session: SessionState | undefined;
   let chat: ChatState | undefined;
   let ready = false;
   let ended: string | undefined;
   let closed = false;
+  /** The request that makes the session inside, while it is in flight. */
+  let making: Promise<unknown> | undefined;
+  /** The close in flight, so a second caller waits on the same one. */
+  let closing: Promise<void> | undefined;
   let turn: string | undefined;
   /** The folder this host named, and where it is inside the machine, as URIs. */
   const outside = start.workingDirectory === undefined ? undefined : fileUri(start.workingDirectory);
@@ -520,32 +554,48 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return;
     }
     if (ended !== undefined || closed) return;
-    const state = (watched.result.snapshot?.state ?? {}) as Partial<ChatState>;
-    const finished = (state.turns ?? []).at(-1);
-    const current = state.activeTurn ?? finished;
-    const origin = (summary.origin ?? {}) as Bag;
-    const parent = workers.get(String(origin.chat ?? ''))?.toolCallId;
-    const text = (current?.message as { text?: unknown } | undefined)?.text;
-    worker.opened = subagent(worker.toolCallId, {
-      title: typeof summary.title === 'string' ? summary.title : 'Subagent',
-      ...(typeof text === 'string' ? { prompt: text } : {}),
-      ...(parent === undefined ? {} : { parentToolCallId: parent }),
-    });
-    outerOf.set(inner, worker.opened.uri);
-    if (current !== undefined) worker.turn = current.id;
-    for (const part of current?.responseParts ?? []) {
-      worker.opened.emit({ type: 'chat/responsePart', turnId: worker.opened.turnId, part: outward(part) });
-    }
-    if (state.activeTurn === undefined && finished !== undefined) {
-      settle(worker, { type: finished.state === 'cancelled' ? 'chat/turnCancelled' : finished.state === 'error' ? 'chat/error' : 'chat/turnComplete' });
-    }
+    /*
+     * From here on it is the outer host's own work: the seam that opens the
+     * chat, the parts written into it, and the subscription that follows it.
+     * None of it runs under a caller - `opensWorker` starts this with `void`,
+     * because it is called from the action that announces the worker and has
+     * to answer whether the session serves that chat - so a throw would be a
+     * rejection nobody holds, and this package installs no
+     * `unhandledRejection` handler, which is a daemon that ends because one
+     * worker's chat could not be opened. The session is not that chat: a line
+     * about it, and the session runs on.
+     */
     try {
-      for await (const event of watched.subscription) {
-        if (ended !== undefined || closed || worker.done) return;
-        if (event.type === 'action') toWorker(worker, event.params.action as unknown as Bag);
+      const state = (watched.result.snapshot?.state ?? {}) as Partial<ChatState>;
+      const finished = (state.turns ?? []).at(-1);
+      const current = state.activeTurn ?? finished;
+      const origin = (summary.origin ?? {}) as Bag;
+      const parent = workers.get(String(origin.chat ?? ''))?.toolCallId;
+      const text = (current?.message as { text?: unknown } | undefined)?.text;
+      worker.opened = subagent(worker.toolCallId, {
+        title: typeof summary.title === 'string' ? summary.title : 'Subagent',
+        ...(typeof text === 'string' ? { prompt: text } : {}),
+        ...(parent === undefined ? {} : { parentToolCallId: parent }),
+      });
+      outerOf.set(inner, worker.opened.uri);
+      if (current !== undefined) worker.turn = current.id;
+      for (const part of current?.responseParts ?? []) {
+        worker.opened.emit({ type: 'chat/responsePart', turnId: worker.opened.turnId, part: outward(part) });
       }
+      if (state.activeTurn === undefined && finished !== undefined) {
+        settle(worker, { type: finished.state === 'cancelled' ? 'chat/turnCancelled' : finished.state === 'error' ? 'chat/error' : 'chat/turnComplete' });
+      }
+      try {
+        for await (const event of watched.subscription) {
+          if (ended !== undefined || closed || worker.done) return;
+          if (event.type === 'action') toWorker(worker, event.params.action as unknown as Bag);
+        }
+      }
+      catch { /* the session's own subscriptions say why it ended */ }
     }
-    catch { /* the session's own subscriptions say why it ended */ }
+    catch (error) {
+      log(`${provider} in computer://${id}: the worker chat ${inner} could not be opened: ${reason(error)}`);
+    }
   };
 
   /**
@@ -704,8 +754,17 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     const started: NestedStarted = 'stdin' in answer ? { host: answer } : answer;
     const opened = started.host;
     host = opened;
-    opened.on('close', () => { exited = true; });
-    opened.on('error', () => { exited = true; });
+    opened.on('close', () => { exited = true; onGone(); });
+    opened.on('error', () => { exited = true; onGone(); });
+    /*
+     * And the process's own end, which `close` can be a long way behind: a
+     * child that started something holding its stdout - a machine's own daemon,
+     * a shell's background job - is gone with its pipes still open, so nothing
+     * reports `close` until that something lets go, and a restart waiting for
+     * `close` waits with it. `exit` is the process being gone, which is what
+     * the session after this one has to wait for.
+     */
+    opened.on('exit', () => { exited = true; onGone(); });
     if (closed) {
       stop();
       return;
@@ -753,23 +812,49 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     innerProvider = servedAs((root?.agents ?? []).map((agent) => agent.provider));
     innerSession = `${innerProvider}:/${sessionId}`;
     innerChat = defaultChatFor(innerSession);
-    /*
-     * A resumed session is not created again: the inner host holds it under
-     * the same id, and the first turn forwarded to it resumes it there, the way
-     * any host resumes a session it is not running - decision
-     * `a-nested-session-resumes-its-inner-transcript-by-id`.
-     */
-    if (start.resume === undefined) {
-      await held.request('createSession', {
+    const make = async (): Promise<void> => {
+      /*
+       * Nothing is made for a session that is already being removed.
+       *
+       * `close` reads `making` the moment it is called and waits on it, so a
+       * create that started before the close is one the close can dispose;
+       * this is the other half - a close that arrived while the start-up was
+       * between its own `closed` check and here would otherwise write a
+       * session into the machine after the record of it is gone.
+       */
+      if (closed) return;
+      const asked = held.request('createSession', {
         channel: innerSession,
         provider: innerProvider,
         config: innerConfig(start.settings ?? {}),
         ...(inside === undefined ? {} : { workingDirectories: [inside] }),
       });
-    }
-    const lead = await held.subscribe(innerSession).catch((error: unknown) => {
-      if (start.resume === undefined) throw error;
-      throw new Error(`computer://${id} holds no session ${start.resume} to resume (${reason(error)})`);
+      making = asked;
+      await asked;
+    };
+    /*
+     * A resumed session is not made again: the inner host holds it under the
+     * same id, and the first turn forwarded to it resumes it there, the way any
+     * host resumes a session it is not running - decision
+     * `a-nested-session-resumes-its-inner-transcript-by-id`.
+     *
+     * But this host asks to resume whenever `agentId()` is set, and that is the
+     * session id from the first breath: a restart before the turn inside has
+     * ever run - which is what adding a directory to a brand-new session is -
+     * resumes a session the inner host has never persisted. It answers the
+     * subscribe below with `NO_AGENT`, and that is a session to make rather
+     * than a failure, because the turn about to be sent needs one to run in.
+     * The refusal is the inner host answering the only question that matters -
+     * whether it will serve this session - so it is asked here rather than by
+     * listing its catalogue first, which is a listing of the machine's
+     * transcripts and not always the same set it can read.
+     */
+    if (start.resume === undefined) await make();
+    const lead = await held.subscribe(innerSession).catch(async (error: unknown) => {
+      if (start.resume === undefined || !(error instanceof RpcError) || error.code !== NO_AGENT) throw error;
+      log(`the host inside computer://${id} holds no session ${sessionId} to resume, so one was made`);
+      await make();
+      return await held.subscribe(innerSession);
     });
     session = lead.result.snapshot?.state as SessionState | undefined;
     const named = (session as { defaultChat?: unknown } | undefined)?.defaultChat;
@@ -784,7 +869,16 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     for (const run of waiting.splice(0)) run();
   };
 
-  void bringUp().catch((error: unknown) => {
+  /*
+   * The start, kept so a close can wait for it.
+   *
+   * A close that arrives before this has settled has no process to stop - the
+   * one inside is still on its way in - and it must not answer before there is
+   * one, or the host that replaces this session is started while the host it is
+   * replacing is still coming up.
+   */
+  const starting = bringUp();
+  void starting.catch((error: unknown) => {
     fail(`${provider} could not start a host inside computer://${id}: ${reason(error)}.${lastWords()}`.replace(/\.\s*$/, '.'));
   });
 
@@ -965,21 +1059,159 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     /*
      * Disposed, then stopped: the inner host is asked to dispose its session
      * and its backend and given `DISPOSE_WAIT` to answer, its input is closed,
-     * and the process gets `SIGTERM` and then `SIGKILL`. The caller is not
-     * held; the sequence runs behind it.
+     * and the process gets `SIGTERM` and then `SIGKILL`.
+     *
+     * `removing` says which of the two this close is: a session being deleted
+     * loses the transcript inside, and a session being started again - a
+     * directory added, a folder moved - keeps it, because the inner host
+     * resumes it - decision
+     * `a-nested-session-resumes-its-inner-transcript-by-id`. Only the first
+     * call decides, since it is the one that starts the sequence.
+     *
+     * A restart's promise settles when the process has gone, because the
+     * caller is about to start another host on this same session and two of
+     * them must not be writing one transcript - and it settles at `KILL_AFTER`
+     * plus a margin whatever the process does, so a host inside that will not
+     * go is a line in the log rather than a machine that never starts again. A
+     * removal's settles when the sequence has been sent, as it always did: the
+     * host is going anyway, and `Host.close` waits on it from the outside,
+     * bounded.
      */
-    close: (): void => {
-      if (closed) return;
-      const up = ready && client !== undefined && ended === undefined;
-      closed = true;
-      const held = client;
-      void (async () => {
-        if (up && held !== undefined) {
+    close: (removing = true): Promise<void> => {
+      closing ??= (async () => {
+        closed = true;
+        /*
+         * A restart that arrives while the host inside is still coming up has
+         * no process to stop yet: `host` is set once `startInside` has answered,
+         * and not before. Waiting for the start is what keeps the host that
+         * replaces this session from being started while the host it replaces
+         * is still on its way in - and `bringUp` reads `closed` the moment it
+         * has the process, stops it there and returns, so this wait ends with
+         * the old host already leaving. A start that failed is nothing for this
+         * close to say: it was announced when it happened. The wait is bounded
+         * the way the one for a process that was stopped is, since a start that
+         * never settles would otherwise hold a restart for good.
+         */
+        if (!removing && host === undefined) {
+          const settled = await bounded(starting.then(() => true, () => true), HANDOVER_WAIT);
+          if (settled !== true) log(`${provider}: the host inside computer://${id} had not started ${HANDOVER_WAIT}ms after this session was closed, and it is started again without it`);
+        }
+        const held = client;
+        /*
+         * A session removed while the request that makes the one inside is
+         * still in flight - a nested session deleted a moment after it was
+         * made - is the case the dispose below cannot see for itself: `ready`
+         * is set at the end of the start-up, and the machine's store already
+         * holds what the create wrote, which outlives this host and is what
+         * the next one would resume. Waiting for the answer is what makes the
+         * removal a removal, and a create that failed is a session that was
+         * never made, so the dispose is skipped and the host is stopped as it
+         * was. `make` asks for nothing once `closed` is set, so nothing starts
+         * behind this wait.
+         */
+        const made = removing && making !== undefined
+          ? await making.then(() => true, () => false)
+          : false;
+        const up = (ready || made) && held !== undefined && ended === undefined;
+        if (removing && up && held !== undefined) {
           await bounded(held.request('disposeSession', { channel: innerSession }), DISPOSE_WAIT);
         }
         await held?.shutdown().catch(() => { /* nothing left to say */ });
         stop();
+        /*
+         * And the process, gone: `exit`, `close` or `error`, whichever the
+         * process has said first. `SIGKILL` was sent `KILL_AFTER` ago, so a
+         * process that has not gone by the margin after it is one nothing here
+         * can end, and the restart goes on without it rather than never.
+         */
+        if (!removing && host !== undefined) {
+          const goneYet = await bounded(gone.then(() => true), HANDOVER_WAIT);
+          if (goneYet !== true) log(`${provider}: the host inside computer://${id} is still there ${HANDOVER_WAIT}ms after it was stopped, and it is started again without it`);
+        }
       })();
+      return closing;
     },
   };
+};
+
+/** What deleting a nested session that is not running needs to reach its copy. */
+export interface NestedDeleteAsked {
+  /** The machine's id, as in `computer://<id>`. */
+  id: string;
+  /** The plugins the host inside loads: the recorded plugin of the session's agent. */
+  plugins: string[];
+  /** The id the inner host holds the session under, which is the outer one's. */
+  sessionId: string;
+  /** The session's port, which is where the host inside is started. */
+  computers?: ComputerPort;
+  /** One line worth keeping, for the copy that could not be reached. */
+  log?: (line: string) => void;
+}
+
+/**
+ * A nested session's copy inside its machine, gone.
+ *
+ * The half of a delete a session that is not running has no close for: a host
+ * is started inside the machine for one question. The listing is what puts the
+ * row in that host's catalogue without opening it - the session is not running
+ * there either, and starting its agent only to delete it would be the work of a
+ * resume nobody asked for - and `disposeSession` then takes it out of the
+ * host's store, which is what the next daemon would have listed and resumed.
+ *
+ * A session the inner host does not list is already gone, which is the answer a
+ * delete twice gets. Everything else - no such machine, a host that will not
+ * start, one that does not answer - is a line and never a throw: what was asked
+ * for is that the session is gone from this host, and the copy inside is the
+ * part that could not be reached.
+ */
+export const deleteNested = async (asked: NestedDeleteAsked): Promise<void> => {
+  const say = asked.log ?? ((): void => { /* nothing was given to say it to */ });
+  const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+  const where = `computer://${asked.id}`;
+  let started: NestedStarted;
+  try {
+    started = await startInside({
+      id: asked.id,
+      plugins: asked.plugins,
+      ...(asked.computers === undefined ? {} : { computers: asked.computers }),
+    });
+  }
+  catch (error) {
+    say(`could not delete ${asked.sessionId} inside ${where}: ${reason(error)}`);
+    return;
+  }
+  const opened = started.host;
+  let exited = false;
+  opened.on('close', () => { exited = true; });
+  opened.on('error', () => { exited = true; });
+  const stop = (): void => {
+    if (exited) return;
+    opened.kill('SIGTERM');
+    const later = setTimeout(() => { if (!exited) opened.kill('SIGKILL'); }, KILL_AFTER);
+    later.unref?.();
+  };
+  const client = new AhpClient(
+    stdioTransport(opened, () => { /* its own lines say nothing a delete needs */ }, () => { exited = true; }),
+    { requestTimeoutMs: ANSWER_TIMEOUT },
+  );
+  try {
+    // This is not a session, so there is nothing for the host inside to ask it.
+    client.setServerRequestHandler(async (method: string) => {
+      throw new Error(`this delete answers nothing to the host inside ${where}, so ${method} is not answered`);
+    });
+    client.connect();
+    const hello = await client.initialize({ clientId: `ahpd-nested-delete-${asked.id}`, protocolVersions: [...SUPPORTED_PROTOCOL_VERSIONS] });
+    if (!SUPPORTED_PROTOCOL_VERSIONS.includes(hello.protocolVersion)) {
+      throw new Error(`the host inside ${where} speaks ${hello.protocolVersion}, and this host offered ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}`);
+    }
+    const listed = await client.request('listSessions', { channel: ROOT });
+    const row = listed.items.find((one) => idOf(one.resource) === asked.sessionId);
+    if (row === undefined) say(`${asked.sessionId} is not in ${where} any more, so nothing was deleted there`);
+    else await bounded(client.request('disposeSession', { channel: row.resource }), DISPOSE_WAIT);
+  }
+  catch (error) {
+    say(`could not delete ${asked.sessionId} inside ${where}: ${reason(error)}`);
+  }
+  await client.shutdown().catch(() => { /* nothing left to say */ });
+  stop();
 };

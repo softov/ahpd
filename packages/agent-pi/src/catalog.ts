@@ -13,6 +13,7 @@
  */
 
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import { uriOf } from '@ahpd/sdk';
 import type { Listed } from '@ahpd/sdk';
 import { loadedPi, loadPi } from './pi.js';
 import type { PiOptions, WatchedSession } from './types.js';
@@ -169,7 +170,7 @@ export async function catalogue(
         title: one.name ?? firstLine(one.firstMessage),
         createdAt: one.created.toISOString(),
         modifiedAt: one.modified.toISOString(),
-        workingDirectories: [`file://${one.cwd === '' ? directory : one.cwd}`],
+        workingDirectories: [uriOf(one.cwd === '' ? directory : one.cwd)],
       });
     }
   }
@@ -182,7 +183,7 @@ export async function catalogue(
       title: one.title,
       createdAt: one.createdAt,
       modifiedAt: one.modifiedAt,
-      workingDirectories: [`file://${one.directory}`],
+      workingDirectories: [uriOf(one.directory)],
     });
   }
 

@@ -359,6 +359,104 @@ describe('a call ends when either side does, and on a timeout', () => {
     expect(served.log.join('\n')).toMatch(/p0 429, p1 unreachable[^;]*; p2 answered 200/u);
   });
 
+  it('does not send a call again when the provider that received it dropped the socket', async () => {
+    /*
+     * The first provider reads the whole request and then destroys the socket
+     * without answering, which is a call it received. Sending it to the second
+     * as well spends it twice, so only a failure that says the request never
+     * arrived is a reason to try the next candidate.
+     */
+    const dropped = await fake((_request, response) => { response.socket?.destroy(); });
+    const spare = await fake(answerJson(200, { from: 'spare' }));
+    const served = await proxy({ proxy: table('openai-chat', dropped.endpoint, spare.endpoint), env: keys(2) });
+    const got = await send(served.port, CHAT, { headers: asRoot, body: { model: 'm/x' } });
+    expect(got.status).toBe(502);
+    expect(dropped.received).toHaveLength(1);
+    expect(spare.received).toEqual([]);
+    // The failure the socket drop reads as, and the answer the caller got for
+    // it: the code is undici's, which is the `fetch` a call goes out through.
+    expect(served.log.join('\n')).toContain('p0 unreachable (UND_ERR_SOCKET); answered 502');
+  });
+
+  it('still falls back when the first provider never took the connection', async () => {
+    // A port nothing listens on: the request never arrived, so the next
+    // candidate gets it and the caller gets that one's answer.
+    const gone = await fake(answerJson(200, {}));
+    await gone.close();
+    fakes.splice(fakes.indexOf(gone), 1);
+    const up = await fake(answerJson(200, { from: 'up' }));
+    const served = await proxy({ proxy: table('openai-chat', gone.endpoint, up.endpoint), env: keys(2) });
+    const got = await send(served.port, CHAT, { headers: asRoot, body: { model: 'm/x' } });
+    expect(got.status).toBe(200);
+    expect(got.json).toEqual({ from: 'up' });
+    expect(served.log.join('\n')).toMatch(/p0 unreachable \(ECONNREFUSED\); p1 answered 200/u);
+  });
+
+  it('answers a provider\'s key refusal with this host\'s own error, and keeps its words for the log', async () => {
+    /*
+     * The proxy calls the provider with the host's key, so a 401 or 403 is
+     * about that key and not the caller's. Streamed back as it came, a client
+     * reads a 401 as its own token being wrong and is shown a body that may
+     * name the host's account - decision
+     * `the-proxy-answers-a-providers-key-refusal-with-its-own-error`.
+     */
+    for (const status of [401, 403]) {
+      const provider = await fake(answerJson(status, { error: { message: `key sk-account-1234 for org-acme is ${String(status)}`, type: 'authentication_error' } }));
+      const served = await proxy({ proxy: table('anthropic-messages', provider.endpoint), env: keys(1) });
+      const got = await send(served.port, MESSAGES, { headers: { 'x-api-key': ROOT_TOKEN }, body: { model: 'm/x' } });
+
+      expect(got.status).toBe(502);
+      expect(isAnthropicError(got.json)).toBe(true);
+      expect(got.json).toMatchObject({ error: { type: 'api_error', message: 'model m/x on p0 refused this host\'s key' } });
+      // The provider's own words are nowhere the caller can read them.
+      expect(got.text).not.toContain('org-acme');
+      expect(got.text).not.toContain('sk-account-1234');
+      // And they are on the log line the call writes, with the status - the
+      // key the message quotes taken out of it.
+      const line = served.log.join('\n');
+      expect(line).toContain(`p0 ${String(status)} `);
+      expect(line).toContain(`for org-acme is ${String(status)}`);
+      expect(line).toContain('answered 502');
+      expect(line).not.toContain('sk-account-1234');
+    }
+
+    // The same in the other dialect, whose error body is a different shape.
+    const openai = await fake(answerJson(401, { error: { message: 'Incorrect API key provided', code: 'invalid_api_key' } }));
+    const served = await proxy({ proxy: table('openai-chat', openai.endpoint), env: keys(1) });
+    const got = await send(served.port, CHAT, { headers: asRoot, body: { model: 'm/x' } });
+    expect(got.status).toBe(502);
+    expect(isOpenAiError(got.json)).toBe(true);
+    expect(got.json).toMatchObject({ error: { message: 'model m/x on p0 refused this host\'s key' } });
+    expect(got.text).not.toContain('Incorrect API key provided');
+    expect(served.log.join('\n')).toContain('Incorrect API key provided');
+  });
+
+  it('takes every key-shaped run out of the provider\'s words before the log keeps them', async () => {
+    /*
+     * The log line is written to disk and carried off the machine with a bug
+     * report, so a key the provider quoted back does not go into it. The
+     * shapes a provider writes: an `sk-` value, a long run after the word
+     * `key`, a `Bearer` value, and the value this call was actually made
+     * with - the marker every provider in this file is keyed by.
+     */
+    const message = 'key sk-account-1234 for org-acme; api_key: 9f2c8b1a4e7d6c5b3a2019f8e7d6c5b4; authorization: Bearer tok-live-9f2c8b1a4e7d6c5b; the key this call used is ' + MARKER + '.';
+    const provider = await fake(answerJson(401, { error: { message } }));
+    const served = await proxy({ proxy: table('anthropic-messages', provider.endpoint), env: keys(1) });
+    const got = await send(served.port, MESSAGES, { headers: { 'x-api-key': ROOT_TOKEN }, body: { model: 'm/x' } });
+    expect(got.status).toBe(502);
+
+    const line = served.log.join('\n');
+    for (const key of ['sk-account-1234', '9f2c8b1a4e7d6c5b3a2019f8e7d6c5b4', 'tok-live-9f2c8b1a4e7d6c5b', MARKER]) {
+      expect(line).not.toContain(key);
+    }
+    // The sentence around the keys is still there, so the log still says what
+    // was refused and by whom.
+    expect(line).toContain('p0 401 ');
+    expect(line).toContain('for org-acme');
+    expect(line).toContain('the key this call used is');
+    expect(line).toContain('answered 502');
+  });
+
   it('does not fall back after a header timeout: the caller gets 504 and the next entry is never called', async () => {
     const silent = await fake(() => { /* never answers */ });
     const spare = await fake(answerJson(200, { from: 'spare' }));

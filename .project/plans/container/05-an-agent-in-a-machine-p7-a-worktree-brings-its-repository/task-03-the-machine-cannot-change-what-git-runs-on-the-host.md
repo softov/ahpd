@@ -1,6 +1,6 @@
 ---
 title: The machine cannot change what git runs on the host
-status: implemented
+status: done
 depends: [task-02-a-machine-mounts-the-git-directory.md]
 layer: "computer"
 refs:

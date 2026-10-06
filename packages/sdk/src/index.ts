@@ -35,6 +35,7 @@ export {
 export { gitBranches } from './repo/git.js';
 export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
+export { localPath, uriOf } from './fileuri.js';
 export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools.js';
 export { toolServers, TOOLS_PREFIX } from './toolserver.js';

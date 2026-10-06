@@ -1,6 +1,6 @@
 ---
 title: A URI a provider cannot split is refused with one code
-status: implemented
+status: done
 depends: []
 layer: "sdk, computer"
 refs:

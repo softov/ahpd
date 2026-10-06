@@ -1,6 +1,6 @@
 ---
 title: A lock is removed only when it is the machine's
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:

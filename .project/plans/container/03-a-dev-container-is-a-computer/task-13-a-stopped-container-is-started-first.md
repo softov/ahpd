@@ -1,6 +1,6 @@
 ---
 title: The relay starts a stopped container before reaching it
-status: implemented
+status: done
 depends: [task-07-the-fake-cli-behaves-like-the-real-one.md]
 layer: "computer"
 refs:

@@ -83,6 +83,16 @@ it('takes a profile\'s gitGuard by its values, and refuses anything else by name
   expect(loose.problems.join('\n')).toContain('profiles.bots.gitGuard is bind or open, and loose is neither');
 });
 
+it('takes a profile\'s nestedDelete by its values, and refuses anything else by name', async () => {
+  const both = await load({ profiles: { cofold: { nestedDelete: 'inside' }, bots: { nestedDelete: 'record' } } });
+  expect(both.problems).toEqual([]);
+  expect(both.loaded.map((one) => one.name)).toEqual([NAME]);
+
+  const skip = await load({ profiles: { cofold: { nestedDelete: 'skip' } } });
+  expect(skip.loaded).toEqual([]);
+  expect(skip.problems.join('\n')).toContain('profiles.cofold.nestedDelete is inside or record, and skip is neither');
+});
+
 it.each<[string, unknown]>([
   ['runtime', 'podman'],
   ['command', 5],

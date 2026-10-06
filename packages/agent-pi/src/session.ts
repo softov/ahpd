@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, callTimes, idFor, startOf, withCallTimes } from '@ahpd/sdk';
+import { Status, callTimes, idFor, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
@@ -963,7 +963,7 @@ export function piSession(
       touch();
     },
     modifiedAt: () => modified,
-    workingDirectories: () => [`file://${where}`],
+    workingDirectories: () => [uriOf(where)],
 
     sessionState: () => ({
       provider,
@@ -972,7 +972,7 @@ export function piSession(
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title }],
-      workingDirectories: [`file://${where}`],
+      workingDirectories: [uriOf(where)],
       customizations: [...seeds],
       ...(activity !== undefined ? { activity } : {}),
       // The questions still waiting, each as `session/inputNeededSet` sent it,

@@ -1,6 +1,6 @@
 ---
 title: A runs cursor the host did not issue is refused
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

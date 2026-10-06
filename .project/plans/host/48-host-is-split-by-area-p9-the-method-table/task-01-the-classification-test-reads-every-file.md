@@ -1,6 +1,6 @@
 ---
 title: The handler classification test reads every file that holds handlers
-status: implemented
+status: done
 depends: []
 layer: "sdk test"
 refs:

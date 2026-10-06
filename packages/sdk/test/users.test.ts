@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
@@ -544,6 +544,22 @@ it('writes through a temp file of its own, so one writer never renames another\'
 
   const after = JSON.parse(readFileSync(path, 'utf8')) as { teams: { id: string }[] };
   expect(after.teams.map((one) => one.id)).toEqual(['backend', 'sales']);
+});
+
+it('writes the file private even when a readable temp at its own name was left behind', async () => {
+  writeFileSync(path, JSON.stringify({ teams: [{ id: 'backend' }], users: [] }));
+  // What a process that had this pid before left world-readable. `mode` is
+  // applied when a file is created and not when one is opened, so a write that
+  // opens this temp keeps its 0644 - and the rename puts that on the users file,
+  // which holds the hashes of everybody's token.
+  const temporary = `${path}.${String(process.pid)}.tmp`;
+  writeFileSync(temporary, '{}');
+  chmodSync(temporary, 0o644);
+  const users = open();
+
+  await users.addTeam('sales');
+
+  expect(statSync(path).mode & 0o777).toBe(0o600);
 });
 
 it('keeps a primary a write does not concern, even one naming nothing yet', async () => {

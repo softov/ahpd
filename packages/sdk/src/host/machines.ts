@@ -1,4 +1,6 @@
+import { lstatSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { computerId, computerSource, machineRefusal, openComputer } from '../computers.js';
 import { RpcError } from '../rpc.js';
 import type { Scope } from '../scopes.js';
@@ -30,6 +32,74 @@ export interface Machines {
     owner?: Owner,
   ): Promise<void>;
 }
+
+/** What `lstat` says of a path, or nothing when it is not there. */
+const statOf = (path: string) => {
+  try { return lstatSync(path); }
+  catch { return undefined; }
+};
+
+/** What a file says, trimmed, or nothing where it cannot be read. */
+const saidBy = (path: string): string | undefined => {
+  try { return readFileSync(path, 'utf8').trim(); }
+  catch { return undefined; }
+};
+
+/**
+ * A folder's own `.git` naming another repository's git directory, or nothing.
+ *
+ * Read before git is asked, because git is no help here: a `commondir` in the
+ * folder's `.git` is followed, so git answers the repository it names - and
+ * where the folder's `.git` holds nothing else, git answers nothing at all and
+ * the folder looks like one with no repository in it. Naming that file is the
+ * point: it is what somebody has to look at.
+ *
+ * `commondir` is read by git on the host and names where everything else is,
+ * so the only directory it may name is the one it is in - which is what this
+ * host itself writes for a main checkout, an empty one being one git breaks on.
+ */
+const stray = (folder: string): string | undefined => {
+  const dotGit = join(folder, '.git');
+  if (statOf(dotGit)?.isDirectory() !== true) return undefined;
+  const commondir = join(dotGit, 'commondir');
+  const said = saidBy(commondir);
+  if (said === undefined || said === '' || resolve(dotGit, said) === resolve(dotGit)) return undefined;
+  return `${commondir} names ${said}, which is not the directory it is in, so ${folder} has no git directory of its own`;
+};
+
+/**
+ * Why the git directory git answered is not the tree's own, or nothing.
+ *
+ * Git takes the folder's `.git` as it is: a directory is a main checkout's git
+ * directory, and a file names a worktree entry - so the answer is compared
+ * against what the tree actually holds, and against the repository this host
+ * made the session's tree from where it made one. What survives is the
+ * folder's own, which is the only one a machine may be given.
+ */
+const notOwn = (found: GitDir, made: { repository: string } | undefined): string | undefined => {
+  if (made !== undefined && resolve(found.gitDir) !== resolve(made.repository, '.git')) {
+    return `${found.gitDir} is not the git directory of ${made.repository}, the repository this session was isolated from`;
+  }
+  const dotGit = join(found.repository, '.git');
+  const there = statOf(dotGit);
+  if (there?.isDirectory() === true) {
+    if (resolve(dotGit) === resolve(found.gitDir)) return undefined;
+    const commondir = join(dotGit, 'commondir');
+    const said = saidBy(commondir);
+    return said === undefined || said === '' || resolve(dotGit, said) === resolve(dotGit)
+      ? `${found.gitDir} is not ${dotGit}, the git directory of ${found.repository}`
+      : `${commondir} names ${said}, which is not the directory it is in`;
+  }
+  if (there?.isFile() === true) {
+    const named = /^gitdir:\s*(.+?)\s*$/m.exec(saidBy(dotGit) ?? '')?.[1];
+    if (named === undefined) return `${dotGit} names no gitdir, so it is not the worktree of ${found.gitDir} this folder belongs to`;
+    const entry = isAbsolute(named) ? named : resolve(found.repository, named);
+    if (resolve(entry) !== resolve(found.worktreeDir)) {
+      return `${dotGit} names ${entry}, and the worktree git has for ${found.repository} is ${found.worktreeDir}`;
+    }
+  }
+  return undefined;
+};
 
 export function createMachines(ctx: HostContext): Machines {
   const { options, agents, charged, checked } = ctx;
@@ -167,11 +237,20 @@ export function createMachines(ctx: HostContext): Machines {
    * The git directory is passed inside the folder too: it adds no mount there,
    * and the machine maker still guards it. A folder that is the root needs no
    * other root. A folder git refuses gets neither, with one line naming it and
-   * git's reason.
+   * git's reason, and so does one whose git directory is not its own: git
+   * answers what the folder's `.git` says, and a `.git` naming another
+   * repository - or a `commondir` in one - makes it answer that repository,
+   * which would then be mounted for the machine, writable over it, with
+   * `hooks/`, `worktrees/` and `modules/` made inside it.
    */
-  const repositoryOf = async (folder: string | undefined): Promise<{ gitDir?: string; repository?: string }> => {
+  const repositoryOf = async (uri: string, folder: string | undefined): Promise<{ gitDir?: string; repository?: string }> => {
     const ask = options.worktrees?.gitDir;
     if (folder === undefined || folder === '' || ask === undefined) return {};
+    const named = stray(folder);
+    if (named !== undefined) {
+      ctx.log(`computers: no git directory for ${folder}: ${named}`);
+      return {};
+    }
     let found: GitDir | undefined;
     try {
       found = await ask.call(options.worktrees, folder);
@@ -181,6 +260,11 @@ export function createMachines(ctx: HostContext): Machines {
       return {};
     }
     if (found === undefined) return {};
+    const stranger = notOwn(found, ctx.worktrees.get(uri));
+    if (stranger !== undefined) {
+      ctx.log(`computers: no git directory for ${folder}: ${stranger}`);
+      return {};
+    }
     const spellings = [folder, await realpath(folder).catch(() => folder)];
     const atRoot = spellings.includes(found.repository);
     return { gitDir: found.gitDir, ...(atRoot ? {} : { repository: found.repository }) };
@@ -227,7 +311,7 @@ export function createMachines(ctx: HostContext): Machines {
     const agent = agents.get(provider);
     const scope = charged.get(uri)?.scope;
     const devPrefix = 'devcontainer://';
-    const tree = await repositoryOf(said.startsWith(devPrefix) ? said.slice(devPrefix.length).trim() : where);
+    const tree = await repositoryOf(uri, said.startsWith(devPrefix) ? said.slice(devPrefix.length).trim() : where);
     const machine = await openComputer(options.computers, said, {
       session: uri,
       provider,

@@ -1,6 +1,6 @@
 ---
 title: Inner chat URIs are rewritten to the outer ones
-status: implemented
+status: done
 depends: [task-07-the-inner-hosts-pipes-cannot-crash-the-daemon.md]
 layer: "sdk"
 refs:

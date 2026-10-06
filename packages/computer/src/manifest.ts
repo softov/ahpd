@@ -128,6 +128,21 @@ export interface Profile {
    */
   sessionFolder?: boolean;
   /**
+   * Whether a machine made for a session from this profile carries the
+   * repository that session's folder sits inside.
+   *
+   * A folder below a repository's root is one git tree, and git works on it
+   * from the root: the root is mounted at its own path in place of the folder,
+   * which for a session in `~/.config/nvim` is the whole of `$HOME`. That is
+   * the host's filesystem inside a machine the same way the folder is, so it
+   * takes a profile saying yes of its own rather than coming with the folder:
+   * decision `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
+   * Without it the folder alone is mounted, with no git directory, and the
+   * daemon logs a line naming the repository that was left out. Meaningless
+   * without `sessionFolder`, which is what puts a folder there at all.
+   */
+  sessionRepository?: boolean;
+  /**
    * What a command in a machine from this profile does when a need value named
    * from the vault cannot be read again.
    *
@@ -165,6 +180,16 @@ export interface Profile {
    * as the host user; `open` leaves it all writable.
    */
   gitGuard?: 'bind' | 'open';
+  /**
+   * What deleting a session that ran in a machine from this profile, and is not
+   * running, does to the copy the machine keeps.
+   *
+   * A session no host is running has no close to dispose it, so the daemon
+   * starts a host inside the machine for exactly that question - `inside`, the
+   * default. `record` deletes the session here and leaves the copy where it is,
+   * for a machine somebody works in by hand and comes back to.
+   */
+  nestedDelete?: 'inside' | 'record';
 }
 
 /** What the provider holds, and what a manifest may leave out. */
