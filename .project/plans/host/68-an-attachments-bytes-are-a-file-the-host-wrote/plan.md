@@ -4,7 +4,7 @@ domain: host
 status: planned
 priority: medium
 created: 2026-10-06
-revalidated: 2026-10-06
+revalidated: 2026-10-07
 requires: []
 changes: []
 creates: []
@@ -75,9 +75,11 @@ chat/turnStarted | chat/pendingMessageSet with message.attachments
 | A `simple` attachment is its `modelRepresentation` as text; `annotations` and `chat` are named by label | VS Code's resolvers; `blocksFor` | 03 |
 | A client-only file is fetched with `resourceRead` only when its `sizeHint` is absent or at most 32 MiB; a larger one is left as sent | (defaulted: below `ws`'s 100 MiB payload, so a fetch never asks for more than a message could carry) | 01 |
 | The attachments folder is removed with its session | the folder is the session's | 01 |
+| A machine made for a session binds that session's attachments folder read-only at the same path | Softov, 2026-10-07, chose "Read-only bind per session" for how a machine session sees its attachments | 04 |
 
 ## Proposed architecture
 
+- **Machine** - the computer binds `<sessions dir>/attachments/<session>` read-only at the same path when it makes a machine for that session.
 - **Data flow** - `sdk/src/host/attachments.ts` (new): `snapshot(session, action, connection)` writes and rewrites; `sdk/src/attachments.ts` (new, exported): `partsOf(text, attachments, { images: boolean })` returns `Part[]`, where `Part` is `{ type: 'text', text }` or `{ type: 'image', mimeType, data }`, text first.
 - **State flow** - the rewritten action is what is applied, stored and echoed; nothing else holds the bytes.
 - **Layer responsibilities** - `sdk` host: the folder, the rewrite, the `Session` contract · `sdk` library: `partsOf` and its limits · each backend: `Part` to its own block, in its own plan.
@@ -90,12 +92,13 @@ chat/turnStarted | chat/pendingMessageSet with message.attachments
 | [01 - An embedded or client-only attachment becomes a file the host wrote](task-01-an-attachment-becomes-a-file-the-host-wrote.md) | todo | - |
 | [02 - A queued or steering message carries its attachments](task-02-a-queued-or-steering-message-carries-its-attachments.md) | todo | - |
 | [03 - partsOf turns attachments into text and image parts within the limits](task-03-parts-of-turns-attachments-into-parts.md) | todo | 01 |
+| [04 - A session in a machine reads its attachments at the path the host wrote](task-04-a-machine-reads-its-sessions-attachments.md) | todo | 01 |
 
 Backends take `partsOf` in their own plans: claude 20, acp 14, pi 15, plugin 36.
 
 ## Risks and tradeoffs
 
-- A session in a machine reads paths inside the machine; the attachments folder must be readable there at the same path, or a machine session gets only names. See Resume state.
+- A session that enters a machine made for another session gets no bind, because a running container takes no new mount. Task 04 stops and asks there.
 - A rewritten chip is a `file://` resource on the host's disk; a client on another machine cannot open it, as with VS Code.
 - An action that fails to snapshot is applied as sent, so a write failure still costs the bytes in state for that message.
 
@@ -104,7 +107,7 @@ Backends take `partsOf` in their own plans: claude 20, acp 14, pi 15, plugin 36.
 - **Done so far:** nothing.
 - **Next action:** [task-01-an-attachment-becomes-a-file-the-host-wrote.md](task-01-an-attachment-becomes-a-file-the-host-wrote.md).
 - **Open questions:**
-  1. How does a session in a machine read the attachments folder? - proposed: the computer binds `<sessions dir>/attachments/<session>` read-only at the same path; ask before building if the computer has no per-session bind.
+  1. What does a session get when it enters a machine made earlier for another session? - no proposal yet; task 04 stops and asks.
 - **Watch out for:** the rewrite is async and must finish before the action is applied, without reordering it against the actions behind it on the same channel.
 
 ## Final verification checklist
@@ -112,5 +115,6 @@ Backends take `partsOf` in their own plans: claude 20, acp 14, pi 15, plugin 36.
 - [ ] A host test sends a `chat/turnStarted` with a pasted PNG and reads a `file://` resource tagged as a snapshot in state, in the session file and in what `begin` got.
 - [ ] A queued message and a steering message reach `queue` and `steer` with their attachments.
 - [ ] `partsOf` tests: small and large image, image of another type, `images: false`, small and large text, a FIFO, a directory, a selection, `simple`, `annotations`.
+- [ ] A machine made for a session holds a read-only bind of its attachments folder at the same path.
 - [ ] `pnpm` gates green.
 - [ ] `plans/index.md` updated.

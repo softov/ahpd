@@ -4,7 +4,7 @@ domain: plugin
 status: planned
 priority: medium
 created: 2026-10-06
-revalidated: 2026-10-06
+revalidated: 2026-10-07
 requires:
   - plans/host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md
 changes: []
@@ -14,6 +14,7 @@ decisions:
   - decisions/a-pasted-image-goes-as-an-image-when-it-fits.md
   - decisions/pasted-text-is-inlined-up-to-64-kib.md
 refs:
+  - file:///github/cofold/.project/plans/agent/07-a-steer-carries-images-and-text-parts/plan.md - cofold's `steer` takes parts there
   - "[code://packages/agent-cofold/src/session.ts#L288](../../../../packages/agent-cofold/src/session.ts#L288) - `begin`, dropping the fifth argument"
   - "[code://packages/agent-cofold/src/session.ts#L307-L316](../../../../packages/agent-cofold/src/session.ts#L307-L316) - `steer`, text only"
   - "[code://packages/agent-cofold/src/turns.ts#L120-L127](../../../../packages/agent-cofold/src/turns.ts#L120-L127) - `run({ input: text })`"
@@ -54,6 +55,7 @@ Session.begin / queue / steer (host 68) -> partsOf(text, attachments, { images: 
 | `images` is the turn's model's `features.images`, never assumed | an image part to a text-only model throws, and the stored message would fail every later turn of the session | 01 |
 | No attachments: `input` stays the string | a message with none is sent as today | 01 |
 | `queue` keeps attachments on the entry; `steer` sends its parts | host 68 task 02 | 01 |
+| A steered message sends its parts through cofold's `steer` `parts`, once a cofold release has it; until then a steer sends its text and names each attachment by path | Softov, 2026-10-07, chose "cofold steer takes content"; cofold plan agent 07 | 01 |
 
 ## Tasks
 
