@@ -135,12 +135,37 @@ it('shows the daemon its keys beside the host own, and nobody else', async () =>
   const member = await signedIn('member', 'member');
 
   const adminConfig = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(adminConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
+  expect(Object.keys(adminConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'globalAutoApproveEnabled', 'daemonPort', 'advancedTools', 'apiKey']);
   expect(adminConfig.values).toMatchObject({ daemonPort: 9187, advancedTools: false, apiKey: '<set>' });
 
   const memberConfig = (await rootOf(member.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(memberConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration']);
+  expect(Object.keys(memberConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'globalAutoApproveEnabled']);
   expect(memberConfig.values.daemonPort).toBeUndefined();
+});
+
+it('lists globalAutoApproveEnabled in the root config schema with default false', async () => {
+  const { signedIn, rootOf } = served();
+  const admin = await signedIn('admin', 'admin');
+  const config = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> } };
+  /*
+   * A key `trust.ts` reads and nothing declared, so no client could see it and
+   * no client could turn it off: a host that approves every tool call by
+   * default is one a person cannot tell about and cannot change.
+   *
+   * The default is the host's answer before anybody pushes one, and `false` is
+   * what the reading of a missing key already does - said here so a client
+   * drawing the control shows a host that asks.
+   */
+  expect(config.schema.properties.globalAutoApproveEnabled).toEqual({
+    type: 'boolean',
+    default: false,
+    title: 'Approve Everything',
+    description: 'Run every tool call without asking, for every session on this host.',
+  });
+  // Nothing is pushed, so no value is shown: the default above is the client's
+  // own to draw, and this host holds no key it was not sent.
+  const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
+  expect(held.values.globalAutoApproveEnabled).toBeUndefined();
 });
 
 it('declares workspaceTrust as VS Code declares it', async () => {
@@ -207,7 +232,7 @@ it('shows the host own root the daemon keys, and the echo of its write', async (
   const root = await asRoot('root');
 
   const rootConfig = (await rootOf(root.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(rootConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
+  expect(Object.keys(rootConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'globalAutoApproveEnabled', 'daemonPort', 'advancedTools', 'apiKey']);
   expect(rootConfig.values).toMatchObject({ daemonPort: 9187, advancedTools: false, apiKey: '<set>' });
 
   await root.client.handle({

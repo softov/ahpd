@@ -123,12 +123,16 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         const held = await find(id);
         if ('said' in held) return held.said;
         /*
-         * Removed without a stop first: `remove` fetches what the machine
-         * committed before its volume goes, and that fetch runs a command in
-         * the machine, which a stopped container refuses. `docker rm -f` stops
-         * it anyway.
+         * A machine whose work cannot be brought out is kept rather than
+         * removed, and the sentence saying so is the answer here: an agent
+         * told it was gone would have nothing left to act on.
          */
-        await runtime.remove(held.machine);
+        try {
+          await runtime.remove(held.machine);
+        }
+        catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
         return `${held.machine} is gone.`;
       },
     },

@@ -79,6 +79,7 @@ Under `presets.<id>`:
 | `model` | | the model a session that names none runs on |
 | `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
 | `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+| `honoursTrust` | | whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field |
 | `toolsChanged` | | how this agent hears that the tools it listed have moved, over the plugin-wide setting |
 | `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; `copy`, a list of `{ "source", "target" }` host paths copied in; `part`, the part the CLI comes from; `state`, the absolute directory the agent keeps its configuration in, as a state volume; and `seed`, the host files that directory is seeded from, each `{ "source", "target", "keep", "drop" }`. A shipped preset brings its own, and this one is laid over it by key, `env` by variable |
 

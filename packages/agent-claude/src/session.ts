@@ -70,7 +70,22 @@ export function createSession(options: ClaudeSessionOptions): Session {
     gone: undefined as string | undefined,
     customizations: [...(options.seedCustomizations ?? [])] as Bag[],
     offered: [] as { id: string; name: string }[],
-    values: { ...optionDefaults(), ...options.preset, ...storedSandbox(options.settings) } as Bag,
+    /*
+     * A preset that says the sandbox is off, which a stored `on` does not
+     * override.
+     *
+     * `sandboxEnabled` is the control a session had before the schema stopped
+     * declaring it, and an `on` of it is spread over the preset so an upgrade
+     * never runs a session less sandboxed than it was. A preset saying `off`
+     * is somebody asking for no sandbox, and it is the value that has to win:
+     * otherwise a variant built to run unsandboxed runs sandboxed on every
+     * session whose sandbox was once turned on.
+     */
+    values: {
+      ...optionDefaults(),
+      ...options.preset,
+      ...(options.preset?.['sandbox'] === 'off' ? {} : storedSandbox(options.settings)),
+    } as Bag,
     draft: undefined as Bag | undefined,
     beginning: undefined as string | undefined,
     turns: [...(options.seed ?? [])] as Bag[],

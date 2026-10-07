@@ -1,6 +1,6 @@
 import { posix } from 'node:path';
 import { Status, idOf } from './catalog.js';
-import { localPath } from './fileuri.js';
+import { localPath, uriOf } from './fileuri.js';
 import type { HostTool, ToolCall } from './types/host.js';
 import type { Summary } from './types/catalog.js';
 import type { Bag } from './types/common.js';
@@ -426,9 +426,16 @@ export const sessionTools = (): HostTool[] => [
       const isolation = flag(input.isolation, 'isolation', tool);
       if (isolation === undefined) throw new Error(`Invalid ${tool} input: isolation must be a boolean.`);
       at.setWorkspace(folder, isolation);
+      /*
+       * Both answers name the folder as a URI, which is `uriOf`'s and not a
+       * `file://` written by hand: a path may hold a `#` or a `?`, and a URI
+       * that carries one raw is read as a fragment or a query - the folder
+       * `a#b` becoming the folder `a` to whoever opens the link.
+       */
+      const named = uriOf(folder);
       return isolation
-        ? `An isolated worktree will be created from file://${folder} and set as the workspace after this turn ends. End this turn now without calling more tools or replying; the host will continue the original task automatically in the isolated workspace.`
-        : `Workspace will be set to file://${folder} after this turn ends. End this turn now without calling more tools or replying; the host will continue the original task automatically in the selected workspace.`;
+        ? `An isolated worktree will be created from ${named} and set as the workspace after this turn ends. End this turn now without calling more tools or replying; the host will continue the original task automatically in the isolated workspace.`
+        : `Workspace will be set to ${named} after this turn ends. End this turn now without calling more tools or replying; the host will continue the original task automatically in the selected workspace.`;
     },
   },
   {

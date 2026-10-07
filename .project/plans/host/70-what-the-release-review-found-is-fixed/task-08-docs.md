@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: todo
+status: done
 depends: [task-01-a-machine-is-removed-only-once-its-work-is-out.md, task-04-pushing-trust-needs-trust-write.md, task-05-the-approve-everything-key-is-declared.md, task-07-a-preset-can-turn-the-sandbox-off.md]
 layer: "docs"
 refs:
@@ -41,3 +41,13 @@ The docs describe 0.10.0: workspace trust, its grant, and every key and endpoint
 
 ## Resume
 
+- **Implemented** 2026-10-07 on `build/agents/4f2c8f8e`. Nothing is left.
+- `docs/USERS.md`: a "Trusted folders" section, linked from the `trust` grants row, the dispatch paragraph and the per-connection keys. It covers `workspaceTrust`, the `trust:write` grant and the `member` role, and what trust gives. It also covers the key being kept per connection, and `vscode/requestWorkspaceTrust` with its refusal sentence. A worktree inherits its repository's answer, and `globalAutoApproveEnabled` needs `config:write`.
+- `docs/AHP.md`: the `root/configChanged` row names the two per-connection keys. The sandbox paragraph says a preset `off` wins over a stored `on`, and that a stored `on` otherwise stays.
+- `docs/PLUGINS.md`: `registerWorktrees` gains its optional `gitDir`, and the need table is six kinds, `part` and `state` added. The tools endpoint runs a client's tool through the backend's runner, and holds a `GET` stream for `notifications/tools/list_changed`. The ACP preset table gains `honoursTrust` and `toolsChanged`.
+- `packages/agent-claude/README.md` and `packages/agent-pi/README.md`: an untrusted folder loads no project files, and both the agent's own question and the host's answer have to say yes.
+- `packages/agent-acp/README.md`: `honoursTrust` in the per-preset table.
+- `docs/DAEMON.md`: the `--client-tool-timeout-ms` row, and `clientToolTimeoutMs` in the keys a client does not configure.
+- `docs/COMPUTER.md`: removal starts a stopped machine that has work to read, keeps a machine it cannot empty, and names the refusal.
+- `docs/PROXY.md:105-119` and `docs/POLICY.md:85` already describe session calls as wired, `proxy.sessionCalls` and all. Read against `listener.ts`'s `chargedAs`, so nothing was corrected there.
+- The validation `rg` finds each of `workspaceTrust`, `honoursTrust`, `clientToolTimeoutMs` and `globalAutoApproveEnabled`. `lint-prose.mjs` finds nothing new in the lines written here; the long sentences left in `docs` are older than this plan.

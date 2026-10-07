@@ -252,7 +252,9 @@ export const channelRead = (channel: string, kind: ChannelKind): Grant => {
  *
  * `ahp-root://` is the one channel read with the action as well.
  * `root/configChanged` that only sets `PER_CONNECTION` keys changes nothing
- * anybody else reads, so it needs a sign-in and no grant (`undefined`). Any
+ * anybody else reads, so it needs a sign-in and no grant (`undefined`) - except
+ * `workspaceTrust`, which is one window's answer about the folders every
+ * session of that window loads from, so pushing it needs `trust:write`. Any
  * other key, and a `replace`, changes the host for everybody and needs
  * `config:write`.
  *
@@ -270,7 +272,9 @@ export const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Recor
   if (isRootChannel(channel)) {
     if (action?.type !== 'root/configChanged' || action.replace === true) return 'config:change';
     const config = typeof action.config === 'object' && action.config !== null ? action.config : {};
-    return Object.keys(config).every((key) => PER_CONNECTION.has(key)) ? undefined : 'config:change';
+    const keys = Object.keys(config);
+    if (!keys.every((key) => PER_CONNECTION.has(key))) return 'config:change';
+    return keys.includes('workspaceTrust') ? 'trust:write' : undefined;
   }
   return kind === 'other' && !channel.startsWith('ahp-automation') ? 'file:watch' : undefined;
 };

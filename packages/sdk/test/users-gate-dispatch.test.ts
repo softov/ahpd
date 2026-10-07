@@ -1,11 +1,14 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, GATE, ROOT } from '../src/host.js';
 import { shellTerminals } from '../src/terminals.js';
+import { fileUsers } from '../src/users.js';
 import {
   call, directory, hello, host, peer, root, signIn, until, watching, withRole,
 } from './users-gate-helpers.js';
 import type { Bag } from './users-gate-helpers.js';
-import type { Grant } from '../src/types/users.js';
+import type { Grant, Users } from '../src/types/users.js';
 
 /*
  * The other half of the gate.
@@ -241,6 +244,101 @@ it('lets anybody signed in set their own shell, and only config:write change the
   await hello(stranger, 'stranger');
   await configChanged(stranger, { defaultShell: '/bin/sh' });
   expect(refusals(strangerSeen)).toEqual(['Sign in to use this host: ahp-root://']);
+});
+
+/*
+ * Pushing trust needs a grant.
+ *
+ * `workspaceTrust` lives on the connection beside `defaultShell`, and a key in
+ * `PER_CONNECTION` used to need no grant at all - so any connection that had
+ * signed in decided what its sessions load from a folder, project settings and
+ * hooks included. The trust key alone needs `trust:write`; a shell preference
+ * is still the person's with nothing asked for it - decision
+ * `pushing-workspace-trust-needs-trust-write`.
+ */
+
+/** The refusals a connection was told, which is how a notification is refused. */
+const refusalsOf = (seen: ReturnType<typeof watching>): string[] =>
+  seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+    .map((one) => String(one.params.rejectionReason));
+
+/** A directory of its own with one person in it, minted, so a built-in role is the real one. */
+const signedUp = async (...roles: string[]): Promise<{ users: Users; secret: string }> => {
+  const users = fileUsers({ path: join(root, 'users.json') });
+  await users.add('ana', roles);
+  return { users, secret: await users.mint('ana') };
+};
+
+it('refuses a workspaceTrust push from a role without trust:write', async () => {
+  const made = host({ users: directory({ m: ['file:read', 'session:read', 'terminal:read'] }) });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'm'); await signIn(client, 'm');
+
+  await configChanged(client, { workspaceTrust: { enabled: true, trustedUris: [`file://${root}`] } });
+  expect(refusalsOf(seen)).toEqual(['m may not trust:write here']);
+  // And nothing was kept: a refused push is a refusal, not a stored value.
+  expect(await values(client)).not.toHaveProperty('workspaceTrust');
+});
+
+it('accepts a workspaceTrust push from a member', async () => {
+  const { users, secret } = await signedUp('member');
+  const made = host({ users });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'ana'); await signIn(client, secret);
+
+  const trust = { enabled: true, trustedUris: [`file://${root}`] };
+  await configChanged(client, { workspaceTrust: trust });
+  expect(refusalsOf(seen)).toEqual([]);
+  // That connection's own, as a shell preference is.
+  expect(await values(client)).toMatchObject({ workspaceTrust: trust });
+});
+
+it('keeps the trust a connection had when a push is refused', async () => {
+  const usersPath = join(root, 'users.json');
+  // A role of this install's own, so the grant can be taken away mid-connection.
+  writeFileSync(usersPath, JSON.stringify({ roles: { files: ['file:read'] }, users: [] }));
+  const users = fileUsers({ path: usersPath });
+  await users.add('ana', ['member']);
+  const secret = await users.mint('ana');
+  const made = host({ users });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'ana'); await signIn(client, secret);
+
+  const pushed = { enabled: true, trustedUris: [`file://${root}`] };
+  await configChanged(client, { workspaceTrust: pushed });
+  expect(refusalsOf(seen)).toEqual([]);
+
+  // A role is read again on every dispatch, so the grant going away is in force
+  // on the next push - which is refused, and leaves what the connection had.
+  await users.add('ana', ['files']);
+  await configChanged(client, { workspaceTrust: { enabled: false, trustedUris: [] } });
+  expect(refusalsOf(seen)).toEqual(['ana may not trust:write here']);
+  expect(await values(client)).toMatchObject({ workspaceTrust: pushed });
+});
+
+it('accepts defaultShell alone with no grant', async () => {
+  const made = host({ users: directory({ g: ['session:read'] }) });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'g'); await signIn(client, 'g');
+
+  await configChanged(client, { defaultShell: '/bin/sh' });
+  expect(refusalsOf(seen)).toEqual([]);
+  expect(await values(client)).toMatchObject({ defaultShell: '/bin/sh' });
+});
+
+it('accepts every push on a host with no people directory', async () => {
+  const made = host();
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client);
+
+  await configChanged(client, { workspaceTrust: { enabled: true, trustedUris: [`file://${root}`] } });
+  await configChanged(client, { artifactToolsCompactPrompts: true });
+  expect(refusalsOf(seen)).toEqual([]);
 });
 
 it('opens a client terminal with that connection\'s own shell', async () => {

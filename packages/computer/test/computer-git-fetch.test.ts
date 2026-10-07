@@ -220,6 +220,20 @@ it.skipIf(!DOCKER)('gives a machine on a main checkout the branch its tree is on
 /** What ahpd left behind in the temporary directory, by the prefix it makes its own. */
 const leftOver = (): string[] => readdirSync(tmpdir()).filter((one) => one.startsWith('ahpd-bringback-'));
 
+/**
+ * Take a container away as Docker does, for a case whose machine cannot be
+ * removed through the runtime.
+ *
+ * A removal that cannot bring a machine's work out keeps the machine, which is
+ * the whole of what those cases are about: the container and the volume holding
+ * its git directory are taken away here so that a case which proved that leaves
+ * nothing running on the machine the tests run on.
+ */
+const forceRemove = (name: string): void => {
+  execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe' });
+  execFileSync('docker', ['volume', 'rm', '-f', `ahpd-git-${name}`], { stdio: 'pipe' });
+};
+
 /** The commit a ref is at, as the host's own git answers it, and nothing where there is no such ref. */
 const refOf = (repo: string, ref: string): string =>
   execFileSync('git', ['-C', repo, 'for-each-ref', '--format=%(objectname)', ref], { stdio: 'pipe' }).toString().trim();
@@ -236,6 +250,25 @@ const commitIn = async (
   expect((await inMachine(docker, name, tree, ['add', file])).code).toBe(0);
   expect((await inMachine(docker, name, tree, ['commit', '-q', '-m', subject])).code).toBe(0);
   return (await inMachine(docker, name, tree, ['rev-parse', 'HEAD'])).output;
+};
+
+/**
+ * One commit on a branch that git itself would never write: no author and no
+ * committer, written into the machine's own repository as it is.
+ *
+ * The machine's git bundles it, since the repository is the machine's own, and
+ * the host's git refuses it - an object every later read of the host's
+ * repository would trip on. So this is a machine holding work that cannot be
+ * brought back, with everything else about it working.
+ */
+const breakBranch = async (
+  docker: ReturnType<typeof dockerRuntime>,
+  name: string,
+  tree: string,
+  branch: string,
+): Promise<void> => {
+  const broken = `git -C ${tree} update-ref refs/heads/${branch} "$(printf 'tree %s\\n\\nmalformed\\n' "$(git -C ${tree} rev-parse 'HEAD^{tree}')" | git -C ${tree} hash-object -w --literally -t commit --stdin)"`;
+  expect((await docker.exec(name, ['sh', '-c', broken])).code).toBe(0);
 };
 
 /** One commit on the host, in the tree, while the machine is up. */
@@ -287,15 +320,7 @@ it.skipIf(!DOCKER)('refuses a bundle the host\'s git cannot check, and leaves th
   await docker.run({ name, image: IMAGE, label: LABEL, folder: tree, gitDir, gitGuard: 'fetch', user: ME });
   try {
     await commitIn(docker, name, tree, 'fine.txt', 'a commit git would write');
-    /*
-     * A commit git would never write: no author and no committer, written into
-     * the machine's own repository as it is. The machine's git is asked for a
-     * bundle of it and writes one - the machine's repository is its own - and
-     * the host's git has to refuse it, or the host's repository would hold an
-     * object every later read of it would trip on.
-     */
-    const broken = `git -C ${tree} update-ref refs/heads/work "$(printf 'tree %s\\n\\nmalformed\\n' "$(git -C ${tree} rev-parse 'HEAD^{tree}')" | git -C ${tree} hash-object -w --literally -t commit --stdin)"`;
-    expect((await docker.exec(name, ['sh', '-c', broken])).code).toBe(0);
+    await breakBranch(docker, name, tree, 'work');
 
     await expect(docker.bringBack(name)).rejects.toThrow(/fsck/);
 
@@ -306,7 +331,10 @@ it.skipIf(!DOCKER)('refuses a bundle the host\'s git cannot check, and leaves th
     expect(leftOver()).toEqual([]);
   }
   finally {
-    await docker.remove(name).catch(() => {});
+    // Away with Docker rather than through the runtime: this machine holds a
+    // commit the host's git will not read, and a removal that cannot bring a
+    // machine's work out keeps it.
+    forceRemove(name);
   }
 }, DOCKER_CASE);
 
@@ -464,9 +492,8 @@ it.skipIf(!DOCKER)('answers nothing to bring back where the machine has committe
  * `release_computer` is how an agent lets a machine go, and the removal is where
  * the machine's commits are fetched out of it: the volume holding its own git
  * directory goes with the container, so the fetch runs in the removal and has
- * nothing but that moment. A stop in front of it leaves nothing to fetch with -
- * a stopped container refuses `docker exec` - and the commits go with the
- * volume, silently, which is what this case holds the tool to.
+ * nothing but that moment. This case holds the tool to the fetch being made
+ * there, and to the commit arriving on the host before the machine does.
  */
 it.skipIf(!DOCKER)('releases a machine with the fetch that brings its commit to the host', async () => {
   const { repo, tree, gitDir, state } = repository();
@@ -488,6 +515,113 @@ it.skipIf(!DOCKER)('releases a machine with the fetch that brings its commit to 
   }
   finally {
     await docker.remove(name).catch(() => {});
+  }
+}, DOCKER_CASE);
+
+/*
+ * A machine that goes without losing what is in it.
+ *
+ * The removal is the last moment a machine's work exists anywhere, and the two
+ * commands that read it out - the fetch of what it committed and the stash of
+ * what it never did - run inside it. `docker exec` refuses a container that is
+ * not up, so a stopped machine is started again first, and a machine whose work
+ * cannot be read out is kept, with its volumes, and says why in one sentence.
+ */
+it.skipIf(!DOCKER)('brings back the commits of a stopped machine before it removes it', async () => {
+  const { repo, tree, gitDir, state } = repository();
+  const docker = dockerRuntime({ command: 'docker', label: LABEL, configDir: state });
+  const name = `ahpd-gitfetch-stopped-${String(process.pid)}`;
+  const before = headOf(repo, 'work');
+  await docker.run({ name, image: IMAGE, label: LABEL, folder: tree, gitDir, gitGuard: 'fetch', user: ME });
+  try {
+    const made = await commitIn(docker, name, tree, 'stopped.txt', 'from the machine');
+    expect(made).not.toBe(before);
+    // A machine that is not up, which is what a `docker stop` or a daemon that
+    // went down leaves behind: its commit is in the volume the removal takes.
+    execFileSync('docker', ['stop', '-t', '0', name], { stdio: 'pipe' });
+
+    await docker.remove(name);
+
+    expect(headOf(repo, 'work')).toBe(made);
+    expect((await docker.list()).map((one) => one.id)).not.toContain(name);
+  }
+  finally {
+    await docker.remove(name).catch(() => {});
+  }
+}, DOCKER_CASE);
+
+it.skipIf(!DOCKER)('keeps the uncommitted files of a stopped copy machine before it removes it', async () => {
+  const { repo, gitDir, state } = repository();
+  const docker = dockerRuntime({ command: 'docker', label: LABEL, configDir: state });
+  const name = `ahpd-gitfetch-stopped-copy-${String(process.pid)}`;
+  const kept = `refs/ahpd/machines/${name}/uncommitted`;
+  const before = headOf(repo, 'main');
+  await docker.run({ name, image: IMAGE, label: LABEL, folder: repo, gitDir, gitGuard: 'fetch', sessionTree: 'copy', user: ME });
+  try {
+    // What the machine committed and what it never did, both in its own
+    // checkout inside the volume the removal takes with it.
+    await commitInside(docker, name, repo, 'src/tracked.txt', 'committed work');
+    await writeInside(docker, name, join(repo, 'src', 'tracked.txt'), 'never committed');
+    execFileSync('docker', ['stop', '-t', '0', name], { stdio: 'pipe' });
+
+    await docker.remove(name);
+
+    // The commit is on the host's branch and the file nobody committed is
+    // under the ref ahpd keeps such work in: both were read out of a machine
+    // that was not running when the removal began.
+    expect(headOf(repo, 'main')).not.toBe(before);
+    expect(execFileSync('git', ['-C', repo, 'show', `${kept}:src/tracked.txt`], { stdio: 'pipe' }).toString()).toBe('never committed\n');
+  }
+  finally {
+    await docker.remove(name).catch(() => {});
+  }
+}, DOCKER_CASE);
+
+it.skipIf(!DOCKER)('keeps a machine whose work cannot be brought back, and says why', async () => {
+  const { repo, tree, gitDir, state } = repository();
+  const docker = dockerRuntime({ command: 'docker', label: LABEL, configDir: state });
+  const name = `ahpd-gitfetch-keeps-${String(process.pid)}`;
+  const before = headOf(repo, 'work');
+  await docker.run({ name, image: IMAGE, label: LABEL, folder: tree, gitDir, gitGuard: 'fetch', user: ME });
+  try {
+    await commitIn(docker, name, tree, 'fine.txt', 'a commit git would write');
+    await breakBranch(docker, name, tree, 'work');
+
+    const refused = await docker.remove(name).then(() => undefined, (error: Error) => error);
+    expect(refused?.message).toContain(`Could not remove ${name}`);
+    expect(refused?.message).toContain('still here');
+
+    // Kept, with its git directory and its volume: the work is in there, and
+    // a volume removed with it is a commit nobody can get back.
+    expect((await docker.list()).map((one) => one.id)).toContain(name);
+    expect(headOf(repo, 'work')).toBe(before);
+  }
+  finally {
+    forceRemove(name);
+  }
+}, DOCKER_CASE);
+
+it.skipIf(!DOCKER)('release_computer answers the refusal and the machine is still there', async () => {
+  const { repo, tree, gitDir, state } = repository();
+  const docker = dockerRuntime({ command: 'docker', label: LABEL, configDir: state });
+  const name = `ahpd-gitfetch-release-keeps-${String(process.pid)}`;
+  await docker.run({ name, image: IMAGE, label: LABEL, folder: tree, gitDir, gitGuard: 'fetch', user: ME });
+  const tools = computerTools(docker, { image: IMAGE, label: LABEL, max: 4, prefix: 'ahpd-gitfetch' });
+  try {
+    await commitIn(docker, name, tree, 'fine.txt', 'a commit git would write');
+    await breakBranch(docker, name, tree, 'work');
+
+    // The answer is the sentence the removal refused with, and never a claim
+    // that the machine is gone: an agent told that would have nothing left to
+    // act on.
+    const said = String(await tool(tools, 'release_computer').run({ id: name }, at));
+    expect(said).toContain('still here');
+    expect(said).not.toContain('is gone');
+
+    expect((await docker.list()).map((one) => one.id)).toContain(name);
+  }
+  finally {
+    forceRemove(name);
   }
 }, DOCKER_CASE);
 

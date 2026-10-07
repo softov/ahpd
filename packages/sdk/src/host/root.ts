@@ -207,6 +207,24 @@ export function createRoot(ctx: HostContext): Root {
         title: 'Deferred Title Generation',
         description: 'Give a session a deferred title strategy, under which renaming a chat is only done when the user asks and the automatic argument is dropped.',
       },
+      /*
+       * Whether a tool call runs without asking anybody.
+       *
+       * VS Code's own key, `agentHostSchema.ts:852`, and the host's rather than
+       * a window's: a push of it is one setting for everybody, unlike
+       * `workspaceTrust` beside it. `trust.ts` reads it where a folder is
+       * entered, and it was read and declared nowhere - so a host that
+       * approved every tool call was one no client could see or turn off.
+       *
+       * The default is what a client draws before anybody pushes one, and it
+       * is the answer the reading of a missing key already gives.
+       */
+      globalAutoApproveEnabled: {
+        type: 'boolean',
+        default: false,
+        title: 'Approve Everything',
+        description: 'Run every tool call without asking, for every session on this host.',
+      },
     },
   };
   /**

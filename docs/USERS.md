@@ -388,7 +388,8 @@ The subjects the host decides are these eight:
 | `container` | - | `connect`, `disconnect`, `relay` | Connecting to dev containers |
 
 The rest are the people schemes and any plugin's, which share the `file`
-operations under their own name:
+operations under their own name, and `trust`, which is one grant and no
+scheme:
 
 | Subject | What they cover |
 | --- | --- |
@@ -399,6 +400,7 @@ operations under their own name:
 | `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
 | `policy` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
 | `proxy` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:write` calls a model, which spends this host's provider keys; `proxy:read` lists the model names with `GET /v1/models` |
+| `trust` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. `trust:write` is the whole of it, and a window answers for every folder at once ([Trusted folders](#trusted-folders)) |
 | a plugin's scheme | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -585,9 +587,10 @@ against is the **channel**, not the action, and a dispatch is always a write: a
 session or a chat needs `session:write`, a terminal needs `terminal:write`, an
 automation needs `automation:write`, and anything else needs `file:read`.
 `ahp-root://` is read with the action: `root/configChanged` that only sets your
-own keys (`defaultShell`) needs a sign-in and no grant, and one that sets any
-other key, or replaces the config, needs `config:write`. Only `admin` has it
-among the built-in roles.
+own keys (`defaultShell`) needs a sign-in and no grant, and one that pushes
+`workspaceTrust` needs `trust:write`. Any other key, or a replacement of the
+whole config, needs `config:write`, which only `admin` has among the built-in
+roles.
 
 That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
@@ -617,6 +620,22 @@ resolves the second, so a client that reads the field correctly stops instead of
 retrying. A VS Code window shows a read-only role as a `NoPermissions` dialog
 with nothing to click, which is correct behaviour for that person and the reason
 roles are configuration rather than a default.
+
+## Trusted folders
+
+A window tells this host which folders it trusts in the root config, under `workspaceTrust`. The key is the one VS Code pushes from its own workspace-trust setting. It is read as an editor reads it: nothing pushed means no folder is trusted.
+
+The value has two fields. `enabled: false` means the window has workspace trust switched off, so every folder it opens is trusted. Otherwise `trustedUris` lists the folders it trusts, and a folder is trusted when it is one of them or sits under one.
+
+Pushing the key needs `trust:write`, and the built-in `member` role holds it. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](PLUGINS.md).
+
+The key is kept on the connection that pushed it, like `defaultShell` beside it. Two windows on one daemon each answer for their own sessions. Each answer covers every folder at once, which is why the grant is one.
+
+When a session moves to a folder the window has not vouched for, the host asks the window itself, with `vscode/requestWorkspaceTrust`. A window that says no, or that does not serve the method, means the move is refused with `Workspace trust was not granted for '<folder>'`. A yes is kept on that connection, so the next move into that folder is not asked again.
+
+A worktree is trusted exactly when the repository it was cut from is, since the window has never opened it.
+
+`globalAutoApproveEnabled` is the neighbouring key and the host's rather than a window's. It is a boolean, off by default, and turning it on runs every tool call in every session on this host without asking. It is not a per-connection key, so pushing it needs `config:write`, which only `admin` holds among the built-in roles.
 
 ## What is readable before signing in
 

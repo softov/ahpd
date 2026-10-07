@@ -284,6 +284,7 @@ anything has been let go of.
 | `--issuer <github\|url>` | An authorization server whose tokens are also accepted. See [USERS.md](USERS.md) |
 | `--trust-token` | A person's connection token authorizes them as well as admits them. Off by default |
 | `--advanced-tools` | Offer the tools that declare they need advanced permission, such as the computer's three. Off by default |
+| `--client-tool-timeout-ms <ms>` | How long a tool call a client runs may wait for that client's answer before it is failed. Default ten minutes; `0` waits for ever |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `memory` is why a restart forgets the last two |
@@ -590,7 +591,7 @@ The merged files are checked against the same schema the flags are, before anyth
 
 ### What a client can configure
 
-The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, `worktreesRoot`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
+The keys of this section are in root config as well, so a client holding `config:read` is shown them beside the host's own three and edits them with `config:write`. The daemon's are `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more, `plugins.<name>`, whose value is `{ enabled, options }`. A plugin is named once, so it has one such key, and its variants are made by its own options. Nothing else the file holds is there, so `stdio`, `configFile`, `noCwd`, `worktreesRoot`, `clientToolTimeoutMs`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were.
 
 `advancedTools` and `wire` apply to this daemon as they are written: the tools every running session's model is offered change at once, and the wire capture starts, moves or stops. `mcpServers` applies to the next session opened; a running session keeps the servers it started with. Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about, so `ahpd restart` applies it.
 

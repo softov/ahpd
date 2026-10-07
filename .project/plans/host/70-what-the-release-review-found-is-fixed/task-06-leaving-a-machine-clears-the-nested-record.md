@@ -1,6 +1,6 @@
 ---
 title: Leaving a machine clears the nested record
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -28,3 +28,8 @@ A session that leaves its machine loses its nested record, so its host history s
 
 ## Resume
 
+- **Implemented** 2026-10-07 on `build/agents/4f2c8f8e`. Nothing is left.
+- `lifecycle.ts`: the leaving block in `restart` clears the record beside the two map deletes. A comment there says what a record left behind reads as.
+- The catch below that block repeats the same three calls for a session that is over. It was left alone: the config may still name that machine, and a resume finds the inner session by the record.
+- `nested-proxy.test.ts`: the named case runs one backend across two daemons, which is what a machine is. Its daemon declares the key the computer plugin contributes, or the move is a refusal rather than a move.
+- The case was written first and failed on the history, `expected [] to deeply equal ['hello']`. It passes with the clear.

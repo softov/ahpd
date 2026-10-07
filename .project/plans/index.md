@@ -153,7 +153,7 @@ Reference: [00-host.md](host/00-host.md)
 | [67 - A machine commits in a repository of its own, and ahpd fetches the work back](host/67-a-machine-commits-in-its-own-repository/plan.md) | high | built 2026-10-07, `sessionTree` shared or copy; supersedes host/65 p2's git allowlist | host 65 p2 (no `deferred.md` there to close), container 05 p7 | - |
 | [68 - An attachment's bytes are a file the host wrote, and every backend reads attachments through one helper with one set of limits](host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md) | medium | planned 2026-10-06 | - | claude 20, acp 14, pi 15, plugin 36 |
 | [69 - Streamed deltas are merged for a short window in the host's dispatch, for every backend](host/69-a-streamed-delta-is-merged-before-it-goes-out/plan.md) | medium | planned 2026-10-06 | - | - |
-| [70 - What the 0.10.0 release review found is fixed](host/70-what-the-release-review-found-is-fixed/plan.md) | high | planned 2026-10-07; tasks 01-08 todo; blocks the 0.10.0 release | - | release 0.10.0 |
+| [70 - What the 0.10.0 release review found is fixed](host/70-what-the-release-review-found-is-fixed/plan.md) | high | built 2026-10-07 ([implemented.md](host/70-what-the-release-review-found-is-fixed/implemented.md)); reviewed and merged | - | release 0.10.0 |
 | [71 - An automation wakes on what a session does](host/71-an-automation-wakes-on-what-a-session-does/plan.md) | medium | planned 2026-10-07; tasks 01-07 todo ([diagrams](host/71-an-automation-wakes-on-what-a-session-does/diagrams.md)) | - | the bot study, step 3 |
 
 Next free number in `host`: `72`.

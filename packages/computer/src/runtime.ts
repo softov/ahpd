@@ -952,6 +952,29 @@ const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
 /** One machine's mounts, as its own record says them. */
 const mountsOf = (found: Record<string, unknown>): unknown[] => (Array.isArray(found.Mounts) ? found.Mounts : []);
 
+/** Whether a machine is up, from the record `inspect` answered. */
+const running = (found: Record<string, unknown>): boolean => {
+  const state = (typeof found.State === 'object' && found.State !== null ? found.State : {}) as Record<string, unknown>;
+  return state.Running === true;
+};
+
+/**
+ * A git command a machine was asked, with a failure of git's own thrown.
+ *
+ * `rev-parse --verify --quiet` and `symbolic-ref -q` ask a question whose
+ * answer may be no: they exit non-zero with nothing on stderr, which is the
+ * question working. Anything git writes on stderr is git not running at all -
+ * a git directory that is not there, a repository it will not read - and a
+ * machine whose git cannot be asked is one holding work this host cannot see,
+ * which is not the same answer as a machine that did no work.
+ */
+const told = (held: Ran, said: string): Ran => {
+  if (held.code !== 0 && held.stderr.trim() !== '') {
+    throw new Error(`${said} exited ${String(held.code)}: ${held.stderr.trim()}`);
+  }
+  return held;
+};
+
 /**
  * Where a machine's uncommitted work is named while it is carried out of the
  * machine: a ref in the machine's own git directory, which goes with it, and
@@ -1302,6 +1325,25 @@ export const profileOf = (found: Record<string, unknown>): string | undefined =>
 const inGitDirectory = (source: string): boolean => /(^|\/)\.git(\/|$)/.test(source);
 
 /**
+ * The labels every machine this host makes carries one of.
+ *
+ * A container ahpd did not make has labels of its own - a dev container is
+ * labelled by the CLI, which writes the provider's label and the folder's and
+ * nothing else - and its mounts are whatever its definition asks for, a
+ * read-only bind of a path in a git directory among them. So these labels are
+ * what say a machine is this host's to judge at all, and a container without
+ * one of them is left where it is, whatever it mounts.
+ */
+const MADE_LABELS = [
+  MACHINE_AGENTS,
+  MACHINE_DISPOSABLE,
+  MACHINE_PROFILE,
+  MACHINE_OWNER,
+  MACHINE_SESSION,
+  MACHINE_HOST,
+] as const;
+
+/**
  * Whether a machine was made under the old `bind` guard, from its own record.
  *
  * A machine this plan made carries `ahpd.git`, and one that does not was made
@@ -1321,9 +1363,15 @@ const inGitDirectory = (source: string): boolean => /(^|\/)\.git(\/|$)/.test(sou
  * A machine this plan makes is excluded by its label rather than by its mounts,
  * and has to be: under `fetch` the host's `<gitDir>/objects` is mounted
  * read-only, which is the same mount by a guard that is nothing of the sort.
+ *
+ * The labels come first, because a mount says nothing about who made a
+ * container: a dev container whose definition binds a path in a git directory
+ * read-only carries the same mount, and it is a person's own container.
  */
 export const madeUnderBind = (found: Record<string, unknown>): boolean => {
-  if (labelsOf(found)[MACHINE_GIT] !== undefined) return false;
+  const labels = labelsOf(found);
+  if (!MADE_LABELS.some((one) => labels[one] !== undefined)) return false;
+  if (labels[MACHINE_GIT] !== undefined) return false;
   return mountsOf(found).some((mount) => {
     if (typeof mount !== 'object' || mount === null) return false;
     const held = mount as Record<string, unknown>;
@@ -2181,7 +2229,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     /** One git command in the machine, in the folder it was given. */
     const inMachine = async (...args: string[]): Promise<Ran> => {
       const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
-      return await ran(options, into.argv, undefined, into.env);
+      return told(await ran(options, into.argv, undefined, into.env), `git ${args.join(' ')} in ${id}`);
     };
     /*
      * Where this branch's work starts from: the commit the host last fetched of
@@ -2335,7 +2383,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     /** One git command in the machine, in the folder it was given. */
     const asked = async (...args: string[]): Promise<Ran> => {
       const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
-      return await ran(options, into.argv, undefined, into.env);
+      return told(await ran(options, into.argv, undefined, into.env), `git ${args.join(' ')} in ${id}`);
     };
     /*
      * Every branch the machine holds, asked of the machine itself rather than
@@ -2386,7 +2434,7 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   const keepUncommitted = async (id: string, at: string, found: Record<string, unknown>, tree: string): Promise<void> => {
     const inMachine = async (...args: string[]): Promise<Ran> => {
       const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
-      return await ran(options, into.argv, undefined, into.env);
+      return told(await ran(options, into.argv, undefined, into.env), `git ${args.join(' ')} in ${id}`);
     };
     // Nothing to keep in a tree holding nothing nobody committed, and nothing
     // to do in one git will not take a stash of either.
@@ -3105,46 +3153,37 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      * a profile its state volumes, which nothing else would ever mount: one per
      * agent its label names, as `stateVolumeOf` names them, and a volume that
      * is not there is nothing to remove. A profile's state volumes outlive
-     * every machine; the git volume is this machine's and goes with it, once
-     * the commits it holds have been fetched into the host's repository - the
-     * last of the moments in task 05.
+     * every machine; the git volume is this machine's and goes with it.
+     *
+     * What it committed, and under `copy` what it never committed, leave it
+     * here: the first is in the git volume and the second in the machine's own
+     * working tree, and the container is the last place either exists. So a
+     * machine whose work cannot be read out is kept, with its volumes, and a
+     * machine that is not up is started again for the commands that read it.
      */
     remove: async (id) => {
       const at = await containerOrFail(id);
       const found = await recordOf(at);
       const labels = labelsOf(found);
       const named = namedOf(found) ?? id;
+      const mounts = mountsOf(found);
+      const working = treeOf(mounts);
+      const keeping = working !== undefined && copyOf(mounts);
+      const fetching = labels[MACHINE_GIT] === 'fetch';
       /*
-       * What it committed, before the container goes.
-       *
-       * The git volume is removed with the machine below, so this is the last
-       * moment the commits in it exist anywhere. A failure does not stop the
-       * removal - a machine somebody asked to remove is a machine that goes -
-       * and what was not fetched is named in the log rather than refused: the
-       * hidden ref holding work that waited is in the host's repository, where
-       * removing this machine does not reach.
+       * A stopped container runs nothing, and `docker exec` refuses one whatever
+       * it is asked: a machine that is not up is started again for both of the
+       * commands below, and one that will not start is refused here rather than
+       * quietly emptied of nothing.
        */
       try {
-        await bringBackOfMachine(id);
+        if ((fetching || keeping) && !running(found)) await must(['start', at]);
+        if (fetching) await bringBackOfMachine(id);
+        if (keeping && working !== undefined) await keepUncommitted(id, at, found, working);
       }
       catch (error) {
-        options.log?.(`the work of ${id} could not be brought back before it went: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      /*
-       * And what it never committed, which under `copy` is in the machine's own
-       * working tree and nowhere else - the fetch above carries only commits.
-       * Same terms as that one: a failure is named in the log and the machine
-       * still goes, since a machine somebody asked to remove is a machine that
-       * goes.
-       */
-      const working = treeOf(mountsOf(found));
-      if (working !== undefined && copyOf(mountsOf(found))) {
-        try {
-          await keepUncommitted(id, at, found, working);
-        }
-        catch (error) {
-          options.log?.(`what ${id} never committed could not be kept before it went: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        const said = error instanceof Error ? error.message : String(error);
+        throw new Error(`Could not remove ${named}, so it is still here: ${said}`);
       }
       await must(['rm', '-f', at]);
       // The machine's own git directory goes with the machine where it had one:

@@ -547,6 +547,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         inMachine(left, uri, false);
         enteredIn.delete(uri);
         sessionMachines.delete(uri);
+        /*
+         * And the record that pointed at the machine, which is what made the
+         * session nested and is now the wrong answer to every question asked
+         * of it: the machine is not where it runs, so nothing runs there, and
+         * a daemon that restarts reads the record and shows an empty
+         * conversation for a session this host has the turns of. Left behind,
+         * it also keeps the row unprunable, since a record is what says a
+         * machine still holds the session.
+         */
+        kept.setNested?.(idOf(uri), undefined);
       }
       // The last thing before the new backend: the old one's process is gone.
       await Promise.all(stopping);
@@ -687,7 +697,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const talking = chat.agentId() !== undefined
       ? { resume: chat.agentId() as string, seed: chat.allTurns() }
       : undefined;
-    chat.close();
+    /*
+     * Started again rather than removed, which is what the chat coming back
+     * resumed needs: told a removal, a backend running nested in a machine
+     * disposes the session inside, and the chat that starts behind it opens
+     * on a transcript that is gone.
+     */
+    chat.close(false);
     held.chats.delete(chatUri);
     byChat.drop(chatUri);
     spawn(

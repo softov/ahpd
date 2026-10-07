@@ -48,7 +48,7 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** One session's `query()` options, on a variant holding the given values. */
-const queried = async (preset: Record<string, unknown>): Promise<Record<string, unknown>> => {
+const queried = async (preset: Record<string, unknown>, settings?: Record<string, unknown>): Promise<Record<string, unknown>> => {
   sdk.options = [];
   sdk.flags = [];
   createSession({
@@ -57,6 +57,7 @@ const queried = async (preset: Record<string, unknown>): Promise<Record<string, 
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-declared-')),
     emit: () => {},
     preset,
+    ...(settings === undefined ? {} : { settings }),
   });
   await settle();
   const one = sdk.options.at(0);
@@ -116,4 +117,23 @@ it('builds a session query from the declared values of its preset', async () => 
 
 it('leaves the sandbox layer out when nobody asked for one', async () => {
   expect((await queried({ sandbox: 'default' })).settings).toBeUndefined();
+});
+
+it('a preset with sandbox off wins over a stored on', async () => {
+  /*
+   * `sandboxEnabled` is the control a session had before the schema stopped
+   * declaring it, and a store still holds an `on` from it. That value was
+   * spread over the preset's, so `off` was the one word a preset could not
+   * say: a variant built to run unsandboxed ran sandboxed on any session
+   * somebody had once turned the sandbox on for.
+   */
+  expect((await queried({ sandbox: 'off' }, { sandboxEnabled: 'on' })).settings)
+    .toEqual({ sandbox: { enabled: false } });
+});
+
+it('a preset with no sandbox keeps a stored on', async () => {
+  // The other half of that: an upgrade never runs a session less sandboxed
+  // than it was, so a stored on still turns it on where the preset is silent.
+  expect((await queried({ thinking: 'disabled' }, { sandboxEnabled: 'on' })).settings)
+    .toEqual({ sandbox: { enabled: true } });
 });

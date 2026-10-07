@@ -79,6 +79,8 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 
 `projectTrust` is `trust` or `deny`. pi's third answer, `ask`, is not offered, because a daemon has nobody at a terminal to answer it. `trust` loads the project's pi resources, which runs its code.
 
+The host's own answer about the folder is asked as well, and both have to say yes. A folder no window vouched for loads none of the project's extensions, skills or prompts, however `projectTrust` is set. See [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/USERS.md#trusted-folders).
+
 With `sessionDir` left alone, `pi` run by hand in the same directory lists the sessions started here, and the other way round.
 
 ## What maps, and what does not

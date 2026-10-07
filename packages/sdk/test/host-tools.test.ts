@@ -372,6 +372,38 @@ describe('tools the host contributes', () => {
       });
       expect(String((notice?.action.message as { text: string }).text)).toContain('/tmp');
     });
+
+    it('names a folder with a # in the worktree message as a valid URI', async () => {
+      /*
+       * The answer names the folder as a URI, and a `#` in a path is where a
+       * URI's fragment begins: `file:///home/softov/a#b` is the folder `a`
+       * with a fragment, and a client that opens it opens the wrong place.
+       * The folder is signed in with the trust port either way, which is why
+       * only the words of the answer are under test here.
+       */
+      const host = createHost({
+        path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0']));
+      const uri = 'ahp-session:/hashed';
+      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chat = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+        snapshot: { state: { defaultChat: string } };
+      }).snapshot.state.defaultChat;
+      await client.handle({ method: 'subscribe', params: { channel: chat } });
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'work in the hashed folder' } } },
+      });
+      await settle();
+      const worktree = await call('set_workspace', { workspaceFolder: 'file:///home/softov/a%23b', isolation: true });
+      expect(worktree).toContain('An isolated worktree will be created from file:///home/softov/a%23b and set as the workspace');
+      const direct = await call('set_workspace', { workspaceFolder: '/home/softov/a#b', isolation: false });
+      expect(direct).toContain('Workspace will be set to file:///home/softov/a%23b after this turn ends');
+    });
   });
 
   it('replaces the set whole, and tells every running session', async () => {

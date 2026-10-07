@@ -4,6 +4,7 @@ import { RpcError } from '@ahpd/sdk';
 import { partTarget, resolveNeeds } from '@ahpd/sdk';
 import { hasDefinition } from './devcontainer.js';
 import { withRequires } from './parts.js';
+import type { SessionTree } from './gitdir.js';
 import { allowedBy, patternOf } from './reference.js';
 import type { Reference } from './reference.js';
 import type { Write } from '@ahpd/sdk';
@@ -300,6 +301,21 @@ export interface ManifestDefaults {
    * operator's own route is not the gate a hand-written body passes through.
    */
   devcontainer?: string;
+  /**
+   * The repository root the runtime mounts for a session's folder, where the
+   * machine is given one, and the tree the machine is given.
+   *
+   * What the runtime mounts in place of the folder is the root of the
+   * repository the folder sits in, and under `copy` it mounts nothing of the
+   * folder's at all: the machine's own volume holds the tree instead. The
+   * clash check folds in that same path, so two mounts landing there are
+   * refused with this manifest's sentence rather than by the runtime, which
+   * answers them with a duplicate mount point - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   */
+  repository?: string;
+  /** Whether the machine works in the host's tree or in a copy of it. */
+  sessionTree?: SessionTree;
   /**
    * The folder a dev container is made from here, resolved, or the sentence for
    * one this host will not build from.
@@ -1029,6 +1045,13 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
    * mounts share is refused here rather than left to the runtime, which answers
    * it by not using one of the two.
    */
+  /*
+   * The path the runtime mounts the session's folder by: the folder's own, the
+   * root of the repository it sits in where the machine is given that root, and
+   * nothing of the folder's under `copy`, where the machine's own volume holds
+   * the tree instead.
+   */
+  const mountedAt = defaults.sessionTree === 'copy' ? undefined : defaults.repository ?? folder;
   oneMountEach([
     ...(defaults.mounts ?? []).map((one) => ({ mount: one, target: targetOf(one), said: `the plugin's mount ${one}` })),
     ...(profile.mounts ?? []).map((one) => ({ mount: one, target: targetOf(one), said: `the profile's mount ${one}` })),
@@ -1045,10 +1068,15 @@ export const manifestOf = (name: string, content: Write, defaults: ManifestDefau
     ...(devcontainer === undefined
       ? []
       : copies.map((one) => ({ mount: `${one.source}:${one.target}`, target: one.target, said: `the copy from ${one.source}` }))),
-    // And the session's folder, at the path it has here, which the Docker route
-    // mounts and the CLI's does not: its own file already mounts the workspace.
-    ...(devcontainer === undefined && folder !== undefined
-      ? [{ mount: `${folder}:${folder}`, target: folder, said: `the folder ${folder}` }]
+    // And the session's folder, at the path `mountedAt` gives, which the Docker
+    // route mounts and the CLI's does not: its own file already mounts the
+    // workspace.
+    ...(devcontainer === undefined && mountedAt !== undefined
+      ? [{
+        mount: `${mountedAt}:${mountedAt}`,
+        target: mountedAt,
+        said: defaults.repository === undefined ? `the folder ${folder}` : `the session's repository ${defaults.repository}`,
+      }]
       : []),
     // And each part, at the one place a part lands; the same part asked twice
     // is one entry.

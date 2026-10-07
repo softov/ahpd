@@ -127,7 +127,7 @@ against its contract before it is recorded.
 | `registerTerminals(store)` | set | `create` |
 | `registerChanges(source)` | set | `scopes`, `state`, `summary`, and the optional operations |
 | `registerDirectories(facts)` | set | `meta`, and the optional `refresh` |
-| `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove` |
+| `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove`, and the optional `gitDir` |
 | `registerGithub(pullRequests)` | set | `resource`, `forBranch`, `create` |
 | `registerAutomations(store)` | set | the automation store |
 | `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles |
@@ -168,7 +168,7 @@ A handler that throws is answered 500 with the shape of the failure, its reason 
 A backend that can run inside a machine says so with an optional `machine()` method beside `schema()` and `defaults()`, returning what it needs by name.
 The computer plugin asks the host for those needs when a machine is made and turns them into its own flags, and the machine is labelled with the agents it was prepared for, so a client is only offered machines that named yours.
 
-A need is delivered four ways, and the field that names the way is the one that carries its value:
+A need is delivered six ways, and the field that names the way is the one that carries its value:
 
 | Shape | What it is | What the machine gets |
 | --- | --- | --- |
@@ -176,6 +176,8 @@ A need is delivered four ways, and the field that names the way is the one that 
 | `{ file, target, readOnly? }` | a host file | a bind mount at `target` |
 | `{ name, default? }` | an environment variable | `-e <name>=<value>` |
 | `{ source, target }` | a host path | a `docker cp` after the create |
+| `{ part, fallback? }` | one agent CLI, or ahpd itself, built by the host at the version its versions file pins | the part's own image, read-only at `/opt/ahpd/<part>` with the parts it requires beside it |
+| `{ state, seed? }` | a directory the agent keeps its own configuration in | a named volume, seeded from the host files the need lists and never from a login file |
 
 Every one of them takes `default`, `required` and `description`.
 A `required` need with no value at all refuses the machine, naming the need; one without it is left out, which is how an image that already carries the thing is used.
@@ -206,9 +208,11 @@ Two members of `Start` carry MCP, and both are optional, so a backend that reach
 
 `start.mcpServers` is what the host is configured with under `mcpServers` in the daemon's `config.json`, by the name a person gave each entry, read at each session's start rather than once when the host was built. An entry is `{ type: 'stdio', command, args?, env?, cwd? }` or `{ type: 'http', url, headers? }`, and a value in `env` or `headers` is a credential. The member is absent when the host holds none, rather than an empty map. A backend that can take MCP servers uses them in whatever shape its own agent takes them; one that cannot ignores the member, which is what the in-process backends do - they reach the same servers through their own configuration.
 
-`start.toolsServer()` opens an endpoint serving the tools bound to this session - every `registerTool` the host holds, and whatever the session's clients contributed - as one MCP server for this session alone, and answers `{ url, token, close() }` or `undefined` where no endpoint can be opened. A session opens it once and answers the same endpoint for the rest of its life, so an agent that dies and is started again over the same session is not handed a path the first one already had, which would leave two live for one session. A client's own tool is listed there and refused when it is called, because the host does not know how to run it. A daemon over stdio serves nothing, so it answers `undefined`, and the member is not there at all on a host built without `toolsServers`.
+`start.toolsServer()` opens an endpoint serving the tools bound to this session - every `registerTool` the host holds, and whatever the session's clients contributed - as one MCP server for this session alone, and answers `{ url, token, close() }` or `undefined` where no endpoint can be opened. A session opens it once and answers the same endpoint for the rest of its life, so an agent that dies and is started again over the same session is not handed a path the first one already had, which would leave two live for one session. A client's own tools are in the same list as the host's. A call to one goes to the backend's runner, which asks the client and answers with what it said. A daemon over stdio serves nothing, so it answers `undefined`, and the member is not there at all on a host built without `toolsServers`.
 
-That is what a backend whose agent asks its client for tools needs, an ACP agent above all: it hands the agent the `url` and the `token` and the agent makes the calls. The endpoint is on the host's own listener under `/ahp-mcp/<id>`, speaks streamable HTTP JSON-RPC at revision `2025-06-18`, and answers `initialize`, `tools/list` and `tools/call` and nothing else - one message per request, a JSON answer, no stream, because there is nothing this server initiates. A tool that throws comes back as a failed call with `isError` and the sentence in its content, which is the model that has to be told. A notification is a `202`, a `GET` a `405`, a body that is not one message a `400`.
+That is what a backend whose agent asks its client for tools needs, an ACP agent above all: it hands the agent the `url` and the `token` and the agent makes the calls. The endpoint is on the host's own listener under `/ahp-mcp/<id>`, speaks streamable HTTP JSON-RPC at revision `2025-06-18`, and answers `initialize`, `tools/list` and `tools/call` and nothing else - one message per request and a JSON answer. A tool that throws comes back as a failed call, with `isError` and the sentence in its content. The model is the one that has to be told. A client's own tool comes back the same way when the client said it failed. A notification is a `202`, and a body that is not one message a `400`.
+
+A `GET` opens the one stream this server has. A backend that asked for `notify` is told `notifications/tools/list_changed` down it whenever the list moves, which is when a client arrives or goes. A backend that asked for `list` gets a `405` there and finds the change at its next `tools/list`. Either way the endpoint serves the list as it is now.
 
 The token is the session's own. It names one path and no other, so a session holding it reaches its own tools and not a neighbour's, and a wrong one is a `401` before the method and before the body are read. The host closes the endpoint when the session is disposed and the path answers `404` from then on; a backend that closes it early takes it back the same way. `close()` is there for a backend that stops talking to it before the session ends - it is not the backend's job to end the session.
 
@@ -835,6 +839,8 @@ Under `presets.<id>`:
 | `model` | The model id a session that names none runs on |
 | `authenticate` | The sign-in to send after the handshake, as `{"methodId": "api-key"}` for Codex with a key |
 | `hostTools` | Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+| `honoursTrust` | Whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field |
+| `toolsChanged` | How this agent hears that the tools it listed have moved, over the plugin-wide setting: `notify` holds a stream open and sends `notifications/tools/list_changed` down it, and `list` says nothing. The default is `notify` |
 | `machine` | What a machine needs to run this agent: `env`, variables set only inside the machine, and `copy`, host paths copied in. See below |
 
 Each key is an agent of its own, so `copilot` and `codex` are two entries in the

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
+import { uriOf } from '../src/fileuri.js';
 import { createPeer, receive } from '../src/rpc.js';
 import { nestedAgent } from '../src/nested.js';
 import { fileSessions } from '../src/sessions.js';
@@ -961,6 +962,147 @@ it('a nested session listed after a restart resumes the inner session by id from
   expect(port.asked().filter(({ method }) => method === 'subscribe').map(({ channel }) => channel)).toContain(`${PROVIDER}:/kept`);
   expect(second.peer.seen.some(({ params }) => params?.rejectionReason !== undefined)).toBe(false);
   await second.host.close();
+  port.done();
+});
+
+it('a nested session moved to this host before its first turn shows its history', async () => {
+  const port = scriptedPort([PROVIDER]);
+  const dir = join(port.dir, 'sessions');
+  /*
+   * One backend for both daemons, which is what a machine is: it holds the
+   * transcript it was given, so a daemon started after this one reads the turn
+   * from it rather than remembering it. A second `backend()` would take the
+   * turn away with the process that held it, and the case would say nothing.
+   */
+  const real: Agent = { ...backend(), runsNested: true };
+  const daemon = async () => {
+    const host = createHost({
+      path: REPO_ROOT,
+      agents: [real],
+      agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
+      computers: port.computers,
+      /*
+       * The key the computer plugin contributes, which is the one the session
+       * was put in a machine with - and so the one a move has to move. Without
+       * it a daemon in this test has no key called `computer` at all, and the
+       * change below is a refusal rather than a move.
+       */
+      sessionConfig: { computer: { type: 'string', title: 'Computer', description: 'Where it runs.', sessionMutable: false } },
+      // Read again from the folder, as a daemon started after this one reads it.
+      sessions: fileSessions({ dir }),
+    });
+    const peer = watching();
+    const client = host.accept(peer);
+    await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
+    return { host, peer, client };
+  };
+  const first = await daemon();
+  const uri = 'ahp-session:/moved';
+  await first.client.handle({ method: 'createSession', params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' } } });
+  await until(() => port.read().length > 0, 1000);
+  await first.client.handle({ method: 'subscribe', params: { channel: uri } });
+  await first.client.handle({ method: 'subscribe', params: { channel: chatUriFor(uri) } });
+
+  /*
+   * Moved to this host before it has said anything.
+   *
+   * No machine is named any more, so the session is restarted here, and the
+   * machine it was made in holds nothing of it - which is what makes the
+   * record written when it went in wrong from the moment it leaves.
+   */
+  await first.client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), clientSeq: 1, action: { type: 'session/configChanged', config: { computer: '' } } },
+  });
+  await until(() => first.peer.seen.some(({ params }) => params?.action?.type === 'session/configChanged'), 1000);
+
+  // Its first turn, and its only one: said here, to the backend on this host.
+  await first.client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor(uri), clientSeq: 2, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+  });
+  await until(() => first.peer.seen.some(({ params }) => params?.action?.type === 'chat/turnComplete'), 1000);
+  await first.host.close();
+
+  /*
+   * A daemon started after the move, on the same folder and the same backend.
+   *
+   * The session is this host's and its transcript is here, so a client that
+   * opens it reads what it said. Left holding the record from when it was in
+   * the machine, the same client is shown an empty conversation - and the row
+   * can never be pruned, because a record keeps saying the machine has it.
+   */
+  const second = await daemon();
+  const [row] = await rowsOf(second.client);
+  expect(row?.resource).toBe(`${PROVIDER}:/moved`);
+  const opened = await second.client.handle({ method: 'subscribe', params: { channel: chatUriFor(String(row?.resource)) } }) as {
+    snapshot: { state: { turns: Bag[] } };
+  };
+  expect(opened.snapshot.state.turns.map((turn) => turn.message?.text)).toEqual(['hello']);
+  await second.host.close();
+  port.done();
+});
+
+it('a nested chat started again keeps the transcript inside the machine', async () => {
+  const port = scriptedPort([PROVIDER]);
+  const dir = join(port.dir, 'sessions');
+  /*
+   * A chat's own set of directories is its CLI started again, which for a
+   * nested session is the host inside stopped and another one resumed on the
+   * same transcript - decision `a-nested-session-resumes-its-inner-transcript
+   * -by-id`. Told a removal instead, the machine disposes the session: the
+   * chat comes back on a conversation that is no longer there.
+   */
+  const real: Agent = { ...backend(), runsNested: true, multipleDirectories: true };
+  const host = createHost({
+    path: REPO_ROOT,
+    agents: [real],
+    agentPlugins: { [PROVIDER]: '@ahpd/agent-cofold' },
+    computers: port.computers,
+    sessions: fileSessions({ dir }),
+  });
+  const peer = watching();
+  const client = host.accept(peer);
+  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
+  const uri = 'ahp-session:/wide';
+  const second = join(port.dir, 'second');
+  await client.handle({
+    method: 'createSession',
+    params: {
+      channel: uri, provider: PROVIDER, config: { computer: 'computer://box' },
+      workingDirectories: [uriOf(REPO_ROOT), uriOf(second)],
+    },
+  });
+  await until(() => port.read().length > 0, 1000);
+  const chat = 'ahp-chat:/narrow';
+  await client.handle({ method: 'createChat', params: { channel: uri, chat, workingDirectories: [uriOf(REPO_ROOT)] } });
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  const subscribed = (): number =>
+    port.asked().filter(({ method, channel }) => method === 'subscribe' && channel === `${PROVIDER}:/wide`).length;
+  // The chat's own host inside, up: the second subscription to the session,
+  // behind the one the session itself opened with.
+  await until(() => subscribed() >= 2, 1000);
+  /*
+   * A directory the session has and the chat does not, which is the one thing
+   * that starts a chat again: the CLI takes its directories when it is started.
+   */
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chat, action: { type: 'chat/workingDirectorySet', directory: uriOf(second) } },
+  });
+  // And started again: the third subscription to the session, from the host
+  // that replaces the one the restart closed.
+  await until(() => subscribed() >= 3, 1000);
+  // The action landed, so the frames above are a chat started again and not a
+  // change this host refused.
+  expect(peer.seen.some(({ params }) => params?.action?.type === 'chat/workingDirectorySet')).toBe(true);
+  /*
+   * And the machine still holds the session, which is what the chat resumes
+   * into: a restart that closed as a removal asks for the session to be
+   * disposed, and the transcript inside goes with it.
+   */
+  expect(port.asked().some(({ method }) => method === 'disposeSession')).toBe(false);
+  await host.close();
   port.done();
 });
 

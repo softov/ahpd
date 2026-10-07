@@ -490,6 +490,51 @@ it('gives a leftover disposable machine the delay again at startup', async () =>
   expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(true);
 });
 
+it('a disposable machine that refuses removal is tried again', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  const dir = temp();
+  const state = join(dir, 'docker.json');
+  /*
+   * A leftover of this daemon's with a git directory of its own, and a git that
+   * will not answer: the removal reads what the machine committed out of it, and
+   * a machine whose work cannot be read out is one that is kept. What is in that
+   * volume is the only copy of the work there is.
+   */
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'left-behind',
+      image: 'node:22',
+      labels: { 'ahpd.disposable': 'claude', 'ahpd.git': 'fetch' },
+      mounts: ['ahpd-git-left-behind:/workspaces/app/.git'],
+    }],
+    calls: [],
+    answers: [{ when: 'for-each-ref', err: 'fatal: not a git repository', code: 128 }],
+  }));
+
+  const lines: string[] = [];
+  await load(options(state, {
+    profiles: { claude: { title: 'Claude', disposable: true, disposableDelay: 1000 } },
+  }), [], (line) => { lines.push(line); });
+  await until(() => lines.some((one) => one.includes('left-behind left behind')));
+  const refused = (): string[] => lines.filter((one) => one.includes('still here'));
+
+  // The delay runs out, the removal is refused, and the machine is kept - with
+  // the git volume holding its work, which the removal would have taken.
+  await advanceUntil(() => refused().length >= 1);
+  expect(refused().some((one) => one.includes('left-behind'))).toBe(true);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['left-behind']);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+
+  /*
+   * And it is watched still. A machine the timer forgot is one that stays for
+   * the rest of the daemon's life, so the delay is given again and the removal
+   * is tried a second time.
+   */
+  await advanceUntil(() => refused().length > 1);
+  expect(refused().length).toBeGreaterThan(1);
+  expect(held(state).machines.map((one) => one.name)).toEqual(['left-behind']);
+});
+
 /*
  * Task 05: a session that moves away before its first turn.
  */
@@ -1489,6 +1534,73 @@ it('mounts the repository root where the profile says sessionRepository as well'
   expect(lines.filter((line) => line.includes('sessionRepository'))).toEqual([]);
 });
 
+/*
+ * Plan host/70 task 03: the clash check folds in the path the runtime mounts.
+ *
+ * A session in a subfolder is given the root of the repository it sits in
+ * rather than its own folder, so a profile mounting a directory at that root is
+ * two mounts at one path: the manifest refuses it, which is the sentence a
+ * person reads instead of the runtime's duplicate mount point. A mount at the
+ * subfolder is not one - the runtime mounts no such path - and under `copy` the
+ * tree the machine works in is its own, so nothing of the folder's is mounted
+ * and nothing of it is folded in.
+ */
+it('refuses a profile mount at the repository of a session in a subfolder', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+  const below = join(repo, 'src');
+  const shared = join(dir, 'shared');
+  mkdirSync(shared);
+
+  const loaded = await withRepository(state, { sessionRepository: true, mounts: [`${shared}:${repo}`] });
+  const { open } = await room(loaded);
+  await expect(open('ahp-session:/one', { computer: 'disposable:claude' }, below))
+    .rejects.toThrow(`the profile's mount ${shared}:${repo} and the session's repository ${repo} both land at ${repo}`);
+  expect(held(state).machines).toEqual([]);
+});
+
+it('accepts a profile mount at the subfolder, which the runtime does not mount', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+  const below = join(repo, 'src');
+  const shared = join(dir, 'shared');
+  mkdirSync(shared);
+
+  const loaded = await withRepository(state, { sessionRepository: true, mounts: [`${shared}:${below}`] });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, below);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toContain(`${shared}:${below}`);
+  // The root, which the runtime mounts in place of the folder, is the only
+  // other mount at a path of this host's.
+  expect(box.mounts).toContain(`${repo}:${repo}`);
+  expect(box.mounts).not.toContain(`${below}:${below}`);
+});
+
+it('folds in no folder mount under copy', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { repo } = repositoryIn(dir);
+  const below = join(repo, 'src');
+  const shared = join(dir, 'shared');
+  mkdirSync(shared);
+
+  const loaded = await withRepository(state, { sessionRepository: true, sessionTree: 'copy', mounts: [`${shared}:${below}`] });
+  const { open } = await room(loaded);
+  await open('ahp-session:/one', { computer: 'disposable:claude' }, below);
+
+  const box = held(state).machines[0] as NonNullable<Held['machines'][number]>;
+  expect(box.mounts).toContain(`${shared}:${below}`);
+  // The tree the machine copies is the repository, and it is the machine's own
+  // volume there rather than a bind of this host's folder.
+  expect(box.mounts).toContain(`ahpd-git-${box.name}:${repo}`);
+  expect(box.mounts).not.toContain(`${repo}:${repo}`);
+  expect(box.mounts).not.toContain(`${below}:${below}`);
+});
+
 it('brings no git directory into a machine whose profile leaves the session folder out', async () => {
   const dir = realpathSync(temp());
   const state = join(dir, 'docker.json');
@@ -2113,13 +2225,15 @@ it('leaves a labelled fetch machine and an open machine of the old guard alone',
         labels: { 'ahpd.computer': '1' },
       },
       // And one the old guard made with the host's git directory pinned
-      // read-only under the tree it wrote in, which is what does go.
+      // read-only under the tree it wrote in, which is what does go. The
+      // session label is what a daemon before this one wrote for a machine it
+      // made for a session, and the labels are what say the machine is ahpd's.
       {
         name: 'bound',
         image: 'node:22',
         state: 'running',
         mounts: underBindMounts(repo, gitDir),
-        labels: { 'ahpd.computer': '1' },
+        labels: { 'ahpd.computer': '1', 'ahpd.session': 'ahp-session:/one' },
       },
     ],
     calls: [],
@@ -2166,7 +2280,7 @@ it('tells a session the sentence when it asks for such a machine', async () => {
       image: 'node:22',
       state: 'running',
       mounts: underBindMounts(tree, gitDir),
-      labels: { 'ahpd.computer': '1' },
+      labels: { 'ahpd.computer': '1', 'ahpd.session': 'ahp-session:/one' },
     }],
     calls: [],
   }));
@@ -2182,6 +2296,79 @@ it('tells a session the sentence when it asks for such a machine', async () => {
     .rejects.toThrow('computer://under-bind was made with the host\'s git directory writable, so it was removed; the next turn makes a new one');
   expect(held(state).machines).toEqual([]);
   expect(lines.some((one) => one.includes('git directory writable'))).toBe(true);
+});
+
+/*
+ * host/70 task 02: the labels say whose a machine is, before its mounts are read.
+ *
+ * A mount alone does not say who made a container. A person's own dev container
+ * is made by the CLI, which writes the provider's label and the folder's and no
+ * other, and its definition may bind any path read-only - a path in a git
+ * directory among them, which is the mount the old guard left. So the labels
+ * ahpd writes for a machine of its own are what a machine is judged by, and a
+ * container without one of them is left exactly where it is.
+ */
+it('does not judge an adopted dev container that mounts a .git path read-only', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'a-folders-own-container',
+      image: 'devcontainer',
+      state: 'running',
+      /*
+       * The mounts its own definition asks for: the folder, and the hooks of the
+       * repository in it pinned read-only, which is the mount the old guard's
+       * machine carried and the only one this judgement reads.
+       */
+      mounts: [`${tree}:${tree}`, `${gitDir}/hooks:${gitDir}/hooks:ro`],
+      labels: { 'ahpd.computer': '1', 'ahpd.devcontainer.folder': tree },
+    }],
+    calls: [],
+  }));
+
+  const lines: string[] = [];
+  const loaded = await withRepository(state, {}, {}, lines);
+  // The startup listing is what would remove one, and `enter` waits for it:
+  // the port cannot count a session into a machine it has not found yet.
+  await loaded.computers?.enter?.('a-folders-own-container', 'ahp-session:/one');
+
+  expect(held(state).machines.map((one) => one.name)).toEqual(['a-folders-own-container']);
+  expect(held(state).calls.some((one) => one[0] === 'rm')).toBe(false);
+  expect(lines.some((one) => one.includes('git directory writable'))).toBe(false);
+});
+
+it('still removes a machine a 0.9 daemon made with the git directory bound', async () => {
+  const dir = realpathSync(temp());
+  const state = join(dir, 'docker.json');
+  const { tree, gitDir } = repositoryIn(dir);
+  writeFileSync(state, JSON.stringify({
+    machines: [{
+      name: 'from-0-9',
+      image: 'node:22',
+      state: 'running',
+      mounts: underBindMounts(tree, gitDir),
+      // A machine that daemon made for a session: the one label of the six a
+      // machine of that daemon's carried without a profile or a disposable key.
+      labels: { 'ahpd.computer': '1', 'ahpd.session': 'ahp-session:/one' },
+    }],
+    calls: [],
+  }));
+
+  const lines: string[] = [];
+  await withRepository(state, {}, {}, lines);
+  // The sentence is said before the removal is asked for, so the removal is
+  // waited for on its own: `rm` is a real subprocess, and the state file moves
+  // when it lands.
+  await until(() => lines.some((one) => one.includes('git directory writable')));
+  await until(() => held(state).machines.length === 0);
+
+  expect(held(state).calls.find((one) => one[0] === 'rm')).toEqual(['rm', '-f', 'from-0-9']);
+  expect(lines.some((one) => one.includes('computer://from-0-9 was made with the host\'s git directory writable, so it was removed; the next turn makes a new one'))).toBe(true);
+  // And nothing of it is asked for: its commits went into the host's repository
+  // as it made them, so there is nothing left in it to bring back.
+  expect((held(state).commands ?? []).some((one) => one.command.join(' ').includes('bundle create'))).toBe(false);
 });
 
 /*

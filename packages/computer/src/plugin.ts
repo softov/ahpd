@@ -859,11 +859,19 @@ export const apply: Plugin['apply'] = (host, options) => {
     if (held === undefined || held.sessions.size > 0) return;
     if (held.timer !== undefined) clearTimeout(held.timer);
     const timer = setTimeout(() => {
-      disposables.delete(id);
       void made.remove(id).then(
-        () => { host.log(`${name}: removed the disposable machine ${id}, ${held.delay}ms after its last session`); },
+        () => {
+          disposables.delete(id);
+          host.log(`${name}: removed the disposable machine ${id}, ${held.delay}ms after its last session`);
+        },
         (error: unknown) => {
-          host.log(`${name}: could not remove ${id}: ${error instanceof Error ? error.message : String(error)}`);
+          /*
+           * A removal that refused kept the machine, so it is still this
+           * plugin's to watch and the delay is given again: a machine nobody
+           * arms any more is one that stays for the rest of the daemon's life.
+           */
+          host.log(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+          arm(id);
         },
       );
     }, held.delay);
@@ -1339,6 +1347,16 @@ export const apply: Plugin['apply'] = (host, options) => {
      * with `for` standing in for the agents a disposable profile cannot name.
      */
     create: async (asked) => {
+      /**
+       * What a session is told when its machine cannot be made: the source it
+       * asked for, and what stopped it.
+       */
+      const making = async <T>(work: () => T | Promise<T>): Promise<T> => {
+        try { return await work(); }
+        catch (error) {
+          throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      };
       /*
        * A folder's own dev container, made when the session starts.
        *
@@ -1460,6 +1478,20 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(asked.folder === undefined || profile.sessionFolder !== true ? {} : { folder: asked.folder }),
         ...(own === undefined ? {} : { needs: own.values }),
       };
+      /*
+       * What of the repository the folder sits in this machine is given, read
+       * before the manifest because the manifest folds in the path the runtime
+       * mounts for the folder, and that path is what this decides: the
+       * repository's root behind `sessionRepository`, and the tree behind
+       * `sessionTree`.
+       */
+      const git = await making(() => withGit(
+        asked,
+        profile.sessionFolder === true ? asked.folder : undefined,
+        profile.gitGuard,
+        profile.sessionRepository === true,
+        profile.sessionTree,
+      ));
       const id = `${prefix}-${randomUUID().slice(0, 8)}`;
       const spec = manifestOf(id, { data: JSON.stringify({ profile: key }), encoding: 'utf-8' }, {
         runtime,
@@ -1482,6 +1514,11 @@ export const apply: Plugin['apply'] = (host, options) => {
         ...(asked.owner === undefined ? {} : { owner: asked.owner }),
         ...(asked.team === undefined ? {} : { team: asked.team }),
         ...(asked.project === undefined ? {} : { project: asked.project }),
+        // The path the runtime mounts for the folder, which is this machine's
+        // git: the repository's root where it is given one, and nothing of the
+        // folder's under `copy`.
+        ...(git.repository === undefined ? {} : { repository: git.repository }),
+        ...(git.sessionTree === undefined ? {} : { sessionTree: git.sessionTree }),
       });
       // Counted before it is made, and with the same count a write to
       // `computer://<name>` passes: a machine made for a session is a machine
@@ -1494,33 +1531,22 @@ export const apply: Plugin['apply'] = (host, options) => {
         if (full !== undefined) {
           throw new Error(`This host holds ${max} computers already, and ${id} would be one more`);
         }
-        try {
-          await made.run({
-            ...spec,
-            label,
-            // The repository the session's folder belongs to, behind a gate of
-            // its own: `sessionRepository` for the root it sits below and the
-            // git directory beside it, `sessionFolder` for the folder.
-            ...withGit(
-              asked,
-              profile.sessionFolder === true ? asked.folder : undefined,
-              profile.gitGuard,
-              profile.sessionRepository === true,
-              profile.sessionTree,
-            ),
-            disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
-            // The session this machine is made for, which is what a daemon
-            // restarting finds it by, and the daemon making it, which is what
-            // keeps it out of a daemon that keeps the same session ids.
-            session: asked.session,
-            ...(host.hostId === undefined ? {} : { host: host.hostId }),
-          });
-        }
-        catch (error) {
-          // The runtime's own sentence, kept: it is the only thing that says
-          // what Docker refused, and the session reads it as its creation error.
-          throw new Error(`The machine for ${asked.source} could not be made: ${error instanceof Error ? error.message : String(error)}`);
-        }
+        // The runtime's own sentence is kept: it is the only thing that says
+        // what Docker refused, and the session reads it as its creation error.
+        await making(async () => made.run({
+          ...spec,
+          label,
+          // The repository the session's folder belongs to, behind a gate of
+          // its own: `sessionRepository` for the root it sits below and the
+          // git directory beside it, `sessionFolder` for the folder.
+          ...git,
+          disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
+          // The session this machine is made for, which is what a daemon
+          // restarting finds it by, and the daemon making it, which is what
+          // keeps it out of a daemon that keeps the same session ids.
+          session: asked.session,
+          ...(host.hostId === undefined ? {} : { host: host.hostId }),
+        }));
       });
       // Watched before the host says the session entered, so a session that
       // never starts still leaves a machine that goes.

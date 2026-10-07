@@ -560,13 +560,14 @@ describe('a session\'s config across a restart', () => {
     expect(options?.settings).toEqual({ sandbox: { enabled: true } });
   });
 
-  it('keeps a stored sandbox on over a preset that says off, in both spellings it was written in', async () => {
+  it('lets a preset that says off turn off a stored sandbox on, in both spellings it was written in', async () => {
     // `'on'` is what the control the schema dropped actually wrote; `true` is
-    // the same value in the shape a client could have sent it.
+    // the same value in the shape a client could have sent it. A preset saying
+    // off is somebody asking for no sandbox, so it wins over that stored value.
     expect((await resumedQuery({ sandboxEnabled: 'on' }, { sandbox: 'off' }))?.settings)
-      .toEqual({ sandbox: { enabled: true } });
+      .toEqual({ sandbox: { enabled: false } });
     expect((await resumedQuery({ sandboxEnabled: true }, { sandbox: 'off' }))?.settings)
-      .toEqual({ sandbox: { enabled: true } });
+      .toEqual({ sandbox: { enabled: false } });
   });
 
   it('lets a stored sandbox that is off, default or false leave the preset in charge', async () => {
