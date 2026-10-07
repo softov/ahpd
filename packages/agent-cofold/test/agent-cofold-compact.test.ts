@@ -248,8 +248,11 @@ it('says a compaction as one notice rather than as the model\'s answer', async (
 
   // The two numbers are cofold's, so the notice is checked against the event
   // they arrived on rather than against numbers this test made up.
+  // Searched across every run: two turns can start in the same millisecond,
+  // and then the list's newest-first order does not say which one folded.
   const runs = await store.runs.list({ sessionId: 'one' });
-  const events = await store.runs.listEvents({ sessionId: 'one', runId: String(runs[0]?.runId) });
+  const events = (await Promise.all(runs.map((one) =>
+    store.runs.listEvents({ sessionId: 'one', runId: String(one.runId) })))).flat();
   const compacted = events.find((one) => one.type === 'context.compacted') as
     { estimatedTokens: number; afterTokens: number } | undefined;
   expect(compacted).toBeDefined();
