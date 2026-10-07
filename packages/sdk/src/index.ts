@@ -54,7 +54,7 @@ export { artifactTools, ARTIFACTS_META } from './artifacttools.js';
 export { gitWorktrees, worktreesOf, worktreeFor } from './repo/worktrees.js';
 export { githubPullRequests } from './repo/github.js';
 export { partsOf, SNAPSHOT_TAG } from './attachments.js';
-export type { Part, PartOptions } from './attachments.js';
+export type { Part, PartOptions, PartSource } from './attachments.js';
 export { memoryAutomations } from './automations.js';
 export { scheduledAutomations } from './scheduled.js';
 export { fileSessions, memorySessions, migrateSessions } from './sessions.js';

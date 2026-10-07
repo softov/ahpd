@@ -78,7 +78,45 @@ it('sends a pasted screenshot as an image, and the text before it', async () => 
 
   expect(parts).toHaveLength(2);
   expect(parts[0]).toEqual({ type: 'text', text: 'look at this' });
-  expect(parts[1]).toEqual({ type: 'image', mimeType: 'image/png', data: png().toString('base64') });
+  expect(parts[1]).toEqual({
+    type: 'image',
+    mimeType: 'image/png',
+    data: png().toString('base64'),
+    source: { label: 'ab12cd34-shot.png', uri: `file://${path}` },
+  });
+});
+
+it('says which attachment each part came from', async () => {
+  const dir = temp();
+  const path = given(dir, 'ab12cd34-shot.png', png(), 'image/png');
+  const parts = await partsOf('look', [
+    snapshot(path, 'image/png', 'shot.png'),
+    { type: 'simple', label: 'terminal', modelRepresentation: 'Terminal output:\n$ ls' } as MessageAttachment,
+    {
+      type: 'embeddedResource',
+      label: 'pasted.png',
+      contentType: 'image/png',
+      data: png().toString('base64'),
+    } as MessageAttachment,
+  ], { images: true });
+
+  // The message's own text came from no attachment, so it names none.
+  expect(parts[0]).toEqual({ type: 'text', text: 'look' });
+  // A file the host wrote: the label a person gave it, and where it is.
+  expect(parts[1]).toEqual({
+    type: 'image',
+    mimeType: 'image/png',
+    data: png().toString('base64'),
+    source: { label: 'shot.png', uri: `file://${path}` },
+  });
+  // An attachment that names no file has a label and no URI.
+  expect(parts[2]).toEqual({ type: 'text', text: 'Terminal output:\n$ ls', source: { label: 'terminal' } });
+  expect(parts[3]).toEqual({
+    type: 'image',
+    mimeType: 'image/png',
+    data: png().toString('base64'),
+    source: { label: 'pasted.png' },
+  });
 });
 
 it('sends an image of each kind the provider takes', async () => {
@@ -126,7 +164,14 @@ it('inlines pasted text, labelled with the lines it covers', async () => {
   const parts = await partsOf('read this', [snapshot(path, 'text/plain', 'notes.txt')], { images: true });
 
   expect(parts).toHaveLength(2);
-  expect((parts[1] as { text: string }).text).toBe('notes.txt (lines 1-2):\n```\nfirst\nsecond\n```');
+  // The text a backend sends is the labelled, fenced copy, and the source
+  // carries the file's own text beside it - the words without the fence, and
+  // with the newline the file ends in, for a block that is the file itself.
+  expect(parts[1]).toEqual({
+    type: 'text',
+    text: 'notes.txt (lines 1-2):\n```\nfirst\nsecond\n```',
+    source: { label: 'notes.txt', uri: `file://${path}`, text: 'first\nsecond\n' },
+  });
 });
 
 it('names text too long to inline, and text in a file somebody is editing', async () => {
@@ -182,7 +227,9 @@ it('sends what a producer wrote for a simple attachment', async () => {
   const one = { type: 'simple', label: 'terminal', modelRepresentation: 'Terminal output:\n$ ls' } as MessageAttachment;
   const parts = await partsOf('see', [one], { images: true });
   expect(parts).toHaveLength(2);
-  expect(parts[1]).toEqual({ type: 'text', text: 'Terminal output:\n$ ls' });
+  expect(parts[1]).toEqual({ type: 'text', text: 'Terminal output:\n$ ls', source: { label: 'terminal' } });
+  // Nothing read a file for this part, so it carries no file text.
+  expect((parts[1] as Bag).source).not.toHaveProperty('text');
 });
 
 it('names an annotations attachment and a chat by their label', async () => {
@@ -210,8 +257,15 @@ it('holds an attachment that was never written to the same limits', async () => 
     } as MessageAttachment,
   ], { images: true });
 
-  expect(parts[1]).toEqual({ type: 'image', mimeType: 'image/png', data: png().toString('base64') });
+  expect(parts[1]).toEqual({
+    type: 'image',
+    mimeType: 'image/png',
+    data: png().toString('base64'),
+    source: { label: 'pasted.png' },
+  });
   expect((parts[2] as Bag).text).toBe('notes.txt (lines 1-1):\n```\nhello\n```');
+  // These bytes never reached a file, so there is no file text to carry.
+  expect((parts[2] as Bag).source).not.toHaveProperty('text');
 });
 
 /*
@@ -226,7 +280,12 @@ it('reads a file name as the type where nothing else says', async () => {
     label: 'shot.png',
     uri: `file://${path}`,
   } as MessageAttachment], { images: true });
-  expect(parts[1]).toEqual({ type: 'image', mimeType: 'image/png', data: png().toString('base64') });
+  expect(parts[1]).toEqual({
+    type: 'image',
+    mimeType: 'image/png',
+    data: png().toString('base64'),
+    source: { label: 'shot.png', uri: `file://${path}` },
+  });
 });
 
 /** The note a snapshot's reference line carries. */

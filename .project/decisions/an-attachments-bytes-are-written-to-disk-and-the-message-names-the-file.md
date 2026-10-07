@@ -6,7 +6,7 @@ refs:
   - "[code://packages/sdk/src/host/chatactions.ts#L278](../../packages/sdk/src/host/chatactions.ts#L278) - `chat/turnStarted`, where a message's attachments reach the host"
   - "[code://packages/sdk/src/host/chatactions.ts#L828](../../packages/sdk/src/host/chatactions.ts#L828) - `chat/pendingMessageSet`, the queued and steering half"
   - "[code://packages/sdk/src/sessions.ts#L178](../../packages/sdk/src/sessions.ts#L178) - one JSON file per session, which today holds every pasted attachment's base64"
-  - "[code://packages/sdk/src/resources.ts#L208-L216](../../packages/sdk/src/resources.ts#L208-L216) - `read`, which loads a whole file and returns binary as base64"
+  - "[code://packages/sdk/src/resources.ts#L208-L217](../../packages/sdk/src/resources.ts#L208-L217) - `read`, which loads a whole file and returns binary as base64"
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/agentService.ts#L7548-L7600 - `_rewriteUserMessageAttachments`, the host rewrite this mirrors
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/common/meta/vscode/agentSnapshotAttachmentMeta.ts - `vscode.agentHost.snapshotAttachment`, the tag on a rewritten attachment
 ---

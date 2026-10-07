@@ -1,5 +1,6 @@
-import type { BlobResourceContents, ContentBlock, StopReason, TextResourceContents, Usage } from '@agentclientprotocol/sdk';
+import type { ContentBlock, StopReason, Usage } from '@agentclientprotocol/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom } from '@ahpd/sdk';
+import { partsOf } from '@ahpd/sdk';
 import { closePlan } from '../mapping.js';
 import type { AcpConnection } from '../types.js';
 import { bag, messageOf } from './common.js';
@@ -39,21 +40,6 @@ const NOT_AN_ANSWER: Partial<Record<StopReason, string>> = {
   max_turn_requests: 'The agent used every turn request this session allowed',
   refusal: 'The agent declined to answer this prompt',
 };
-
-/**
- * Whether an attachment carries its bytes with it, which is what an inline one
- * is.
- *
- * The protocol writes its variants as a `const enum`, whose members name
- * themselves as strings but narrow nothing at runtime, so the words the
- * protocol declares are what these test for.
- */
-const inline = (one: MessageAttachment): one is Extract<MessageAttachment, { data: string }> =>
-  (one as { type: string }).type === 'embeddedResource';
-
-/** Whether an attachment is a reference to a resource rather than bytes. */
-const referencing = (one: MessageAttachment): one is Extract<MessageAttachment, { uri: string }> =>
-  (one as { type: string }).type === 'resource';
 
 export function createTurn(ctx: SessionContext): Turn {
   const { emit, provider, start, inside, turns, doing, touch } = ctx;
@@ -240,82 +226,45 @@ export function createTurn(ctx: SessionContext): Turn {
    */
   const attachmentUri = (label: string): string => `acp-attachment:${provider}/${label}`;
 
-  /** An attachment the server cannot take, named where the text can carry it. */
-  const named = (label: string): ContentBlock => ({ type: 'text', text: `[${label}]` });
-
   /**
-   * The content a `resource` attachment points at, read as the store holds it.
+   * The blocks one turn is prompted with: what was said, then the message's
+   * attachments as the parts the shared helper made of them.
    *
-   * ACP's embedded resource carries the bytes rather than pointing at them, so
-   * a file the client named by URI is read here - the same read
-   * `fs/read_text_file` makes, and for the same reason: the agent gets what the
-   * person attached rather than a path it cannot open.
-   */
-  const contentOf = async (
-    uri: string,
-    mime: string | undefined,
-  ): Promise<TextResourceContents | BlobResourceContents | undefined> => {
-    const store = start.resources;
-    if (store === undefined) return undefined;
-    try {
-      const read = await store.read(uri);
-      const said = mime ?? read.contentType;
-      return read.encoding === 'base64'
-        ? { uri, blob: read.data, ...(said === undefined ? {} : { mimeType: said }) }
-        : { uri, text: read.data, ...(said === undefined ? {} : { mimeType: said }) };
-    }
-    catch {
-      // A file the store will not read is an attachment this turn cannot carry.
-      return undefined;
-    }
-  };
-
-  /**
-   * The blocks one turn is prompted with: what was said, then whatever of the
-   * message's attachments the server said it can take.
-   *
-   * ACP asks a server to opt into everything past text, so an image is an image
-   * block only where `promptCapabilities.image` says so, and a file is an
-   * embedded resource only where `embeddedContext` does. Whatever the server
-   * did not ask for is named in the text rather than dropped, because a message
-   * carrying a picture the agent never heard about is a message that is missing
-   * something.
+   * The helper decides which of the three an attachment is, and within which
+   * limits, so nothing here reads a file: a part is what the message already
+   * holds. What is left to this bridge is what ACP asks a server to opt into -
+   * an image block only where `promptCapabilities.image` says so, which the
+   * helper is told, and a file named as a resource only where
+   * `embeddedContext` does. A file the helper could not inline is named by its
+   * path in the text, which the agent opens with its own tools if it has them.
    */
   const blocksFor = async (text: string, attachments: MessageAttachment[] | undefined): Promise<ContentBlock[]> => {
-    const blocks: ContentBlock[] = [{ type: 'text', text }];
-    for (const one of attachments ?? []) {
-      // What the producer wrote for the model is text, which every server takes.
-      const written = (one as { modelRepresentation?: unknown }).modelRepresentation;
-      if ((one as { type: string }).type === 'simple' && typeof written === 'string' && written !== '') {
-        blocks.push({ type: 'text', text: written });
-        continue;
-      }
-      const picture = inline(one) && one.contentType.startsWith('image/');
-      if (picture && ctx.takes?.image === true) {
+    const parts = await partsOf(text, attachments, { images: ctx.takes?.image === true });
+    const blocks: ContentBlock[] = [];
+    for (const part of parts) {
+      if (part.type === 'image') {
         blocks.push({
           type: 'image',
-          data: one.data,
-          mimeType: one.contentType,
-          uri: attachmentUri(one.label),
+          data: part.data,
+          mimeType: part.mimeType,
+          uri: attachmentUri(part.source?.label ?? 'attachment'),
         });
         continue;
       }
       /*
-       * An image the server will not take is named rather than sent as a
-       * resource, because `embeddedContext` is about context a message refers
-       * to and an image is not that; the sentence that named it is what the
-       * agent is left with.
+       * A text part with a file behind it goes as the resource it is, to a
+       * server that takes embedded context: the file's own words under the URI
+       * they came from, because a resource block is the file rather than a copy
+       * of it with a label on top. A text part read out of no file - an
+       * attachment named rather than read, or bytes that never reached a file -
+       * names nothing to point at and stays text.
        */
-      if (!picture && ctx.takes?.embeddedContext === true) {
-        const resource = inline(one)
-          ? { uri: attachmentUri(one.label), blob: one.data, mimeType: one.contentType }
-          : referencing(one) ? await contentOf(one.uri, one.contentType) : undefined;
-        if (resource !== undefined) {
-          blocks.push({ type: 'resource', resource });
-          continue;
-        }
+      const source = part.source;
+      if (ctx.takes?.embeddedContext === true && source?.uri !== undefined && source.text !== undefined) {
+        blocks.push({ type: 'resource', resource: { uri: source.uri, text: source.text } });
+        continue;
       }
-      blocks.push(named(one.label));
+      blocks.push({ type: 'text', text: part.text });
     }
     return blocks;
   };

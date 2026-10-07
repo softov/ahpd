@@ -1,23 +1,32 @@
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
+import { SNAPSHOT_TAG } from '@ahpd/sdk';
 import { fileResources } from '../../sdk/src/resources.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import type { Agent, Bag, Emit, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 
 /*
- * What a prompt carries, and what a session is opened with.
+ * What a prompt carries, what a queued message keeps, and what a session is
+ * opened with.
  *
- * Both are decided by what the server said in its handshake: an image is an
- * image block only to an agent that advertised `promptCapabilities.image`, a
- * file is an embedded resource only to one that advertised `embeddedContext`,
- * and the directories beside the working one go only to an agent that
- * advertised `sessionCapabilities.additionalDirectories`. What an agent cannot
- * take is named in the text rather than dropped, because a message carrying a
- * picture the agent never heard about is a message missing something.
+ * The first two are decided by what the server said in its handshake: an image
+ * is an image block only to an agent that advertised `promptCapabilities.image`,
+ * a file is an embedded resource only to one that advertised
+ * `embeddedContext`, and the directories beside the working one go only to an
+ * agent that advertised `sessionCapabilities.additionalDirectories`. What an
+ * agent cannot take is named in the text rather than dropped, because a message
+ * carrying a picture the agent never heard about is a message missing
+ * something.
+ *
+ * The file an attachment names is the host's own copy of what the client
+ * pasted, which the shared parts helper reads within its limits. Anything else
+ * - a file somebody works in, a pipe, a device - is named by its path and never
+ * opened, whatever the server said it takes.
  *
  * The server is the scripted subprocess in `test/fixtures/acp-server.mjs`, which
  * reports the blocks a prompt arrived in and logs every request it is sent, so
@@ -56,7 +65,7 @@ function backend(flags: string[] = []): { agent: Agent; log: string } {
   };
 }
 
-type Watcher = { emit: Emit; prose(): string; ended(): number };
+type Watcher = { emit: Emit; prose(): string; ended(): number; waiting(): Bag[] };
 
 /** A session's emitted actions, which is how a test knows a turn has settled. */
 function watcher(): Watcher {
@@ -68,6 +77,10 @@ function watcher(): Watcher {
       .map((one) => String(one.action.content))
       .join(''),
     ended: () => actions.filter((one) => ['chat/turnComplete', 'chat/turnCancelled', 'chat/error'].includes(String(one.action.type))).length,
+    // The messages a client was told are waiting, as the actions carried them.
+    waiting: () => actions
+      .filter((one) => one.action.type === 'chat/pendingMessageSet')
+      .map((one) => one.action.message as Bag),
   };
 }
 
@@ -160,6 +173,15 @@ const NOTES = carried({
   data: 'bm90ZXM=',
 });
 
+/** A file this host wrote for the message, as the host's rewrite leaves it. */
+const written = (path: string, label: string, type: string): MessageAttachment => carried({
+  type: 'resource',
+  label,
+  uri: `file://${path}`,
+  contentType: type,
+  _meta: { [SNAPSHOT_TAG]: { isSnapshot: true, contentType: type } },
+});
+
 it('sends an image as an image block to a server that takes images', async () => {
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = start(agent, 'image');
@@ -173,41 +195,91 @@ it('names the image in the text for a server that does not take them', async () 
   const { agent } = backend();
   const { session, watch } = start(agent, 'no-image');
   expect(await prompt(session, watch, [PICTURE]))
-    .toBe('blocks=text:what are these blocks?|text:[shot.png]');
+    .toBe('blocks=text:what are these blocks?|text:The user provided the following references:\n- shot.png');
 });
 
-it('sends a pasted file as an embedded resource to a server that takes context', async () => {
+it('sends a file the host wrote as an embedded resource to a server that takes context', async () => {
+  const dir = scratch();
+  const path = join(dir, 'notes.txt');
+  writeFileSync(path, 'the notes\n');
   const { agent } = backend(['--prompt-caps']);
   const { session, watch } = start(agent, 'context');
+  /*
+   * The URI is the file the host wrote, which is one an agent with tools of its
+   * own can open, and the text is the file's own words: the report names the URI
+   * and then the text, so what is read here is the file's bytes and nothing this
+   * bridge added. No fence and no line header, and the newline the file ends
+   * with is still there.
+   */
+  expect(await prompt(session, watch, [written(path, 'notes.txt', 'text/plain')]))
+    .toBe(`blocks=text:what are these blocks?|resource:file://${path}\nthe notes\n`);
+});
+
+it('inlines an attachment that never reached a file, which names no resource', async () => {
+  // What the client pasted, on a host that wrote nothing for it: a resource
+  // block would name a URI nothing here can open, so the text goes as text.
+  const { agent } = backend(['--prompt-caps']);
+  const { session, watch } = start(agent, 'no-file');
   expect(await prompt(session, watch, [NOTES]))
-    .toBe('blocks=text:what are these blocks?|resource:acp-attachment:acp/notes.txt');
+    .toBe('blocks=text:what are these blocks?|text:notes.txt (lines 1-1):\n```\nnotes\n```');
 });
 
 it('names what the server cannot take rather than dropping it', async () => {
   const { agent } = backend();
   const { session, watch } = start(agent, 'named');
-  // A file the server did not ask for is named; a simple attachment is the
-  // text its producer wrote for the model.
+  // A pasted file is the text it holds, which is what any server takes; a
+  // simple attachment is the text its producer wrote for the model.
   const said = await prompt(session, watch, [NOTES, carried({
     type: 'simple',
     label: 'the first paragraph',
     modelRepresentation: 'It was a dark and stormy night.',
   })]);
-  expect(said).toBe('blocks=text:what are these blocks?|text:[notes.txt]|text:It was a dark and stormy night.');
+  expect(said).toBe(
+    'blocks=text:what are these blocks?'
+    + '|text:notes.txt (lines 1-1):\n```\nnotes\n```'
+    + '|text:It was a dark and stormy night.',
+  );
 });
 
-it('reads a file the client named by URI, through the host\'s own store', async () => {
-  const path = scratch();
-  writeFileSync(join(path, 'note.txt'), 'the note body');
+it('names a file the client gave by URI, and does not read it', async () => {
+  const dir = scratch();
+  const path = join(dir, 'note.txt');
+  writeFileSync(path, 'the note body');
+  const asked: string[] = [];
+  const store = fileResources();
   const { agent } = backend(['--prompt-caps']);
-  const { session, watch } = start(agent, 'referenced', { resources: fileResources() });
+  const { session, watch } = start(agent, 'referenced', {
+    resources: { ...store, read: (uri: string, wanted?: string) => { asked.push(uri); return store.read(uri, wanted); } },
+  });
   const said = await prompt(session, watch, [carried({
     type: 'resource',
     label: 'note.txt',
-    uri: `file://${join(path, 'note.txt')}`,
+    uri: `file://${path}`,
   })]);
-  // The URI travels as it was given, so the agent can name what it was sent.
-  expect(said).toBe(`blocks=text:what are these blocks?|resource:file://${join(path, 'note.txt')}`);
+  // A file in somebody's workspace is named by its path and left where it is:
+  // the agent opens it with its own tools, and this host never read it at all.
+  expect(said).toBe(`blocks=text:what are these blocks?|text:The user provided the following references:\n- ${path}`);
+  expect(asked.filter((uri) => uri.includes('note.txt'))).toEqual([]);
+});
+
+it('names a large file, a pipe and a device without reading them', async () => {
+  const dir = scratch();
+  const big = join(dir, 'huge.bin');
+  writeFileSync(big, Buffer.alloc(6 * 1024 * 1024, 7));
+  const pipe = join(dir, 'a-pipe');
+  execFileSync('mkfifo', [pipe]);
+  // A server that takes embedded context gets these as names too: read, a pipe
+  // is forever, a device is endless and six megabytes is more than the helper
+  // sends, so each is named by its path and none of them is opened.
+  const { agent } = backend(['--prompt-caps']);
+  const { session, watch } = start(agent, 'limits');
+  const said = await prompt(session, watch, [
+    carried({ type: 'resource', label: 'huge.bin', uri: `file://${big}`, contentType: 'application/octet-stream' }),
+    carried({ type: 'resource', label: 'a-pipe', uri: `file://${pipe}` }),
+    carried({ type: 'resource', label: 'zero', uri: 'file:///dev/zero' }),
+  ]);
+  const named = ['The user provided the following references:', `- ${big}`, `- ${pipe}`, '- /dev/zero'].join('\n');
+  expect(said).toBe(`blocks=text:what are these blocks?|text:${named}`);
 });
 
 /** Run one turn with nothing attached to it, and wait for it to settle. */
@@ -216,6 +288,19 @@ const turn = async (session: Session, watch: Watcher, text: string): Promise<voi
   session.begin('t1', text);
   await until(() => watch.ended() > before);
 };
+
+it('sends a queued message with its attachments when its turn starts', async () => {
+  const { agent } = backend(['--prompt-caps']);
+  const { session, watch } = start(agent, 'queued');
+  // Queued while the turn before it is still running, so it waits rather than
+  // being sent: what it becomes when its turn comes is its text and its
+  // attachments, which a client was already shown as waiting.
+  session.begin('t1', 'hello');
+  session.queue('q1', 'what are these blocks?', undefined, undefined, [PICTURE]);
+  expect(watch.waiting()[0]?.attachments).toEqual([PICTURE]);
+  await until(() => watch.prose().includes('blocks='));
+  expect(watch.prose()).toContain('blocks=text:what are these blocks?|image:acp-attachment:acp/shot.png');
+});
 
 it('sends the directories beside the working one only to a server that advertised them', async () => {
   const { agent, log } = backend();

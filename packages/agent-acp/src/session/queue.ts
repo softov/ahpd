@@ -189,9 +189,9 @@ export function createQueue(ctx: SessionContext): Queue {
       String(message.text ?? ''),
       next.model as Chosen | undefined,
       next.from as MessageFrom | undefined,
-      // Nothing here holds a queued message's attachments, so the turn this
-      // becomes carries its text alone.
-      undefined,
+      // What the message was queued with, which is still its own: a picture
+      // pasted into a message that waited its turn is a picture when it comes.
+      Array.isArray(message.attachments) ? message.attachments as MessageAttachment[] : undefined,
       String(next.id),
     );
   };
@@ -221,10 +221,10 @@ export function createQueue(ctx: SessionContext): Queue {
     runCommand(turnId, command, run, queuedAs);
   };
 
-  const queue: Session['queue'] = (id, text, model, from) => {
+  const queue: Session['queue'] = (id, text, model, from, attachments) => {
     const entry: Bag = {
       id,
-      message: { text },
+      message: { text, ...(attachments !== undefined ? { attachments } : {}) },
       ...(model !== undefined ? { model } : {}),
       ...(from !== undefined ? { from } : {}),
     };

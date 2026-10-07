@@ -67,7 +67,8 @@
  *   rather than `end_turn`, so a turn that stopped early can be told apart from
  *   one that finished;
  * - text containing `blocks` reports the content blocks the prompt arrived in,
- *   as `blocks=text|image|resource` with each block's text or its URI, so a
+ *   as `blocks=text|image|resource` with each block's text or its URI - a
+ *   resource block saying its URI and then its own text on the next line - so a
  *   test can read exactly what a client sent;
  * - text containing `chatter` says one line on stderr and answers normally, so
  *   a test can read that a healthy server's noise never reaches a client;
@@ -616,13 +617,18 @@ const promptScript = async (id, params) => {
 
   if (text.includes('blocks')) {
     const blocks = Array.isArray(params?.prompt) ? params.prompt : [];
-    // One block as `<type>:<what it carries>`, which is enough to tell an image
-    // block from a text block naming the same image.
+    /*
+     * One block as `<type>:<what it carries>`, which is enough to tell an image
+     * block from a text block naming the same image. A resource block says its
+     * URI and then its own text on the next line, so a test can read the words
+     * a client sent for a file as well as which file they are under.
+     */
     const said = blocks.map((block) => {
-      const what = block?.type === 'text'
-        ? String(block.text ?? '')
-        : String(block?.uri ?? block?.resource?.uri ?? '');
-      return `${block?.type}:${what}`;
+      if (block?.type === 'text') return `text:${String(block.text ?? '')}`;
+      if (block?.type === 'resource') {
+        return `resource:${String(block.resource?.uri ?? '')}\n${String(block.resource?.text ?? '')}`;
+      }
+      return `${String(block?.type)}:${String(block?.uri ?? '')}`;
     });
     notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `blocks=${said.join('|')}` } });
   }
