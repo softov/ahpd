@@ -93,7 +93,9 @@ afterEach(async () => {
  * is one of the three roads below.
  */
 function harness(options: { command: string; args: string[] }) {
-  const agent = acpAgent({ command: options.command, args: options.args, provider: 'acp' });
+  // These cases are about the machine, not the folder, so the agent says it
+  // asks about trust on its own and the host does not refuse its folder.
+  const agent = acpAgent({ command: options.command, args: options.args, provider: 'acp', honoursTrust: true });
   const { properties, ...rest } = agent.schema() as { properties?: Record<string, unknown> };
   return {
     ...agent,
