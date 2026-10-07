@@ -255,7 +255,7 @@ it('every chat a turn through a real inner host names is the outer chat', async 
 it('a restart waits for the inner host it replaces, and resumes its conversation', async () => {
   const env = home();
   const started: ChildProcessWithoutNullStreams[] = [];
-  /** Set when the first process's own `close` arrived. */
+  /** Set when the first process exited: the moment the host waits for, ahead of `close`. */
   let firstGone = false;
   /** Set when a second process was asked for while the first was still there. */
   let replacedTooEarly = false;
@@ -263,7 +263,7 @@ it('a restart waits for the inner host it replaces, and resumes its conversation
     const one = ahpd(env);
     started.push(one);
     if (started.length > 1 && !firstGone) replacedTooEarly = true;
-    one.once('close', () => { if (one === started[0]) firstGone = true; });
+    one.once('exit', () => { if (one === started[0]) firstGone = true; });
     return one;
   }));
 
