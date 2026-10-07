@@ -63,6 +63,7 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 | --- | --- | --- |
 | `presets` | required | the agents this one load registers, by the id clients name. A key that names a shipped preset takes it; a key that names none writes a `command` of its own |
 | `hostTools` | | offer the host's own tools to each session as an MCP server, on by default. A preset may set its own |
+| `toolsChanged` | | how a session's agent hears that the tools it listed have moved: `notify` holds a stream open and sends `notifications/tools/list_changed` down it, which is the default, and `list` says nothing and leaves it to the agent's next `tools/list`. Both serve the current list, so an agent that ignores the notification is no worse off. A preset may set its own |
 
 Under `presets.<id>`:
 
@@ -78,6 +79,7 @@ Under `presets.<id>`:
 | `model` | | the model a session that names none runs on |
 | `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
 | `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
+| `toolsChanged` | | how this agent hears that the tools it listed have moved, over the plugin-wide setting |
 | `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; `copy`, a list of `{ "source", "target" }` host paths copied in; `part`, the part the CLI comes from; `state`, the absolute directory the agent keeps its configuration in, as a state volume; and `seed`, the host files that directory is seeded from, each `{ "source", "target", "keep", "drop" }`. A shipped preset brings its own, and this one is laid over it by key, `env` by variable |
 
 Every shipped preset brings a `machine`: its CLI's part, a state directory at `/ahpd/<id>` seeded from the agent's own host files and never its login file, and the variables that point the CLI there. So a preset in a machine runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. See [ACP agents in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#acp-agents-in-a-machine).
@@ -87,6 +89,8 @@ A per-agent option written at the top level fails the load and says where it goe
 ## What it does
 
 It spawns the command, completes the ACP handshake over its stdio, opens one session, and turns each `session/update` into the `chat/*` action a client already knows. A turn ends as the server's own stop reason says: `chat/turnComplete` for `end_turn`, `chat/turnCancelled` for `cancelled`, and `chat/error` carrying the reason for `max_tokens`, `max_turn_requests` and `refusal`, which are a turn that stopped early rather than an answer. `cancel` reaches the server as its notification, after every permission it was still waiting on has been answered `cancelled`.
+
+The host's own tools, and with them the tools a session's clients provide, are offered to the agent as one HTTP MCP server named `ahp`, where `hostTools` is on, which it is by default. A call the agent makes to a client's tool is reported against the client that provides it and waits for that client's answer, which reaches the agent as the tool result with everything the client sent, images and resources included. A client that arrives after the agent listed its tools is heard of as `toolsChanged` says: under `notify`, the default, the host holds a stream open and sends `notifications/tools/list_changed` down it, and under `list` nothing is sent. Both serve the current list either way, so an agent that ignores the notification and never lists again is one that misses every tool a client announced after it looked.
 
 A session this process never watched is loaded when a client reads it, where the server advertised `loadSession`; the read and the turn after it each load it, and what the server replays becomes the session's earlier turns. A replayed turn the server sent no user message for is kept, with no user text on it.
 

@@ -88,10 +88,17 @@ const OPEN_FILE = {
 };
 
 /** What the model does: call the client's tool, then answer with a final line. */
-const script = (final: string) => [
-  { toolCalls: [{ name: 'probe__openFile', input: { path: '/a.txt' }, callId: 'call-1' }] },
+const script = (final: string, tool = 'probe__openFile') => [
+  { toolCalls: [{ name: tool, input: { path: '/a.txt' }, callId: 'call-1' }] },
   { text: final },
 ];
+
+/** The result the client sends for a call it ran, in the shape the protocol carries it. */
+const OPENED = {
+  success: true,
+  pastTenseMessage: 'Opened it',
+  content: [{ type: 'text', text: 'opened /a.txt' }],
+};
 
 /**
  * A running cofold session with one client that says it can run `openFile`.
@@ -101,14 +108,25 @@ const script = (final: string) => [
  * The host forces the `clientId` to this connection's, which is what makes
  * the tool `probe__openFile` on the model's list.
  */
-async function offering(model: ModelAdapter) {
+async function offering(
+  model: ModelAdapter,
+  given: { clientId?: string; clientToolTimeoutMs?: number } = {},
+) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
-  const host = createHost({ path, agents: [cofoldAgent({ adapter: model, memory: true })] });
+  const host = createHost({
+    path,
+    agents: [cofoldAgent({ adapter: model, memory: true })],
+    ...(given.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: given.clientToolTimeoutMs }),
+  });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    params: {
+      clientId: given.clientId ?? 'probe',
+      protocolVersions: ['0.9.0'],
+      initialSubscriptions: ['ahp-root://'],
+    },
   });
   const uri = 'ahp-session:/one';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
@@ -142,15 +160,43 @@ const begin = (
 };
 
 /** A second connection in the same session, with a client id of its own. */
-async function outsider(host: ReturnType<typeof createHost>) {
+async function outsider(host: ReturnType<typeof createHost>, clientId = 'other') {
   const p = peer();
   const client = host.accept(p);
   await client.handle({
     method: 'initialize',
-    params: { clientId: 'other', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   return { client, peer: p };
 }
+
+/**
+ * What a client watching the session has been told is still being asked for.
+ *
+ * Folded from the two actions the protocol raises an entry with rather than
+ * read off a snapshot, because what the cases below check is the pair: a call
+ * raises one entry and its answer takes that same entry away.
+ */
+const needed = (p: ReturnType<typeof peer>, uri: string): Record<string, unknown>[] => {
+  const open = new Map<string, Record<string, unknown>>();
+  for (const one of actions(p, uri)) {
+    if (one.action.type === 'session/inputNeededSet') {
+      const request = one.action.request as Record<string, unknown>;
+      open.set(String(request.id), request);
+    }
+    if (one.action.type === 'session/inputNeededRemoved') open.delete(String(one.action.id));
+  }
+  return [...open.values()];
+};
+
+type Client = Awaited<ReturnType<typeof offering>>['client'];
+
+/** A client's own word on the call it ran, dispatched the way the protocol says. */
+const complete = (client: Client, chatUri: string, result: Record<string, unknown>): Promise<unknown> =>
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId: 'call-1', result } },
+  });
 
 /** The call has been opened and filled in, which is when the client may run it. */
 const called = (p: ReturnType<typeof peer>, chatUri: string): boolean =>
@@ -328,6 +374,122 @@ it('fails a call whose client went away and finishes the turn', async () => {
   // The failure is the tool result the model read, and the run went on.
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('no longer here');
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
+it('raises one entry for a call a client runs, and removes it when the client answers', async () => {
+  const model = createFakeModel({ script: script('done'), stream: true });
+  const { client, peer: p, uri, chatUri } = await offering(model);
+  begin(client, chatUri, 't1', 'open it');
+  await until(() => needed(p, uri).length > 0);
+
+  /*
+   * The call is a client's to run, so it is asked for on the session and not
+   * only on the chat: a second window, or a plugin, that subscribed to the
+   * session alone finds the call there, named for the client that must run it.
+   */
+  const entries = needed(p, uri);
+  expect(entries).toHaveLength(1);
+  expect(entries[0]).toMatchObject({ kind: 'toolClientExecution', chat: chatUri, turnId: 't1', clientId: 'probe' });
+  expect(entries[0]?.toolCall).toMatchObject({
+    toolCallId: 'call-1',
+    // The name the client announced it under, not the `probe__openFile` the
+    // model was offered: that is the name a failure of it is reported under.
+    toolName: 'openFile',
+    status: 'running',
+    contributor: { kind: 'client', clientId: 'probe' },
+  });
+
+  // Answered, the call is no longer anything a client is being asked for.
+  await complete(client, chatUri, OPENED);
+  await until(() => ended(p, chatUri));
+  expect(needed(p, uri)).toHaveLength(0);
+});
+
+it('asks a call of the one client whose tool it is, and refuses the other', async () => {
+  const model = createFakeModel({ script: script('done', 'a__openFile'), stream: true });
+  const { host, client, peer: p, uri, chatUri } = await offering(model, { clientId: 'a' });
+  // A second client in the same session, providing the same tool.
+  const other = await outsider(host, 'b');
+  await other.client.handle({ method: 'subscribe', params: { channel: uri } });
+  await other.client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: uri,
+      action: { type: 'session/activeClientSet', activeClient: { name: 'Other editor', tools: [OPEN_FILE] } },
+    },
+  });
+  await settle();
+
+  begin(client, chatUri, 't1', 'open it');
+  await until(() => needed(p, uri).length > 0);
+  // Both clients' tools are on the model's list, one name each.
+  expect(model.requests[0]?.tools.map((one) => one.name))
+    .toEqual(expect.arrayContaining(['a__openFile', 'b__openFile']));
+  // The entry names the client the call belongs to, which is whose tool the
+  // model actually called.
+  expect(needed(p, uri)[0]).toMatchObject({ clientId: 'a' });
+
+  // The other client answers for work it did not do, and is refused.
+  await complete(other.client, chatUri, { ...OPENED, content: [{ type: 'text', text: 'not mine' }] });
+  await settle();
+  const refused = other.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { rejectionReason?: unknown });
+  expect(refused.some((one) => typeof one.rejectionReason === 'string')).toBe(true);
+  expect(model.requests).toHaveLength(1);
+  expect(ended(p, chatUri)).toBe(false);
+
+  // The client the call is out with settles it, and the run goes on.
+  await complete(client, chatUri, OPENED);
+  await until(() => ended(p, chatUri));
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('opened /a.txt');
+  expect(needed(p, uri)).toHaveLength(0);
+});
+
+it('fails a call nobody answers in the time the host allows, and the turn finishes', async () => {
+  const model = createFakeModel({ script: script('carried on'), stream: true });
+  const { client, peer: p, uri, chatUri } = await offering(model, { clientToolTimeoutMs: 30 });
+  begin(client, chatUri, 't1', 'open it');
+  await until(() => needed(p, uri).length > 0);
+
+  // Nobody answers. A client that has gone quiet without going away must not
+  // block the turn for ever, so the host calls the call failed.
+  await until(() => ended(p, chatUri));
+  const done = completion(p, chatUri);
+  expect(done?.success).toBe(false);
+  expect((done?.error as { message?: string } | undefined)?.message).toContain('got no answer from probe');
+  // The failure is the tool result the model read, and the run went on.
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('got no answer from probe');
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // And nothing is being asked for any more.
+  expect(needed(p, uri)).toHaveLength(0);
+});
+
+it('carries a client\'s text and names the image it could not pass', async () => {
+  const model = createFakeModel({ script: script('done'), stream: true });
+  const { client, peer: p, uri, chatUri } = await offering(model);
+  begin(client, chatUri, 't1', 'open it');
+  await until(() => needed(p, uri).length > 0);
+
+  await complete(client, chatUri, {
+    success: true,
+    pastTenseMessage: 'Opened it',
+    content: [
+      { type: 'text', text: 'here is the page' },
+      { type: 'embeddedResource', data: 'AAAA', contentType: 'image/png' },
+    ],
+  });
+  await until(() => ended(p, chatUri));
+
+  /*
+   * A cofold tool answers text and nothing else, so the client's own words
+   * travel as text and the image is named, with its type and its size, rather
+   * than dropped: an answer that quietly left out a block would be a lie about
+   * what the client sent.
+   */
+  const read = JSON.stringify(model.requests[1]?.messages);
+  expect(read).toContain('here is the page');
+  expect(read).toContain('[image/png, 3 bytes]');
 });
 
 it('does not offer a tool nobody can run', () => {

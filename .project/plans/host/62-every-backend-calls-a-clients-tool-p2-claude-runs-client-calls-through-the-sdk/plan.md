@@ -1,7 +1,7 @@
 ---
 title: Claude runs its client calls through the sdk
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -22,7 +22,11 @@ refs:
 
 ## Goal
 
-Claude's client calls run through the sdk holder, so a claude session raises the `toolClientExecution` entry, accepts an answer that arrives before the CLI runs the handler, times a call out, hands the model the client's images and resources as well as its text, and joins the handler to the model's call by its id.
+Claude's client calls run through the sdk holder.
+A claude session raises the `toolClientExecution` entry.
+It accepts an answer that arrives before the CLI runs the handler, and times a call out.
+The model gets the client's images and resources as well as its text.
+The handler is joined to the model's call by its id.
 
 ## Reconnaissance
 
@@ -30,11 +34,16 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### What claude has today
 
-Claude already calls a client's tool and is the pattern pi and cofold copied: the tool is offered on the in-process `ahp` server as `mcp__ahp__<clientId>__<name>`, `chat/toolCallStart` carries `contributor: { kind: 'client', clientId }`, the handler waits, only the owner's `completeToolCall` settles it, `clientGone` fails it, and `setTools` re-declares the server.
+Claude already calls a client's tool, and is the pattern pi and cofold copied.
+The tool is offered on the in-process `ahp` server as `mcp__ahp__<clientId>__<name>`.
+`chat/toolCallStart` carries `contributor: { kind: 'client', clientId }`.
+The handler waits, and only the owner's `completeToolCall` settles it.
+`clientGone` fails it, and `setTools` re-declares the server.
 Against the 1.0.0 execution request it is the older shape:
 
 - no `session/inputNeededSet` with `kind: toolClientExecution` is raised, so a client that runs its calls from the session's `inputNeeded` never runs claude's;
-- the call is announced `running` from the assistant frame and the wait is registered when the handler runs, so an owner's answer in between is refused;
+- the call is announced `running` from the assistant frame;
+- the wait is registered when the handler runs, so an owner's answer in between is refused;
 - the handler is joined to the call by name and input, which two identical concurrent calls cannot tell apart;
 - no timeout;
 - the result is read as text only.
@@ -67,19 +76,20 @@ Against the 1.0.0 execution request it is the older shape:
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A claude client call is the sdk's, opened when it is announced running](task-01-a-claude-client-call-is-the-sdks.md) | todo | p1 |
-| [02 - The handler finds its call by the id the CLI hands it](task-02-the-handler-finds-its-call-by-id.md) | todo | 01 |
+| [01 - A claude client call is the sdk's, opened when it is announced running](task-01-a-claude-client-call-is-the-sdks.md) | done | p1 |
+| [02 - The handler finds its call by the id the CLI hands it](task-02-the-handler-finds-its-call-by-id.md) | done | 01 |
 
 ## Risks and tradeoffs
 
-- The fake SDK in the tests does what the test says, not what the CLI does - task 02 is checked by hand against a real CLI before it is marked done.
+- The fake SDK in the tests does what the test says, not what the CLI does.
+  Task 02 is checked by hand against a real CLI before it is marked done.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-claude-client-call-is-the-sdks.md](task-01-a-claude-client-call-is-the-sdks.md).
-- **Open questions:** none.
-- **Watch out for:** a call `canUseTool` asks about is not running until approved; open the entry at the running ready, not at `chat/toolCallStart`.
+- **Done so far:** both tasks. Task 01 - claude's client calls are held by `createClientCalls`, opened beside the running ready and reported in the snapshot's `inputNeeded`. Task 02 - the handler reads the call id from `extra._meta['claudecode/toolUseId']` and keeps the name-and-input join behind it. Seven cases in `packages/sdk/test/host-tools.test.ts`; the fake SDK hands an id to a handler.
+- **Next action:** none; both tasks are done, reviewed on 2026-10-06. The by-hand run with a real CLI is owed and is in [deferred.md](deferred.md).
+- **Open questions:** one - whether the name-and-input fallback can go, which a live run answers and Softov decides.
+- **Watch out for:** a call `canUseTool` asks about is not running until approved; the entry goes at the running ready, not at `chat/toolCallStart`.
 
 ## Final verification checklist
 

@@ -517,8 +517,8 @@ describe('tools a client contributes', () => {
   };
 
   /** A running session with one client that says it can run `openFile`. */
-  async function providing(tools: unknown[] = [OPEN_FILE]) {
-    const held = await running();
+  async function providing(tools: unknown[] = [OPEN_FILE], clientToolTimeoutMs?: number) {
+    const held = await running(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs });
     held.client.handle({
       method: 'dispatchAction',
       params: {
@@ -763,6 +763,390 @@ describe('tools a client contributes', () => {
     // And the tool goes with the client: one whose provider has left is one
     // every call to would fail.
     expect(offered().some((tool) => tool.name === 'probe__openFile')).toBe(false);
+  });
+
+  /*
+   * The same session, read the way a client that watches only the session does.
+   *
+   * The call a client runs is raised as the protocol's `toolClientExecution`
+   * request, so a client that runs its tools from `session.inputNeeded` - VS
+   * Code's does - picks this one up without subscribing to the chat. That is
+   * the half of calling a client's tool that the chat's own tool call never
+   * covered.
+   */
+  /** What the session's channel holds now. */
+  const watched = async (client: { handle(message: unknown): Promise<unknown> }, uri: string): Promise<SessionState> =>
+    ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+      snapshot: { state: SessionState };
+    }).snapshot.state;
+
+  /** One turn whose model calls the client's `openFile`. */
+  const calling = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: {
+        id: 'm1',
+        content: [{ type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: { path: '/a.txt' } }],
+      },
+    });
+  };
+
+  /** The client saying what its tool did, as `chat/toolCallComplete`. */
+  const answers = (
+    client: { handle(message: unknown): Promise<unknown> },
+    chatUri: string,
+    result: Bag,
+    toolCallId = 'call-1',
+  ): void => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/toolCallComplete', toolCallId, result } },
+    });
+  };
+
+  /** The client's tool as the model reaches it, which is what runs it here. */
+  const tool = () => offered().find((one) => one.name === 'probe__openFile');
+
+  /** The model making a call of a client's tool, by the id the CLI knows it by. */
+  const used = (id: string, input: Bag = { path: '/a.txt' }) => ({
+    type: 'tool_use', id, name: 'mcp__ahp__probe__openFile', input,
+  });
+
+  it('raises the call on the session, and takes the entry down with the answer', async () => {
+    const { client, uri, chatUri } = await providing();
+    await calling(client, chatUri);
+
+    const entry = (await watched(client, uri)).inputNeeded?.find((one) => one.kind === 'toolClientExecution');
+    expect(entry).toMatchObject({
+      kind: 'toolClientExecution',
+      // The chat a client dispatches its answer to, and the turn the call is in.
+      chat: chatUri,
+      turnId: 't1',
+      // The client that must run it, named on the entry and on the call.
+      clientId: 'probe',
+      toolCall: {
+        toolCallId: 'call-1',
+        // The name the client announced, not the one the model was offered.
+        toolName: 'openFile',
+        status: 'running',
+        contributor: { kind: 'client', clientId: 'probe' },
+      },
+    });
+
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
+    expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
+
+    // And the session says the work is done rather than that somebody is being
+    // asked something: the entry goes when the call does.
+    await settle();
+    expect(((await watched(client, uri)).inputNeeded ?? []).some((one) => one.id === entry?.id)).toBe(false);
+  });
+
+  it('keeps an answer that arrives before the CLI runs the tool', async () => {
+    const { client, chatUri } = await providing();
+    await calling(client, chatUri);
+    /*
+     * The call is reported running before the harness runs the tool, so the
+     * owner's answer can land in the gap between the two. It used to be
+     * refused as a call nobody was waiting on, which lost the answer.
+     */
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'early' }] });
+    await settle();
+
+    const answer = await offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    expect(answer?.isError).toBeUndefined();
+    expect(answer?.content[0]?.text).toBe('early');
+  });
+
+  it('fails a call nobody answers, in the time the host allows', async () => {
+    const { client, chatUri } = await providing(undefined, 30);
+    await calling(client, chatUri);
+
+    // A turn blocked on a client that has gone quiet is worse than a tool that
+    // says so, so the limit the host resolved ends it.
+    const answer = await offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toContain('no answer from probe');
+  });
+
+  it('tells two concurrent calls of one tool apart by the id the CLI hands the handler', async () => {
+    const { client, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it twice' } } },
+    });
+    await settle();
+    /*
+     * The two calls carry the same arguments, and the CLI ran the second one
+     * first - which is the order it hands its handlers out in, and the one
+     * thing a match by name and input cannot know: the first handler to run
+     * would take the other's call. The id the CLI names each call by in
+     * `_meta` is what tells these two apart.
+     */
+    sdk.toolUseIds.push('call-2', 'call-1');
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: { id: 'm1', content: [used('call-1'), used('call-2')] },
+    });
+
+    const both = [tool()?.handler({ path: '/a.txt' }), tool()?.handler({ path: '/a.txt' })];
+    await settle();
+    // Answered out of order, so a result that reached the wrong call is not
+    // hidden by the two having arrived in the order they were made.
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'the second' }] }, 'call-2');
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'the first' }] }, 'call-1');
+
+    const [second, first] = await Promise.all(both);
+    expect(second?.content[0]?.text).toBe('the second');
+    expect(first?.content[0]?.text).toBe('the first');
+  });
+
+  it('waits on the id the CLI named when the frame has not been read yet', async () => {
+    const { client, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it twice' } } },
+    });
+    await settle();
+    /*
+     * Both handlers run before either frame is read, and the frames then
+     * arrive in the other order. With the id there is nothing to join and
+     * nothing the handler needs from a frame that has not arrived: it waits
+     * for its own call to be opened, whenever that happens.
+     */
+    sdk.toolUseIds.push('call-2', 'call-1');
+    const both = [tool()?.handler({ path: '/a.txt' }), tool()?.handler({ path: '/a.txt' })];
+    await settle();
+
+    await emit({ type: 'assistant', uuid: 'reply-1', message: { id: 'm1', content: [used('call-1')] } });
+    await emit({ type: 'assistant', uuid: 'reply-2', message: { id: 'm2', content: [used('call-2')] } });
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'the first' }] }, 'call-1');
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'the second' }] }, 'call-2');
+
+    const [second, first] = await Promise.all(both);
+    expect(second?.content[0]?.text).toBe('the second');
+    expect(first?.content[0]?.text).toBe('the first');
+  });
+
+  it('still finds its call by name and input when no id is handed over', async () => {
+    // A CLI that puts nothing in `_meta`, which is what the fallback is for and
+    // is why it stays until a live run shows the key always arrives.
+    sdk.sendsToolUseId = false;
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = tool()?.handler({ path: '/a.txt' });
+    await settle();
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'by name' }] });
+
+    const answer = await answering;
+    expect(answer?.isError).toBeUndefined();
+    expect(answer?.content[0]?.text).toBe('by name');
+    // Said out loud, because whether the fallback is still needed is a question
+    // about what a live CLI sends and nothing a test can answer.
+    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
+    warned.mockRestore();
+  });
+
+  it('hands the model the client\'s image as an image, and its words as words', async () => {
+    const { client, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    answers(client, chatUri, {
+      success: true,
+      content: [
+        { type: 'text', text: 'here it is' },
+        { type: 'embeddedResource', data: 'iVBORw0KGgo=', contentType: 'image/png' },
+      ],
+    });
+
+    // An MCP result, which is the shape the CLI's in-process server answers in:
+    // the client's image is an image and not a base64 string the model has to
+    // be told about.
+    const answer = await answering as { content: Bag[] };
+    expect(answer.content).toEqual([
+      { type: 'text', text: 'here it is' },
+      { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+    ]);
+  });
+
+  /*
+   * The same call, where the CLI asks a person about it first.
+   *
+   * A tool of a client's is not one this host's own lists settle, so the CLI's
+   * permission callback is what runs before the tool does - and the callback
+   * is the host's gate, so a person is asked. Whether the CLI's question comes
+   * before or after the assistant frame that reports the call is the CLI's
+   * business; both orders are one call, and a client is asked to run it only
+   * once somebody has allowed it.
+   */
+  /** A turn under way, with the model yet to reach the client's tool. */
+  const intoTurn = async (client: { handle(message: unknown): Promise<unknown> }, chatUri: string): Promise<void> => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+  };
+
+  /** The person's answer, dispatched to the session the way a client dispatches it. */
+  const decided = (
+    client: { handle(message: unknown): Promise<unknown> },
+    uri: string,
+    approved: boolean,
+  ): void => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+    });
+  };
+
+  /** The calls of a client's the session is asking somebody to run right now. */
+  const askedToRun = async (
+    client: { handle(message: unknown): Promise<unknown> },
+    uri: string,
+  ): Promise<SessionInputRequest[]> =>
+    ((await watched(client, uri)).inputNeeded ?? []).filter((one) => one.kind === 'toolClientExecution');
+
+  it('opens a call the person allowed, and not before the question is answered', async () => {
+    const { client, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    /*
+     * The callback first, which is the order `asking.ts` documents: the CLI
+     * runs it as soon as the call's input is complete, before the canonical
+     * assistant frame is read. Nothing has reported the call, so the approval
+     * is the only thing that can raise the entry.
+     */
+    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    await settle();
+    expect(await askedToRun(client, uri)).toEqual([]);
+
+    sdk.toolUseIds.push('call-1');
+    const run = tool();
+    let done = false;
+    const answering = (run === undefined ? Promise.resolve(undefined) : run.handler({ path: '/a.txt' }))
+      .then((answer) => { done = true; return answer; });
+    await settle();
+    // Parked on a call that does not exist yet, which is what the approval has
+    // to get it out of: an opener that only runs for a frame leaves the tool
+    // waiting for ever.
+    expect(done).toBe(false);
+
+    decided(client, uri, true);
+    await settle();
+    expect(await gate).toMatchObject({ behavior: 'allow' });
+    // The client is asked to run it now, and once.
+    const entries = await askedToRun(client, uri);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      clientId: 'probe',
+      toolCall: { toolCallId: 'call-1', toolName: 'openFile', status: 'running' },
+    });
+
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
+    expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
+    await settle();
+    expect(await askedToRun(client, uri)).toEqual([]);
+  });
+
+  it('takes a reported call\'s entry down while the person is asked about it', async () => {
+    const { client, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    /*
+     * The frame first, so the call is reported running and the client is asked
+     * to run it - and the CLI then asks a person about it, which is a question
+     * the client should not have been asked to act on at all.
+     */
+    await emit({
+      type: 'assistant',
+      uuid: 'reply-1',
+      message: { id: 'm1', content: [used('call-1')] },
+    });
+    expect(await askedToRun(client, uri)).toHaveLength(1);
+
+    sdk.toolUseIds.push('call-1');
+    const answering = tool()?.handler({ path: '/a.txt' });
+    await settle();
+    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    await settle();
+    // The question takes it back: while a person decides, no client is being
+    // asked to run the tool.
+    expect(await askedToRun(client, uri)).toEqual([]);
+
+    decided(client, uri, true);
+    await settle();
+    // Allowed, so it is the client's to run once more - one entry, not two.
+    expect(await gate).toMatchObject({ behavior: 'allow' });
+    expect(await askedToRun(client, uri)).toHaveLength(1);
+
+    answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
+    expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
+    await settle();
+    expect(await askedToRun(client, uri)).toEqual([]);
+  });
+
+  it('refuses a handler whose call the person declined, and asks nobody to run it', async () => {
+    const { client, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    sdk.toolUseIds.push('call-1');
+    const answering = tool()?.handler({ path: '/a.txt' });
+    await settle();
+    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    await settle();
+
+    decided(client, uri, false);
+    await settle();
+    /*
+     * Settled, and with the refusal: a handler left waiting on a call nobody
+     * will run is a tool call the model never gets back, and it would wait for
+     * a call that no approval can ever open.
+     */
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toBe('The person declined this action');
+    // And nothing asked a client to run it, before or after.
+    expect(await askedToRun(client, uri)).toEqual([]);
+  });
+
+  it('settles a handler still waiting when the turn is stopped', async () => {
+    // A CLI that names no call, so the handler waits on the tool's name and
+    // input - the other half of the join, which a stopped turn has to end too.
+    sdk.sendsToolUseId = false;
+    const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { client, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    const answering = tool()?.handler({ path: '/a.txt' });
+    await settle();
+    // A call a person is being asked about, and never answered: the turn is
+    // stopped while both waits stand.
+    const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
+    await settle();
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+    });
+    await settle();
+
+    // The question with the stop, and the handler with a refusal rather than a
+    // promise nothing will settle.
+    expect(await gate).toMatchObject({ behavior: 'deny' });
+    const answer = await answering;
+    expect(answer?.isError).toBe(true);
+    expect(answer?.content[0]?.text).toBe('The turn was stopped');
+    expect(await askedToRun(client, uri)).toEqual([]);
+    expect(warned.mock.calls.flat().join(' ')).toContain('claudecode/toolUseId');
+    warned.mockRestore();
   });
 });
 

@@ -212,6 +212,75 @@ describe('a client call, held', () => {
     expect((await calls.wait('call-1')).text).toBe('done');
   });
 
+  it('takes a call\'s entry down while it waits on something else, and keeps the call', async () => {
+    const { calls, requests, removed } = holder();
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+
+    calls.hold('call-1');
+    // A call a person is being asked about is not one a client is asked to
+    // run: the entry goes, and what is left is the call and its own answer.
+    expect(calls.entries()).toEqual([]);
+    expect(removed()).toEqual([`toolClientExecution:${CHAT}:t1:call-1`]);
+    expect(calls.owner('call-1')).toBe('a');
+
+    // An answer that arrives while it is held still settles the wait, and the
+    // held entry is not removed again: there was never a second one.
+    const waiting = calls.wait('call-1');
+    expect(calls.complete('call-1', 'a', answered('opened /a.txt'))).toBe(true);
+    expect((await waiting).text).toBe('opened /a.txt');
+    expect(requests()).toHaveLength(1);
+    expect(removed()).toHaveLength(1);
+  });
+
+  it('raises a held call\'s entry again when the call is opened again', () => {
+    vi.useFakeTimers();
+    const { calls, requests, removed } = holder({ timeoutMs: 1000 });
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    calls.hold('call-1');
+
+    // Held is not timed: the clock is for a client that is not answering, and
+    // no client has been asked to run this one.
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(calls.entries()).toEqual([]);
+
+    // Opening it again is the same call raised once more, with its clock
+    // started over from the moment a client can read it.
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    expect(requests()).toHaveLength(2);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(1000);
+    expect(removed()).toHaveLength(2);
+  });
+
+  it('holds nothing for a call that is not open, or one that is over', async () => {
+    const { calls, removed } = holder();
+    // A backend out of step: there is no entry to take down and no call to
+    // keep, so this is not a hold.
+    calls.hold('call-1');
+    expect(removed()).toEqual([]);
+
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    calls.complete('call-1', 'a', answered('done'));
+    calls.hold('call-1');
+    // And a call that is over stays over: its entry is not removed a second
+    // time, and the answer it gave is still the answer.
+    expect(removed()).toHaveLength(1);
+    expect((await calls.wait('call-1')).text).toBe('done');
+  });
+
+  it('removes a held call\'s entry once when the turn is released', async () => {
+    const { calls, removed } = holder();
+    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    calls.hold('call-1');
+    calls.release('The turn was stopped');
+
+    // One removal for one entry: the hold took it down, and the release has
+    // nothing left to take.
+    expect(removed()).toEqual([`toolClientExecution:${CHAT}:t1:call-1`]);
+    expect((await calls.wait('call-1')).text).toBe('The turn was stopped');
+  });
+
   it('releases every call with one reason, and leaves nothing open', async () => {
     const { calls, removed } = holder();
     calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });

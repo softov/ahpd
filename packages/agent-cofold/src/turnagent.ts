@@ -2,12 +2,13 @@ import { resolve } from 'node:path';
 import { createAgent, createAskUserTool, policyOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, Tool } from '@cofold/agents';
 import { resolveWithin } from '@cofold/tools';
-import type { Bag, Session } from '@ahpd/sdk';
+import { createClientCalls } from '@ahpd/sdk';
+import type { Bag, ClientCallAnswer, Session } from '@ahpd/sdk';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
 import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
-import { cofoldTools } from './tools.js';
-import type { ClientToolRelay } from './tools.js';
+import { cofoldTools, describe } from './tools.js';
+import type { ClientToolCall, ClientToolRelay } from './tools.js';
 import type { HarnessConfig } from './config.js';
 import type { SessionContext } from './context.js';
 
@@ -106,28 +107,34 @@ const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.';
 
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
+/** The tool's own name, off the `<clientId>__<name>` the model was offered. */
+const bareName = (name: string, owner: string): string =>
+  (name.startsWith(`${owner}__`) ? name.slice(owner.length + 2) : name);
+
 /**
- * A tool call a connected client is running, as the session holds it.
+ * What the model reads of a client's answer.
  *
- * The owner is what `completeToolCall` checks a result against and what
- * `clientGone` matches on; the name is what a call failed by a lost client
- * says it was. `resolve` and `reject` are the two halves of the promise the
- * owner-bound tool's `execute` awaits, and exactly one of them must run for
- * every entry, or the turn waits on a promise nothing can settle.
+ * A cofold tool answers text - its `ToolOutput` is a string - so everything
+ * the client sent has to travel as text: its own words, then a line for each
+ * block that is not text, naming what it is and how big it is. A block dropped
+ * silently would be an answer that lied about what the client sent.
  */
-interface WaitingCall {
-  owner: string;
-  name: string;
-  input: unknown;
-  resolve(text: string): void;
-  reject(reason: Error): void;
-}
+const readOf = (answer: ClientCallAnswer): string => {
+  const lines = answer.content
+    .filter((block) => block.type !== 'text')
+    .map((block) => (block.type === 'embeddedResource'
+      ? `[${block.contentType}, ${Buffer.byteLength(block.data, 'base64')} bytes]`
+      : JSON.stringify(block)));
+  return [answer.text, ...lines].filter((one) => one !== '').join('\n');
+};
 
 /** What the agent a turn runs on offers the other areas. */
 export interface TurnAgent {
   agentOf: (values: Record<string, unknown>) => CofoldAgent;
   settleEdit: (callId: string) => void;
-  releaseCalls: (why: string, whose?: string) => void;
+  releaseCalls: (why: string) => void;
+  /** The requests a client can still answer: the person's, and the clients'. */
+  needed: () => Bag[];
 }
 
 export const createTurnAgent = (
@@ -156,38 +163,73 @@ export const createTurnAgent = (
   };
 
   /**
-   * The calls a connected client is running, by the id of the model's call.
+   * The calls a connected client is running, held in one place.
    *
-   * Nothing on this host executes an owner-bound tool, so this map is the
-   * whole of its execution: a call is held here from the moment cofold tries
-   * to run the tool until the owning client settles it through
-   * `completeToolCall`, or goes away and `clientGone` fails it. Every path
-   * that takes an entry out also settles its promise, because a run waiting
-   * on one nothing can settle is a turn that hangs for ever.
+   * Nothing on this host executes an owner-bound tool, so this is the whole of
+   * its execution: a call is held here from the moment cofold reports it
+   * running until the owning client settles it through `completeToolCall`, or
+   * goes away and `clientGone` fails it. Every path that ends a call settles
+   * its promise, because a run waiting on one nothing can settle is a turn
+   * that hangs for ever. It also raises the session entry a client reads and
+   * times a call out, which is what the map this replaces did neither of - see
+   * `packages/sdk/src/clientcalls.ts`.
    */
-  const waiting = new Map<string, WaitingCall>();
+  const calls = createClientCalls({
+    chat: start.chatUri,
+    emit: start.emit,
+    ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
+    providers: (name) => ctx.offered
+      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
+      .map((one) => String(one.owner)),
+  });
 
-  /** Fail every held call, or one client's, and forget each one's promise. */
-  const releaseCalls = (why: string, whose?: string): void => {
-    for (const [callId, held] of [...waiting.entries()]) {
-      if (whose !== undefined && held.owner !== whose) continue;
-      waiting.delete(callId);
-      held.reject(new Error(why));
-    }
+  /** Fail every held call, and forget each one's promise. */
+  const releaseCalls = (why: string): void => { calls.release(why); };
+
+  /** The requests a client can still answer: the person's, and the clients'. */
+  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(calls.entries());
+
+  /**
+   * Ask the client that provides a tool to run a call.
+   *
+   * The tool is named as the client announced it - `openFile`, not the
+   * `probe__openFile` the model was offered - because that is the name its
+   * failure is reported under.
+   */
+  const openedCall = (call: ClientToolCall): void => {
+    calls.open({
+      turnId: String(ctx.active?.id ?? ''),
+      owner: call.owner,
+      toolCall: {
+        toolCallId: call.callId,
+        toolName: bareName(call.name, call.owner),
+        displayName: call.name,
+        invocationMessage: describe(call.name, call.input),
+        confirmed: 'not-needed',
+        toolInput: JSON.stringify(call.input),
+      },
+    });
   };
 
   /**
    * The session side of a client-run call, used by `cofoldTool`.
    *
-   * The entry is registered synchronously, in the promise executor, so a
-   * client's answer that arrives on a later turn of the loop always finds
-   * something to settle even though the model's step was only opened a
-   * moment before.
+   * The ask and the wait are one step, and they have to be: cofold emits
+   * `tool.started` and runs the tool without waiting for this host to have read
+   * that event, so a call opened from the event that says it is running is
+   * opened after the tool has already asked for it. Here the call is raised and
+   * waited on in the same turn of the loop, which is the only order in which
+   * the wait finds its call.
    */
   const relay: ClientToolRelay = {
-    call: (call) => new Promise<string>((resolve, reject) => {
-      waiting.set(call.callId, { owner: call.owner, name: call.name, input: call.input, resolve, reject });
-    }),
+    call: async (call) => {
+      openedCall(call);
+      const answer = await calls.wait(call.callId);
+      // A failure is thrown rather than returned: that is what cofold records
+      // as a failed `tool.completed` and what makes the model read the reason.
+      if (!answer.ok) throw new Error(answer.text === '' ? 'The tool failed' : answer.text);
+      return readOf(answer);
+    },
   };
 
   /**
@@ -305,6 +347,7 @@ export const createTurnAgent = (
     agentOf,
     settleEdit,
     releaseCalls,
+    needed,
     methods: {
       /**
        * The client running a tool call, for a call that is one client's to run.
@@ -312,7 +355,7 @@ export const createTurnAgent = (
        * Nothing for a call this host is running itself, which is what the host
        * checks before letting a client stream into one.
        */
-      toolCallOwner: (toolCallId) => waiting.get(toolCallId)?.owner,
+      toolCallOwner: (toolCallId) => calls.owner(toolCallId),
 
       /**
        * What a client says one of its own tool calls did.
@@ -329,20 +372,7 @@ export const createTurnAgent = (
        * call takes. A completion emitted here as well would be the same row
        * finished twice.
        */
-      completeToolCall: (toolCallId, clientId, result) => {
-        const held = waiting.get(toolCallId);
-        if (held === undefined || held.owner !== clientId) return false;
-        waiting.delete(toolCallId);
-        /*
-         * The client's word is the tool's result: its text when it worked and
-         * its message when it did not. A failure is thrown rather than
-         * returned, which is what cofold records as a failed `tool.completed`
-         * and what makes the model read the message as the reason.
-         */
-        if (result.ok) held.resolve(result.text);
-        else held.reject(new Error(result.text === '' ? 'The tool failed' : result.text));
-        return true;
-      },
+      completeToolCall: (toolCallId, clientId, result) => calls.complete(toolCallId, clientId, result),
 
       /**
        * A client that was running tool calls here has gone.
@@ -353,13 +383,7 @@ export const createTurnAgent = (
        * message is the tool result the model reads, which is why it names the
        * tool as well as the client.
        */
-      clientGone: (clientId) => {
-        for (const [callId, held] of [...waiting.entries()]) {
-          if (held.owner !== clientId) continue;
-          waiting.delete(callId);
-          held.reject(new Error(`The client ${clientId} that was running ${held.name} is no longer here`));
-        }
-      },
+      clientGone: (clientId) => { calls.gone(clientId); },
     },
   };
 };

@@ -128,6 +128,17 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
   void ctx.consume();
 
+  /*
+   * Everything this session is waiting on a person or a client for.
+   *
+   * Two kinds in one list: a confirmation `canUseTool` is holding, and a call a
+   * client is running. A client watching only the session reads this to know
+   * what to draw, and for a `toolClientExecution` entry the answer is that
+   * client's own - which is what lets a client that never sees the chat still
+   * run the call.
+   */
+  const needed = (): Bag[] => [...ctx.pending.values()].map((one) => one.entry).concat(ctx.calls.entries());
+
   const self: Session = {
     ...config.methods,
     ...clientTools.methods,
@@ -194,7 +205,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
         : {}),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.
-      ...(ctx.pending.size > 0 ? { inputNeeded: [...ctx.pending.values()].map((one) => one.entry) } : {}),
+      ...(needed().length > 0 ? { inputNeeded: needed() } : {}),
       ...(ctx.failed ? { error: ctx.failed } : {}),
     }),
 

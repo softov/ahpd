@@ -98,18 +98,49 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
   const known = turn.calls.get(update.toolCallId);
   if (known !== undefined) return known;
   const title = 'title' in update && update.title !== undefined && update.title !== null ? update.title : update.toolCallId;
-  const name = 'name' in update && update.name !== undefined && update.name !== null ? update.name : title;
-  const call: AcpCall = { toolCallId: update.toolCallId, toolName: name, displayName: title, readied: false, asked: false };
+  const named = 'name' in update && update.name !== undefined && update.name !== null ? update.name : undefined;
+  const name = named ?? title;
+  /*
+   * Which client's tool this is, read off what the agent reported. The name it
+   * gave is what it called, so it is read before the title: a title that spells
+   * some other client's tool is not what the agent said it reached for.
+   */
+  const owner = turn.ownerOf?.(named, title);
+  const call: AcpCall = {
+    toolCallId: update.toolCallId,
+    toolName: name,
+    displayName: title,
+    readied: false,
+    asked: false,
+    ...(owner === undefined ? {} : { owner }),
+  };
   turn.calls.set(update.toolCallId, call);
   // A call ends the run of message chunks before it, held whitespace and all.
   delete turn.waiting;
   turn.parts.push({
     id: update.toolCallId,
     kind: 'toolCall',
-    toolCall: { toolCallId: update.toolCallId, toolName: name, displayName: title, status: 'streaming' },
+    toolCall: {
+      toolCallId: update.toolCallId,
+      toolName: name,
+      displayName: title,
+      status: 'streaming',
+      ...contributorOf(call),
+    },
   });
   return call;
 };
+
+/**
+ * The contributor an action about a call carries, when a client owns its tool.
+ *
+ * The protocol ignores a client contributor that arrives after the start of the
+ * call, so a backend that means one has to say it on the start and on
+ * everything after it. Nothing for a call nobody owns, which carries no
+ * `contributor` key at all.
+ */
+const contributorOf = (call: AcpCall): Bag =>
+  (call.owner === undefined ? {} : { contributor: { kind: 'client', clientId: call.owner } });
 
 /**
  * Whether the agent has moved the call off `pending`.
@@ -160,8 +191,23 @@ const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => 
     invocationMessage: call.displayName,
     confirmed: 'not-needed',
     ...(input === undefined ? {} : { toolInput: input }),
+    ...contributorOf(call),
     ...metaOf(turn, call),
   };
+};
+
+/**
+ * The ready that says a call is running, and the ask that goes with it.
+ *
+ * A call a client owns is that client's to run, so the entry asking it is
+ * raised here, at the one ready that says the agent has started the call -
+ * never at `pending`, which is the agent saying it has not. A call that arrives
+ * already finished is nobody's to run and asks nobody.
+ */
+const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[] => {
+  const finished = call.status === 'completed' || call.status === 'failed';
+  if (call.owner !== undefined && !finished) turn.onRunning?.(call);
+  return [ready(turn, call, input)];
 };
 
 /**
@@ -225,6 +271,7 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
   toolCallId: call.toolCallId,
   toolName: call.toolName,
   displayName: call.displayName,
+  ...contributorOf(call),
   ...metaOf(turn, call),
 }];
 
@@ -422,7 +469,7 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate, at?: number): Ba
       stampStart(turn, call, at);
       const actions = opened(turn, call);
       inputOf(call, update);
-      if (mayReady(call)) actions.push(ready(turn, call, call.input));
+      if (mayReady(call)) actions.push(...running(turn, call, call.input));
       return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
     }
 
@@ -442,7 +489,7 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate, at?: number): Ba
       const actions = known ? [] : opened(turn, call);
       // A second ready goes out for arguments that arrived after the first, so
       // what a client shows is the arguments the agent last wrote down.
-      if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(ready(turn, call, call.input));
+      if (mayReady(call) && (!call.readied || input !== undefined)) actions.push(...running(turn, call, call.input));
       return drawn(turn, call, contentBlocks(turn, update.content), actions, at);
     }
 

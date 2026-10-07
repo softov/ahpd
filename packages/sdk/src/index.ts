@@ -42,6 +42,7 @@ export { toolServers, TOOLS_PREFIX } from './toolserver.js';
 export type { RunClientTool, ToolsChanged, ToolsEndpoint, ToolsServerOptions, ToolsServers } from './toolserver.js';
 export { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from './clientcalls.js';
 export type { ClientCall, ClientCallAnswer, ClientCalls, ClientCallsOptions } from './clientcalls.js';
+export { toMcpContent } from './mcpcontent.js';
 export { machineAsked, refuseComputer, computersFor, computerId, computerSource, machineRefusal, openComputer } from './computers.js';
 export { nestedAgent } from './nested.js';
 export type { NestedAsked, NestedHost, NestedOptions, NestedStarted } from './nested.js';

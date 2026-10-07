@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import type { ClientCallAnswer } from '../../sdk/src/clientcalls.js';
 import { mapEvent } from '../src/mapping.js';
 import { THINKING_KEY } from '../src/models.js';
 import { piSession } from '../src/session.js';
@@ -13,7 +14,7 @@ import { driveCall, fakePi, opened, root, settled, turn } from './fake-pi.js';
 // Host tools --------------------------------------------------------------
 
 /** A client wait that answers nothing, for a host tool nobody hands out. */
-const noClient = async (): Promise<{ text: string; ok: boolean }> => ({ text: '', ok: false });
+const noClient = async (): Promise<ClientCallAnswer> => ({ text: '', ok: false, content: [] });
 
 /** Call a pi tool definition the way pi does. */
 const callTool = async (tool: Awaited<ReturnType<typeof toPiTool>>, params: Record<string, unknown>): Promise<Bag> => {
@@ -74,20 +75,32 @@ it('hands the host tools to pi as custom tools', async () => {
   expect((pi.opens[0]?.tools ?? []).map((one) => one.name)).toEqual(['open_file']);
 });
 
+/** The client's tools one session offered pi, by the name the model calls them. */
+const offered = (pi: ReturnType<typeof fakePi>, name: string) =>
+  pi.opens[0]?.tools?.find((one) => one.name === name)!;
+
+/** The session's outstanding requests, as they were published. */
+const needed = (session: { sessionState(): unknown }): Bag[] =>
+  ((session.sessionState() as Bag).inputNeeded ?? []) as Bag[];
+
 it('waits on the client that owns a tool, and lets only that client answer', async () => {
   const { session, pi } = opened({
     tools: [{ definition: { name: 'editor__open', title: 'Open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
   session.begin('t1', 'hello');
   await settled();
-  const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
+  const tool = offered(pi, 'editor__open');
   expect(session.toolCallOwner?.('c1')).toBeUndefined();
+  // pi raises the start and calls the hook before it runs the tool, so the
+  // client is asked at the ready and the tool runs against the open call.
+  await driveCall(pi, 'c1', 'editor__open', {});
+  expect(session.toolCallOwner?.('c1')).toBe('editor');
 
   let answered: Bag | undefined;
-  const pending = tool!.execute('c1', {} as never, undefined, undefined, undefined as never)
+  const pending = tool.execute('c1', {} as never, undefined, undefined, undefined as never)
     .then((result) => { answered = result as unknown as Bag; });
   await settled();
-  expect(session.toolCallOwner?.('c1')).toBe('editor');
   // A result from anybody else is a client out of step and does not settle it.
   expect(session.completeToolCall?.('c1', 'other', { text: 'not mine', ok: true, content: [] })).toBe(false);
   await settled();
@@ -101,33 +114,190 @@ it('waits on the client that owns a tool, and lets only that client answer', asy
 it('fails a client tool call with the answer, and when its client is gone', async () => {
   const { session, pi } = opened({
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
   session.begin('t1', 'hello');
   await settled();
-  const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
-  const refused = tool!.execute('c1', {} as never, undefined, undefined, undefined as never);
+  const tool = offered(pi, 'editor__open');
+  await driveCall(pi, 'c1', 'editor__open', {});
+  const refused = tool.execute('c1', {} as never, undefined, undefined, undefined as never);
   await settled();
   session.completeToolCall?.('c1', 'editor', { text: 'it refused', ok: false, content: [] });
   await expect(refused).rejects.toThrow('it refused');
 
-  const gone = tool!.execute('c2', {} as never, undefined, undefined, undefined as never);
+  await driveCall(pi, 'c2', 'editor__open', {});
+  const gone = tool.execute('c2', {} as never, undefined, undefined, undefined as never);
   await settled();
   session.clientGone?.('editor');
-  await expect(gone).rejects.toThrow('The client that provides this tool is no longer here');
+  await expect(gone).rejects.toThrow('The client editor that was running open is no longer here');
 });
 
 it('releases a waiting client call when the turn is cancelled', async () => {
   const { session, pi } = opened({
     tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
   } as Partial<Start>);
   pi.hold();
   session.begin('t1', 'hello');
   await settled();
-  const tool = pi.opens[0]?.tools?.find((one) => one.name === 'editor__open');
-  const waiting = tool!.execute('c1', {} as never, undefined, undefined, undefined as never);
+  const tool = offered(pi, 'editor__open');
+  await driveCall(pi, 'c1', 'editor__open', {});
+  const waiting = tool.execute('c1', {} as never, undefined, undefined, undefined as never);
   await settled();
   session.cancel('t1');
   await expect(waiting).rejects.toThrow('The turn was stopped');
+});
+
+// A client's calls, held by the sdk --------------------------------------
+
+it('raises the call on the session, and takes the entry down with the answer', async () => {
+  const { session, pi } = opened({
+    tools: [{ definition: { name: 'editor__open', title: 'Open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  // Held, because a client's call belongs to a turn and the fake settles one
+  // as soon as it is asked to run.
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', { path: '/a.txt' });
+
+  const raised = needed(session);
+  expect(raised).toHaveLength(1);
+  expect(raised[0]).toMatchObject({
+    kind: 'toolClientExecution',
+    chat: 'ahp-chat:/s1',
+    turnId: 't1',
+    clientId: 'editor',
+    toolCall: {
+      toolCallId: 'c1',
+      // The tool's own name, not the `editor__` name the model was offered.
+      toolName: 'open',
+      status: 'running',
+      contributor: { kind: 'client', clientId: 'editor' },
+    },
+  });
+
+  session.completeToolCall?.('c1', 'editor', { text: 'opened', ok: true, content: [{ type: 'text', text: 'opened' }] });
+  await settled();
+  expect(needed(session).some((one) => one.id === raised[0]?.id)).toBe(false);
+});
+
+it('keeps the answer a client gives between the ready and the run', async () => {
+  const { session, pi } = opened({
+    tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', {});
+  // The client answers before pi gets as far as running the tool.
+  session.completeToolCall?.('c1', 'editor', { text: 'early', ok: true, content: [{ type: 'text', text: 'early' }] });
+  await settled();
+
+  const result = await offered(pi, 'editor__open')
+    .execute('c1', {} as never, undefined, undefined, undefined as never) as unknown as Bag;
+  expect(result.content).toEqual([{ type: 'text', text: 'early' }]);
+});
+
+it('settles a call only from the client the tool belongs to', async () => {
+  const bound = (owner: string): BoundTool => ({
+    definition: { name: `${owner}__openFile`, title: 'Open a file' },
+    owner,
+  });
+  const { session, pi } = opened({
+    tools: [bound('a'), bound('b')],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'a__openFile', {});
+  expect(needed(session)).toHaveLength(1);
+  expect(needed(session)[0]?.clientId).toBe('a');
+
+  const running = offered(pi, 'a__openFile')
+    .execute('c1', {} as never, undefined, undefined, undefined as never);
+  await settled();
+  expect(session.toolCallOwner?.('c1')).toBe('a');
+  // Both clients provide a tool of this name; the call is one of theirs.
+  expect(session.completeToolCall?.('c1', 'b', { text: 'not mine', ok: true, content: [] })).toBe(false);
+  expect(session.completeToolCall?.('c1', 'a', { text: 'mine', ok: true, content: [{ type: 'text', text: 'mine' }] })).toBe(true);
+  expect((await running as unknown as Bag).content).toEqual([{ type: 'text', text: 'mine' }]);
+});
+
+it('fails a call nobody answers, in the time the host allows', async () => {
+  const { session, pi } = opened({
+    tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: 30,
+  } as Partial<Start>);
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', {});
+
+  const running = offered(pi, 'editor__open')
+    .execute('c1', {} as never, undefined, undefined, undefined as never);
+  await expect(running).rejects.toThrow('no answer from editor');
+  await settled();
+  expect(needed(session)).toHaveLength(0);
+});
+
+it('asks a client for a call only once the person has allowed it', async () => {
+  const bound: BoundTool = {
+    definition: { name: 'editor__save', title: 'Save' },
+    owner: 'editor',
+    effects: { writes: true },
+  };
+  const { session, pi } = opened({
+    tools: [bound],
+    settings: { permissionMode: 'default' },
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  const waiting = driveCall(pi, 'c1', 'editor__save', {});
+  await settled();
+  // Nobody has allowed it yet, so nothing has been asked of the client.
+  expect(needed(session).map((one) => one.kind)).toEqual(['toolConfirmation']);
+
+  session.confirm('c1', true);
+  await waiting;
+  await settled();
+  expect(needed(session).map((one) => one.kind)).toEqual(['toolClientExecution']);
+
+  const running = offered(pi, 'editor__save')
+    .execute('c1', {} as never, undefined, undefined, undefined as never);
+  await settled();
+  session.completeToolCall?.('c1', 'editor', { text: 'saved', ok: true, content: [{ type: 'text', text: 'saved' }] });
+  expect((await running as unknown as Bag).content).toEqual([{ type: 'text', text: 'saved' }]);
+});
+
+it('hands the model the client image as an image, and its other files as a line', async () => {
+  const { session, pi } = opened({
+    tools: [{ definition: { name: 'editor__open' }, owner: 'editor' }],
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  } as Partial<Start>);
+  session.begin('t1', 'hello');
+  await settled();
+  await driveCall(pi, 'c1', 'editor__open', {});
+
+  const running = offered(pi, 'editor__open')
+    .execute('c1', {} as never, undefined, undefined, undefined as never);
+  await settled();
+  session.completeToolCall?.('c1', 'editor', {
+    text: 'here it is',
+    ok: true,
+    content: [
+      { type: 'text', text: 'here it is' },
+      { type: 'embeddedResource', data: 'iVBORw0KGgo=', contentType: 'image/png' },
+      { type: 'embeddedResource', data: 'AAAA', contentType: 'application/pdf' },
+    ],
+  });
+  expect((await running as unknown as Bag).content).toEqual([
+    { type: 'text', text: 'here it is' },
+    { type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+    { type: 'text', text: '[application/pdf, 3 bytes]' },
+  ]);
 });
 
 it('replaces the tools on the next turn, rebuilding pi on the same session file', async () => {

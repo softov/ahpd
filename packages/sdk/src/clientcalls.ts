@@ -83,6 +83,17 @@ export interface ClientCalls {
   /** Hold a call and raise its entry. Answers the entry's id. */
   open(call: ClientCall): string;
   /**
+   * Take a call's entry down while it waits on something else, and keep it.
+   *
+   * A backend can learn that a call needs a person *after* it has reported the
+   * call running - claude's assistant frame says the call is under way, and the
+   * CLI's permission gate can still ask about it - and an entry a client can
+   * read is an instruction to run the tool. What goes down is the entry alone:
+   * the call is still open, the owner's answer still settles it, and `open`
+   * raises the entry again when whatever it was waiting for is over.
+   */
+  hold(toolCallId: string): void;
+  /**
    * Wait for the owner's answer.
    *
    * Rejects for a call that was never opened, which is a backend out of step
@@ -123,6 +134,13 @@ interface Held {
   answer: Promise<ClientCallAnswer>;
   settle: (answer: ClientCallAnswer) => void;
   timer?: ReturnType<typeof setTimeout>;
+  /**
+   * Whether the entry is up.
+   *
+   * False for a call that is held: one the backend knows about and no client is
+   * being asked to run yet, which is a call whose answer still counts.
+   */
+  shown: boolean;
   /** Answered, abandoned, released or timed out. Kept only so a late `wait` finds it. */
   finished: boolean;
 }
@@ -167,8 +185,22 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     if (call.finished) return;
     call.finished = true;
     if (call.timer !== undefined) clearTimeout(call.timer);
-    options.emit('session', { type: 'session/inputNeededRemoved', id: call.id });
+    // Only an entry that is up can be removed: a call that was held has no
+    // entry, and a removal for one would name an id no client ever saw.
+    if (call.shown) options.emit('session', { type: 'session/inputNeededRemoved', id: call.id });
     call.settle(answer);
+  };
+
+  /** Raise the entry, and the clock with it: the call is a client's to run now. */
+  const show = (record: Held): void => {
+    record.shown = true;
+    if (timeoutMs > 0) {
+      const seconds = Math.round(timeoutMs / 1000);
+      record.timer = setTimeout(() => {
+        end(record, failed(`${record.name} got no answer from ${record.owner} in ${seconds} s`));
+      }, timeoutMs);
+    }
+    options.emit('session', { type: 'session/inputNeededSet', request: record.entry });
   };
 
   /** Forget the finished calls once enough of them have piled up. */
@@ -184,9 +216,14 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     const toolCallId = String(call.toolCall.toolCallId ?? '');
     const id = entryId(call.turnId, toolCallId);
     // An upsert keyed by id: the second announcement of a call is the call
-    // again, and the first one is the one holding the answer.
+    // again, and the first one is the one holding the answer. A call that was
+    // held rather than finished is raised again: what it was waiting on is
+    // over, and it is a client's to run now.
     const already = held.get(toolCallId);
-    if (already !== undefined && !already.finished) return id;
+    if (already !== undefined && !already.finished) {
+      if (!already.shown) show(already);
+      return id;
+    }
 
     const entry: Bag = {
       id,
@@ -217,19 +254,24 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
       name: String(call.toolCall.toolName ?? toolCallId),
       answer,
       settle,
+      shown: false,
       finished: false,
     };
     held.set(toolCallId, record);
     prune();
-
-    if (timeoutMs > 0) {
-      const seconds = Math.round(timeoutMs / 1000);
-      record.timer = setTimeout(() => {
-        end(record, failed(`${record.name} got no answer from ${record.owner} in ${seconds} s`));
-      }, timeoutMs);
-    }
-    options.emit('session', { type: 'session/inputNeededSet', request: entry });
+    show(record);
     return id;
+  };
+
+  const hold = (toolCallId: string): void => {
+    const record = held.get(toolCallId);
+    // Nothing for a call that is not open, or one that is over: there is no
+    // entry to take down and no call left to keep.
+    if (record === undefined || record.finished || !record.shown) return;
+    record.shown = false;
+    if (record.timer !== undefined) clearTimeout(record.timer);
+    delete record.timer;
+    options.emit('session', { type: 'session/inputNeededRemoved', id: record.id });
   };
 
   const wait = (toolCallId: string): Promise<ClientCallAnswer> => {
@@ -275,11 +317,19 @@ export function createClientCalls(options: ClientCallsOptions): ClientCalls {
     }
   };
 
-  /** What is still open. A finished call is kept for `wait` and is not an entry. */
-  const entries = (): Bag[] => [...held.values()].filter((record) => !record.finished).map((record) => record.entry);
+  /**
+   * What is still open.
+   *
+   * A finished call is kept for `wait` and is not an entry, and neither is one
+   * that is held: what a client reads here is what it is being asked to run.
+   */
+  const entries = (): Bag[] => [...held.values()]
+    .filter((record) => !record.finished && record.shown)
+    .map((record) => record.entry);
 
   return {
     open,
+    hold,
     wait,
     complete,
     owner,

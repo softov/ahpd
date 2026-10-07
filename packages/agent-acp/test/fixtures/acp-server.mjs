@@ -15,13 +15,30 @@
  * - text containing `blank` thinks, writes a message that is one space, calls
  *   a tool, thinks again and answers in chunks that start with whitespace;
  * - text containing `tool` opens a tool call with its input and completes it;
+ * - text containing `client` reports one call per `client=<name>` /
+ *   `ctitle=<title>` pair, so a call a client's tool is reported under a name,
+ *   a title alone, or both; it reports them `pending` and never runs them when
+ *   the text also says `cstatus=pending`, and announces and finishes one in a
+ *   single update when it says `cdone`;
  * - text containing `read` asks the client for a file and says what it got;
  * - text containing `write` asks it to write one and says it did;
  * - text containing `term` opens a terminal, waits for it, reads it, releases it;
  * - text containing `ask` asks for permission on a destructive call and reports
  *   which option came back;
  * - text containing `hold` asks for permission on a call it is still holding,
- *   which is `pending`, and reports which option came back;
+ *   which is `pending`, and reports which option came back; `ctool=<name>` gives
+ *   that call the programmatic name it asks about, as an agent that reached a
+ *   tool of the host's MCP server would;
+ * - text containing `mrep=` or `mreq=` is the two halves of a client tool call:
+ *   `mrep=<id>=<tool>=<json|->` reports one to the client, with `-` for a call
+ *   reported with no arguments at all, and `mreq=<tool>=<json>=<id|->` makes it
+ *   over HTTP on the host's own MCP server, with `<id>` as the call the request
+ *   names in its `_meta` or `-` for none. Every report goes out
+ *   before the first request, with a file read between them so that the reports
+ *   are on the session before anything is paired, and each request's MCP result
+ *   is said as one `mcp=<url-encoded JSON>` chunk, so a test can read exactly
+ *   what the agent was told. The rows the reports opened are completed once the
+ *   requests are answered, which is the order an agent works in;
  * - text containing `jump` sends the update that ends a call as the first word
  *   about it, so the bridge never hears a `tool_call` for it at all;
  * - text containing `paint` opens a shell, really writes a file beside the
@@ -247,6 +264,68 @@ const paged = (cursor) => (cursor === undefined || cursor === null
   ? { sessions: LISTED.slice(0, 1), nextCursor: 'page-2' }
   : { sessions: LISTED.slice(1) });
 
+/** The host's own MCP server, as `session/new` named it, once there is one. */
+let hostTools;
+
+/**
+ * The host's own tools out of the servers a session was opened with.
+ *
+ * By the name the bridge gives it, because the list also holds whatever else
+ * the deployment configured: what a script here reaches for is the host's.
+ */
+const named = (servers) => (Array.isArray(servers) ? servers : []).find((one) => one?.name === 'ahp');
+
+/** How many requests this server has made on that MCP server. */
+let called = 0;
+
+/**
+ * One `tools/call` on the host's own MCP server, awaited.
+ *
+ * A real HTTP request on the endpoint the session was handed, because that is
+ * how an ACP agent reaches a tool of the host's: the server named at
+ * `session/new` is the only way a client's tool is offered to it at all.
+ */
+const mcpCall = async (name, args, meta) => {
+  called += 1;
+  // The header as the session was told to present it: ACP carries an HTTP
+  // server's headers as a list of names and values, which is where the token
+  // the endpoint minted for this session is.
+  const auth = (Array.isArray(hostTools.headers) ? hostTools.headers : [])
+    .find((one) => String(one?.name ?? '').toLowerCase() === 'authorization');
+  const response = await fetch(hostTools.url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: String(auth?.value ?? '') },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: called,
+      method: 'tools/call',
+      params: {
+        name,
+        arguments: args,
+        ...(meta === undefined ? {} : { _meta: { 'claudecode/toolUseId': meta } }),
+      },
+    }),
+  });
+  return await response.json();
+};
+
+/**
+ * One `<marker>=<a>=<b>=<rest>` token, split on its first `n` equals signs.
+ *
+ * The last field is everything that is left, because the JSON a script names as
+ * a call's arguments is the last thing in the token and may hold an `=` itself.
+ */
+const fields = (token, n) => {
+  const out = [];
+  let rest = token;
+  for (let i = 0; i < n; i++) {
+    const at = rest.indexOf('=');
+    out.push(rest.slice(0, at));
+    rest = rest.slice(at + 1);
+  }
+  return [...out, rest];
+};
+
 const write = (message) => {
   process.stdout.write(`${JSON.stringify(message)}\n`);
 };
@@ -391,6 +470,46 @@ const scriptFor = (text) => {
     updates.push({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'weighing it up' } });
   }
 
+  /*
+   * A call the agent reports the way it reports a tool of the host's MCP
+   * server: `client=<name>` names it, `ctitle=<title>` gives it a title alone,
+   * and one call is reported per pair of them in the order they were written.
+   * The title spelling is separate because an agent that names no `name` is
+   * the whole reason a title is read at all.
+   */
+  if (text.includes('client')) {
+    const names = [...text.matchAll(/client=(\S+)/g)].map((one) => one[1]);
+    const titles = [...text.matchAll(/ctitle=(\S+)/g)].map((one) => one[1]);
+    // A call the agent is still holding: said, and never started or finished.
+    const held = text.includes('cstatus=pending');
+    // A call the agent announced and finished in one update, so nobody is left
+    // holding anything to run.
+    const whole = text.includes('cdone');
+    const count = Math.max(names.length, titles.length);
+    for (let i = 0; i < count; i++) {
+      const toolCallId = `call-client-${i + 1}`;
+      updates.push({
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title: titles[i] ?? 'A client tool',
+        ...(names[i] === undefined ? {} : { name: names[i] }),
+        kind: 'other',
+        status: held ? 'pending' : whole ? 'completed' : 'in_progress',
+        rawInput: { path: '/a.txt' },
+        ...(whole ? { content: [{ type: 'content', content: { type: 'text', text: 'the client did it' } }] } : {}),
+      });
+      if (held || whole) continue;
+      updates.push({
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: 'the client did it' } }],
+      });
+    }
+    updates.push(message('the client answered'));
+    return updates;
+  }
+
   if (text.includes('tool')) {
     updates.push({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'looking' } });
     updates.push({
@@ -465,7 +584,9 @@ const promptScript = async (id, params) => {
       availableCommands: [{ name: 'plan', description: 'Draft a plan' }],
     });
   }
-  const reaches = ['read', 'write', 'term', 'ask', 'hold', 'jump', 'paint', 'away', 'plan', 'name', 'shift', 'reauth'].some((one) => text.includes(one));
+  const reaches = [
+    'read', 'write', 'term', 'ask', 'hold', 'jump', 'paint', 'away', 'plan', 'name', 'shift', 'reauth', 'mrep=', 'mreq=',
+  ].some((one) => text.includes(one));
   if (!reaches) for (const update of scriptFor(text)) notify(update);
   if (text.includes('chatter')) {
     process.stderr.write('a line the server said to nobody\n');
@@ -546,6 +667,69 @@ const promptScript = async (id, params) => {
     return;
   }
 
+  if (text.includes('mrep=') || text.includes('mreq=')) {
+    /*
+     * One client tool call, as the two things that arrive for it and name each
+     * other nowhere: the updates the agent reports, and the `tools/call`s it
+     * makes on the host's own MCP server.
+     *
+     * All the reports go out before the first request, and a file is read
+     * between the two. That read is a round trip on this server's own pipe, so
+     * by the time it is answered the bridge has read every report and put it on
+     * the session - which is what stops a request from being paired against a
+     * session that has not heard of the calls yet.
+     */
+    const reports = [...text.matchAll(/(mrep=\S+)/g)].map((one) => fields(one[1], 3));
+    const requests = [...text.matchAll(/(mreq=\S+)/g)].map((one) => fields(one[1], 3));
+    for (const [, toolCallId, tool, args] of reports) {
+      notify({
+        sessionUpdate: 'tool_call',
+        toolCallId,
+        title: tool,
+        name: `mcp__ahp__${tool}`,
+        kind: 'other',
+        status: 'in_progress',
+        // `-` for a report that says no arguments, which an agent need not: a
+        // call announced with a title alone is one nothing here knows the
+        // arguments of.
+        ...(args === '-' ? {} : { rawInput: JSON.parse(args) }),
+      });
+    }
+    if (reports.length > 0 && requests.length > 0) {
+      await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` });
+    }
+    for (const [, tool, args, meta] of requests) {
+      /*
+       * One request at a time, awaited before the next is made.
+       *
+       * That is the order an agent works in, and it is what lets a test tell
+       * one request from the next: the second is not on the wire until the
+       * first has been answered.
+       */
+      const answer = await mcpCall(tool, JSON.parse(args), meta === '-' ? undefined : meta);
+      // Encoded, and on a line of its own: one result is one word a test can
+      // cut out of the prose whatever the agent's own words are, and the line
+      // is what stops one result running into the next.
+      const said = encodeURIComponent(JSON.stringify({
+        isError: answer?.result?.isError === true,
+        content: answer?.result?.content ?? answer?.error ?? null,
+      }));
+      notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `\nmcp=${said}` } });
+    }
+    // The rows the reports opened, finished once the tools they were for came
+    // back - the order an agent works in.
+    for (const [, toolCallId, tool] of reports) {
+      notify({
+        sessionUpdate: 'tool_call_update',
+        toolCallId,
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: `ran ${tool}` } }],
+      });
+    }
+    respond(id, { stopReason: 'end_turn' });
+    return;
+  }
+
   if (text.includes('read')) {
     const answer = await ask('fs/read_text_file', { sessionId: session, path: `${cwd}/note.txt` });
     notify({
@@ -618,7 +802,7 @@ const promptScript = async (id, params) => {
     const toolCall = {
       toolCallId: 'call-hold',
       title: 'Drop a branch',
-      name: 'drop_branch',
+      name: /ctool=(\S+)/.exec(text)?.[1] ?? 'drop_branch',
       kind: 'delete',
       status: 'pending',
       rawInput: { branch: 'main' },
@@ -882,6 +1066,7 @@ const onLine = (line) => {
       }
       const id = nextSession();
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
+      hostTools = named(message.params?.mcpServers);
       // Started with `--books`, the server says what the session had already
       // cost before any turn, before it answers, the way `session/load`
       // replays a resumed conversation before its response.
@@ -897,6 +1082,7 @@ const onLine = (line) => {
       // belongs to the conversation the client asked to continue.
       session = String(message.params?.sessionId ?? nextSession());
       if (typeof message.params?.cwd === 'string' && message.params.cwd !== '') cwd = message.params.cwd;
+      hostTools = named(message.params?.mcpServers);
       if (process.argv.includes('--replay')) replayed();
       respond(message.id, process.argv.includes('--legacy')
         ? { modes: modes(), models: listed() }

@@ -49,6 +49,25 @@ export const sdk = {
   mcpReconnected: [] as string[],
   /** Every set of MCP servers re-declared on a running session, in order. */
   mcpDeclared: [] as Record<string, unknown>[],
+  /**
+   * The call ids the CLI hands its in-process handlers, in the order it does.
+   *
+   * The real CLI names the call it is running in the handler's `_meta`, so a
+   * test that queues an id here is a test of a handler that was handed one. A
+   * queue and not a counter, because the ids are the model's own - `call-1`
+   * from the assistant frame this test emitted - and no counter could guess
+   * them.
+   */
+  toolUseIds: [] as string[],
+  /**
+   * Whether the fake hands an id at all.
+   *
+   * False is a CLI that puts nothing in `_meta`, which is what the fallback
+   * exists for. `packages/agent-claude` logs when it joins by name and input,
+   * so a live run against a real CLI is what says whether that path is still
+   * needed.
+   */
+  sendsToolUseId: true,
   canUseTool: undefined as undefined | ((n: string, i: Record<string, unknown>, about?: Record<string, unknown>) => Promise<unknown>),
   /**
    * Every CLI the host started, in order.
@@ -61,8 +80,35 @@ export const sdk = {
   queries: [] as Fake[],
 };
 
+/**
+ * What the CLI passes beside the arguments, which is where the call id rides.
+ *
+ * One id per invocation, taken from the queue in the order the handlers are
+ * called - which is the order the CLI runs the tools. Nothing when the test
+ * queued nothing or asked the fake not to send one, and then a handler is in
+ * the position of a CLI that named no call.
+ */
+const extraFor = (): Record<string, unknown> | undefined => {
+  if (!sdk.sendsToolUseId) return undefined;
+  const id = sdk.toolUseIds.shift();
+  return id === undefined ? undefined : { _meta: { 'claudecode/toolUseId': id } };
+};
+
 export const fake = {
-  createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  /*
+   * The definitions as the host built them, with the arguments a handler is
+   * handed wrapped on: the real SDK calls a tool handler with the arguments
+   * and the request's `extra`, and a test calling one has to be calling the
+   * same thing.
+   */
+  createSdkMcpServer: (given: Record<string, unknown>) => ({
+    type: 'sdk',
+    name: given.name,
+    tools: (given.tools as { handler: (input: unknown, extra?: unknown) => unknown }[]).map((one) => ({
+      ...one,
+      handler: (input: unknown, extra?: unknown) => one.handler(input, extra ?? extraFor()),
+    })),
+  }),
   listSessions: async () => {
     sdk.listed += 1;
     // A tick, so callers meant to share one listing really do overlap: a
@@ -155,5 +201,7 @@ export function resetSdk(): void {
   sdk.mcpToggled.length = 0;
   sdk.mcpReconnected.length = 0;
   sdk.mcpDeclared.length = 0;
+  sdk.toolUseIds.length = 0;
+  sdk.sendsToolUseId = true;
   sdk.canUseTool = undefined;
 }

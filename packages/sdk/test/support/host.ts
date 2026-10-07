@@ -12,6 +12,7 @@
  */
 
 import type { Peer } from '../../src/types/rpc.js';
+import type { HostOptions } from '../../src/types/host.js';
 import { sdk, resetSdk } from './claude-sdk.js';
 
 export { sdk, resetSdk };
@@ -43,8 +44,8 @@ export const { gitChanges } = await import('../../src/changes.js');
  * host built out of this library takes - so what is checked here is what a
  * third-party backend gets, not a shortcut only the built-in has.
  */
-export const serving = (path: string, also: string[] = []) =>
-  createHost({ path, agents: [claude({ paths: [path, ...also] })], ...machine() });
+export const serving = (path: string, also: string[] = [], over: Partial<HostOptions> = {}) =>
+  createHost({ path, agents: [claude({ paths: [path, ...also] })], ...machine(), ...over });
 
 export function peer(): Peer & { sent: Record<string, unknown>[]; notes: { method: string; params: unknown }[] } {
   const sent: Record<string, unknown>[] = [];
@@ -68,8 +69,8 @@ export const hello = (versions: unknown[], extra: Record<string, unknown> = {}) 
 });
 
 /** A connected client with one session, subscribed to both its channels. */
-export async function running() {
-  const host = serving('/home/softov');
+export async function running(over: Partial<HostOptions> = {}) {
+  const host = serving('/home/softov', [], over);
   const p = peer();
   const client = host.accept(p);
   // Root included: a catalogue notification goes to the connections watching

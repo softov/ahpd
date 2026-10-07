@@ -1,6 +1,7 @@
 import type { PromptCapabilities, SessionModeState, SessionUpdate } from '@agentclientprotocol/sdk';
-import type { Bag, Emit, OpenedTerminal, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Emit, OpenedTerminal, Start } from '@ahpd/sdk';
 import type { AcpConnection, AcpOptions, AcpTurn, ConfirmationOption, PermissionAnswer, WatchedSession, WatchedTurn } from '../types.js';
+import type { ClientCalls } from './clientcalls.js';
 import type { Config } from './config.js';
 import type { Handlers } from './handlers.js';
 import type { Opening } from './opening.js';
@@ -16,13 +17,22 @@ import type { Turn } from './turn.js';
  * than copied onto a factory's own scope at construction - so the order the
  * areas are built in never matters and nothing is frozen.
  */
-export interface SessionContext extends Config, Handlers, Opening, Queue, Turn {
+export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, ClientCalls {
   /** The backend's identity and wiring. */
   options: AcpOptions;
   /** What this particular session was told. */
   start: Start;
   /** The provider id this session reports, the backend's own or `acp`. */
   provider: string;
+  /**
+   * The tools this session may offer, the host's own and its clients'.
+   *
+   * What the host handed at the session's start, and what it replaces whole
+   * whenever a client announces what it provides or stops being active. A
+   * client's tool carries an owner, which is what a call the agent reports for
+   * one is recognised by.
+   */
+  offering: BoundTool[];
   /** Say one thing on one channel, to every client watching it. */
   emit: Emit;
   /** The directory the server works in. */

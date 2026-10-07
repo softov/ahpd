@@ -7,7 +7,7 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../../sdk/src/catalog.js';
 import { idOf, uriOf } from '@ahpd/sdk';
-import type { Bag } from '@ahpd/sdk';
+import type { Bag, HostTool } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { gitChanges } from '../../sdk/src/changes.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
@@ -70,7 +70,7 @@ const text = async (source: ChangesetSource, uri: string): Promise<string | unde
   (await source.read?.(uri))?.data;
 
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(options: { changes?: ChangesetSource } = {}) {
+async function talking(options: { changes?: ChangesetSource; tools?: HostTool[] } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-'));
   const host = createHost({
     path,
@@ -81,6 +81,7 @@ async function talking(options: { changes?: ChangesetSource } = {}) {
     // and so no folder it can be told is trusted.
     users: anyone(),
     ...(options.changes === undefined ? {} : { changes: options.changes }),
+    ...(options.tools === undefined ? {} : { tools: options.tools }),
   });
   const p = peer();
   const client = host.accept(p);
@@ -90,7 +91,6 @@ async function talking(options: { changes?: ChangesetSource } = {}) {
   });
   await signIn(client);
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
   // The window says which folders it trusts, and a session of a folder nobody
   // vouched for is refused rather than started - decision
   // `a-folder-is-untrusted-until-a-client-says-otherwise`.
@@ -105,7 +105,18 @@ async function talking(options: { changes?: ChangesetSource } = {}) {
     method: 'createSession',
     params: { channel: uri, provider: 'acp', workingDirectories: [`file://${path}`] },
   });
-  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  /*
+   * The chat, read rather than assumed.
+   *
+   * What a session calls its chat is the host's to say and the client's to look
+   * up - a test that hard-codes it is testing a spelling rather than the lookup
+   * every client actually does. It matters twice over here: the entry a client
+   * runs its tools from names the chat it is to answer on, and that has to be a
+   * channel this client dispatches to.
+   */
+  const chatUri = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state.defaultChat;
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   opened.push({ client, uri });
   return { host, client, peer: p, uri, chatUri, path };
@@ -130,6 +141,66 @@ const begin = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: s
 
 const ended = (p: ReturnType<typeof peer>, chatUri: string): boolean =>
   types(p, chatUri).some((type) => type === 'chat/turnComplete' || type === 'chat/turnCancelled');
+
+/** Whether the chat has ended at least this many turns, one per `begin`. */
+const finished = (p: ReturnType<typeof peer>, chatUri: string, turns: number): boolean =>
+  types(p, chatUri).filter((type) => type === 'chat/turnComplete' || type === 'chat/turnCancelled').length >= turns;
+
+/*
+ * A client's tool is a tool of the host's own MCP server, which this host calls
+ * `ahp`, so an agent names a call to one the way that server spells it:
+ * `mcp__ahp__<clientId>__<name>`, or the same with the prefix dropped.
+ */
+const OPEN_FILE = {
+  name: 'openFile',
+  description: 'Open a file in the editor',
+  inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+};
+
+const DROP_BRANCH = {
+  name: 'drop_branch',
+  description: 'Drop a branch',
+  inputSchema: { type: 'object', properties: { branch: { type: 'string' } } },
+};
+
+/** A tool of the host's own, which no client provides and nobody owns. */
+const HOST_TOOL: HostTool = {
+  definition: {
+    name: 'list_sessions',
+    description: 'List the sessions',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  run: () => 'the sessions',
+};
+
+/**
+ * A second client in the session, saying it can run these tools.
+ *
+ * Presence is what carries them: `session/activeClientSet` is the one way a
+ * client announces what it provides, and the host tells every chat what it may
+ * offer as soon as it does.
+ */
+async function providing(
+  host: ReturnType<typeof createHost>,
+  uri: string,
+  chatUri: string,
+  id: string,
+  tools: unknown[] = [OPEN_FILE],
+): Promise<void> {
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: id, protocolVersions: ['0.9.0'] },
+  });
+  await signIn(client);
+  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
+  });
+}
 
 it('turns one prompt into turnStarted, an opened part, deltas and turnComplete, in that order', async () => {
   const { client, peer: p, chatUri } = await talking();
@@ -377,6 +448,200 @@ it('opens, readies and completes a call whose first word was its end', async () 
   }).snapshot.state.turns[0]?.responseParts ?? [];
   expect(kept.map((part) => part.kind)).toEqual(['toolCall']);
   expect(kept[0]?.toolCall?.status).toBe('completed');
+});
+
+it('opens a call the agent reported for a client\'s tool with that client on the row', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+
+  // Named the way the host's MCP server spells the tool.
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  await until(() => finished(p, chatUri, 1));
+  // And said about a client's tool in the title alone, which is all an agent
+  // that names no `name` leaves behind for a call to be recognised by.
+  begin(client, chatUri, 't2', 'report a client tool by title ctitle=mcp__ahp__a__openFile');
+  await until(() => finished(p, chatUri, 2));
+
+  const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
+  expect(starts.map((e) => e.action.toolCallId)).toEqual(['call-client-1', 'call-client-1']);
+  for (const one of starts) {
+    expect(one.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
+  }
+
+  // Said again on the ready, which is where the protocol stops taking one: a
+  // contributor that arrives after the start is ignored, so both carry it.
+  const readies = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallReady'
+    && e.action.toolCallId === 'call-client-1');
+  expect(readies).toHaveLength(2);
+  for (const one of readies) {
+    expect(one.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
+  }
+
+  // And the rows the snapshot draws, which is what a client subscribing now
+  // reads.
+  type Part = { kind: string; toolCall?: { toolCallId?: string; contributor?: Bag } };
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: Part[] }[] } };
+  }).snapshot.state.turns.flatMap((turn) => turn.responseParts).filter((part) => part.kind === 'toolCall');
+  expect(kept.map((part) => part.toolCall?.contributor))
+    .toEqual([{ kind: 'client', clientId: 'a' }, { kind: 'client', clientId: 'a' }]);
+});
+
+it('gives each of two clients the call it owns', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  await providing(host, uri, chatUri, 'b');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile client=mcp__ahp__b__openFile');
+  await until(() => ended(p, chatUri));
+
+  // Two clients in one session may both provide `openFile`, and the model is
+  // offered one list: each call belongs to the client whose tool it names.
+  const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
+  expect(starts.map((e) => [e.action.toolCallId, e.action.contributor])).toEqual([
+    ['call-client-1', { kind: 'client', clientId: 'a' }],
+    ['call-client-2', { kind: 'client', clientId: 'b' }],
+  ]);
+});
+
+it('reads a name that is not a client\'s tool before a title that is', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking({ tools: [HOST_TOOL] });
+  await providing(host, uri, chatUri, 'a');
+  // The agent named the tool it called, and the name is no client's. The title
+  // spells one, and a title is only read when the agent named none.
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions ctitle=mcp__ahp__a__openFile');
+  await until(() => ended(p, chatUri));
+
+  const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions']);
+  expect(starts[0]?.action.contributor).toBeUndefined();
+});
+
+it('gives no contributor to a tool of the host\'s or the agent\'s own', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking({ tools: [HOST_TOOL] });
+  await providing(host, uri, chatUri, 'a');
+  // The host's own tool, as the agent sees it beside the clients', and a tool
+  // the agent has itself. Neither is a client's, so neither is a client's to
+  // run.
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__list_sessions client=count_lines');
+  await until(() => ended(p, chatUri));
+
+  const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
+  expect(starts.map((e) => e.action.toolName)).toEqual(['mcp__ahp__list_sessions', 'count_lines']);
+  expect(starts.map((e) => e.action.contributor)).toEqual([undefined, undefined]);
+});
+
+it('keeps the contributor through the chat reducer, and the snapshot agrees', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  await until(() => ended(p, chatUri));
+
+  // What a client draws from the actions alone, which is the fold a contributor
+  // arriving too late would be missing from.
+  type Part = { kind: string; toolCall?: { toolCallId?: string; contributor?: Bag } };
+  let state = { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState;
+  for (const one of actions(p, chatUri)) {
+    state = chatReducer(state, one.action as unknown as ChatAction);
+  }
+  const drawn = state.turns.flatMap((turn) => turn.responseParts) as unknown as Part[];
+  expect(drawn.find((part) => part.kind === 'toolCall')?.toolCall?.contributor)
+    .toEqual({ kind: 'client', clientId: 'a' });
+
+  const kept = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { responseParts: Part[] }[] } };
+  }).snapshot.state.turns.flatMap((turn) => turn.responseParts);
+  expect(kept.find((part) => part.kind === 'toolCall')?.toolCall?.contributor)
+    .toEqual({ kind: 'client', clientId: 'a' });
+});
+
+it('raises the session entry a client reads when its call starts running', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile');
+  await until(() => ended(p, chatUri));
+
+  // A client that runs its tools from the session rather than from the chat
+  // finds the call here, and the entry is what asks it.
+  const sets = actions(p, uri).filter((e) => e.action.type === 'session/inputNeededSet');
+  expect(sets).toHaveLength(1);
+  expect(sets[0]?.action.request).toMatchObject({
+    kind: 'toolClientExecution',
+    chat: chatUri,
+    turnId: 't1',
+    clientId: 'a',
+    toolCall: {
+      toolCallId: 'call-client-1',
+      // The name the client announced, not the one the model was offered.
+      toolName: 'openFile',
+      status: 'running',
+      contributor: { kind: 'client', clientId: 'a' },
+    },
+  });
+});
+
+it('opens no entry for a call the agent has not started', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cstatus=pending');
+  await until(() => ended(p, chatUri));
+
+  // The row is drawn and attributed, and nobody is asked to run it: `pending`
+  // is the agent saying it has not started the call, and the ready that asks
+  // goes out when it does.
+  const starts = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallStart');
+  expect(starts.map((e) => e.action.contributor)).toEqual([{ kind: 'client', clientId: 'a' }]);
+  expect(types(p, chatUri)).not.toContain('chat/toolCallReady');
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+});
+
+it('opens no entry for a call the agent has finished as it announced it', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a');
+  begin(client, chatUri, 't1', 'report client=mcp__ahp__a__openFile cdone');
+  await until(() => ended(p, chatUri));
+
+  // The row is drawn, attributed and closed at once. Nothing is asking anybody
+  // to run it: the call is already run, and an entry raised for one would wait
+  // on a client for a call whose result is in the chat.
+  const calls = actions(p, chatUri).filter((e) => String(e.action.type).startsWith('chat/toolCall'));
+  expect(calls.map((e) => e.action.type))
+    .toEqual(['chat/toolCallStart', 'chat/toolCallReady', 'chat/toolCallComplete']);
+  expect(calls[0]?.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
+  expect(types(p, uri)).not.toContain('session/inputNeededSet');
+});
+
+it('asks a client to run the call once the person allows it', async () => {
+  const { host, client, peer: p, uri, chatUri } = await talking();
+  await providing(host, uri, chatUri, 'a', [DROP_BRANCH]);
+  begin(client, chatUri, 't1', 'hold ctool=mcp__ahp__a__drop_branch');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+
+  // The question is the row's readiness while it stands, and nobody has been
+  // asked to run anything: the call is `pending` until the person answers.
+  expect(actions(p, uri).filter((e) => e.action.type === 'session/inputNeededSet'
+    && (e.action.request as Bag).kind === 'toolClientExecution')).toEqual([]);
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-hold', approved: true },
+    },
+  });
+  await until(() => ended(p, chatUri));
+
+  // An allowed call is one that runs, so this is where the client is asked -
+  // the mapping's own ready never comes for a call a question has stood on.
+  const entry = actions(p, uri).find((e) => e.action.type === 'session/inputNeededSet'
+    && (e.action.request as Bag).kind === 'toolClientExecution');
+  expect(entry?.action.request).toMatchObject({
+    clientId: 'a',
+    toolCall: { toolCallId: 'call-hold', toolName: 'drop_branch', status: 'running' },
+  });
+
+  const start = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart'
+    && e.action.toolCallId === 'call-hold');
+  expect(start?.action.contributor).toEqual({ kind: 'client', clientId: 'a' });
 });
 
 /** A changeset source that only remembers what it was asked to observe. */

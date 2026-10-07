@@ -12,7 +12,8 @@
  */
 
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { BoundTool } from '@ahpd/sdk';
+import type { ImageContent, TextContent } from '@earendil-works/pi-ai';
+import type { BoundTool, ClientCallAnswer } from '@ahpd/sdk';
 import { loadPi } from './pi.js';
 
 /**
@@ -29,7 +30,33 @@ export type RunByClient = (
   bound: BoundTool,
   toolCallId: string,
   params: Record<string, unknown>,
-) => Promise<{ text: string; ok: boolean }>;
+) => Promise<ClientCallAnswer>;
+
+/**
+ * A client's answer, as the content pi hands its model.
+ *
+ * An image goes as an image: pi's model takes one, and a screenshot a client
+ * returned is the whole of what it had to say. Anything else - a PDF, an
+ * archive - travels as a line naming what it is, because pi's content has no
+ * inline form for one and a block silently dropped would be an answer that
+ * lied about what the client sent. The answer's own words are the answer for
+ * one that carried no blocks at all.
+ */
+const toPiContent = (answer: ClientCallAnswer): (TextContent | ImageContent)[] => {
+  if (answer.content.length === 0) return [{ type: 'text', text: answer.text }];
+  return answer.content.map((block): TextContent | ImageContent => {
+    if (block.type === 'text') return { type: 'text', text: block.text };
+    if (block.type === 'embeddedResource') {
+      return block.contentType.startsWith('image/')
+        ? { type: 'image', data: block.data, mimeType: block.contentType }
+        : {
+          type: 'text',
+          text: `[${block.contentType}, ${Buffer.byteLength(block.data, 'base64')} bytes]`,
+        };
+    }
+    return { type: 'text', text: JSON.stringify(block) };
+  });
+};
 
 /** A promise that rejects when pi aborts the call, and never settles otherwise. */
 const stopped = (signal: AbortSignal | undefined): Promise<never> => new Promise((_, reject) => {
@@ -65,7 +92,7 @@ export async function toPiTool(bound: BoundTool, client: RunByClient): Promise<T
       if (bound.run === undefined) {
         const answer = await client(bound, toolCallId, params as Record<string, unknown>);
         if (!answer.ok) throw new Error(answer.text);
-        return { content: [{ type: 'text' as const, text: answer.text }], details: undefined };
+        return { content: toPiContent(answer), details: undefined };
       }
       try {
         return {

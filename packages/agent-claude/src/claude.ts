@@ -593,6 +593,9 @@ export function claude(options: ClaudeOptions): Agent {
       settings: start.settings,
       schema: start.schema,
       emit: start.emit,
+      // How long a client has to answer a call of its tool, resolved by the
+      // host so every backend waits for the same time.
+      clientToolTimeoutMs: start.clientToolTimeoutMs,
       ...(start.seedCustomizations ? { seedCustomizations: start.seedCustomizations } : {}),
       ...(start.seedModels ? { seedModels: start.seedModels } : {}),
       ...(start.resume !== undefined ? { resume: start.resume } : {}),

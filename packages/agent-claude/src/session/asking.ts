@@ -1,3 +1,4 @@
+import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
@@ -26,6 +27,15 @@ interface PendingInput {
   suggestions?: unknown[];
   settle(result: { behavior: 'allow'; updatedInput: Bag; updatedPermissions?: unknown[] } | { behavior: 'deny'; message: string }): void;
 }
+
+/**
+ * What a person refusing a call says, to the model and to anything waiting.
+ *
+ * One sentence in one place, because the refusal reaches the model as the tool
+ * result of a declined call and as the answer to a handler that was waiting for
+ * a call nobody will run - and the two are the same refusal.
+ */
+const DECLINED = 'The person declined this action';
 
 /** Where a kept permission lands, as a person reads it. */
 const KEPT_IN: Record<string, string> = {
@@ -199,6 +209,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         return;
       }
 
+      /*
+       * From here the call is one a person is being asked about, and not one a
+       * client runs. The frame that reports it can be read before this question
+       * is put and after it, so the id is held either way: an entry already
+       * raised comes down, and one that would be raised is not raised.
+       */
+      ctx.holdCall(id);
       const input = toolInputOf(toolName, raw);
       const displayName = str(about.displayName) ?? toolName;
       // The card reads the row's line; the CLI's own sentence is its title.
@@ -326,6 +343,20 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         times = approved ? ctx.stampStart(call) : ctx.untimed(call);
       }
       if (scope === ctx.mainScope) ctx.doing(approved ? ctx.busyWith(str(bag(part?.toolCall).toolName) ?? 'tool', {}) : 'Thinking');
+      /*
+       * A call of a client's, which is the client's to run now and only now.
+       *
+       * Before the action that says the call is running, because the entry is
+       * what the client goes on and the chat is what tells everybody else: a
+       * client that reads the session runs the tool the person just allowed.
+       * A refused call runs nowhere, and whoever waits for it is told so.
+       */
+      const call = bag(held.entry.toolCall);
+      const name = str(call.toolName) ?? '';
+      if (approved) {
+        ctx.allowCall(name, str(held.entry.turnId) ?? '', toolCallId, call.invocationMessage as StringOrMarkdown, str(call.toolInput));
+      }
+      else ctx.refuseCall(name, toolCallId, DECLINED);
       // Said back, like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here stayed
       // `pending-confirmation` on every screen watching it - including the
@@ -342,7 +373,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       });
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
-        : { behavior: 'deny', message: 'The person declined this action' });
+        : { behavior: 'deny', message: DECLINED });
       ctx.touch();
     },
 

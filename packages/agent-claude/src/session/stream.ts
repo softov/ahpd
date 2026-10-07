@@ -341,10 +341,9 @@ export function createStream(ctx: SessionContext): Stream {
          * one as this host's contribution would tell every client that the
          * call is nobody's to answer, including the one whose call it is.
          */
-        const own = ctx.providedBy(name);
-        if (own !== undefined) ctx.opening(name, id, bag(block.input));
+        const own = ctx.clientToolOf(name);
         const contributor = own !== undefined
-          ? { kind: 'client' as const, clientId: own }
+          ? { kind: 'client' as const, clientId: own.owner }
           : from === undefined
             ? undefined
             : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
@@ -447,6 +446,16 @@ export function createStream(ctx: SessionContext): Stream {
           // The whole bag, because an action's `_meta` replaces the call's.
           _meta: bag(call._meta),
         });
+        /*
+         * A client's call, raised on the session and held for its owner.
+         *
+         * Here, and not where the call is first announced: a call
+         * `canUseTool` asks about is not running until the person approves it,
+         * and an entry raised then would tell a client to run a tool nobody
+         * has allowed. This is the same moment the ready goes out, so the
+         * entry and the chat agree about the call being under way.
+         */
+        ctx.openCall(name, str(turn.id) ?? '', id, line, input);
       }
     }
   };

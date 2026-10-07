@@ -1,7 +1,7 @@
 ---
 title: Every backend calls a client's tool, acp, cofold, pi and claude, the way the protocol asks
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -26,7 +26,9 @@ refs:
 ## Goal
 
 A tool a client announces in `SessionActiveClient.tools` can be called by the agent in every backend ahpd ships: claude, pi, cofold and ACP.
-The call is reported against the client that owns it, raised on the session as the protocol's `toolClientExecution` request so a client watching only the session finds it, and waits for that client's `chat/toolCallComplete`.
+The call is reported against the client that owns it.
+It is raised on the session as the protocol's `toolClientExecution` request, so a client watching only the session finds it.
+It waits for that client's `chat/toolCallComplete`.
 A call whose client leaves, or that nobody answers, ends with a failure the model reads rather than a turn that hangs.
 
 ## Reconnaissance
@@ -57,9 +59,13 @@ agent calls <clientId>__<name> -> backend: chat/toolCallStart { contributor: cli
 - A client's result reaches every model as text only: `chatactions.ts` reads the text blocks and drops images and resources.
 - No backend raises `toolClientExecution`, so a client that runs its calls from the session's `inputNeeded`, as VS Code's does, never runs ahpd's.
 - Three backends hold the same waiting map in three copies, and none times a call out.
-- Claude and pi register the wait when the harness runs the tool, after `chat/toolCallReady` has told the client to start, so an answer that comes back first is refused as `not a call <client> is running here`.
+- Claude and pi register the wait when the harness runs the tool.
+  That is after `chat/toolCallReady` has told the client to start.
+  So an answer that comes back first is refused as `not a call <client> is running here`.
 - Claude joins its MCP handler to the model's call by tool name and input; VS Code reads the id from `_meta['claudecode/toolUseId']`.
-- The tool server refuses a client's tool and serves the tools it was opened with for the life of the session, so an ACP agent is never offered a client's tool.
+- The tool server refuses a client's tool.
+  It serves the tools it was opened with for the life of the session.
+  So an ACP agent is never offered a client's tool.
 
 ## Decisions locked in
 
@@ -81,39 +87,62 @@ agent calls <clientId>__<name> -> backend: chat/toolCallStart { contributor: cli
 
 ## Proposed architecture
 
-- **Data flow** - a client's `ToolDefinition` becomes a `BoundTool` with an `owner` (unchanged); the backend offers it; the call is held by one sdk client-call holder keyed by the call id the backend reports; the client's result, with its content blocks, comes back through `completeToolCall` into that holder and out to the harness in the richest shape the harness takes.
-- **Event flow** - the backend emits `chat/toolCallStart` with the contributor and `chat/toolCallReady` to `running`; the holder emits `session/inputNeededSet` and, on any end, `session/inputNeededRemoved`; the backend's own completion path emits `chat/toolCallComplete`.
+- **Data flow** - a client's `ToolDefinition` becomes a `BoundTool` with an `owner` (unchanged), and the backend offers it.
+  The call is held by one sdk client-call holder, keyed by the call id the backend reports.
+  The client's result, with its content blocks, comes back through `completeToolCall` into that holder.
+  It goes out to the harness in the richest shape the harness takes.
+- **Event flow** - the backend emits `chat/toolCallStart` with the contributor and `chat/toolCallReady` to `running`.
+  The holder emits `session/inputNeededSet` and, on any end, `session/inputNeededRemoved`.
+  The backend's own completion path emits `chat/toolCallComplete`.
 - **State flow** - the holder's open entries are what the backend's snapshot lists under `inputNeeded`, beside its own confirmations and questions.
-- **Layer responsibilities** - sdk: the holder, the timeout, the tool server running a client's tool through a backend's runner · agent-claude, agent-pi, agent-cofold: replace their own maps with the holder and open the entry when they report the call running · agent-acp: recognise a client's call when the agent reports it, pair the MCP request to it, and take `setTools`.
+- **Layer responsibilities** - sdk: the holder, the timeout, and the tool server running a client's tool through a backend's runner.
+  agent-claude, agent-pi, agent-cofold: replace their own maps with the holder, and open the entry when they report the call running.
+  agent-acp: recognise a client's call when the agent reports it, pair the MCP request to it, and take `setTools`.
 - **Source-of-truth files** - [`code://packages/sdk/src/types/session.ts`](../../../../packages/sdk/src/types/session.ts), [`code://packages/sdk/src/toolserver.ts`](../../../../packages/sdk/src/toolserver.ts)
 
 ## Tasks
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The sdk holds a client call, raises it for the client, and runs one for the tool server](../62-every-backend-calls-a-clients-tool-p1-the-sdk-holds-a-client-call/plan.md) | planned | - |
-| [p2 - Claude runs its client calls through the sdk](../62-every-backend-calls-a-clients-tool-p2-claude-runs-client-calls-through-the-sdk/plan.md) | planned | p1 |
-| [p3 - pi and cofold run their client calls through the sdk](../62-every-backend-calls-a-clients-tool-p3-pi-and-cofold-run-client-calls-through-the-sdk/plan.md) | planned | p1 |
-| [p4 - An ACP agent calls a client's tool](../62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | planned | p1 |
+| [p1 - The sdk holds a client call, raises it for the client, and runs one for the tool server](../62-every-backend-calls-a-clients-tool-p1-the-sdk-holds-a-client-call/plan.md) | built | - |
+| [p2 - Claude runs its client calls through the sdk](../62-every-backend-calls-a-clients-tool-p2-claude-runs-client-calls-through-the-sdk/plan.md) | built | p1 |
+| [p3 - pi and cofold run their client calls through the sdk](../62-every-backend-calls-a-clients-tool-p3-pi-and-cofold-run-client-calls-through-the-sdk/plan.md) | built | p1 |
+| [p4 - An ACP agent calls a client's tool](../62-every-backend-calls-a-clients-tool-p4-an-acp-agent-calls-a-clients-tool/plan.md) | built | p1 |
 
 ## Risks and tradeoffs
 
-- Moving three working backends onto one holder can break what pi/02 and plugin/04 verified - each child keeps the backend's existing client-tool tests green before it adds new ones.
-- An ACP agent's report of an MCP call is the agent's own shape - p4 matches on the fields ACP defines, then on the arguments, then opens a row of its own, as Softov answered.
-- host/49 task 04 changes when a leaving client's calls fail (after 30 s rather than at once) - these plans test through `clientGone`, which both timings end in, and leave the timing to host/49.
+- Moving three working backends onto one holder can break what pi/02 and plugin/04 verified.
+  Each child keeps the backend's existing client-tool tests green before it adds new ones.
+- An ACP agent's report of an MCP call is the agent's own shape.
+  p4 matches on the fields ACP defines, then on the arguments, then opens a row of its own, as Softov answered.
+- host/49 task 04 changes when a leaving client's calls fail, after 30 s rather than at once.
+  These plans test through `clientGone`, which both timings end in.
+  The timing stays with host/49.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [p1 task 01](../62-every-backend-calls-a-clients-tool-p1-the-sdk-holds-a-client-call/task-01-a-client-call-is-held-in-one-place.md).
+- **Done so far:** all four children.
+  p1 is reviewed and merged.
+  The sdk's `createClientCalls` holds a call, raises it as the protocol's `toolClientExecution` entry and removes it.
+  It runs one for the tool server through a backend's runner.
+  p2, p3 and p4 are built and their tasks are `implemented`, waiting on review.
+  claude, pi and cofold hold their client calls through the sdk's holder rather than three maps of their own.
+  An ACP agent is offered its session's clients' tools through the host's own MCP server.
+  Its `tools/call` is paired to the call the agent reported.
+  Each child's `implemented.md` is the account of its own work.
+  p2 and p4 each carry a `deferred.md`, and p3's account says nothing waits.
+- **Next action:** none; every child is done, reviewed on 2026-10-06.
 - **Open questions:** none; Softov answered all eight on 2026-10-06, and each answer is a row in the plan that owns it.
-- **Watch out for:** `chat/toolCallComplete` from a client is not echoed by the host and must not be; the backend reports the completion from what the harness wrote. A `toolClientExecution` entry must not set `InputNeeded` on the session or fire a notification meant for a person.
+- **Watch out for:** `chat/toolCallComplete` from a client is not echoed by the host, and must not be.
+  The backend reports the completion from what the harness wrote.
+  A `toolClientExecution` entry must not set `InputNeeded` on the session.
+  It must not fire a notification meant for a person.
 
 ## Final verification checklist
 
-- [ ] p1-p4 built, each with its `implemented.md`.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `pnpm wire` against a capture with a client tool call validates the `inputNeeded` entry.
-- [ ] Each backend's tests cover an image result.
-- [ ] By hand: VS Code connected to ahpd runs one of its own tools for a claude, a pi, a cofold and an ACP session.
-- [ ] `plans/index.md` updated.
+- [x] p1-p4 built, each with its `implemented.md`.
+- [x] `npx tsc -b`, `pnpm boundary` and `npx vitest run` over the five packages this plan touches green - 168 files, 2265 tests - all recorded in this plan's `implemented.md`.
+- [ ] `pnpm wire` against a capture with a client tool call validates the `inputNeeded` entry. Not made here: it needs a capture from a live daemon.
+- [x] Each backend's tests cover an image result: claude's `hands the model the client's image as an image, and its words as words`, pi's `hands the model the client image as an image, and its other files as a line`, cofold's `carries a client's text and names the image it could not pass`, and ACP's `answers with the client's blocks as the MCP content an agent reads`.
+- [ ] By hand: VS Code connected to ahpd runs one of its own tools for a claude, a pi, a cofold and an ACP session. Not made here: it needs a live daemon, and p2's and p4's `deferred.md` say what their runs would show.
+- [x] `plans/index.md` updated.

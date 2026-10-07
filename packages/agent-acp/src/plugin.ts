@@ -14,7 +14,7 @@
  * once.
  */
 
-import type { Plugin, PluginHost, SecretRef, Seed } from '@ahpd/sdk';
+import type { Plugin, PluginHost, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
 import { secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { presets as shipped } from './presets.js';
@@ -69,6 +69,11 @@ export const optionsSchema = {
           },
           hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
           honoursTrust: { type: 'boolean', description: "Whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field." },
+          toolsChanged: {
+            type: 'string',
+            enum: ['notify', 'list'],
+            description: "How this agent hears that the tools it listed have moved: notify holds a stream open and sends notifications/tools/list_changed down it, list says nothing and leaves it to the agent's next tools/list. Both serve the current list; defaults to notify.",
+          },
           // Typed by `machineOf` rather than here, so a wrongly written block
           // costs its preset and not this load. A variable's value is read
           // where the machine is made, so a `$secret` reaches this plugin as
@@ -84,9 +89,18 @@ export const optionsSchema = {
       },
     },
     hostTools: { type: 'boolean', description: "Offer the host's own tools to each session as an MCP server, on by default." },
+    toolsChanged: {
+      type: 'string',
+      enum: ['notify', 'list'],
+      description: "How each session's agent hears that the tools it listed have moved, over each preset's own: notify sends notifications/tools/list_changed down a stream the host holds open, list says nothing and leaves it to the agent's next tools/list. Both serve the current list; defaults to notify.",
+    },
   },
   required: ['presets'],
 };
+
+/** One of the two ways an agent hears its list moved, for a value that says one. */
+const changedOf = (value: unknown): ToolsChanged | undefined =>
+  value === 'notify' || value === 'list' ? value : undefined;
 
 /** The keys that belong to a preset rather than to the load, and are refused above one. */
 const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'honoursTrust', 'machine'] as const;
@@ -241,7 +255,12 @@ const machineUnder = (row: AcpMachine | undefined, own: AcpMachine | undefined):
  * `methodId`, a `$secret` the host cannot read, and a `machine` that is
  * wrongly written or reads a variable the daemon does not have.
  */
-const presetOf = async (host: PluginHost, id: string, said: Record<string, unknown>, shared: unknown): Promise<AcpOptions> => {
+const presetOf = async (
+  host: PluginHost,
+  id: string,
+  said: Record<string, unknown>,
+  shared: Record<string, unknown>,
+): Promise<AcpOptions> => {
   const by = `options.presets.${id}`;
   const listed = Object.keys(shipped).join(', ');
   const base = said.base;
@@ -280,7 +299,12 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
   const cwd = said.cwd;
   const description = said.description;
   const model = said.model;
-  const hostTools = typeof said.hostTools === 'boolean' ? said.hostTools : (typeof shared === 'boolean' ? shared : undefined);
+  const hostTools = typeof said.hostTools === 'boolean'
+    ? said.hostTools
+    : (typeof shared.hostTools === 'boolean' ? shared.hostTools : undefined);
+  // A value the schema refuses never reaches here; one that is neither of the
+  // two words is a preset that said nothing about it.
+  const toolsChanged = changedOf(said.toolsChanged) ?? changedOf(shared.toolsChanged);
   const honoursTrust = typeof said.honoursTrust === 'boolean' ? said.honoursTrust : taken?.honoursTrust;
   return {
     command: command as string,
@@ -298,6 +322,7 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
     ...(authenticate === undefined ? {} : { authenticate: authenticate as NonNullable<AcpOptions['authenticate']> }),
     ...(hostTools === undefined ? {} : { hostTools }),
     ...(honoursTrust === undefined ? {} : { honoursTrust }),
+    ...(toolsChanged === undefined ? {} : { toolsChanged }),
     ...(machine === undefined ? {} : { machine }),
     ...(inMachine === undefined ? {} : { authenticateInMachine: inMachine }),
   };
@@ -323,7 +348,7 @@ export const optionsOf = async (host: PluginHost, values: Record<string, unknown
   const dropped: string[] = [];
   for (const [id, given] of Object.entries(bagOf(values.presets))) {
     try {
-      held.push(await presetOf(host, id, bagOf(given), values.hostTools));
+      held.push(await presetOf(host, id, bagOf(given), values));
     }
     catch (error) {
       // Said twice, once where it is asked for and once where a start reads

@@ -1,6 +1,6 @@
 ---
 title: The handler finds its call by the id the CLI hands it
-status: todo
+status: done
 depends: [task-01-a-claude-client-call-is-the-sdks.md]
 layer: "agent-claude"
 refs:
@@ -12,7 +12,9 @@ refs:
 
 ## Objective
 
-An in-process handler for a client's tool reads the call id from `extra._meta['claudecode/toolUseId']` and waits on that call, so two identical concurrent calls are told apart; without the key it falls back to today's name-and-input match.
+An in-process handler for a client's tool reads the call id from `extra._meta['claudecode/toolUseId']`.
+It waits on that call, so two identical concurrent calls are told apart.
+Without the key it falls back to today's name-and-input match.
 
 ## Files
 
@@ -24,15 +26,43 @@ An in-process handler for a client's tool reads the call id from `extra._meta['c
 
 1. Write the cases first and see the concurrent case fail on today's join.
 2. Read the key as VS Code does; with it, wait on that id.
-3. Without it, join by `claim` as today and log that the key was missing, so the live run shows whether the fallback is still needed.
-4. Run a live CLI once with a client tool and note in Resume whether the key arrived on every call; if it did, say so to Softov, who decides whether the fallback goes.
+3. Without it, join by `claim` as today, and log that the key was missing.
+4. Log it so the live run shows whether the fallback is still needed.
+5. Run a live CLI once with a client tool.
+6. Note in Resume whether the key arrived on every call.
+7. If it did, say so to Softov, who decides whether the fallback goes.
 
 ## Validation
 
 - `packages/sdk/test/host-tools.test.ts`, written first:
-  - two concurrent calls of one client tool with the same input: each answer reaches its own call.
-  - a handler invoked with the key and no matching assistant frame yet still waits on that id.
-  - a handler with no key still reaches its call through the name-and-input match.
-- By hand: a claude session on ahpd with VS Code connected calls a VS Code tool, and the log shows the id came from `_meta`.
+  - Run two concurrent calls of one client tool with the same input.
+  - Check each answer reaches its own call.
+  - Invoke a handler with the key and no matching assistant frame yet.
+  - Check it still waits on that id.
+  - Invoke a handler with no key.
+  - Check it still reaches its call through the name-and-input match.
+- By hand: run a claude session on ahpd with VS Code connected, and call a VS Code tool.
+- Check the log shows the id came from `_meta`.
 
 ## Resume
+
+- **Done:** `packages/agent-claude/src/session/clienttools.ts` reads `extra._meta['claudecode/toolUseId']` in the handler and waits on that call.
+  `framed`/`asked` hold the one thing left to wait for: the frame that opens a call whose id the handler already knows.
+  Without the key it logs `@ahpd/agent-claude: no claudecode/toolUseId for <name>; matching the call by tool name and input` and falls back to `claim`.
+  `packages/sdk/test/support/claude-sdk.ts` hands each handler the next id queued in `sdk.toolUseIds` as `extra`.
+  It hands none when `sdk.sendsToolUseId` is false.
+  `createSdkMcpServer` wraps each definition, so a test calling a handler is calling what the CLI calls.
+- **Failed first:** the three cases were written before any of it.
+  Both pairing cases failed with `expected 'the first' to be 'the second'`.
+  The join by name and input gave the first handler the other handler's call.
+  The fallback case failed only on `expected '' to contain 'claudecode/toolUseId'`.
+  That is the log line this task adds, rather than the fallback, which already worked.
+- **The case is written against the order the calls were run, not made.**
+  Two identical calls opened in one frame and claimed in the same order are told apart by the input match by accident.
+  Both cases put the handlers in the other order from the frames.
+  That is the one thing the input cannot say.
+- **Verification:** `npx vitest run packages/sdk/test/host-tools.test.ts` green, 41 cases; `npx vitest run packages/agent-claude` green, 198 cases; `npx tsc -b` green.
+- **Owed:** the by-hand run - a live CLI with a client tool, to see whether the key arrives on every call.
+  The plan asks for it before this is marked done.
+  It is in `deferred.md` with the rest.
+- **Next action:** nothing; this task is implemented. The plan's `implemented.md` is next.

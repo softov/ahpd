@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, callTimes, idFor, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
+import { Status, callTimes, createClientCalls, idFor, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
@@ -184,32 +184,60 @@ export function piSession(
   };
 
   /**
-   * Calls a client is running for this session, by pi's call id.
+   * Calls a client is running for this session, held in one place.
    *
    * Held for the same reason a queued message is: the thing that settles one
    * arrives later and from somewhere else, and anything that ends the turn has
-   * to settle it itself or pi waits for ever on a promise nobody owns.
+   * to settle it itself or pi waits for ever on a promise nobody owns. The
+   * holder also raises the session entry a client reads and times a call out,
+   * which is what the map this replaces did neither of - see
+   * `packages/sdk/src/clientcalls.ts`.
    */
-  const byClient = new Map<string, { owner: string; settle: (answer: { text: string; ok: boolean }) => void }>();
-
-  /** Every outstanding client call, answered the same way and forgotten. */
-  const releaseCalls = (why: string, whose?: string): void => {
-    for (const [id, held] of [...byClient.entries()]) {
-      if (whose !== undefined && held.owner !== whose) continue;
-      byClient.delete(id);
-      held.settle({ text: why, ok: false });
-    }
-  };
+  const calls = createClientCalls({
+    chat: start.chatUri,
+    emit,
+    ...(start.clientToolTimeoutMs === undefined ? {} : { timeoutMs: start.clientToolTimeoutMs }),
+    providers: (name) => built
+      .filter((one) => one.owner !== undefined && one.definition.name.endsWith(`__${name}`))
+      .map((one) => String(one.owner)),
+  });
 
   /** The client that provides a tool, by the name pi calls it. */
   const clientOf = (toolName: string): string | undefined =>
     built.find((one) => one.definition.name === toolName)?.owner;
 
+  /**
+   * Ask the client that provides a tool to run a call, once the call is running.
+   *
+   * Where a call is running and not merely announced: an entry names a call
+   * somebody has to run, and a call a person is still being asked about is one
+   * nobody has allowed yet. `line` is what a client shows for it, which is the
+   * sentence the chat's `chat/toolCallReady` carries beside it.
+   */
+  const openClientCall = (id: string, toolName: string, turnId: string, line: string, input: Bag): void => {
+    const owner = clientOf(toolName);
+    if (owner === undefined) return;
+    calls.open({
+      turnId,
+      owner,
+      toolCall: {
+        toolCallId: id,
+        // The name the client announced: the tool under its own name, not the
+        // `<clientId>__<name>` the model was offered.
+        toolName: toolName.slice(owner.length + 2),
+        displayName: toolName,
+        invocationMessage: line,
+        confirmed: 'not-needed',
+        toolInput: JSON.stringify(input),
+      },
+    });
+  };
+
   /** Hand a call to the client that provides the tool, and wait for its answer. */
   const ranByClient: RunByClient = async (bound, toolCallId) => {
     const owner = bound.owner ?? '';
     doing(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
-    return await new Promise((settle) => { byClient.set(toolCallId, { owner, settle }); });
+    return await calls.wait(toolCallId);
   };
 
   /**
@@ -222,7 +250,12 @@ export function piSession(
     id: string;
     entry: Bag;
     settle: (answer: ToolCallEventResult | undefined) => void;
+    /** Ask the client to run the call, for a call the person then allows. */
+    open?: () => void;
   }>();
+
+  /** The requests a client can still answer: the person's, and the clients'. */
+  const needed = (): Bag[] => [...pending.values()].map((one) => one.entry).concat(calls.entries());
 
   /** What a declined call answers, which is the reason the model reads. */
   const DECLINED = 'The person declined this action';
@@ -415,13 +448,24 @@ export function piSession(
         ready({ confirmationTitle: title });
         const toolCall = row ?? { toolCallId: id, toolName: event.toolName, displayName };
         const entry: Bag = { id, chat: start.chatUri, kind: 'toolConfirmation', turnId, toolCall };
-        pending.set(id, { id, entry, settle });
+        pending.set(id, {
+          id,
+          entry,
+          settle,
+          // A client's tool is asked for the same way as any other call that
+          // writes, and it is the client that runs it once the person allows
+          // it - the same open an unasked call gets at its own running ready.
+          ...(owner === undefined
+            ? {}
+            : { open: () => { openClientCall(id, event.toolName, turnId, describe(displayName, input), input); } }),
+        });
         emit('session', { type: 'session/inputNeededSet', request: entry });
         doing(`Waiting on you: ${displayName}`);
         touch();
       });
     }
     ready({ confirmed: 'not-needed' });
+    openClientCall(id, event.toolName, turnId, describe(displayName, input), input);
     return decided;
   };
 
@@ -983,9 +1027,10 @@ export function piSession(
       workingDirectories: [uriOf(where)],
       customizations: [...seeds],
       ...(activity !== undefined ? { activity } : {}),
-      // The questions still waiting, each as `session/inputNeededSet` sent it,
-      // so a client that subscribes while one waits can answer it.
-      ...(pending.size > 0 ? { inputNeeded: [...pending.values()].map((one) => one.entry) } : {}),
+      // The requests still waiting - the questions and the calls a client has
+      // to run - each as `session/inputNeededSet` sent it, so a client that
+      // subscribes while one waits can answer it.
+      ...(needed().length > 0 ? { inputNeeded: needed() } : {}),
       /*
        * The host's schema when it gave one, which is the same one every other
        * backend publishes.
@@ -1069,7 +1114,7 @@ export function piSession(
       doing('Stopping');
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
-      releaseCalls('The turn was stopped');
+      calls.release('The turn was stopped');
       // A question nobody can answer any more is answered the same way.
       releasePending('The turn was stopped');
       // The turn is closed on pi's settle rather than here, so what it had
@@ -1151,12 +1196,14 @@ export function piSession(
       // pending on every screen watching it, including the answering one.
       if (approved) doing(`Running ${String(toolCall.displayName ?? '')}`);
       else doing('Thinking');
+      // An allowed call is one a client now has to run, so it is asked here.
+      if (approved) held.open?.();
       held.settle(approved ? undefined : { block: true, reason: DECLINED });
       touch();
     },
     answer: () => {},
 
-    toolCallOwner: (toolCallId) => byClient.get(toolCallId)?.owner,
+    toolCallOwner: (toolCallId) => calls.owner(toolCallId),
 
     /*
      * What a client says its own tool did.
@@ -1168,18 +1215,13 @@ export function piSession(
      * other call takes, and a completion announced here as well would be the
      * same row finished twice.
      */
-    completeToolCall: (toolCallId, clientId, result) => {
-      const held = byClient.get(toolCallId);
-      if (held === undefined || held.owner !== clientId) return false;
-      byClient.delete(toolCallId);
-      held.settle(result);
-      return true;
-    },
+    completeToolCall: (toolCallId, clientId, result) =>
+      calls.complete(toolCallId, clientId, result),
 
     clientGone: (clientId) => {
       // A call whose client has gone is a turn waiting on a promise nothing
       // will settle. The agent is told it failed, which is true.
-      releaseCalls('The client that provides this tool is no longer here', clientId);
+      calls.gone(clientId);
     },
 
     /**
@@ -1231,7 +1273,7 @@ export function piSession(
 
     close: () => {
       closed = true;
-      releaseCalls('The turn was stopped');
+      calls.release('The turn was stopped');
       releasePending('The turn was stopped');
       unsubscribe?.();
       unsubscribe = undefined;

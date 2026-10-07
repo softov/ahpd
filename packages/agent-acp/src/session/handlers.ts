@@ -308,6 +308,10 @@ export function createHandlers(ctx: SessionContext): Handlers {
      * its state moves.
      */
     const turnId = ctx.mapping?.turnId ?? '';
+    // Which client's tool the question is about, read the way the mapping reads
+    // a reported call: the name it gave, and the title only when it named none.
+    const owner = ctx.ownerOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
+    const contributor: Bag = owner === undefined ? {} : { contributor: { kind: 'client', clientId: owner } };
     const existing = ctx.mapping?.parts.find((one) => one.id === toolCallId);
     const call = existing === undefined ? {
       toolCallId,
@@ -327,10 +331,12 @@ export function createHandlers(ctx: SessionContext): Handlers {
     if (offered.length > 0) call.options = offered;
     delete call.confirmed;
     if (existing === undefined && ctx.mapping !== undefined) {
+      Object.assign(call, contributor);
       ctx.mapping.parts.push({ id: toolCallId, kind: 'toolCall', toolCall: call });
       emit('chat', {
         type: 'chat/toolCallStart', turnId, toolCallId,
         toolName: call.toolName, displayName: call.displayName,
+        ...contributor,
       });
     }
     /*
@@ -361,6 +367,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
         displayName: String(call.displayName),
         readied: true,
         asked: true,
+        ...(owner === undefined ? {} : { owner }),
       });
     }
     emit('chat', {
@@ -422,6 +429,19 @@ export function createHandlers(ctx: SessionContext): Handlers {
       delete call.options;
       delete call.confirmationTitle;
       if (picked !== undefined) call.selectedOption = picked;
+    }
+    /*
+     * An allowed call is one that runs, so this is where a client that owns it
+     * is asked to run it.
+     *
+     * The mapping's own readiness never comes for a call a question has stood
+     * on - `asked` is what stopped it - so without this a client would never be
+     * told about a call the person has just allowed. Before the action that
+     * says the call is running, because the entry exists before the chat does.
+     */
+    const allowed = ctx.mapping?.calls.get(toolCallId);
+    if (approved && allowed !== undefined && ctx.mapping !== undefined) {
+      ctx.openCall(allowed, ctx.mapping.turnId);
     }
     emit('chat', {
       type: 'chat/toolCallConfirmed',

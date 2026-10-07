@@ -260,11 +260,12 @@ export function cofoldSession(
       customizations: start.seedCustomizations ?? [],
       ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
       /*
-       * What a client is being asked, so a session channel a client
-       * subscribed to before the pause still shows the form and the status
-       * that carries it. The entries are the ones the set actions carried.
+       * What a client is being asked - the person's questions and the calls a
+       * client has to run - so a session channel a client subscribed to
+       * before one was raised still shows it and the status that carries it.
+       * The entries are the ones the set actions carried.
        */
-      ...(pending.size > 0 ? { inputNeeded: [...pending.values()].map((held) => held.entry) } : {}),
+      ...(ctx.needed().length > 0 ? { inputNeeded: ctx.needed() } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits.

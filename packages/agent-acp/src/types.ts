@@ -40,7 +40,7 @@ import type {
   WriteTextFileRequest,
   WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Bag, MessageFrom, SecretRef, Seed } from '@ahpd/sdk';
+import type { Bag, MessageFrom, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
 
 /**
  * What a machine needs for one agent to run in it, as the agent declares it.
@@ -123,7 +123,24 @@ export interface AcpOptions {
    * business rather than this host's.
    */
   honoursTrust?: boolean;
-  /** Where a server left out of a session's list is said. */
+  /**
+   * How a session's agent hears that the tools it listed are not the ones there are.
+   *
+   * `notify` is the stream this host holds open and a
+   * `notifications/tools/list_changed` down it, which is what an agent that
+   * watches for one needs; `list` is nothing said, and the change left to the
+   * agent's next `tools/list`. Both serve the current list either way, so
+   * `notify` is the default: an agent that ignores the notification is no worse
+   * off than one that was never told, and one that watches is saved a re-list
+   * it would otherwise never make.
+   */
+  toolsChanged?: ToolsChanged;
+  /**
+   * Where a session says what it left out or had to invent.
+   *
+   * A server left out of its MCP list, and a `tools/call` the agent reported no
+   * call for and this bridge therefore names itself.
+   */
   log?: (line: string) => void;
   /**
    * What a machine needs to run this agent, which `machine()` answers.
@@ -313,6 +330,13 @@ export interface AcpCall {
    * its first update says anything about it.
    */
   startedAt?: number;
+  /**
+   * The client whose tool this call is for, when the agent reached one.
+   *
+   * Read off what the agent reported - see `AcpTurn.ownerOf` - and never set on
+   * a call that is the agent's own, the host's, or one nobody's tool matches.
+   */
+  owner?: string;
 }
 
 /**
@@ -369,6 +393,23 @@ export interface AcpTurn {
   prompted?: boolean;
   /** What the last `usage_update` said, which is what this turn holds. */
   usage?: Bag;
+  /**
+   * Which client's tool a call the agent reported is for, if any.
+   *
+   * The agent reaches a client's tool through the host's own MCP server, so it
+   * names the call the way that server spells the tool, or says it in the title
+   * when it names nothing. A turn the transcript replays has no session behind
+   * it and no lookup: a call with no owner is one nobody's tool matched.
+   */
+  ownerOf?(name: string | undefined, title: string): string | undefined;
+  /**
+   * A call this turn has started, which somebody is to run.
+   *
+   * Called where the ready says the call is running, and before that ready goes
+   * out, so the entry that asks a client for the call exists before the chat
+   * says the call has started.
+   */
+  onRunning?(call: AcpCall): void;
 }
 
 /**

@@ -27,6 +27,7 @@ import { resolve } from 'node:path';
 import { Status, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
+import { createClientCalls } from './session/clientcalls.js';
 import { createConfig } from './session/config.js';
 import type { SessionContext } from './session/context.js';
 import { createHandlers } from './session/handlers.js';
@@ -122,6 +123,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     touch,
     doing,
     status,
+    offering: [...(start.tools ?? [])],
     settings: { ...start.settings },
     turns: [...(start.seed ?? [])],
     seeds: [...(start.seedCustomizations ?? [])],
@@ -156,6 +158,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
   Object.assign(ctx, createOpening(ctx));
   Object.assign(ctx, createTurn(ctx));
   Object.assign(ctx, createQueue(ctx));
+  Object.assign(ctx, createClientCalls(ctx));
 
   return {
     uri: start.uri,
@@ -193,6 +196,17 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       chats: [{ resource: start.chatUri, title: ctx.title }],
       workingDirectories: [uriOf(where)],
       customizations: [...seeds, ...ctx.commands],
+      /*
+       * The calls this session has out with its clients, which is what a client
+       * connecting now draws the request from: the entries were raised as
+       * actions while nobody was watching, and a session whose state did not
+       * carry them would be one whose request only a client that was there
+       * already could answer.
+       *
+       * Set only while there are any, so a key that is always present and
+       * sometimes empty is not a thing a client has to guess about.
+       */
+      ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
       ...(activity !== undefined ? { activity } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
@@ -227,12 +241,17 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * The permissions are answered before it goes, because a server told to stop
      * while it is blocked on a question of this client's is a server that never
      * gets past the question.
+     *
+     * And so are the calls out with clients, for the same reason: a client is
+     * asked for one, the agent is blocked on the request it made for that call,
+     * and neither is any longer anything this turn will finish.
      */
     cancel: (turnId) => {
       const turn = ctx.active;
       if (turn === undefined || String(turn.id) !== turnId) return;
       ctx.cancelRequested = true;
       ctx.settlePermissions();
+      ctx.calls.release('The turn was stopped');
       doing('Cancelling');
       const connection = ctx.live;
       if (connection !== undefined && ctx.acpSessionId !== undefined) {
@@ -246,6 +265,28 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     unqueue: ctx.unqueue,
 
     reorder: ctx.reorder,
+
+    /*
+     * The tools this session may offer, which the host replaces whole whenever
+     * a client announces what it runs or stops being active.
+     *
+     * Kept because what a client provides is what a call the agent reports is
+     * recognised by: the offering is the lookup a reported call's owner comes
+     * from, and it has to be current before the next turn.
+     */
+    setTools: ctx.setTools,
+
+    /*
+     * The three the holder answers, spread on unchanged.
+     *
+     * Which client owns a call, which client may settle it, and what happens to
+     * the calls of a client that goes: all of it is the holder's, and none of it
+     * is about this bridge. These are what the host's own dispatch reads - a
+     * client answering with `chat/toolCallComplete` is talking to the holder
+     * through them - and the answer reaches the agent as the tool result of the
+     * `tools/call` it is blocked on.
+     */
+    ...ctx.calls.methods,
 
     // Held by the session, so two people on one chat see each other's.
     setDraft: (next) => {
@@ -285,9 +326,14 @@ export function acpSession(options: AcpOptions, start: Start): Session {
        * server asked for is a process this host opened: closing the connection
        * without answering either leaves the first hanging and the second
        * running under nobody.
+       *
+       * A client's call is the third of those. The agent is blocked on the
+       * request it made for one, the client is holding an entry that is about to
+       * be on no channel at all, and neither ends by being left alone.
        */
       for (const held of permissions.values()) held.settle('cancelled');
       permissions.clear();
+      ctx.calls.release('The session was closed');
       for (const held of terminals.values()) held.handle.release();
       terminals.clear();
       const connection = ctx.live;

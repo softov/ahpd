@@ -1,7 +1,7 @@
 ---
 title: pi and cofold run their client calls through the sdk
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -27,7 +27,10 @@ refs:
 
 ## Goal
 
-pi and cofold keep calling a client's tool as pi/02 and plugin/04 built it, through the sdk holder, so both raise the `toolClientExecution` entry, keep an early answer, and time a call out; pi hands its model a client's images, and cofold, whose tools answer text only, says in text what it could not pass.
+pi and cofold keep calling a client's tool as pi/02 and plugin/04 built it, through the sdk holder.
+Both raise the `toolClientExecution` entry, keep an early answer, and time a call out.
+pi hands its model a client's images.
+cofold's tools answer text only, so it says in text what it could not pass.
 
 ## Reconnaissance
 
@@ -35,7 +38,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### What pi and cofold have today
 
-Both take `setTools` and offer a client's tool to their model: pi as a custom tool from `toPiTool`, rebuilt before the next turn when the set changes; cofold as a `createTool` whose `execute` hands the call to the session's relay.
+Both take `setTools` and offer a client's tool to their model.
+pi offers it as a custom tool from `toPiTool`, rebuilt before the next turn when the set changes.
+cofold offers it as a `createTool` whose `execute` hands the call to the session's relay.
 Both report the call with the client contributor and wait for `completeToolCall`, and both fail it on `clientGone`, cancel and close.
 Neither raises the execution request or times a call out, and pi registers its wait at `execute`, after the ready has gone out.
 
@@ -53,10 +58,13 @@ Neither raises the execution request or times a call out, and pi registers its w
 | --- | --- | --- |
 | pi and cofold move onto the sdk holder and keep their client-tool tests green | the parent | 01, 02 |
 | pi passes text and images, and a resource that is not an image as a text line; cofold passes everything as text, an image or resource as a line naming its type and size | the parent's row, Softov, 2026-10-06: "Everything now"; what each agent's tool result takes | 01, 02 |
+| Where cofold asks its client to run a call: in the relay, not at the running ready | `@cofold/agents` emits `tool.started` and runs the tool without yielding to this host's reader, so a call opened from the event is opened after the tool has asked for it - `node_modules/@cofold/agents/dist/run/tools.js` | 02 |
 
 ## Proposed architecture
 
-- **Data flow** - pi opens at `askBefore`'s running ready and waits in `execute`; cofold opens where `toolReadyAction` goes out for an owned call and waits in the relay.
+- **Data flow** - pi opens at `askBefore`'s running ready and waits in `execute`.
+  cofold opens and waits in the relay's `call`, one step.
+  Its run loop asks for the call before this host has read the event that says it is running.
 - **State flow** - each snapshot's `inputNeeded` adds `calls.entries()`.
 - **Layer responsibilities** - agent-pi · agent-cofold.
 
@@ -64,8 +72,8 @@ Neither raises the execution request or times a call out, and pi registers its w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi's client calls are the sdk's](task-01-pis-client-calls-are-the-sdks.md) | todo | p1 |
-| [02 - cofold's client calls are the sdk's](task-02-cofolds-client-calls-are-the-sdks.md) | todo | p1 |
+| [01 - pi's client calls are the sdk's](task-01-pis-client-calls-are-the-sdks.md) | done | p1 |
+| [02 - cofold's client calls are the sdk's](task-02-cofolds-client-calls-are-the-sdks.md) | done | p1 |
 
 ## Risks and tradeoffs
 
@@ -73,12 +81,21 @@ Neither raises the execution request or times a call out, and pi registers its w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-pis-client-calls-are-the-sdks.md](task-01-pis-client-calls-are-the-sdks.md).
+- **Done so far:** both tasks.
+  pi's client calls are held by `createClientCalls`.
+  They open at the running ready in `askBefore`, and at the approval for a call a person is asked about.
+  `toPiTool`'s `execute` waits on them, and the snapshot's `inputNeeded` reports them.
+  pi's model gets text, images, and a line for anything else.
+  Eight cases are in `packages/agent-pi/test/agent-pi-tools.test.ts`.
+  cofold's calls are held by the same holder.
+  They open and wait in the relay's `call` - one step, because cofold runs the tool without yielding to this host's reader.
+  The answer is read as text, plus a line per block that is not text.
+  Four cases are in `packages/agent-cofold/test/agent-cofold-client-tool.test.ts`, which had six.
+- **Next action:** none; the plan is built. The parent, host/62, has p4 left.
 - **Open questions:** none beyond the parent's.
-- **Watch out for:** cofold's gone message names the tool; the holder's must too, or cofold's existing case fails for the wrong reason.
+- **Watch out for:** cofold's gone message names the tool; the holder's must too, or cofold's existing case fails for the wrong reason. Both gone messages now name the client and the tool, which the existing cases match on `no longer here` alone.
 
 ## Final verification checklist
 
-- [ ] `vitest run packages/agent-pi packages/agent-cofold` green.
-- [ ] `plans/index.md` updated.
+- [x] `vitest run packages/agent-pi packages/agent-cofold` green: 168 and 191 cases.
+- [x] `plans/index.md` updated.

@@ -12,6 +12,15 @@ import type { SessionContext } from './context.js';
 export interface Opening {
   open(): Promise<{ connection: AcpConnection; sessionId: string }>;
   signInFailure(why: unknown): { errorType: string; message: string } | undefined;
+  /**
+   * The host's own tools endpoint, once a turn has opened it.
+   *
+   * Asked rather than kept, because it is opened inside the first `session/new`
+   * and a session that has run no turn has none yet. What asks is the offering
+   * being replaced: a client that arrives or goes moves the list the agent was
+   * handed, and the endpoint is the only thing serving it.
+   */
+  toolsEndpoint(): ToolsEndpoint | undefined;
 }
 
 /**
@@ -163,12 +172,26 @@ export function createOpening(ctx: SessionContext): Opening {
    * a server that dies is opened again with the same endpoint, so asking per
    * open would leave the process behind the first one answering for a session
    * nothing is listening to.
+   *
+   * The runner goes with it, because some of the tools in that list are a
+   * client's: the server has nothing to run one of those with, and the session
+   * is the only thing that knows which client owns which tool and how to ask
+   * it.
+   *
+   * `toolsChanged` goes with it too, and defaults to `notify` here rather than
+   * to the tool server's own `list`: the list this session serves holds a
+   * client's tools, and a client arriving mid-turn is the ordinary case rather
+   * than a rare one. A deployment that would rather its agents re-listed than
+   * be interrupted sets `list`.
    */
   let endpoint: ToolsEndpoint | undefined;
   let asked = false;
   const toolsServer = (): ToolsEndpoint | undefined => {
     if (!asked) {
-      endpoint = start.toolsServer?.();
+      endpoint = start.toolsServer?.({
+        runClient: ctx.ranByClient,
+        toolsChanged: options.toolsChanged ?? 'notify',
+      });
       asked = true;
     }
     return endpoint;
@@ -448,5 +471,5 @@ export function createOpening(ctx: SessionContext): Opening {
     return pending;
   };
 
-  return { open, signInFailure };
+  return { open, signInFailure, toolsEndpoint: () => endpoint };
 }

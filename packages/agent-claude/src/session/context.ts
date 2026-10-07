@@ -19,6 +19,14 @@ import type { Workers } from './workers.js';
  * `claude()` when the session named a machine.
  */
 export interface ClaudeSessionOptions extends SessionOptions {
+  /**
+   * How long a client has to answer a call of its tool.
+   *
+   * Resolved by the host before the session is built, so this is a number
+   * wherever a client-tool call is waited on. Absent only where a session is
+   * built by hand, and then the holder's own default applies.
+   */
+  clientToolTimeoutMs?: number;
   /** Start the CLI somewhere other than this host. */
   spawn?: (asked: Asked) => Spawned;
   /** Where the CLI is wherever `spawn` starts it. */
