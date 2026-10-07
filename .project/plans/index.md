@@ -155,8 +155,9 @@ Reference: [00-host.md](host/00-host.md)
 | [69 - Streamed deltas are merged for a short window in the host's dispatch, for every backend](host/69-a-streamed-delta-is-merged-before-it-goes-out/plan.md) | medium | built 2026-10-07 ([implemented.md](host/69-a-streamed-delta-is-merged-before-it-goes-out/implemented.md)); reviewed and merged | - | - |
 | [70 - What the 0.10.0 release review found is fixed](host/70-what-the-release-review-found-is-fixed/plan.md) | high | built 2026-10-07 ([implemented.md](host/70-what-the-release-review-found-is-fixed/implemented.md)); reviewed and merged | - | release 0.10.0 |
 | [71 - An automation wakes on what a session does](host/71-an-automation-wakes-on-what-a-session-does/plan.md) | medium | planned 2026-10-07; tasks 01-07 todo ([diagrams](host/71-an-automation-wakes-on-what-a-session-does/diagrams.md)) | - | the bot study, step 3 |
+| [72 - A plugin is told when the host closes, and the computer plugin stops its work there](host/72-a-plugin-is-told-when-the-host-closes/plan.md) | high | planned 2026-10-07; tasks 01-04 todo; fixes the ENOTEMPTY flake before the 0.10.0 dry run | - | release 0.10.0 |
 
-Next free number in `host`: `72`.
+Next free number in `host`: `73`.
 
 ## claude
 
