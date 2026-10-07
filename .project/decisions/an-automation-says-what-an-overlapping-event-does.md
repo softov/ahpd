@@ -3,7 +3,7 @@ title: An automation says what an event does while it runs
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L233-L247](../../packages/sdk/src/host/automations.ts#L233-L247) - `due`, which starts every run it is given"
+  - "[code://packages/sdk/src/host/automations.ts#L233-L246](../../packages/sdk/src/host/automations.ts#L233-L246) - `due`, which starts every run it is given"
 ---
 
 ## Context

@@ -138,6 +138,7 @@ against its contract before it is recorded.
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 | `registerRoute(handler)` | register, open key | one HTTP route served on this host's own listener, under `/plugins/<name>/` |
+| `registerTriggerType(definition)` | register, open key | one event trigger type an automation may be saved with, listed beside the host's own `session` and `watch` |
 | `registerClose(close)` | register, open key | one function the host runs when it closes, once its sessions have closed and before its stores do |
 
 ### A route authenticates its own caller
@@ -163,6 +164,37 @@ The path reaches your handler whole, prefix and all, so `new URL(request.url).pa
 A route is served whether `http` is on or off, and on the daemon's own port rather than one of its own, so a tunnel forwards it like everything else here and no second port is opened for you. `/api` is unaffected.
 
 A handler that throws is answered 500 with the shape of the failure, its reason goes to the daemon's log against your plugin's name, and the daemon keeps serving.
+
+### A trigger type of your own
+
+`registerTriggerType(definition)` adds one event trigger type beside the host's own `session` and `watch`. A person saving an automation picks it the way they pick those two, and every client is offered it by `listAutomationTriggerDefinitions` with the form your `configSchema` describes.
+
+```ts
+export const apply: Plugin['apply'] = (host) => {
+  host.registerTriggerType({
+    type: 'deploy',
+    title: 'A deployment',
+    description: 'Something a deployment did.',
+    events: [
+      { id: 'failed', title: 'A deployment failed', description: 'The rollout did not finish.' },
+      { id: 'rolledBack', title: 'A deployment was rolled back' },
+    ],
+    configSchema: { type: 'object', properties: { environment: { type: 'string', title: 'Environment' } } },
+  });
+};
+```
+
+`type` and `title` are what the type is called, `events` needs at least one entry with an `id` and a `title`, and two events of one type may not share an id. `configSchema` is optional and is the JSON Schema a client draws the trigger's own settings from; the host does not read the config it describes, so what you do with it is yours. `session` and `watch` are the host's own names and are refused, as is a name you have already registered in this plugin, because a type is chosen by its name and two meanings for one is a choice nobody could make. Two plugins claiming one name is reported where the plugins are folded and the second loses that type alone, keeping everything else it contributed.
+
+`host.fireTrigger(type, event, data)` says an event of that type happened. Every enabled automation saved with that type and that event id starts a run, under its own overlap setting, and each run's message names the event with the `title` your definition gave it. The call hands the event over and returns: it does not wait for the runs it started. A type you never registered, or an event id your type does not offer, throws rather than firing nothing.
+
+`data` is what the run is told of the event beyond its name, and it rides on the run's origin, which is where the protocol keeps a host's own provenance for a run a trigger made. It is stored with the run and read back by whoever may read the automation, so it must carry nothing secret.
+
+```ts
+host.fireTrigger('deploy', 'failed', { environment: 'production', revision: '9f2c1ab' });
+```
+
+Your type runs an automation exactly as the host's own do: under the same overlap mode and the same hourly cap, and acting as that automation's owner. An automation its owner may not read a session with is one this host will not run, which is the same answer a rule of that automation gets - and an automation nobody owns is run only where the daemon offers such automations every session, which is `--unowned-automations every`, its default. The run is still refused when its owner has never signed in. That is also why `{{session}}` and `{{sessionTitle}}` are filled with nothing in a message your event woke.
 
 ### A plugin is told when the host closes
 

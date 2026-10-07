@@ -1,7 +1,7 @@
 ---
 title: An automation wakes on what a session does
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -11,11 +11,11 @@ decisions:
   - decisions/an-automation-says-what-an-overlapping-event-does.md
   - decisions/a-run-is-told-what-woke-it.md
 refs:
-  - "[code://packages/sdk/src/automations.ts#L94](../../../../packages/sdk/src/automations.ts#L94) - `triggers` answers no event trigger types today"
-  - "[code://packages/sdk/src/host/automations.ts#L170-L205](../../../../packages/sdk/src/host/automations.ts#L170-L205) - `beginAutomation`, which makes a session and begins a turn"
-  - "[code://packages/sdk/src/host/automations.ts#L233-L247](../../../../packages/sdk/src/host/automations.ts#L233-L247) - `due`, the one way a run starts without a person"
+  - "[code://packages/sdk/src/automations.ts#L382](../../../../packages/sdk/src/automations.ts#L382) - `triggers`, which answered no event trigger types before task 03"
+  - "[code://packages/sdk/src/host/automations.ts#L561-L708](../../../../packages/sdk/src/host/automations.ts#L561-L708) - `beginAutomation`, which makes a session and begins a turn"
+  - "[code://packages/sdk/src/host/automations.ts#L1004-L1022](../../../../packages/sdk/src/host/automations.ts#L1004-L1022) - `due`, the one way a run starts without a person"
   - "[code://packages/sdk/src/scheduled.ts](../../../../packages/sdk/src/scheduled.ts) - the schedule clock, the pattern a trigger clock mirrors"
-  - "[code://packages/sdk/src/types/automations.ts#L151](../../../../packages/sdk/src/types/automations.ts#L151) - `AutomationStore`"
+  - "[code://packages/sdk/src/types/automations.ts#L160](../../../../packages/sdk/src/types/automations.ts#L160) - `AutomationStore`"
   - "[code://packages/sdk/src/host/gate.ts#L74](../../../../packages/sdk/src/host/gate.ts#L74) - `automation:run`"
   - npm://@microsoft/agent-host-protocol@1.0.0 - `AutomationEventTrigger`, `AutomationTriggerDefinition`, `listAutomationTriggerDefinitions`, `AutomationTriggeredRunOrigin.event`
   - file:///github/ahp-review/bots/bot-steps.md - step 1 of the bot study: automations wake on events
@@ -65,10 +65,18 @@ chat action in dispatch -> session event -> rule engine (per automation, per ses
 | What | Source | Task |
 | --- | --- | --- |
 | First events: a turn ends (completed, failed, cancelled), a tool call fails, a message is queued, a session goes idle, a child session finishes | Softov, 2026-10-07, "Which event triggers come first?" | 01 |
+| `idle` fires when the last turn ends and nothing waits behind it; a rule that wants a quiet period says so in its own `then` | Softov, 2026-10-07, "Idle: At once, rule sets the wait" | 01 |
+| `childFinished` fires for a worker chat on its session, and for a session the `create` tool started on the session that started it, from a parent link kept in the session's stored record | Softov, 2026-10-07, "childFinished: Both, record a parent at create" | 01 |
+| `childFinished` for a session the `create` tool started is said when that child goes idle - its last turn ended with nothing queued behind it - and again on every later turn that goes quiet, so it is not only the child being disposed of; a worker chat keeps saying it when its turn ends | Softov, 2026-10-07, "childFinished for a create-tool child": "When the child goes idle" | 01 |
 | Presets: looks stuck, failing tools, long silent turn, idle after failure, waiting while busy; each a rule with editable numbers | Softov, 2026-10-07, "ship presets?": "Yes, tunable presets" | 03 |
+| "Long silent turn" needs no event to fire on: the host hands the engine each turn start as an internal signal of its own, not a public event kind, and the engine arms a timer for the rule's length | Softov, 2026-10-07, "long silent turn": "Internal timer only" | 01, 02, 03 |
+| "Long silent turn" is measured from the turn's last activity rather than from its start: the timer starts again on every tool call, tool result or message chunk in that turn, so it fires only after the rule's length of nothing happening | Softov, 2026-10-07, "The long silent turn": "Really silent: reset on activity" | 01, 02, 03 |
+| A rule may name a session's folders and whether a run made it, and ask how long its turn has run: every event carries the first two, and the turn start the engine is handed times the third | Softov, 2026-10-07, "filters: add both": "Yes, add both" | 01, 02, 03 |
 | "No reply posted" waits for `post_message`, step 3 of the bot study | `(defaulted: the event does not exist yet)` | - |
+| Dropping a plugin's trigger types when the plugin goes waits for a plugin reload, which this host does not have | Softov, 2026-10-07, "Unload: defer or plan more" | - |
 | A plugin declares a trigger type and fires it through the SDK | Softov, 2026-10-07, "Plugins add trigger types" | 06 |
-| A rule only sees sessions the automation's owner may `session:read` | `(defaulted: an event names a session and its title)` | 04 |
+| A rule only sees sessions the automation's owner may `session:read`, and an owner this host has not met sees none | `(defaulted: an event names a session and its title)` | 04 |
+| An automation that names no owner sees every session, and the daemon's automation settings may narrow that to none | Softov, 2026-10-07, "No owner: configurable maybe default to every?" `(defaulted: the key is unownedAutomations, beside automations, and it reads every or none)` | 04 |
 | A run's own sessions never wake the automation that made them | `(defaulted: a loop guard)` | 04 |
 | An automation runs at most 20 times an hour; more events are counted and dropped | `(defaulted: a guard against a rule that fires on every turn)` | 04 |
 | Counts and timers live in memory and start again when the daemon restarts | `(defaulted: a restart is rare, and a lost timer misses one wake)` | 02 |
@@ -81,7 +89,7 @@ chat action in dispatch -> session event -> rule engine (per automation, per ses
 - **Event flow** - dispatch -> `events.emit` -> engine -> `fire(automation, event)` -> overlap -> `startForAutomation` or a turn in the pinned chat.
 - **State flow** - counts and timers in the engine, in memory; the pinned session URI in `_meta.ahpd.pinnedSession` on the automation.
 - **Layer responsibilities** - `sessionevents.ts`: the event stream · `triggers.ts`: the rule engine, with a clock it is given · `host/automations.ts`: fire, overlap, pinned, placeholders · `automations.ts`: trigger types.
-- **Source-of-truth files** - [`code://packages/sdk/src/triggers.ts`](../../../../packages/sdk/src/triggers.ts)
+- **Source-of-truth files** - `packages/sdk/src/triggers.ts` (made by task 02), `packages/sdk/src/host/automations.ts`.
 
 ```ts
 // packages/sdk/src/types/triggers.ts
@@ -90,18 +98,27 @@ export type SessionEventKind =
   | 'toolFailed' | 'toolCalled' | 'messageQueued'
   | 'idle' | 'childFinished';
 
-export interface SessionEvent {
-  kind: SessionEventKind;
+export interface SessionAbout {          // what everything said about a session says
   session: string;            // ahp-session URI
   at: string;                 // ISO time
   owner?: string;
   provider?: string;
   project?: string;
+  folders: string[];          // where the session works, as the catalogue has it
+  automated: boolean;         // whether a run made it rather than a person
+}
+
+export interface SessionEvent extends SessionAbout {
+  kind: SessionEventKind;
   tool?: { name: string; inputHash: string };   // toolFailed, toolCalled
   turnToolCalls?: number;     // tool calls in the running turn so far
   running?: boolean;
   queued?: number;
 }
+
+// The host says a turn started through `SessionEvents.turns`, and the engine
+// times a long turn from it. Not a `SessionEventKind`: no rule is written on it.
+export type SessionTurn = SessionAbout;
 
 export interface SessionRule {
   on: SessionEventKind;
@@ -126,7 +143,7 @@ export interface TriggerTypeDefinition {
   events: { id: string; title: string; description?: string }[];
   configSchema?: Record<string, unknown>;
 }
-// PluginApi
+// PluginHost
 registerTriggerType(definition: TriggerTypeDefinition): void;
 fireTrigger(type: string, event: string, data: Record<string, unknown>): void;
 ```
@@ -138,13 +155,13 @@ Durations are `30s`, `5m`, `2h`.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host emits session events](task-01-the-host-emits-session-events.md) | todo | - |
-| [02 - The rule engine matches a rule](task-02-the-rule-engine-matches-a-rule.md) | todo | - |
-| [03 - The host lists its trigger types and presets](task-03-the-host-lists-its-trigger-types.md) | todo | 02 |
-| [04 - A matched rule starts a run that knows what woke it](task-04-a-matched-rule-starts-a-run.md) | todo | 01, 02, 03 |
-| [05 - Pinned sessions and the overlap modes](task-05-pinned-sessions-and-overlap.md) | todo | 04 |
-| [06 - A plugin adds a trigger type](task-06-a-plugin-adds-a-trigger-type.md) | todo | 04 |
-| [07 - Docs](task-07-docs.md) | todo | 01-06 |
+| [01 - The host emits session events](task-01-the-host-emits-session-events.md) | done | - |
+| [02 - The rule engine matches a rule](task-02-the-rule-engine-matches-a-rule.md) | done | - |
+| [03 - The host lists its trigger types and presets](task-03-the-host-lists-its-trigger-types.md) | done | 02 |
+| [04 - A matched rule starts a run that knows what woke it](task-04-a-matched-rule-starts-a-run.md) | done | 01, 02, 03 |
+| [05 - Pinned sessions and the overlap modes](task-05-pinned-sessions-and-overlap.md) | done | 04 |
+| [06 - A plugin adds a trigger type](task-06-a-plugin-adds-a-trigger-type.md) | done | 04 |
+| [07 - Docs](task-07-docs.md) | done | 01-06 |
 
 ## Risks and tradeoffs
 
@@ -154,13 +171,13 @@ Durations are `30s`, `5m`, `2h`.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-emits-session-events.md](task-01-the-host-emits-session-events.md).
-- **Open questions:** none.
+- **Done so far:** every task, and the two answers of 2026-10-07 built on top of them. Task 01, the stream of session events, the turn start the engine is handed, and the parent link a child session leaves. Task 02, the rule engine, the filter on a session's folders and whether a run made it, and the timer a long turn gets. Task 03, the two trigger types and the five presets a client draws its form from. Task 04, the rules the host watches, the owner gate, the hourly cap, and the message a woken run is given. Task 05, the overlap modes and the pinned chat, with the refusal of `pinned` beside `parallel`. Task 06, a plugin's own trigger type, listed beside the host's two and fired into the automations that watch it. Task 07, the daemon and plugin docs.
+- **Next action:** none. Reviewed and closed on 2026-10-07.
+- **Open questions:** none. Softov settled the last two on 2026-10-07. The silent turn is the engine's own timer, fed by an internal turn start rather than a public event kind. A filter may name a session's folders and whether a run made it. Both are rows in the table above, and neither is left in [deferred.md](deferred.md).
 - **Watch out for:** the rule engine is pure and takes a clock, so every test runs with fake time.
 
 ## Final verification checklist
 
-- [ ] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass, every package.
+- [x] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass, every package.
 - [ ] VS Code lists the `session` and `watch` trigger types in its automation editor.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

@@ -1,6 +1,6 @@
 /** Automations: a session started by a trigger rather than by a person. */
 
-import type { AutomationOperation, SessionOriginKind } from '@microsoft/agent-host-protocol';
+import type { AutomationOperation, AutomationTriggerDefinition, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
 import type { Bag } from './common.js';
 import type { Owner } from './usage.js';
@@ -82,6 +82,15 @@ export interface AutomationRun {
   sessions: string[];
   /** The one a client should open when it opens the run. */
   primarySession?: string;
+  /**
+   * What the host has noted about it while it ran.
+   *
+   * Sent to a client as `_meta`, beside `ahpd.owner`: the protocol declares
+   * `_meta` on a run's state and on its summary both, and this is where a fact
+   * the host decided about the run goes - how many events arrived while it was
+   * going and were dropped, most of all.
+   */
+  notes?: Record<string, unknown>;
 }
 
 /**
@@ -161,9 +170,14 @@ export interface AutomationStore {
    * listed here, and may always be written - what a client learns from a host
    * that will not fire one is the absent `nextRunAt`, not an absence here.
    * Manual is not a trigger either; an empty trigger list on a definition is
-   * what manual-only means. So empty is a real answer, and the usual one.
+   * what manual-only means. So empty is a real answer, and the one every store
+   * gave before this host learned to wake on a session.
+   *
+   * Each definition is the protocol's own, schema and all, because a client
+   * draws the automation form from it: a type listed here is a type this host
+   * will fire.
    */
-  triggers(options: { provider?: string; workingDirectories?: string[] }): Bag[];
+  triggers(options: { provider?: string; workingDirectories?: string[] }): AutomationTriggerDefinition[];
 
   /**
    * Write one the client has just described.
@@ -202,6 +216,17 @@ export interface AutomationStore {
    * longer holds must not reopen a finished run.
    */
   settle?(run: string, ending: RunEnding): boolean;
+
+  /**
+   * Note something about a run, so the run itself carries it.
+   *
+   * The host is what decides how an event that arrives while a run is going is
+   * answered, and the run is where the answer belongs: a client watching it
+   * reads the count there rather than being told separately. Absent keys are
+   * left alone. Optional like the rest, so a store that keeps its runs
+   * immutable simply leaves it out.
+   */
+  note?(run: string, notes: Record<string, unknown>): boolean;
 
   /** One run's own state, for the channel a client watches it on. */
   runOf(resource: string): AutomationRun | undefined;

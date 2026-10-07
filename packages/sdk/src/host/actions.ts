@@ -448,12 +448,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
       const made = type === 'automation/createRequested'
-        ? store.create(resource, (typeof action.definition === 'object' && action.definition !== null
-          ? action.definition
-          : {}) as Bag, ownerFor(connection))
-        : store.update(resource, (typeof action.changes === 'object' && action.changes !== null
-          ? action.changes
-          : {}) as Bag);
+        ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection))
+        : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag));
       // `onChanged` is what dispatches. A store that told the host
       // nothing would be one whose own timers were invisible, so
       // everything goes out the same way.
@@ -610,6 +606,32 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       return;
     }
     return chatAction(ctx, conn, params, channel, action, type, origin, no);
+  };
+
+  /** The value as a keyed object, or an empty one where it is not. */
+  const keyed = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Bag
+    : {});
+
+  /**
+   * A definition a client wrote, with the host's own chat kept where it is.
+   *
+   * Which chat a pinned automation works in rides in `_meta.ahpd.pinnedSession`
+   * and is written by the host alone, so a client writing it would be a client
+   * choosing a chat for somebody else's automation - and the run that follows
+   * begins a turn there. So the value a client sends is dropped, and the one
+   * the store already holds is put back: a patch that says nothing about waking
+   * leaves the pin alone, exactly as it leaves every key it does not mention.
+   */
+  const withPinOf = (resource: string, given: Bag): Bag => {
+    const meta = given['_meta'];
+    const written = keyed(meta)['ahpd'];
+    if (typeof written !== 'object' || written === null || Array.isArray(written)) return given;
+    const pin = keyed(keyed(options.automations?.get(resource)?.definition['_meta'])['ahpd'])['pinnedSession'];
+    const ahpd = { ...written as Bag };
+    delete ahpd['pinnedSession'];
+    if (typeof pin === 'string') ahpd['pinnedSession'] = pin;
+    return { ...given, _meta: { ...meta as Bag, ahpd } };
   };
 
   return { applyDispatch };

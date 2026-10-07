@@ -27,6 +27,7 @@ import type { Lifecycle } from './lifecycle.js';
 import type { Tooling } from './tooling.js';
 import type { Terminals } from './terminals.js';
 import type { Automations } from './automations.js';
+import type { SessionEvents } from './sessionevents.js';
 
 /**
  * Everything an area of the host reaches for, in one object.
@@ -90,6 +91,12 @@ export interface HostContext extends Routing, Relay, Changesets, Facts, Telemetr
   described: Map<string, string>;
   /** The side index a worker's link is written from, fed from `dispatch`. */
   links: CallLinks;
+  /**
+   * What each session does, fed from the same funnel and read by the wake
+   * rules. Held beside the host rather than merged into it, so that what a rule
+   * reads is named once rather than spread over the host's own fields.
+   */
+  sessionEvents: SessionEvents;
   /** The chats made out of another, by URI, naming the source chat as this host holds it. */
   madeFrom: Map<string, Bag>;
   /** What started each session, for the ones nothing did. */

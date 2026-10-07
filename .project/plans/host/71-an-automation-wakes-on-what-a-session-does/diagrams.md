@@ -8,8 +8,11 @@ The diagrams for [plan.md](plan.md).
 
 ```mermaid
 flowchart LR
-    A["chat action in dispatch<br/>turnComplete, toolCallComplete,<br/>error, pendingMessageSet"] --> E["session event<br/>kind, session, owner,<br/>running, queued, turnToolCalls"]
-    I["idle timer<br/>per session"] --> E
+    A["chat action in dispatch<br/>turnComplete, toolCallComplete,<br/>error, pendingMessageSet"] --> E["session event<br/>kind, session, owner, folders,<br/>automated, running, queued,<br/>turnToolCalls"]
+    A --> I["the last turn ended and<br/>nothing waits behind it"]
+    I --> E
+    A --> T["turn started<br/>the session's own chat"]
+    T --> G
     E --> G{"owner may read<br/>the session?<br/>not its own run?"}
     G -- no --> X["dropped"]
     G -- yes --> R["rule engine<br/>one state per<br/>automation and session"]
@@ -27,10 +30,11 @@ Every rule is one event. The three other parts are optional.
 
 ```mermaid
 flowchart LR
-    ON["on<br/>one event kind<br/>+ filter"] --> WHEN["when<br/>running, queued,<br/>tool calls, turn length"]
+    ON["on<br/>one event kind<br/>+ filter"] --> WHEN["when<br/>running, queued, tool calls,<br/>a turn longer than T"]
     WHEN --> COUNT["count<br/>n, in a row,<br/>within a window,<br/>same input"]
     COUNT --> THEN["then<br/>an event within T,<br/>quiet for T,<br/>or no event for T"]
     THEN --> M["match"]
+    WHEN -.->|"a turn ending, no count, no then<br/>the turn's own timer fires it"| M
 ```
 
 | Softov's example | on | when | count | then |
@@ -55,13 +59,15 @@ stateDiagram-v2
     Matched --> Counting: count cleared
 ```
 
+A turn that runs long is the one match no event drives. The engine arms a timer when the turn starts, and the run is handed the turn itself.
+
 ## The presets
 
 ```mermaid
 flowchart TB
     W["watch trigger type"] --> S1["looks stuck<br/>same tool and input, 3 times"]
     W --> S2["failing tools<br/>3 failures in a row"]
-    W --> S3["long silent turn<br/>running 10m, no tool call"]
+    W --> S3["long silent turn<br/>a turn running 10m"]
     W --> S4["idle after failure<br/>failed turn, then 3m quiet"]
     W --> S5["waiting while busy<br/>queued message, 3 tool calls"]
     W -.-> S6["no reply posted<br/>after post_message exists"]

@@ -15,13 +15,13 @@ import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
-import type { Contribution, PluginContext, PluginHost, PortContribution, PortKey, PortOf, Route } from './types/plugin.js';
+import type { Contribution, PluginContext, PluginHost, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
 import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
 import type { Vault } from './types/vault.js';
 import { idOf, schemeOf } from './catalog.js';
 import { readSecret } from './vault.js';
-import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkTool, miss } from './validate.js';
+import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkTool, checkTriggerType, miss } from './validate.js';
 
 /**
  * Every key a `set` registration may name.
@@ -61,6 +61,16 @@ export const reservedScheme = (scheme: string): boolean => {
   const lower = scheme.toLowerCase();
   return lower === 'file' || lower.startsWith('ahp-');
 };
+
+/**
+ * The trigger type names the host answers for itself.
+ *
+ * `session` and `watch` are listed by every host that wakes on anything, so a
+ * plugin offering one would be a second definition of a name a saved automation
+ * already means something by - and which of the two fired would depend on the
+ * order they were registered in.
+ */
+export const RESERVED_TRIGGER_TYPES: readonly string[] = ['session', 'watch'];
 
 /**
  * Where every plugin's route is served, on the host's own listener.
@@ -359,6 +369,38 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   ];
   if (closers.length > 0) options.closers = closers;
 
+  /*
+   * The trigger types the plugins offer, one entry per plugin that offered one.
+   *
+   * A name is held by whoever registered it first, and a second plugin offering
+   * the same one is reported and loses that type alone: a saved trigger names
+   * its type by string, so two definitions of one name would be a trigger
+   * nothing could choose between, and the plugin that lost keeps everything
+   * else it contributed - the rule a duplicate agent `provider` follows.
+   *
+   * The entry is the object `pluginHost` built and not a copy, because the host
+   * sets `deliver` on it and the plugin's own `fireTrigger` holds the same one.
+   * What the loser loses is deleted from it here, so the host, the listing and
+   * the plugin all see one set of names.
+   */
+  const typeHolders = new Map<string, string>();
+  const pluginTriggers: PluginTriggers[] = [];
+  for (const contribution of contributions) {
+    const held = contribution.triggers;
+    if (Object.keys(held.types).length === 0) continue;
+    for (const name of Object.keys(held.types)) {
+      const owner = typeHolders.get(name);
+      if (owner !== undefined) {
+        problems.push(`plugin ${contribution.by} registers trigger type ${name}, which plugin ${owner} already registered`);
+        delete held.types[name];
+        continue;
+      }
+      typeHolders.set(name, contribution.by);
+    }
+    if (Object.keys(held.types).length > 0) pluginTriggers.push(held);
+  }
+  if (pluginTriggers.length > 0) options.pluginTriggers = pluginTriggers;
+
   return { options, problems, routes };
 }
 
@@ -448,6 +490,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
    * time.
    */
   const events: Record<string, EventListener[]> = {};
+  const triggers: PluginTriggers = { by, types: {} };
   const contribution: Contribution = {
     by,
     ...(options.spec === undefined ? {} : { spec: options.spec }),
@@ -459,6 +502,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     providers: {},
     events: events as unknown as HostHandlers,
     closers: [],
+    triggers,
   };
   const providers = new Set<string>();
   const tools = new Set<string>();
@@ -611,6 +655,43 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
         throw new Error(miss(by, 'registerClose', 'close', 'a function'));
       }
       contribution.closers.push(close);
+    },
+    registerTriggerType(definition) {
+      checkTriggerType(definition, by);
+      const named = definition.type;
+      /*
+       * The host's own two names are refused here rather than in the fold,
+       * because a name this host already answers for is not a collision with
+       * another plugin: whatever a plugin wrote under `session` would never be
+       * what fired. The same refusal `registerResourceProvider` makes for a
+       * scheme the host owns.
+       */
+      if (RESERVED_TRIGGER_TYPES.includes(named)) {
+        throw new Error(miss(by, 'registerTriggerType', named, 'a name the host does not already use; session and watch are its own'));
+      }
+      if (triggers.types[named] !== undefined) {
+        throw new Error(miss(by, 'registerTriggerType', named, 'a type name no other type in this plugin uses'));
+      }
+      triggers.types[named] = definition;
+    },
+    fireTrigger(type, event, data) {
+      const named = typeof type === 'string' ? type.trim() : '';
+      const offered = triggers.types[named];
+      // Both halves are this plugin's own mistake rather than a host's: the
+      // type is what it registered, and the event is what that type offers.
+      if (offered === undefined) throw new Error(miss(by, 'fireTrigger', named, 'a type this plugin registered'));
+      if (!offered.events.some((one) => one.id === event)) {
+        throw new Error(miss(by, 'fireTrigger', String(event), `an event ${named} offers`));
+      }
+      if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+        throw new Error(miss(by, 'fireTrigger', 'data', 'an object'));
+      }
+      /*
+       * Dropped before a host is built over this plugin, which is a plugin
+       * firing from its own test rather than a fire that went missing: nothing
+       * keeps it for later, because an event is about what is happening now.
+       */
+      triggers.deliver?.(named, String(event), data as Record<string, unknown>);
     },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the

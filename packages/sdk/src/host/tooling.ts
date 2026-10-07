@@ -312,6 +312,15 @@ export function createTooling(ctx: HostContext): Tooling {
       // it ends up running in.
       openSession(made, provider, backendsOwn(config), where, undefined, undefined, undefined, asked.title,
         forWhom(kept.owner(idOf(uri))));
+      /*
+       * The session this one was made inside, kept with its record.
+       *
+       * In the store rather than in memory, because what the link is for is
+       * telling this session when its child ends, and a child can end after a
+       * restart. The id is what is kept, so the session is found again under
+       * whichever scheme this host is publishing it by then.
+       */
+      kept.setParent?.(idOf(made), idOf(uri));
       const lead = byChat.get(chatUriFor(made));
       if (lead === undefined) throw new Error(`${made} did not start`);
       lead.chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);

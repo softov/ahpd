@@ -633,6 +633,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
         file: automationsPath(),
         onProblem: (message) => process.stdout.write(`${message}\n`),
       }),
+    /*
+     * What an automation that names no owner wakes on, which is a decision
+     * about this deployment rather than about the automation: the key reads
+     * `every` or `none`, and a daemon that has not been told wakes them on
+     * every session.
+     */
+    unownedAutomations: options.unownedAutomations,
     // What this host's work cost, built above so the scheme and the command
     // read the same records this host charges to.
     usage: store,

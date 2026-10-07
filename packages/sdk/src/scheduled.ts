@@ -346,15 +346,17 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     },
 
     /**
-     * The event triggers this host understands, which are none.
+     * The event triggers this host understands, which are what the store
+     * underneath lists.
      *
      * Schedule triggers are protocol-defined and never appear here - a client
      * may always write one - and manual is not a trigger at all: an empty
-     * trigger list is what the protocol says manual-only means. So an empty
-     * answer is the true one for a host whose only automatic trigger is a
-     * clock.
+     * trigger list is what the protocol says manual-only means. Everything
+     * else is the store's answer, and this one is the store a daemon is built
+     * over, so a client asking the daemon gets the same form it would get from
+     * memory.
      */
-    triggers: () => [],
+    triggers: (options) => inner.triggers(options),
 
     create: (resource, definition, owner) => {
       const made = inner.create(resource, definition, owner);

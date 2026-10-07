@@ -100,6 +100,14 @@ export interface Config {
    */
   automations?: 'file' | 'memory';
   /**
+   * What an automation that names no owner wakes on: `every` session, or `none`.
+   *
+   * `every` is the default, and the one that matters: an automation nobody made
+   * is nobody's work, and a host with no people directory has no other kind. A
+   * deployment that would rather they woke on nothing says `none`.
+   */
+  unownedAutomations?: 'every' | 'none';
+  /**
    * Where the read and archived bits and a session's settings are kept: `file`
    * beside this configuration, or `memory` until the process ends.
    */

@@ -59,6 +59,7 @@ const contribution = (
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   events: {},
+  triggers: { by, types: {} },
   closers: parts.closers ?? [],
   ...(parts.routes === undefined ? {} : { routes: parts.routes }),
 });

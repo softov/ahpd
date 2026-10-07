@@ -234,6 +234,8 @@ describe('Host.close', () => {
     const sessions = { ...fileSessions({ dir: join(dir, 'sessions') }), close: () => { order.push('sessions'); } };
     const automations = {
       onDue: () => {},
+      list: () => [],
+      get: () => undefined,
       run: async () => undefined,
       close: () => { order.push('automations'); },
     };
@@ -401,6 +403,8 @@ describe('Host.close refuses what would start', () => {
     const runs: string[] = [];
     const store = {
       onDue: (observer: typeof due) => { due = observer; },
+      list: () => [],
+      get: () => undefined,
       run: async (automation: string, _origin: unknown, given: (options: StartSession) => Promise<string>) => {
         runs.push(automation);
         start = given;
@@ -430,6 +434,8 @@ describe('Host.close refuses what would start', () => {
     const said: string[] = [];
     const store = {
       onDue: (observer: typeof due) => { due = observer; },
+      list: () => [],
+      get: () => undefined,
       run: async (_automation: string, _origin: unknown, start: (options: StartSession) => Promise<string>) => {
         await start({ provider: 'echo', text: 'go', workingDirectory: dir, config: { isolation: 'worktree' } });
         return undefined;
@@ -461,7 +467,7 @@ describe('Host.close refuses what would start', () => {
     const agent: Agent = { ...base, create: (start) => ({ ...base.create(start), close: () => { throw new Error('the agent would not go'); } }) };
     const closedStores: string[] = [];
     const sessions = { ...fileSessions({ dir: join(dir, 'sessions') }), close: () => { closedStores.push('sessions'); } };
-    const automations = { onDue: () => {}, run: async () => undefined, close: () => { closedStores.push('automations'); throw new Error('the clock stuck'); } };
+    const automations = { onDue: () => {}, list: () => [], get: () => undefined, run: async () => undefined, close: () => { closedStores.push('automations'); throw new Error('the clock stuck'); } };
     const host = createHost({
       path: dir, agents: [agent], sessions, automations: automations as never, onEvent: (line: string) => { said.push(line); },
     } as never);

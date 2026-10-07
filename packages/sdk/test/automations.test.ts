@@ -41,11 +41,11 @@ const until = async (done: () => boolean | Promise<boolean>, tries = 200): Promi
   }
 };
 
-async function connected(withStore = true, pace = 0) {
+async function connected(withStore = true, pace = 0, held = memoryAutomations()) {
   const host = createHost({
     path: DIR,
     agents: [echo({ path: DIR, pace })],
-    ...(withStore ? { automations: memoryAutomations() } : {}),
+    ...(withStore ? { automations: held } : {}),
   });
   const p = peer();
   const client = host.accept(p);
@@ -53,8 +53,12 @@ async function connected(withStore = true, pace = 0) {
     method: 'initialize',
     params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
-  return { host, client, peer: p };
+  return { host, client, peer: p, store: held };
 }
+
+/** The value as a keyed object, for reading into a definition. */
+const keyed = (value: unknown): Record<string, unknown> =>
+  (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {});
 
 const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .filter((n) => n.method === 'action')
@@ -199,7 +203,7 @@ describe('the catalogue under its old spelling', () => {
   });
 });
 
-it('advertises no event triggers, and manual is not one', async () => {
+it('advertises the event triggers it fires, and manual is not one', async () => {
   const { client } = await connected();
   const found = await client.handle({
     method: 'listAutomationTriggerDefinitions', params: { channel: 'ahp-root://' },
@@ -209,7 +213,7 @@ it('advertises no event triggers, and manual is not one', async () => {
   // all - an empty trigger list on a definition is what manual-only means. A
   // store that put `manual` here would be offering a type a client would then
   // save as an event trigger nothing ever fires.
-  expect(found.items).toEqual([]);
+  expect(found.items.map((one) => one.type)).toEqual(['session', 'watch']);
 });
 
 it('answers -32601 for the whole channel when the host was given no store', async () => {
@@ -253,6 +257,51 @@ it('patches rather than overwrites, so one client does not revert another', asyn
   expect(found.definition.title).toBe('Renamed');
   // The keys the patch did not mention are still there.
   expect(found.definition.message).toEqual({ text: 'review what changed today' });
+});
+
+it('keeps the pinned chat the host holds, whatever a client writes', async () => {
+  const auto = memoryAutomations();
+  const { client } = await connected(true, 0, auto);
+  await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+
+  /*
+   * Which chat a pinned automation works in is the host's own note - it is
+   * written as a run makes the chat and read back by the next one - so a client
+   * writing it would be choosing a chat for a run of its own to type in, which
+   * is the one road into a session that does not go through `createSession`.
+   * The value is dropped, and everything else the client wrote in the same place
+   * stays: the rest of `ahpd` is what a client says about waking.
+   */
+  await write(client, {
+    ...DEFINITION,
+    _meta: {
+      ahpd: { session: 'pinned', overlap: 'steer', pinnedSession: 'claude:/somebody-elses' },
+      note: 'kept',
+    },
+  });
+  const written = (await entries(client))[0] as { definition: Record<string, unknown> };
+  expect(keyed(keyed(written.definition['_meta'])['ahpd']))
+    .toEqual({ session: 'pinned', overlap: 'steer' });
+  expect(keyed(written.definition['_meta'])['note']).toBe('kept');
+
+  // And once the host has one, a patch cannot move it: what the client asked
+  // for is answered with the chat the host holds rather than the one it named.
+  auto.update(ONE, {
+    _meta: { ahpd: { session: 'pinned', overlap: 'steer', pinnedSession: 'claude:/mine' }, note: 'kept' },
+  });
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: AUTOMATIONS,
+      action: {
+        type: 'automation/updateRequested',
+        resource: ONE,
+        changes: { _meta: { ahpd: { overlap: 'skip', pinnedSession: 'claude:/theirs' } } },
+      },
+    },
+  });
+  expect(keyed(keyed(auto.get(ONE)?.definition['_meta'])['ahpd']))
+    .toEqual({ overlap: 'skip', pinnedSession: 'claude:/mine' });
 });
 
 it('does not offer to run one that is switched off', async () => {

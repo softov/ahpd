@@ -118,7 +118,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, origins,
     drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
-    dispatch, broadcast, flushDeltas, log, fire, leadOf,
+    dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
     isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
@@ -143,6 +143,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       drafts.delete(chatUri);
       madeFrom.delete(chatUri);
       ctx.links.forgetChat(chatUri);
+      // And what the session stream was holding for it: a turn nothing will
+      // end and calls nothing will finish are not measurements of anything.
+      ctx.sessionEvents.forget(chatUri);
     }
     /*
      * And the worker chats the session opened.
@@ -159,6 +162,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ctx.endedWorkers.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       ctx.links.forget(one.parentChat, one.toolCallId);
+      ctx.sessionEvents.forget(chatUri);
       dispatch(uri, { type: 'session/chatRemoved', chat: chatUri });
     }
     /*
@@ -251,6 +255,15 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // Gone from the map first, so a handler asking about it is told the truth.
     void fire({ type: 'session_end', session: uri, reason: 'disposed' });
     /*
+     * And the session this one was started from, told that its child finished.
+     *
+     * Before the stored record is forgotten below, because that record is
+     * where the link is - and read from the store rather than remembered here,
+     * so a child that ends after a restart reaches the session that started
+     * it just the same.
+     */
+    sessionEvents.ended(uri);
+    /*
      * And the run that started it, which is now holding a URI that
      * opens onto nothing.
      *
@@ -267,6 +280,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     if (from !== undefined) ctx.settleRun(uri, { status: 'cancelled' });
     origins.delete(uri);
+    /*
+     * And the rules, which were measuring a session that is no longer here: a
+     * turn this process will never see end, and a wake held behind a chat in a
+     * session that is gone are both things nothing may act on. What such a wake
+     * starts makes itself another session, the same as a pinned run whose chat
+     * was never there.
+     */
+    ctx.gone(uri);
     presence.delete(idOf(uri));
     // And what was kept *about* it. All of these are keyed by a session
     // that no longer exists, so anything left here is held for nobody -

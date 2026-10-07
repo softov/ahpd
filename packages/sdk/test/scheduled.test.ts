@@ -327,12 +327,13 @@ describe('across a restart', () => {
 });
 
 describe('what it advertises', () => {
-  it('offers no event triggers, because it has none', () => {
+  it('answers the event triggers of the store underneath', () => {
     const clock = clockwork();
     store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
-    // A schedule trigger is protocol-defined and never listed here. This host
-    // fires schedules and understands no events, so the honest answer is none.
-    expect(store.triggers({})).toEqual([]);
+    // A schedule trigger is protocol-defined and never listed here. What is
+    // listed is what the store underneath wakes on, so the daemon and a host
+    // in memory draw the same form.
+    expect(store.triggers({}).map((one) => one.type)).toEqual(['session', 'watch']);
   });
 
   it('writes the file where it was told, and nowhere else', () => {

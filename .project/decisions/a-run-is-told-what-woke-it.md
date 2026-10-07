@@ -3,7 +3,7 @@ title: A run is told what woke it, by placeholders and a summary block
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L203](../../packages/sdk/src/host/automations.ts#L203) - the message a run begins with"
+  - "[code://packages/sdk/src/host/automations.ts#L204](../../packages/sdk/src/host/automations.ts#L204) - the message a run begins with"
 ---
 
 ## Context

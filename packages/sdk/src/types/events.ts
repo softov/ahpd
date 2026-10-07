@@ -184,7 +184,7 @@ export interface AuthenticatedEvent {
   resource: string;
 }
 
-/** An automation that started a session, which is the one thing that is not a person. */
+/** An automation that started a run, which is the one thing that is not a person. */
 export interface AutomationFireEvent {
   type: 'automation_fire';
   /** The automation's resource. */

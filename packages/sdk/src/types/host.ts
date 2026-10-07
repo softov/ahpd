@@ -11,6 +11,7 @@ import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
+import type { PluginTriggers } from './plugin.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
@@ -203,6 +204,15 @@ export interface HostOptions {
    * definitions, runs them when asked, and holds no clock.
    */
   automations?: AutomationStore;
+  /**
+   * What an automation that names no owner sees, `every` by default.
+   *
+   * An automation nobody made is nobody's work, so nothing there is a person's
+   * to keep from it - which is every automation on a host with no people
+   * directory, and the case this host was asked to be useful in. A deployment
+   * that would rather they woke on nothing at all says `none`.
+   */
+  unownedAutomations?: 'every' | 'none';
   /**
    * Where the flags and configuration this host adds on top of a backend go.
    *
@@ -406,6 +416,16 @@ export interface HostOptions {
    * `a-plugin-is-told-when-the-host-closes`.
    */
   closers?: { by: string; close: () => void | Promise<void> }[];
+  /**
+   * The trigger types the plugins offer, one entry per plugin that offered one.
+   *
+   * The fold fills this from `registerTriggerType`, and the host does two
+   * things with it: it lists the types beside its own `session` and `watch`, so
+   * a client draws them in the automation form, and it sets each entry's
+   * `deliver` so that plugin's `fireTrigger` reaches an automation. Kept by
+   * plugin, so dropping one plugin's types is one entry to remove.
+   */
+  pluginTriggers?: PluginTriggers[];
 }
 
 /**

@@ -24,6 +24,7 @@ import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { computerId, computersFor } from './computers.js';
 import { nestedAgent } from './nested.js';
 import { createCallLinks } from './calllinks.js';
+import { createSessionEvents } from './host/sessionevents.js';
 import { idFor, idOf, uriFor, Status } from './catalog.js';
 import { memorySessions } from './sessions.js';
 import { meter } from './meter.js';
@@ -571,6 +572,7 @@ export function createHost(options: HostOptions): Host {
     ctx.telemetered(channel, action);
     ctx.asking(channel, action);
     ctx.links.observe(channel, action);
+    ctx.sessionEvents.observe(channel, action);
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
@@ -737,6 +739,9 @@ export function createHost(options: HostOptions): Host {
     dispatch,
     flushDeltas: deltas.flush,
   } as HostContext;
+  // Before any area is built, because everything a person or a backend does
+  // goes out through `emit`, which folds into this stream on the way.
+  ctx.sessionEvents = createSessionEvents(ctx);
   Object.assign(ctx, createTelemetry(ctx));
   Object.assign(ctx, createAuth(ctx));
   Object.assign(ctx, createRouting(ctx));
@@ -907,6 +912,15 @@ export function createHost(options: HostOptions): Host {
         for (const { by, close } of options.closers ?? []) {
           await step(`the plugin ${by}`, close);
         }
+        /*
+         * And what reads what sessions do, before the stores it reads.
+         *
+         * A rule wakes a run, and a run writes to a store - so a wake that
+         * arrived with the stores half closed would be a run begun in a daemon
+         * that is going away. Stopping the subscriptions first is what makes the
+         * closes below the last thing anything hears.
+         */
+        await step('the automation rules', () => ctx.stop());
         await step('the automation store', () => options.automations?.close?.());
         await step('the session store', () => kept.close?.());
       })();

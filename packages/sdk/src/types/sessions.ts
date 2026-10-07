@@ -125,6 +125,22 @@ export interface SessionStore {
   /** Record it, or forget it with `undefined`. */
   setProvider(id: string, value: string | undefined): void;
   /**
+   * The session this one was started from, as the id that session is held
+   * under, or nothing where nothing started it.
+   *
+   * Recorded when the `create` tool opens a session inside another one. Kept
+   * with the rest of a session's record rather than in memory, because what
+   * the link is for is telling the session that started a child when that
+   * child ends, and a child can end long after the process that started it.
+   *
+   * The id rather than the URI, for the reason the whole store is keyed by id:
+   * a scheme is only whose a session is, and a client may have named the same
+   * session under another one.
+   */
+  parent?(id: string): string | undefined;
+  /** Record it, or forget it with `undefined`. */
+  setParent?(id: string, value: string | undefined): void;
+  /**
    * What this host knows of a session that runs in a host inside a machine,
    * or nothing for any other session.
    *

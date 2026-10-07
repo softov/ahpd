@@ -12,6 +12,8 @@
  * composes several contributions into one option object.
  */
 
+import type { AutomationTriggerDefinition } from '@microsoft/agent-host-protocol';
+
 import type { Agent } from './agent.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
@@ -20,6 +22,40 @@ import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
 import type { UsageEntry } from './usage.js';
 import type { SecretWork } from './vault.js';
+
+/**
+ * A kind of trigger a plugin offers, in the protocol's own words.
+ *
+ * The very object a client draws the automation form from, so a plugin writes
+ * the listing rather than something this host translates into it: `type` is the
+ * name a saved trigger carries, `events` are what may be picked, and
+ * `configSchema` is the form below them. A host that lists a type is a host that
+ * will fire it, which is why the two are one registration.
+ */
+export type TriggerTypeDefinition = AutomationTriggerDefinition;
+
+/**
+ * One plugin's trigger types, and the way its fires reach the host.
+ *
+ * Built by the plugin host and carried through the fold rather than copied: a
+ * plugin fires from a route or a timer long after `apply` returned, so the
+ * object its closure holds has to be the object the host fills in. `deliver` is
+ * that place, and it is set once the host is built over these types.
+ */
+export interface PluginTriggers {
+  /** The plugin that registered them. */
+  by: string;
+  /** The types, keyed by the name a saved trigger names them with. */
+  types: Record<string, TriggerTypeDefinition>;
+  /**
+   * Where a fire goes, set by the host once it exists.
+   *
+   * Absent until then, which is a host nobody has built over these types yet: a
+   * plugin firing from its own unit test, or one firing while `apply` runs.
+   * Nothing is kept for later, because a fire is about what is happening now.
+   */
+  deliver?: (type: string, event: string, data: Record<string, unknown>) => void;
+}
 
 /**
  * The `HostOptions` keys that hold one value, one plugin at a time.
@@ -371,6 +407,32 @@ export interface PluginHost extends PluginContext {
    */
   registerClose(close: () => void | Promise<void>): void;
   /**
+   * Offer one kind of trigger, for an automation to wake on.
+   *
+   * The type is the name a saved trigger carries, so it is the key everything
+   * else is looked up by: this host will fire it, a client will offer it, and an
+   * automation that names it will run when it does. `session` and `watch` are
+   * the host's own and are refused, as is a name this plugin has already used.
+   *
+   * A type is registered once and not patched: an edit is a removal and a
+   * re-registration, which is what this host does not have.
+   */
+  registerTriggerType(definition: TriggerTypeDefinition): void;
+  /**
+   * Say that one of this type's events has happened.
+   *
+   * Every enabled automation whose trigger names this type and this event
+   * starts a run, which is what makes a plugin's own knowledge - a webhook that
+   * arrived, a machine that went away - something an automation can wake on.
+   * `data` is the plugin's own account of it: it is recorded on the run's origin
+   * and read by nobody else here, so it must carry nothing secret.
+   *
+   * Nothing is awaited. A run starts asynchronously and the plugin is not told
+   * whether one did, because an event has no answer - what a client watching an
+   * automation reads is the run it started.
+   */
+  fireTrigger(type: string, event: string, data: Record<string, unknown>): void;
+  /**
    * Subscribe to one of the host's own moments.
    *
    * The one method not named `register*`, because it contributes nothing to
@@ -477,6 +539,14 @@ export interface Contribution {
    * `HostOptions.closers` without a case.
    */
   closers: (() => void | Promise<void>)[];
+  /**
+   * The trigger types this plugin registered, and where its fires go.
+   *
+   * Carried through rather than copied, so the object the plugin's own
+   * `fireTrigger` holds is the one the host fills in. Always here, empty when
+   * the plugin offered no type, so the fold can read it without a case.
+   */
+  triggers: PluginTriggers;
   /**
    * The one route this plugin registered, when it registered one.
    *

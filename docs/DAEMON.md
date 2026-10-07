@@ -287,6 +287,7 @@ anything has been let go of.
 | `--client-tool-timeout-ms <ms>` | How long a tool call a client runs may wait for that client's answer before it is failed. Default ten minutes; `0` waits for ever |
 | `--config-file <p>` | Read this instead of the file below |
 | `--automations <where>` | `file`, the default, or `memory`. See below |
+| `--unowned-automations <scope>` | `every`, the default, or `none`: what an automation that names no owner wakes on. See [Automations](#automations) |
 | `--sessions <where>` | `file`, the default, or `memory`: where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `memory` is why a restart forgets the last two |
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines, one message per line with an `_ahpLog` beside it - the shape VS Code's agent host writes its traffic log in, so a capture opens in whatever reads that. A line over 1 MiB is written again with its strings cut and `_ahpLog.truncated` set; a file over 75 MiB rolls to `<file>.1` and five files are kept. The capture holds every token a client sent in `authenticate`, so each of its files is `0600`. `pnpm wire -- <file>` checks it against the schema |
 | `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, applied in order. See below |
@@ -310,6 +311,8 @@ is a `nextRunAt`, which is the honest form of "this host will not fire that".
 Both are the same `AutomationStore`, so the host is not told which it was
 given. Runs are in memory either way: a run names the sessions it started, and
 those went when the process did.
+
+What an automation wakes on, and what a run does while another is still going, is under [Automations](#automations).
 
 ### `--path`, and what it is not
 
@@ -475,6 +478,137 @@ states are `ready`, `incompatible`, `unconfigured`, `disabled`, `missing` and
 the reason the `ahpd` key lives in `package.json` at all.
 
 Writing one is [PLUGINS.md](PLUGINS.md).
+
+## Automations
+
+An automation is one instruction this host carries out with nobody watching: a trigger says when, and the run is a session whose first message is what the automation wrote. A trigger is a schedule or an event, and this is the event half. An event trigger is a rule about what a session does, and the run it starts is told what woke it.
+
+There are three kinds. `session` is what a session does, with a count, a follow-up or a state check around it. `watch` is one of five patterns somebody already thought about, with its numbers left to you. A third kind arrives with a plugin, which registers its own type and fires its events.
+
+### What a session does
+
+| Event | Fires when |
+| --- | --- |
+| `turnCompleted` | The last turn of the session ended well |
+| `turnFailed` | The last turn of the session ended with an error |
+| `turnCancelled` | Somebody stopped the last turn |
+| `toolCalled` | A tool call in the session finished |
+| `toolFailed` | A tool call in the session failed |
+| `messageQueued` | A message waits behind the turn that is running |
+| `idle` | The last turn ended with nothing waiting behind it |
+| `childFinished` | A session or worker chat this one started went quiet |
+
+`idle` fires as soon as the last turn ends with nothing queued behind it, and a rule that wants a quiet period says so itself, with `then`. `childFinished` is about the sessions a `create` tool call starts: the child going quiet says it, which is its last turn ending with nothing queued behind it, every later turn that goes quiet says it again, and the child being disposed of says it too. A worker chat a session opened says it when its turn ends. Every event also says where the session works and whether a run of an automation made it, so a rule may name a folder or ask for sessions nothing automated started.
+
+A turn that works without saying anything emits nothing, so a rule about a turn that has gone quiet is timed rather than fired: the host tells the engine when each turn starts and every time the session does anything, and the engine arms a timer that matches once the turn has been quiet the rule's length. `when.turnLongerThan` is read the same way, against the turn running as the event arrives. A rule that watches a turn ending, with no count and no follow-up, is fired by that timer alone: a turn that keeps working is one the timer starts again on, and a turn that has ended is one there is nothing left to measure.
+
+### The rule around the event
+
+A `session` trigger picks its event in `events`, and its `config` holds four optional parts. Every one of them left out is a rule that fires on the event itself, in any session.
+
+| Key | What it says |
+| --- | --- |
+| `filter` | Which sessions this rule looks at: `sessions`, `providers`, `owners`, `projects`, `folders`, `automated`. Left out, every session is looked at |
+| `count` | How many times the event has to happen: `n`, and whether they have to arrive `consecutive`, with `sameInput`, or inside a `within` |
+| `then` | What has to follow: `{ "kind": "event", "event": "id", "within": "5m" }` for another event, `{ "kind": "idle", "for": "3m" }` for quiet, `{ "kind": "absent", "event": "id", "for": "3m" }` for an event that does not come |
+| `when` | What the session has to look like as the event arrives: `running`, `queuedAtLeast`, `toolCallsAtLeast`, `turnLongerThan` |
+
+A duration is written `30s`, `5m` or `2h`. A key the rule does not have is refused with the key named, and so is a value of the wrong kind, when the automation is saved.
+
+```json
+{
+  "title": "Fix the failing tests",
+  "enabled": true,
+  "message": { "text": "{{event}} in {{sessionTitle}}: look at it." },
+  "session": { "provider": "claude", "workingDirectories": ["file:///work/api"] },
+  "triggers": [{
+    "id": "t1",
+    "kind": "event",
+    "type": "session",
+    "title": "Failing tests",
+    "events": [{ "id": "toolFailed" }],
+    "config": {
+      "count": { "n": 3, "consecutive": true, "within": "5m" },
+      "when": { "running": true },
+      "filter": { "projects": ["api"] }
+    }
+  }]
+}
+```
+
+That one is a count and a state check together: three tool calls failing one after another inside five minutes, while the turn is still running, in a session of the `api` project.
+
+A follow-up is a rule that waits for a second thing after the first: `"then": { "kind": "event", "event": "turnCompleted", "within": "10m" }` fires on a failure that was followed by a turn finishing within ten minutes, and fires on nothing at all if that turn never comes. An absence is the other way round: `"then": { "kind": "absent", "event": "toolCalled", "for": "5m" }` fires on a failure that five minutes passed without a tool call after, and `"then": { "kind": "idle", "for": "3m" }` waits for the session to be quiet for three minutes instead - the turn ending and the `idle` that says so are not counted against it, while anything else the session does is.
+
+### The presets
+
+A `watch` trigger names one of these in `events` and its numbers in `config`. Each is the `session` rule above, written out, so the host treats it as one.
+
+| Preset | Watches for | Number, and what it starts as |
+| --- | --- | --- |
+| `looks-stuck` | The same tool called with the same input several times | `times`, 3 |
+| `failing-tools` | Tool calls failing one after another | `times`, 3 |
+| `long-silent-turn` | A turn still running with nothing happening for a while | `minutes`, 10 |
+| `idle-after-failure` | A turn failed and the session went quiet after it | `minutes`, 3 |
+| `waiting-while-busy` | A message queued behind a turn that has already run several tool calls | `toolCalls`, 3 |
+
+A preset also takes the same `filter` the rule does, so one can be narrowed to a folder, a project or a provider. `long-silent-turn` is the one with no event behind it: its rule is about a turn that is still running, so the host times it, and the timer starts again on every tool call, tool result or message chunk in that turn - it fires only after that many minutes of nothing happening at all.
+
+### One chat, or a session each run
+
+By default every run makes a session of its own. The automation's `_meta.ahpd.session` set to `pinned` changes that: it keeps one session and adds each run as the next turn in the chat that session holds, so a run sees the ones before it. The host writes that session's URI to `_meta.ahpd.pinnedSession` - it is the host's own note and a client writing one has it dropped - and a run whose session is gone makes a new one and keeps it there. The session's folder, worktree and machine stay between runs, and its context grows until the backend compacts it.
+
+A pinned automation also types into a chat somebody else may be using, so a turn running there is a turn already going, whoever started it: an event arriving then is answered by `overlap` like any other, and a run pressed by hand is refused while that turn runs.
+
+```json
+{ "_meta": { "ahpd": { "session": "pinned", "pinnedSession": "ahp-session://claude/local/..." } } }
+```
+
+### What an event does while a run is going
+
+An event can arrive while the automation's own last run is still going, and `_meta.ahpd.overlap` says what happens to it. Left out, it is `queue`.
+
+| Mode | What happens |
+| --- | --- |
+| `queue` | One run waits, and later events fold into it: the run that finally starts is told how many there were |
+| `steer` | The event goes into the running turn as a message. With no turn running it becomes a `queue` |
+| `parallel` | A run starts for every event |
+| `skip` | The event is dropped, and counted on the run it arrived during |
+
+A pinned automation refuses `parallel` when it is saved, because it has one chat and two turns in it at once is not a thing. A scheduled automation answers to this setting exactly as an event does. A run somebody presses by hand is not held behind one that is going - what the press is answered with is the run it started - with one exception: a press on a pinned automation is refused while its chat has a turn running, because that chat takes one turn at a time.
+
+### What the run is told
+
+The agent reads its message and nothing else, so the event that woke it arrives there, twice over: filled into the text where the automation asked for it, and stated at the end whether it did or not.
+
+| Placeholder | What it becomes |
+| --- | --- |
+| `{{trigger}}` | The trigger's own title, as the automation wrote it |
+| `{{event}}` | The event's title, as the type that offers it names it |
+| `{{session}}` | The session's URI, where the event was about one |
+| `{{sessionTitle}}` | That session's title, where this host has one to give |
+| `{{count}}` | How many events the rule counted |
+| `{{at}}` | When the event happened, ISO 8601 |
+
+A name that is not one of the six is left exactly as it was written, and a placeholder for something an event does not carry is filled with nothing rather than left in the message.
+
+The summary block goes after whatever the automation wrote:
+
+```
+Examining the failing tests.
+
+What woke this run: A tool call failed
+Session: Fix the parser (ahp-session://claude/local/9f2c...)
+Count: 3
+At: 2026-10-07T14:22:05.118Z
+```
+
+### What stops a wake
+
+- A rule only sees sessions its owner may `session:read`, and an owner this host has not met sees none. An automation that names no owner sees every session, unless the daemon was started with `--unowned-automations none` - and an event a plugin fires is held to that same answer, whether or not it names a session.
+- A run's own sessions never wake the automation that made them, so an automation cannot feed itself.
+- An automation runs at most 20 times an hour. Past that an event is dropped and logged with the count, and the next one inside the hour is dropped too. Switching the automation off and on again does not start the hour over, and an event its own overlap mode dropped is not one of the twenty.
+- Counts, timers and the hourly count live in memory and start again when the daemon restarts, so a wake that was halfway through is missed once.
 
 ## Configuration
 

@@ -16,6 +16,8 @@ import type { Owner } from './types/usage.js';
 interface Held {
   chatTitlesOf(id: string): Record<string, string> | undefined;
   sendersOf(id: string): Record<string, Owner> | undefined;
+  parent(id: string): string | undefined;
+  setParent(id: string, value: string | undefined): void;
   nested(id: string): NestedRecord | undefined;
   setNested(id: string, value: NestedRecord | undefined): void;
   nestedSessions(): [string, NestedRecord][];
@@ -41,9 +43,11 @@ export function memorySessions(): SessionStore & Held {
   const pullRequests = new Map<string, PullRequestBaseline>();
   const chatTitles = new Map<string, Map<string, string>>();
   const nested = new Map<string, NestedRecord>();
+  const parents = new Map<string, string>();
   const forget = (id: string): void => {
     flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id);
     providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); nested.delete(id);
+    parents.delete(id);
   };
   return {
     flags: (id) => flags.get(id) ?? 0,
@@ -67,6 +71,8 @@ export function memorySessions(): SessionStore & Held {
     },
     provider: (id) => providers.get(id),
     setProvider: (id, value) => { if (value === undefined) providers.delete(id); else providers.set(id, value); },
+    parent: (id) => parents.get(id),
+    setParent: (id, value) => { if (value === undefined) parents.delete(id); else parents.set(id, value); },
     nested: (id) => nested.get(id),
     setNested: (id, value) => { if (value === undefined) nested.delete(id); else nested.set(id, value); },
     nestedSessions: () => [...nested.entries()],
@@ -95,11 +101,11 @@ export function memorySessions(): SessionStore & Held {
     },
     forget,
     prune: (gone) => {
-      // Every id any of the ten holds, since a session is remembered under
+      // Every id any of the eleven holds, since a session is remembered under
       // whichever of them was written last and nothing else names it.
       for (const id of new Set([...flags.keys(), ...config.keys(), ...scope.keys(), ...owners.keys(),
         ...senders.keys(), ...providers.keys(), ...artifacts.keys(), ...pullRequests.keys(), ...chatTitles.keys(),
-        ...nested.keys()])) {
+        ...nested.keys(), ...parents.keys()])) {
         if (gone(id)) forget(id);
       }
     },
@@ -164,6 +170,8 @@ interface Saved {
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
   chatTitles?: Record<string, string>;
+  /** The id of the session this one was started from, where one did. */
+  parent?: string;
   nested?: NestedRecord;
 }
 
@@ -286,10 +294,12 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     const artifacts = inner.artifacts(id);
     const pullRequests = inner.pullRequests(id);
     const chatTitles = inner.chatTitlesOf(id);
+    const parent = inner.parent(id);
     const nested = inner.nested(id);
     if (flags === 0 && config === undefined && scope === undefined && owner === undefined
       && senders === undefined && provider === undefined && artifacts === undefined
-      && pullRequests === undefined && chatTitles === undefined && nested === undefined) return undefined;
+      && pullRequests === undefined && chatTitles === undefined && parent === undefined
+      && nested === undefined) return undefined;
     return {
       version: 1,
       id,
@@ -302,6 +312,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(artifacts === undefined ? {} : { artifacts }),
       ...(pullRequests === undefined ? {} : { pullRequests }),
       ...(chatTitles === undefined ? {} : { chatTitles }),
+      ...(parent === undefined ? {} : { parent }),
       ...(nested === undefined ? {} : { nested }),
     };
   };
@@ -412,6 +423,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof title === 'string') inner.setChatTitle(row.id, chatUri, title);
         }
       }
+      // The id of a session that started this one. Anything that is not a
+      // non-empty string is ignored rather than guessed at, as every other
+      // field here is.
+      if (typeof row.parent === 'string' && row.parent !== '') inner.setParent(row.id, row.parent);
       const nested = nestedOf(row.nested);
       if (nested !== undefined) inner.setNested(row.id, nested);
     }
@@ -432,6 +447,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setSender: (id, turnId, value) => { heard.add(id); inner.setSender(id, turnId, value); dirty.add(id); later(); },
     provider: (id) => inner.provider(id),
     setProvider: (id, value) => { heard.add(id); inner.setProvider(id, value); dirty.add(id); later(); },
+    parent: (id) => inner.parent(id),
+    setParent: (id, value) => { heard.add(id); inner.setParent(id, value); dirty.add(id); later(); },
     nested: (id) => inner.nested(id),
     setNested: (id, value) => { heard.add(id); inner.setNested(id, value); dirty.add(id); later(); },
     nestedSessions: () => inner.nestedSessions(),

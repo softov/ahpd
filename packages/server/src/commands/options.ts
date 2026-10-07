@@ -67,6 +67,8 @@ export interface Options {
   deltaWindowMs?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
+  /** What an automation that names no owner wakes on. */
+  unownedAutomations: 'every' | 'none';
   /** Where the read and archived bits and a session's settings go. */
   sessions: 'file' | 'memory';
   /**
@@ -429,6 +431,11 @@ export const serverFields = {
     type: 'string',
     enum: ['file', 'memory'],
     description: 'file keeps automations beside the configuration and fires their schedules; memory keeps them until this process ends.',
+  },
+  unownedAutomations: {
+    type: 'string',
+    enum: ['every', 'none'],
+    description: 'What an automation that names no owner wakes on. every is the default: an automation nobody made is nobody\'s work, so every session is offered to it. none wakes on nothing.',
   },
   sessions: {
     type: 'string',
@@ -908,6 +915,7 @@ const noCwd = input['noCwd'] === true;
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     automations: given('automations') ?? 'file',
+    unownedAutomations: given('unownedAutomations') ?? 'every',
     sessions: given('sessions') ?? 'file',
     usagePer: given('usage')?.per ?? 'turn',
     ...(usageZone === undefined ? {} : { usageTimezone: usageZone }),

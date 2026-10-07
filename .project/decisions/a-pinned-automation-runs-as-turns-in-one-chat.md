@@ -3,7 +3,7 @@ title: A pinned automation runs each time as the next turn in one chat
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L200-L205](../../packages/sdk/src/host/automations.ts#L200-L205) - a run makes a new session today"
+  - "[code://packages/sdk/src/host/automations.ts#L127-L206](../../packages/sdk/src/host/automations.ts#L127-L206) - `beginAutomation`, which makes a new session on every run today"
 ---
 
 ## Context

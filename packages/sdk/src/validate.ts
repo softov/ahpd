@@ -237,3 +237,34 @@ export const checkRoute = (value: unknown, by: string): void => {
     throw new Error(miss(by, 'registerRoute', 'handler', 'a function taking a Request and answering a Response'));
   }
 };
+
+/**
+ * Check one `registerTriggerType` value against `TriggerTypeDefinition`.
+ *
+ * The type and the events are what an automation is looked up by, so they are
+ * checked and the rest is left to the listing: a `title` the host shows, an
+ * optional `description` and an optional `configSchema` are a client's to draw
+ * and cost nothing when they are wrong, while a type with no events - or an
+ * event with no id - is a trigger an automation could name and nothing could
+ * fire.
+ */
+export const checkTriggerType = (value: unknown, by: string): void => {
+  const object = asObject(value, by, 'registerTriggerType', 'definition');
+  stringy(object, 'type', by, 'registerTriggerType');
+  stringy(object, 'title', by, 'registerTriggerType');
+  if (!Array.isArray(object.events) || object.events.length === 0) {
+    throw new Error(miss(by, 'registerTriggerType', 'events', 'a list of the events this type offers'));
+  }
+  const ids = new Set<string>();
+  for (const held of object.events) {
+    const event = asObject(held, by, 'registerTriggerType', 'events');
+    stringy(event, 'id', by, 'registerTriggerType');
+    stringy(event, 'title', by, 'registerTriggerType');
+    const id = event.id as string;
+    if (ids.has(id)) throw new Error(miss(by, 'registerTriggerType', id, 'an event id no other event of this type uses'));
+    ids.add(id);
+  }
+  if (object.configSchema !== undefined && !right(object.configSchema, 'object')) {
+    throw new Error(miss(by, 'registerTriggerType', 'configSchema', 'an object'));
+  }
+};
