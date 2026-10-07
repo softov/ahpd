@@ -48,12 +48,13 @@ vi.mock('@cofold/store-file', async (original) => {
 /**
  * Waits for `check` to hold, turning the event loop, and throws once `ms` of
  * wall-clock time has passed, inside the case's own limit so a wait that runs
- * out fails on its own message rather than letting the case read on.
+ * out fails on its own message rather than letting the case read on. `seen`
+ * describes what had arrived, for the message.
  */
-const until = async (check: () => boolean, ms = 4000): Promise<void> => {
+const until = async (check: () => boolean, ms = 4000, seen?: () => string): Promise<void> => {
   const limit = Date.now() + ms;
   while (!check()) {
-    if (Date.now() > limit) throw new Error('timed out waiting');
+    if (Date.now() > limit) throw new Error(seen === undefined ? 'timed out waiting' : `timed out waiting; seen: ${seen()}`);
     await new Promise((r) => { setTimeout(r, 0); });
   }
 };
@@ -553,7 +554,7 @@ it('reopens a paused run through start.resume without replaying the input', asyn
   expect((entry?.request as Bag | undefined)?.kind).toBe('toolConfirmation');
   await until(() => after.view.said('chat', 'chat/toolCallStart') !== undefined);
   after.session.confirm('call-1', true);
-  await until(() => ended(after.view));
+  await until(() => ended(after.view), 4000, () => JSON.stringify(after.view.notes.map((one) => [one.channel, one.action.type, one.action.type === 'chat/toolCallComplete' || one.action.type === 'chat/error' || one.action.type === 'session/inputNeededSet' ? one.action : undefined])));
 
   // A silent give-up in `until` must not read as a pass: the turn this asserts
   // is the one the answer was supposed to reach.
