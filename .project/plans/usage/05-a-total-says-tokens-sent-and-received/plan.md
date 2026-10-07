@@ -1,7 +1,7 @@
 ---
 title: A usage total says the tokens sent and the tokens received, beside the sum
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -11,10 +11,10 @@ creates: []
 decisions: []
 refs:
   - "[code://packages/sdk/src/types/usage.ts#L59-L71](../../../../packages/sdk/src/types/usage.ts#L59-L71) - `ModelCall`, which already keeps `input`, `output` and `cache`"
-  - "[code://packages/sdk/src/types/usage.ts#L90-L108](../../../../packages/sdk/src/types/usage.ts#L90-L108) - `UsageTotal`, which has one `tokens`"
-  - "[code://packages/sdk/src/usage.ts#L22-L30](../../../../packages/sdk/src/usage.ts#L22-L30) - `Measured`, the per-day sum"
-  - "[code://packages/sdk/src/usage.ts#L115-L135](../../../../packages/sdk/src/usage.ts#L115-L135) - `measured`, which adds the four counts into one"
-  - "[code://packages/sdk/src/usage.ts#L255-L273](../../../../packages/sdk/src/usage.ts#L255-L273) - the total over a range"
+  - "[code://packages/sdk/src/types/usage.ts#L90-L111](../../../../packages/sdk/src/types/usage.ts#L90-L111) - `UsageTotal`, which has one `tokens`"
+  - "[code://packages/sdk/src/usage.ts#L22-L33](../../../../packages/sdk/src/usage.ts#L22-L33) - `Measured`, the per-day sum, and `none`"
+  - "[code://packages/sdk/src/usage.ts#L118-L144](../../../../packages/sdk/src/usage.ts#L118-L144) - `measured`, which sets the three token counts and their sum"
+  - "[code://packages/sdk/src/usage.ts#L261-L293](../../../../packages/sdk/src/usage.ts#L261-L293) - the total over a range"
   - "[code://packages/sdk/test/usage.test.ts#L55](../../../../packages/sdk/test/usage.test.ts#L55) - the test that charges one model call"
   - "file:///github/ahpapp/.project/plans/usage/02-a-pool-shows-tokens-sent-and-received/plan.md - the ahpapp plan that draws the split"
 ---
@@ -63,7 +63,7 @@ ModelUse { input, output, cache } -> measured -> per-day Measured -> total over 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A total carries the three counts](task-01-a-total-carries-the-three-counts.md) | todo | - |
+| [01 - A total carries the three counts](task-01-a-total-carries-the-three-counts.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -71,13 +71,13 @@ ModelUse { input, output, cache } -> measured -> per-day Measured -> total over 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-total-carries-the-three-counts.md](task-01-a-total-carries-the-three-counts.md).
+- **Done so far:** 2026-10-07 - task 01, where `UsageTotal` carries `input`, `output` and `cache` beside `tokens`, and `tokens` is their sum.
+- **Next action:** none. Reviewed and closed on 2026-10-07.
 - **Open questions:** none.
-- **Watch out for:** the strict schema; run `node tools/schema.mjs` after the type changes.
+- **Watch out for:** `UsageTotal.cache` is one number for reads and writes together, while `ModelCall.cache` is an object of the two.
 
 ## Final verification checklist
 
-- [ ] A test: one model call gives a total with `input`, `output`, `cache` and their sum in `tokens`.
-- [ ] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
-- [ ] `plans/index.md` updated.
+- [x] A test: one model call gives a total with `input`, `output`, `cache` and their sum in `tokens`.
+- [x] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
+- [x] `plans/index.md` updated.

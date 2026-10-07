@@ -57,18 +57,32 @@ it('charges a pool what one model call cost, in every measure it carries', async
   await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['team:backend'], {
     input: 100,
     output: 20,
-    cache: { read: 5, write: 7 },
+    cache: { read: 10, write: 2 },
   }, { cost: { amount: 0.25, currency: 'usd', from: 'harness' } }));
 
   expect(await usage.total('team:backend', month.from, month.until)).toEqual({
     usd: 0.25,
-    // The cache is tokens the provider billed, so it is tokens.
+    // The cache is tokens the provider billed, so it counts in `tokens` and is
+    // summed beside the prompt and the answer.
     tokens: 132,
+    input: 100,
+    output: 20,
+    cache: 12,
     calls: 1,
   });
   // Nobody else was charged, and a pool nothing names is an empty answer
   // rather than a refusal.
   expect(await usage.total('user:maria', month.from, month.until)).toEqual({});
+});
+
+it('leaves the cache count out of a total when the call was charged none', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 30, output: 4 }));
+
+  const total = await usage.total('p', month.from, month.until);
+  expect(total).toEqual({ tokens: 34, input: 30, output: 4, calls: 1 });
+  // A count nothing was charged in is absent, as every other measure is.
+  expect(total.cache).toBeUndefined();
 });
 
 it('charges every pool a record names, and charges a pool in another currency nothing', async () => {
@@ -91,9 +105,13 @@ it('charges a pool computer time as hours', async () => {
   const usage = fileUsage({ folder });
   await usage.record(computerTime('2026-10-04T10:00:00.000Z', 9_000, ['project:atlas']));
 
-  expect(await usage.total('project:atlas', month.from, month.until)).toEqual({ hours: 2.5 });
-  // A computer is not a model call.
-  expect((await usage.total('project:atlas', month.from, month.until)).calls).toBeUndefined();
+  const total = await usage.total('project:atlas', month.from, month.until);
+  expect(total).toEqual({ hours: 2.5 });
+  // A computer is not a model call, so it is charged no token count at all.
+  expect(total.calls).toBeUndefined();
+  expect(total.input).toBeUndefined();
+  expect(total.output).toBeUndefined();
+  expect(total.cache).toBeUndefined();
 });
 
 it('answers a range by the day it covers, in either store', async () => {
@@ -103,10 +121,10 @@ it('answers a range by the day it covers, in either store', async () => {
   await usage.record(modelUse('2026-10-21T10:00:00.000Z', ['p'], { input: 60 }));
 
   const between = await usage.total('p', '2026-10-05T00:00:00.000Z', '2026-10-20T23:59:59.999Z');
-  expect(between).toEqual({ tokens: 30, calls: 1 });
+  expect(between).toEqual({ tokens: 30, input: 30, calls: 1 });
 
   const day = await usage.total('p', '2026-10-21T00:00:00.000Z', '2026-10-21T23:59:59.999Z');
-  expect(day).toEqual({ tokens: 60, calls: 1 });
+  expect(day).toEqual({ tokens: 60, input: 60, calls: 1 });
 
   // Nothing between the two, which is an empty answer and not a zero measure.
   expect(await usage.total('p', '2026-09-01T00:00:00.000Z', '2026-09-30T23:59:59.999Z')).toEqual({});
@@ -122,11 +140,11 @@ it('keeps one file per month and kind, and rebuilds the totals from them', async
 
   // A new store over the same folder, which is what a restart is.
   const second = fileUsage({ folder });
-  expect(await second.total('p', month.from, month.until)).toEqual({ usd: 1, tokens: 10, calls: 1, hours: 0.5 });
+  expect(await second.total('p', month.from, month.until)).toEqual({ usd: 1, tokens: 10, input: 10, calls: 1, hours: 0.5 });
 
   // A range across the two months sums both files.
   const both = await second.total('p', '2026-10-01T00:00:00.000Z', '2026-11-30T23:59:59.999Z');
-  expect(both).toEqual({ usd: 1, tokens: 50, calls: 2, hours: 0.5 });
+  expect(both).toEqual({ usd: 1, tokens: 50, input: 50, calls: 2, hours: 0.5 });
 
   // And what it wrote is one whole record per line.
   const written = readFileSync(join(folder, '2026-10-model.jsonl'), 'utf8').trim().split('\n');
@@ -146,14 +164,14 @@ it('loses nothing when several records arrive at once', async () => {
 
   await Promise.all(many.map((entry) => usage.record(entry)));
 
-  expect(await usage.total('p', month.from, month.until)).toEqual({ tokens: 200, calls: 200 });
+  expect(await usage.total('p', month.from, month.until)).toEqual({ tokens: 200, input: 200, calls: 200 });
   // Two lines appended at once can interleave into one line that reads back as
   // neither record, so every one of them is a line of its own.
   const lines = readFileSync(join(folder, '2026-10-model.jsonl'), 'utf8').trim().split('\n');
   expect(lines).toHaveLength(200);
   for (const line of lines) expect((JSON.parse(line) as UsageEntry).pools).toEqual(['p']);
   // And a second store over the folder reads exactly the same number back.
-  expect(await fileUsage({ folder }).total('p', month.from, month.until)).toEqual({ tokens: 200, calls: 200 });
+  expect(await fileUsage({ folder }).total('p', month.from, month.until)).toEqual({ tokens: 200, input: 200, calls: 200 });
 });
 
 it('skips a line it cannot read, says so once, and keeps the month', async () => {
@@ -173,7 +191,7 @@ it('skips a line it cannot read, says so once, and keeps the month', async () =>
   expect(said[1]).toContain('not a usage record');
   // The whole line that was readable is still charged, and a file that is not
   // this store's is left alone.
-  expect(await rebuilt.total('p', month.from, month.until)).toEqual({ tokens: 7, calls: 1 });
+  expect(await rebuilt.total('p', month.from, month.until)).toEqual({ tokens: 7, input: 7, calls: 1 });
   expect(readFileSync(join(folder, 'notes.txt'), 'utf8')).toBe('not a usage file\n');
 });
 

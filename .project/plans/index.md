@@ -340,7 +340,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [02 - A turn writes what it used to the usage store, charged to its owner, team and project](usage/02-a-turn-writes-what-it-used/plan.md) | high | built 2026-10-02 ([implemented.md](usage/02-a-turn-writes-what-it-used/implemented.md)) | usage 01, host 34, host 35 | policy |
 | [03 - A machine records who created it and writes the time it was up, charged to its owner](usage/03-a-machine-writes-its-up-time/plan.md) | high | built 2026-10-02 ([implemented.md](usage/03-a-machine-writes-its-up-time/implemented.md)) | usage 01, host 34 | - |
 | [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
-| [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | planned 2026-10-07 | - | ahpapp usage 02 |
+| [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
 
 Next free number in `usage`: `06`.
 

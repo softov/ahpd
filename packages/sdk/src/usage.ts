@@ -19,15 +19,18 @@ import type { Usage, UsageEntry, UsageTotal } from './types/usage.js';
 /** An hour, which is what computer time is reported in. */
 const HOUR_S = 3_600;
 
-/** What one record costs, in the four measures the port reports. */
+/** What one record costs, in the measures the port reports. */
 interface Measured {
   usd: number;
   tokens: number;
+  input: number;
+  output: number;
+  cache: number;
   calls: number;
   hours: number;
 }
 
-const none = (): Measured => ({ usd: 0, tokens: 0, calls: 0, hours: 0 });
+const none = (): Measured => ({ usd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: 0 });
 
 /** A number the record meant, or zero: a count nothing was told is not a count. */
 const counted = (value: unknown): number =>
@@ -118,20 +121,26 @@ export function fileUsage(options: FileUsageOptions): Usage {
       /*
        * Every token the provider handled, the cache included: those are tokens
        * it billed, and a measure that left them out would not match the cost
-       * beside it.
+       * beside it. The three counts are kept apart as well, so a report can say
+       * what was sent and what came back.
        */
+      const input = counted(entry.model.input);
+      const output = counted(entry.model.output);
+      const cache = counted(entry.model.cache?.read) + counted(entry.model.cache?.write);
       return {
         usd: typeof entry.cost?.currency === 'string' && entry.cost.currency.toLowerCase() === 'usd'
           ? counted(entry.cost.amount)
           : 0,
-        tokens: counted(entry.model.input) + counted(entry.model.output)
-          + counted(entry.model.cache?.read) + counted(entry.model.cache?.write),
+        tokens: input + output + cache,
+        input,
+        output,
+        cache,
         calls: 1,
         hours: 0,
       };
     }
     const span = counted(entry.seconds) / HOUR_S;
-    return { usd: 0, tokens: 0, calls: 0, hours: span > 0 ? span : 0 };
+    return { usd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: span > 0 ? span : 0 };
   };
 
   /** The pools one record is charged to, and nothing it does not name with a string. */
@@ -147,6 +156,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
       const charged = days.get(day) ?? none();
       charged.usd += what.usd;
       charged.tokens += what.tokens;
+      charged.input += what.input;
+      charged.output += what.output;
+      charged.cache += what.cache;
       charged.calls += what.calls;
       charged.hours += what.hours;
       days.set(day, charged);
@@ -261,6 +273,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
           if (day < first || day > last) continue;
           sum.usd += charged.usd;
           sum.tokens += charged.tokens;
+          sum.input += charged.input;
+          sum.output += charged.output;
+          sum.cache += charged.cache;
           sum.calls += charged.calls;
           sum.hours += charged.hours;
         }
@@ -269,6 +284,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
       const out: UsageTotal = {};
       if (sum.usd !== 0) out.usd = sum.usd;
       if (sum.tokens !== 0) out.tokens = sum.tokens;
+      if (sum.input !== 0) out.input = sum.input;
+      if (sum.output !== 0) out.output = sum.output;
+      if (sum.cache !== 0) out.cache = sum.cache;
       if (sum.calls !== 0) out.calls = sum.calls;
       if (sum.hours !== 0) out.hours = sum.hours;
       return out;

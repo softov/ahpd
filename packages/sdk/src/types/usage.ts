@@ -90,14 +90,20 @@ export type UsageEntry = ModelUse | ComputerTime;
 /**
  * What a pool has been charged over a period.
  *
- * A measure nothing was charged in is absent. `tokens` includes cache reads
- * and writes. `usd` adds only costs in US dollars.
+ * A measure nothing was charged in is absent. `tokens` is `input` and `output`
+ * and `cache` added together. `usd` adds only costs in US dollars.
  */
 export interface UsageTotal {
   /** Cost in US dollars. */
   usd?: number;
   /** Tokens, cache included. */
   tokens?: number;
+  /** Prompt tokens. */
+  input?: number;
+  /** Tokens written back. */
+  output?: number;
+  /** Prompt tokens read from and written to the provider's cache. */
+  cache?: number;
   /** Model calls. */
   calls?: number;
   /** Computer time, in hours. */
