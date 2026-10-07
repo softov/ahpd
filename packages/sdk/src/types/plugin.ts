@@ -356,6 +356,21 @@ export interface PluginHost extends PluginContext {
    */
   registerRoute(handler: Route): void;
   /**
+   * Register what this plugin runs when the host closes.
+   *
+   * The host calls every registered function once its sessions have closed and
+   * before its stores do, so a plugin stops the work it owns: a timer it armed,
+   * a removal it started, a process it spawned. Nothing else knows about that
+   * work, so a plugin that leaves it running leaves it running for the rest of
+   * the process's life - decision `a-plugin-is-told-when-the-host-closes`.
+   *
+   * Called more than once, each function is kept and each runs, in the order
+   * they were registered. A failure is logged against this plugin and does not
+   * stop the next plugin's. A plugin that registered none is not asked for one:
+   * having nothing to stop is the ordinary case.
+   */
+  registerClose(close: () => void | Promise<void>): void;
+  /**
    * Subscribe to one of the host's own moments.
    *
    * The one method not named `register*`, because it contributes nothing to
@@ -455,6 +470,13 @@ export interface Contribution {
    * order.
    */
   events: HostHandlers;
+  /**
+   * What this plugin asked to run when the host closes, in registration order.
+   *
+   * Empty when it registered none, so the fold can carry it into
+   * `HostOptions.closers` without a case.
+   */
+  closers: (() => void | Promise<void>)[];
   /**
    * The one route this plugin registered, when it registered one.
    *

@@ -162,6 +162,8 @@ export interface FoldedOptions {
  * - A route is kept under the plugin's own name and is never moved: one handler
  *   per plugin, under that plugin's own prefix, so there is nothing for two of
  *   them to collide on.
+ * - A close function is kept, never composed: every registration runs, in load
+ *   order, and there is nothing for two of them to collide on.
  */
 export function foldHostOptions(base: HostOptions, contributions: Contribution[]): FoldedOptions {
   const problems: string[] = [];
@@ -342,6 +344,21 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     if (contribution.routes !== undefined) routes[contribution.by] = contribution.routes;
   }
 
+  /*
+   * The close functions, the base's first and then each plugin's, in the order
+   * the plugins were configured.
+   *
+   * A registration of one plugin runs after the one before it, and the plugin
+   * that registered each is carried beside it, so a closer that fails is
+   * logged against the plugin that owns the work it was stopping. A host with
+   * none keeps `closers` absent rather than carrying an empty list.
+   */
+  const closers = [
+    ...(base.closers ?? []),
+    ...contributions.flatMap((contribution) => contribution.closers.map((close) => ({ by: contribution.by, close }))),
+  ];
+  if (closers.length > 0) options.closers = closers;
+
   return { options, problems, routes };
 }
 
@@ -441,6 +458,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     ports: {},
     providers: {},
     events: events as unknown as HostHandlers,
+    closers: [],
   };
   const providers = new Set<string>();
   const tools = new Set<string>();
@@ -580,6 +598,19 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
         throw new Error(miss(by, 'registerRoute', 'handler', 'registered only once'));
       }
       contribution.routes = handler;
+    },
+    registerClose(close) {
+      /*
+       * Callable is the whole of what can be checked here: the host calls this
+       * when the daemon stops, and what it does then is the plugin's own. A
+       * JavaScript plugin that registered a value rather than a function is
+       * refused at the call site rather than at the close, where the daemon is
+       * going and nobody is left to report it.
+       */
+      if (typeof close !== 'function') {
+        throw new Error(miss(by, 'registerClose', 'close', 'a function'));
+      }
+      contribution.closers.push(close);
     },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the

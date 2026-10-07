@@ -886,6 +886,27 @@ export function createHost(options: HostOptions): Host {
           new Promise((done) => { timer = setTimeout(done, HOST_CLOSE_WAIT_MS); }),
         ]);
         clearTimeout(timer);
+        /*
+         * Every machine enter and leave this host started, finished.
+         *
+         * A session's leaving is not held up by the port, so the calls that
+         * read a machine out land after the session has gone. They are waited
+         * for before the plugins stop: a plugin's own close takes its machines
+         * apart, and a machine still being read is one nothing should remove.
+         */
+        await step('the machine leaves', () => ctx.settled());
+        /*
+         * Every plugin's own close, before the stores it may write through.
+         *
+         * A session has left its machine by now, so this is the point where a
+         * plugin stops what it owns: a timer it armed, a removal it started, a
+         * process it spawned. Each runs as a step, so one that fails is logged
+         * against its plugin and the next one still runs - decision
+         * `a-plugin-is-told-when-the-host-closes`.
+         */
+        for (const { by, close } of options.closers ?? []) {
+          await step(`the plugin ${by}`, close);
+        }
         await step('the automation store', () => options.automations?.close?.());
         await step('the session store', () => kept.close?.());
       })();

@@ -48,6 +48,7 @@ const contribution = (
     sessionConfig?: Record<string, Record<string, unknown>>;
     sessionCompletions?: Contribution['sessionCompletions'];
     routes?: Route;
+    closers?: (() => void | Promise<void>)[];
   } = {},
 ): Contribution => ({
   by,
@@ -58,6 +59,7 @@ const contribution = (
   ports: parts.ports ?? {},
   providers: parts.providers ?? {},
   events: {},
+  closers: parts.closers ?? [],
   ...(parts.routes === undefined ? {} : { routes: parts.routes }),
 });
 

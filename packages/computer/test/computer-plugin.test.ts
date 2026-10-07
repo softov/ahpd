@@ -9,6 +9,7 @@ import { fileResources } from '../../sdk/src/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -26,7 +27,9 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Everything the test started, closed before its folders go.
+  await closeAll();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
@@ -54,14 +57,18 @@ const base = (): HostOptions => ({
   resources: fileResources(),
 });
 
-const load = (
+const load = async (
   options: Record<string, unknown>,
   more: Partial<HostOptions> = {},
   log: (line: string) => void = () => {},
-) => loadPlugins(
-  [{ name: SOURCE, options }],
-  { base: { ...base(), ...more }, configDir: stateDir(), cwd: REPO, log },
-);
+) => {
+  const result = await loadPlugins(
+    [{ name: SOURCE, options }],
+    { base: { ...base(), ...more }, configDir: stateDir(), cwd: REPO, log },
+  );
+  keeping(result.options);
+  return result;
+};
 
 const at = {} as ToolCall;
 const tool = (tools: HostTool[], name: string) => tools.find((one) => one.definition.name === name) as HostTool;
@@ -87,6 +94,7 @@ it('serves computer: through the host and offers the three tools', async () => {
   expect(String(await tool(tools, 'request_disposable_computer').run({ name: 'box' }, at))).toContain('computer://box');
 
   const host = createHost(options);
+  keeping(options, host);
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
 
@@ -126,6 +134,7 @@ it('withholds the three tools from a session until the host permits advanced too
 
   const names = async (advancedTools: boolean) => {
     const host = createHost({ ...options, advancedTools });
+    keeping(options, host);
     const client = host.accept(peer());
     await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gate', provider: 'base' } });
@@ -155,6 +164,7 @@ it('contributes the computer session setting, and the default the operator chose
   expect(Object.keys(options.sessionConfig ?? {})).toEqual(['computer']);
 
   const host = createHost(options);
+  keeping(options, host);
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/key', provider: 'base' } });
@@ -185,6 +195,7 @@ it('advertises the scheme on the handshake, before any machine exists', async ()
   });
 
   const host = createHost(options);
+  keeping(options, host);
   const client = host.accept(peer());
   const ready = await client.handle({
     method: 'initialize',
@@ -567,6 +578,7 @@ const guardOf = async (
   );
   if (loaded.problems.length > 0) return { argv: [], error: loaded.problems.map((one) => String(one)).join('\n') };
   const host = createHost(loaded.options);
+  keeping(loaded.options, host);
   const client = host.accept(peer());
   await client.handle({
     method: 'initialize',

@@ -12,6 +12,7 @@ import { MACHINE_OBJECTS } from '../src/gitdir.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
@@ -36,7 +37,11 @@ const HOST = fileURLToPath(new URL('./fixtures/container-host.mjs', import.meta.
 
 /** Temporary directories, removed after the test that made them. */
 const loose: string[] = [];
-afterEach(() => {
+afterEach(async () => {
+  // Everything the test started, closed before its folders go: a launcher
+  // still holding a nested host is a process writing into a folder the line
+  // below takes away.
+  await closeAll();
   for (const one of loose.splice(0)) rmSync(one, { recursive: true, force: true });
 });
 
@@ -148,20 +153,24 @@ const optionsOf = (devState: string, dockerState: string, more: Record<string, u
  * than one person uses: a plugin is told whether there is one, and reads
  * nothing of it.
  */
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp(), people = false) => loadPlugins(
-  [{ name: SOURCE, options: pluginOptions }],
-  {
-    base: {
-      path: '/tmp/computer-devcontainer',
-      agents,
-      resources: fileResources(),
-      ...(people ? { users: fileUsers({ path: join(configDir, 'users.json') }) } : {}),
+const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = [], configDir = temp(), people = false) => {
+  const result = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    {
+      base: {
+        path: '/tmp/computer-devcontainer',
+        agents,
+        resources: fileResources(),
+        ...(people ? { users: fileUsers({ path: join(configDir, 'users.json') }) } : {}),
+      },
+      configDir,
+      cwd: REPO,
+      log: () => {},
     },
-    configDir,
-    cwd: REPO,
-    log: () => {},
-  },
-);
+  );
+  keeping(result.options);
+  return result;
+};
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }): Promise<void>;
@@ -190,7 +199,9 @@ const agentWith = (needs: Record<string, MachineNeed> = {}): Agent => ({
 /** One client and the session half of the tests. */
 async function room(hostOptions: HostOptions) {
   const p = peer();
-  const client = createHost(hostOptions).accept(p);
+  const host = createHost(hostOptions);
+  keeping(hostOptions, host);
+  const client = host.accept(p);
   await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
@@ -753,7 +764,9 @@ it('connect twice for one folder makes one container', async () => {
   }), [agentWith()], join(dir, 'config'));
 
   const p = peer();
-  const client = createHost(loaded).accept(p);
+  const host = createHost(loaded);
+  keeping(loaded, host);
+  const client = host.accept(p);
   await client.handle({
     method: 'initialize',
     params: { clientId: 'window', protocolVersions: ['0.9.0'] },
@@ -802,6 +815,7 @@ it('installs the server in a container at the daemon\'s version, from the plugin
     { base: { path: '/tmp/computer-devcontainer', agents: [], resources: fileResources() }, configDir: join(root, 'config'), cwd: REPO, log: () => {}, version: '0.10.4' },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   const closed: (string | undefined)[] = [];
   const said: string[] = [];
   await options.containers?.connect(
@@ -1170,6 +1184,7 @@ const loadVaulted = async (pluginOptions: Record<string, unknown>, agents: Agent
     },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   return { options, lines };
 };
 

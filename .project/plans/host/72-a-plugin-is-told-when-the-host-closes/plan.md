@@ -1,7 +1,7 @@
 ---
 title: A plugin is told when the host closes, and the computer plugin stops its work there
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -60,6 +60,7 @@ computer plugin close -> clear every disposal timer -> await removals in flight 
 | `host.close()` calls the plugin closers after the chats close and before the stores close, each as a `step`, so one failure does not stop the others | the order a session needs: a session leaves its machine before the plugin stops | 01 |
 | The computer plugin clears its timers and does not remove the machines; the next start gives a leftover machine the delay again | today a daemon that stops also leaves them; the startup scan handles them | 02 |
 | The computer tests close every host they make, and close a load that has no host through its closers | the cause of the flake | 03 |
+| `close()` awaits every machine enter and leave that `inMachine` started, before the plugin closers; the tests do not wait for a quiet folder | Softov, 2026-10-07, asked "The host's own session leave runs unawaited, so it still writes after close() returns. Which way?" and chose "close() awaits leaves" | 05 |
 
 ## Proposed architecture
 
@@ -72,10 +73,11 @@ computer plugin close -> clear every disposal timer -> await removals in flight 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin can register what runs when the host closes](task-01-a-plugin-can-register-a-close.md) | todo | - |
-| [02 - The computer plugin stops its timers and nested hosts on close](task-02-the-computer-plugin-stops-on-close.md) | todo | 01 |
-| [03 - The computer tests close what they open](task-03-the-computer-tests-close-what-they-open.md) | todo | 02 |
-| [04 - Docs](task-04-docs.md) | todo | 01, 02 |
+| [01 - A plugin can register what runs when the host closes](task-01-a-plugin-can-register-a-close.md) | done | - |
+| [02 - The computer plugin stops its timers and nested hosts on close](task-02-the-computer-plugin-stops-on-close.md) | done | 01 |
+| [03 - The computer tests close what they open](task-03-the-computer-tests-close-what-they-open.md) | done | 02 |
+| [04 - Docs](task-04-docs.md) | done | 01, 02 |
+| [05 - close() awaits the host's own machine leaves](task-05-close-awaits-machine-leaves.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -84,17 +86,17 @@ computer plugin close -> clear every disposal timer -> await removals in flight 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-plugin-can-register-a-close.md](task-01-a-plugin-can-register-a-close.md).
+- **Done so far:** tasks 01 to 05 implemented 2026-10-07, uncommitted on `build/agents/70ebe302`. The hook, the fold and the call in `close`. `close()` on the launcher. The computer plugin's `closed` flag, its removals in flight and its closer. The shared cleanup the computer tests close through. The two docs. The host's own machine leaves, waited for by `close`. [implemented.md](implemented.md) records all of it.
+- **Next action:** none. Reviewed, gates green, merged.
 - **Open questions:** none.
 - **Watch out for:** killing the fake docker does not end the `/bin/sh` child it started with inherited stdio. A test must see the sink close, not only send the kill.
 
 ## Final verification checklist
 
-- [ ] A host test: `close()` calls a plugin closer once, after the chats and before the stores.
-- [ ] A host test: a closer that throws does not stop the next closer.
-- [ ] A computer test: after `close()`, an armed disposal timer does not fire and no file under the test folder changes.
-- [ ] `npx vitest run packages/computer` passes 10 times in a row, with no `ENOTEMPTY`.
-- [ ] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass from the root.
-- [ ] CI on main is green.
-- [ ] `plans/index.md` updated.
+- [x] A host test: `close()` calls a plugin closer once, after the chats and before the stores.
+- [x] A host test: a closer that throws does not stop the next closer.
+- [x] A computer test: after `close()`, an armed disposal timer does not fire and no file under the test folder changes.
+- [x] `npx vitest run packages/computer` passes 10 times in a row, with no `ENOTEMPTY`.
+- [x] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass from the root.
+- [ ] CI on main is green. Nothing here is committed yet, so no run has seen it.
+- [x] `plans/index.md` updated.

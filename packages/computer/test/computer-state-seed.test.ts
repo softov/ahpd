@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { fileResources } from '../../sdk/src/resources.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
 
@@ -24,7 +25,10 @@ const SOURCE = './packages/computer/src/index.ts';
 const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url));
 
 let loose: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Every load this test made, closed before its folder goes: a load on its
+  // own has already read what is out there and armed what it found.
+  await closeAll();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
@@ -78,6 +82,7 @@ const load = async (state: string, needs: Record<string, MachineNeed>, extra: Re
     { base: { path: '/tmp/computer-state', agents: [agent('claude', needs)], resources: fileResources() }, configDir: stateDir(), cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   const provider = options.resourceProviders?.computer as {
     write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
   };
@@ -229,6 +234,7 @@ it('seeds a dev container that builds its image after up, inside it and owned by
     { base: { path: '/tmp/computer-state', agents: [agent('claude', { claudeState: { state: '/ahpd/claude', seed: [{ source: settings }] } })], resources: fileResources() }, configDir: dir, cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   await options.computers?.create?.({ source: `devcontainer://${folder}`, session: 'claude:/one', provider: 'claude', owner: 'user:ada' });
   const after = held(state);
   // No container is created for the seed, so no image is pulled for it.

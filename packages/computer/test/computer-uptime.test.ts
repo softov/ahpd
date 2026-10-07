@@ -9,6 +9,7 @@ import { memorySessions } from '../../sdk/src/sessions.js';
 import { raise } from '../../sdk/src/plugins.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { Principal, Users } from '../../sdk/src/types/users.js';
@@ -31,8 +32,11 @@ const DEV = fileURLToPath(new URL('./fixtures/devcontainer.mjs', import.meta.url
 
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Real timers first, then everything the test started: a close waits for
+  // work that the faked clock above would never let finish.
   vi.useRealTimers();
+  await closeAll();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
@@ -119,21 +123,22 @@ const base = (usage?: Usage): HostOptions => ({
 /** The plugin as loaded, with what it said kept. */
 function load(hostOptions: HostOptions, state: string, more: Record<string, unknown> = {}, configDir = stateDir()) {
   const lines: string[] = [];
-  return {
-    lines,
-    loaded: loadPlugins(
-      [{
-        name: SOURCE,
-        options: {
-          command: process.execPath,
-          args: [FIXTURE],
-          env: { DOCKER_FAKE_STATE: state },
-          ...more,
-        },
-      }],
-      { base: hostOptions, configDir, cwd: REPO, log: (line) => { lines.push(line); } },
-    ),
-  };
+  const loading = loadPlugins(
+    [{
+      name: SOURCE,
+      options: {
+        command: process.execPath,
+        args: [FIXTURE],
+        env: { DOCKER_FAKE_STATE: state },
+        ...more,
+      },
+    }],
+    { base: hostOptions, configDir, cwd: REPO, log: (line) => { lines.push(line); } },
+  ).then((result) => {
+    keeping(result.options);
+    return result;
+  });
+  return { lines, loaded: loading };
 }
 
 /** The provider as this host serves it, which is where every state change goes. */
@@ -190,7 +195,9 @@ const peer = (): Peer => ({
 
 /** A host opened on one connection, signed in as ana. */
 async function serving(options: HostOptions) {
-  const client = createHost(options).accept(peer());
+  const host = createHost(options);
+  keeping(options, host);
+  const client = host.accept(peer());
   await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },

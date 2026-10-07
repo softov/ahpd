@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { ComputerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
+import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
 import { resolveNeeds, secretRef } from '@ahpd/sdk';
 import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
@@ -839,6 +839,19 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const disposables = new Map<string, Disposable>();
 
+  /*
+   * Whether the daemon has been told to stop.
+   *
+   * Set before anything else the closer does, because the startup scan arms a
+   * leftover machine when it finds one and a timer armed into a daemon that is
+   * going is the timer this exists to prevent. Everything that arms work reads
+   * it, so what is left is a machine waiting for whoever starts next.
+   */
+  let closed = false;
+
+  /** Every removal this plugin started and has not seen settle. */
+  const removals = new Set<Promise<unknown>>();
+
   /** What each agent this machine is made for declares it needs, by provider. */
   const needsFor = (asked: MachineSource) =>
     (provider: string): Record<string, MachineNeed> | undefined =>
@@ -855,11 +868,12 @@ export const apply: Plugin['apply'] = (host, options) => {
    * racing the session that just picked it.
    */
   const arm = (id: string): void => {
+    if (closed) return;
     const held = disposables.get(id);
     if (held === undefined || held.sessions.size > 0) return;
     if (held.timer !== undefined) clearTimeout(held.timer);
     const timer = setTimeout(() => {
-      void made.remove(id).then(
+      const removing = made.remove(id).then(
         () => {
           disposables.delete(id);
           host.log(`${name}: removed the disposable machine ${id}, ${held.delay}ms after its last session`);
@@ -869,11 +883,20 @@ export const apply: Plugin['apply'] = (host, options) => {
            * A removal that refused kept the machine, so it is still this
            * plugin's to watch and the delay is given again: a machine nobody
            * arms any more is one that stays for the rest of the daemon's life.
+           * A daemon that is stopping arms nothing, so it is left for whoever
+           * starts next.
            */
           host.log(`${name}: ${error instanceof Error ? error.message : String(error)}`);
           arm(id);
         },
       );
+      /*
+       * Kept while it runs, so the closer can wait for it: a removal halfway
+       * through is a machine being taken apart, and a daemon that goes while
+       * one is running leaves the work of it to nobody.
+       */
+      removals.add(removing);
+      void removing.then(() => { removals.delete(removing); });
     }, held.delay);
     // A timer nobody is waiting on is not a reason for the process to stay up.
     (timer as { unref?: () => void }).unref?.();
@@ -888,7 +911,7 @@ export const apply: Plugin['apply'] = (host, options) => {
    * session it was made for is the one that decides, and it may well be.
    */
   const watch = (id: string, profile: string, delay: number, first?: string): void => {
-    if (disposables.has(id)) return;
+    if (closed || disposables.has(id)) return;
     const sessions = new Set<string>();
     if (first !== undefined) sessions.add(first);
     disposables.set(id, { profile, delay, sessions });
@@ -1616,6 +1639,15 @@ export const apply: Plugin['apply'] = (host, options) => {
    * plugins that host loads are deployment facts - decision
    * `a-dev-container-is-reached-by-docker-exec`.
    */
+  /*
+   * The launcher this plugin registered, when it registered one.
+   *
+   * Held outside the block below because the closer has to end the nested
+   * hosts this launcher started, and whether there is a launcher at all is
+   * what that block decides.
+   */
+  let relay: ContainerPort | undefined;
+
   if (container !== false) {
     /*
      * The computer a folder already is, and whether it is up, so a relay finds
@@ -1633,7 +1665,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       return found === undefined ? undefined : { id: found.id, running: isRunning(found) };
     };
 
-    const relay = devContainer({
+    const launcher = devContainer({
       ...cliOptions,
       ...(hostCommand === undefined ? {} : { host: hostCommand }),
       // The same Docker the listing reads, and not a program named beside it:
@@ -1676,8 +1708,9 @@ export const apply: Plugin['apply'] = (host, options) => {
       },
     });
 
+    relay = launcher;
     host.registerContainers({
-      ...relay,
+      ...launcher,
       /*
        * The container a connection brought up, as a machine of this host.
        *
@@ -1692,7 +1725,7 @@ export const apply: Plugin['apply'] = (host, options) => {
         const answer = folderFor(asked.workspaceFolder);
         if (typeof answer !== 'string') throw new Error(answer.refusal);
         const here = { ...asked, workspaceFolder: answer };
-        const result = await relay.connect(here, sink);
+        const result = await launcher.connect(here, sink);
         const machine = await machineFor(answer);
         if (machine === undefined) return result;
         if (asked.owner !== undefined) {
@@ -1820,4 +1853,33 @@ export const apply: Plugin['apply'] = (host, options) => {
       ];
     });
   }
+
+  /*
+   * What this plugin still owns when the daemon stops.
+   *
+   * A disposal timer and a nested host child are this plugin's own, and nothing
+   * else knows about them: left running they run for the rest of the process's
+   * life, which is a machine removed long after anybody asked and a `docker
+   * exec` holding the pipes of a container nobody is talking to.
+   *
+   * The timers are cleared rather than fired. A machine whose delay is cut
+   * short is one removed out from under a session that may be resumed when this
+   * daemon starts again, and the startup scan hands a machine it finds the
+   * delay back - decision `a-plugin-is-told-when-the-host-closes`. The removals
+   * already running are waited for, because half a removal is worse than none:
+   * a machine with its work fetched out and its volume still there.
+   */
+  host.registerClose(async () => {
+    closed = true;
+    // The scan arms a leftover machine as it finds one, so it has to be over
+    // before the timers below are cleared.
+    await listing;
+    for (const held of disposables.values()) {
+      if (held.timer === undefined) continue;
+      clearTimeout(held.timer);
+      delete held.timer;
+    }
+    await Promise.all([...removals]);
+    await relay?.close?.();
+  });
 };

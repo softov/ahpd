@@ -1,6 +1,6 @@
 ---
 title: A plugin can register what runs when the host closes
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -43,3 +43,12 @@ A plugin calls `host.registerClose(fn)` in `apply`.
 - `pnpm typecheck` from the root passes.
 
 ## Resume
+
+- `PluginHost.registerClose(close)` sits after `registerRoute` and before `on`. A second call is kept rather than refused, because a plugin with two things to stop is the ordinary case.
+- `Contribution.closers` is required, the way `events` is, so every hand-built contribution names it. Nine contribution literals in `plugin-host.test.ts` and one helper in `plugin-fold.test.ts` gained `closers: []`.
+- The check is inline in `plugins.ts` beside the recording, the way `registerSessionConfig`'s check is, because `miss` is already imported there. It answers `plugin <name>: registerClose needs close to be a function`.
+- `foldHostOptions` keeps the base's own closers first and then appends each plugin's in load order, as `{ by, close }`. The key stays absent when nothing registered one.
+- `close` runs them after the wait on the sessions and terminals, and before the automation store, one `step` each. A failure is logged as `closing the plugin <name> failed: <reason>`.
+- Tests: `packages/sdk/test/plugins-close.test.ts` is new. It folds two closers from one plugin, in order, each with the plugin's name. It keeps a base's own first, leaves the key absent when none registered, and refuses a value that is not a function.
+- Tests: `packages/sdk/test/host-close.test.ts` already existed, so the three cases went into its `Host.close` group. They check the order `chat, alpha, beta, automations, sessions`, a closer that throws logged while the next still runs, and a second `close()` that calls none again.
+- `pnpm typecheck` from the root passes.

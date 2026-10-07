@@ -21,6 +21,7 @@ import type { Bag } from '../src/types/common.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { StartTerminals, Terminal } from '../src/types/terminals.js';
 import type { StartSession } from '../src/types/automations.js';
+import type { ComputerPort } from '../src/types/computers.js';
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-close-')); });
@@ -182,6 +183,112 @@ describe('Host.close', () => {
     expect(opened).toHaveLength(1);
     expect(opened[0]?.exitCode()).toBeDefined();
     client.close();
+  });
+
+  it('waits for a machine leave whose fetch answers late', async () => {
+    let fetched = false;
+    let left = false;
+    const port: ComputerPort = {
+      how: async () => undefined,
+      create: async () => 'box',
+      enter: async () => {},
+      leave: async () => { left = true; },
+      // A machine with work in it: bringing it back is a fetch, and a fetch
+      // takes a moment.
+      bringBack: async () => {
+        await new Promise((done) => { setTimeout(done, 200); });
+        fetched = true;
+        return { moved: false };
+      },
+    };
+    const host = createHost({ path: dir, agents: [echo({ path: dir, pace: 0 })], computers: port });
+    const client = host.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
+    await client.handle({
+      method: 'createSession',
+      params: { channel: 'ahp-session:/one', provider: 'echo', config: { computer: 'computer://box' } },
+    });
+
+    // The session goes, and what its machine committed is read back behind the
+    // answer that asked for it - so the leave is still running here.
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+    expect(fetched).toBe(false);
+    expect(left).toBe(false);
+
+    await host.close();
+    expect(fetched).toBe(true);
+    expect(left).toBe(true);
+    client.close();
+  });
+
+  it('runs every plugin closer once, after the chats and before the stores', async () => {
+    const order: string[] = [];
+    const base = echo({ path: dir, pace: 0 });
+    const agent: Agent = {
+      ...base,
+      create: (start) => {
+        const session = base.create(start);
+        return { ...session, close: () => { order.push('chat'); session.close(); } };
+      },
+    };
+    const sessions = { ...fileSessions({ dir: join(dir, 'sessions') }), close: () => { order.push('sessions'); } };
+    const automations = {
+      onDue: () => {},
+      run: async () => undefined,
+      close: () => { order.push('automations'); },
+    };
+    const host = createHost({
+      path: dir,
+      agents: [agent],
+      sessions,
+      automations: automations as never,
+      closers: [
+        { by: 'alpha', close: async () => { order.push('alpha'); } },
+        { by: 'beta', close: () => { order.push('beta'); } },
+      ],
+    });
+    const client = host.accept(peer());
+    await client.handle({ method: 'initialize', params: { clientId: 'c', protocolVersions: ['0.9.0'] } });
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
+
+    await host.close();
+    // A plugin stops what it owns after the session that used it has gone, and
+    // before a store it may write through is closed.
+    expect(order).toEqual(['chat', 'alpha', 'beta', 'automations', 'sessions']);
+    client.close();
+  });
+
+  it('logs a closer that throws and still runs the next one', async () => {
+    const said: string[] = [];
+    const ran: string[] = [];
+    const host = createHost({
+      path: dir,
+      agents: [echo({ path: dir, pace: 0 })],
+      onEvent: (line: string) => { said.push(line); },
+      closers: [
+        { by: 'alpha', close: () => { throw new Error('the timer would not go'); } },
+        { by: 'beta', close: () => { ran.push('beta'); } },
+      ],
+    });
+
+    await host.close();
+    expect(ran).toEqual(['beta']);
+    expect(said).toContain('closing the plugin alpha failed: the timer would not go');
+  });
+
+  it('calls a closer once, however often close is asked for', async () => {
+    const calls: string[] = [];
+    const host = createHost({
+      path: dir,
+      agents: [echo({ path: dir, pace: 0 })],
+      closers: [{ by: 'alpha', close: () => { calls.push('alpha'); } }],
+    });
+
+    const once = host.close();
+    expect(host.close()).toBe(once);
+    await once;
+    await host.close();
+    expect(calls).toEqual(['alpha']);
   });
 
   it('stops waiting for an agent that never exits after HOST_CLOSE_WAIT_MS', async () => {

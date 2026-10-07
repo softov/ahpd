@@ -5,6 +5,7 @@ import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { devContainer, hasDefinition, parseUp, pluginInstallLine, reachOf } from '../src/devcontainer.js';
+import { closeAll, keepingPort } from './support/closing.js';
 import type { Probe } from '../src/devcontainer.js';
 import { adoptedDevContainer, dockerRuntime } from '../src/runtime.js';
 import type { DockerOptions } from '../src/runtime.js';
@@ -31,7 +32,13 @@ beforeEach(() => {
   state = join(root, 'cli.json');
   dockerState = join(root, 'docker.json');
 });
-afterEach(() => { rmSync(root, { recursive: true, force: true }); });
+afterEach(async () => {
+  // Every launcher this test made, ended before its folder goes: one still
+  // connected holds a host inside a container, which goes on writing into the
+  // folder the line below takes away.
+  await closeAll();
+  rmSync(root, { recursive: true, force: true });
+});
 
 /** A folder that is a dev container, and one that is not. */
 function workspace(withDefinition = true): string {
@@ -81,20 +88,24 @@ function sink(): ContainerSink & { said: string[]; out: string[]; closed: (strin
  * the Docker fixture's `exec` - which is where this test now reads what the
  * launcher ran.
  */
-const launcher = (extra: Record<string, unknown> = {}, options: { docker?: string } = {}) => devContainer({
-  command: process.execPath,
-  args: [CLI],
-  docker: options.docker === undefined
-    ? { command: process.execPath, args: [DOCKER], env: { DOCKER_FAKE_STATE: dockerState } }
-    : { command: options.docker, args: [] },
-  env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState },
-  host: [process.execPath, HOST],
-  // A backend, because `connect` refuses a host inside that would have none.
-  // The fake host below never reads the configuration, so this only has to be
-  // a spec; the refusal itself is checked with an empty list further down.
-  plugins: ['@ahpd/agent-cofold'],
-  ...extra,
-});
+const launcher = (extra: Record<string, unknown> = {}, options: { docker?: string } = {}) => {
+  const port = devContainer({
+    command: process.execPath,
+    args: [CLI],
+    docker: options.docker === undefined
+      ? { command: process.execPath, args: [DOCKER], env: { DOCKER_FAKE_STATE: dockerState } }
+      : { command: options.docker, args: [] },
+    env: { DEVCONTAINER_FAKE_STATE: state, DOCKER_FAKE_STATE: dockerState },
+    host: [process.execPath, HOST],
+    // A backend, because `connect` refuses a host inside that would have none.
+    // The fake host below never reads the configuration, so this only has to be
+    // a spec; the refusal itself is checked with an empty list further down.
+    plugins: ['@ahpd/agent-cofold'],
+    ...extra,
+  });
+  keepingPort(port);
+  return port;
+};
 
 /** What the scripted Docker recorded, as its own calls and the commands it ran. */
 const ran = (): {
@@ -144,6 +155,7 @@ it('answers Docker and the launcher as two questions', async () => {
   // No CLI is a yes to Docker and a no to a container, which is the difference
   // the two methods are for.
   const noCli = devContainer({ command: '/nonexistent/devcontainer', docker: { command: process.execPath, args: [] }, env: { DEVCONTAINER_FAKE_STATE: state } });
+  keepingPort(noCli);
   expect(await noCli.docker()).toBe(true);
   expect(await noCli.available()).toBe(false);
 });
@@ -412,6 +424,20 @@ it('writes a frame to the host, and stops it on disconnect', async () => {
   // And a frame after that goes nowhere rather than throwing.
   port.send('a', '{"jsonrpc":"2.0","id":2,"method":"ping"}');
   port.disconnect('a');
+});
+
+it('ends the host inside on close, and answers once it has gone', async () => {
+  wrote({ hostPresent: true, passthrough: [process.execPath] });
+  const plain = sink();
+  const port = launcher();
+  await port.connect({ ...connect, workspaceFolder: workspace() }, plain);
+  await until(() => plain.said.some((one) => one.includes('"method":"ready"')));
+
+  await port.close?.();
+  // The nested host is gone with the launcher that started it, and the relay
+  // said so before this answered: a daemon on its way out does not leave a
+  // process running that nobody is talking to.
+  expect(plain.closed).toHaveLength(1);
 });
 
 /*

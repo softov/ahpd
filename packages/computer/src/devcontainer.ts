@@ -698,6 +698,38 @@ export const definitionOf = (folder: string): string | undefined => {
 export const hasDefinition = (folder: string): boolean => definitionOf(folder) !== undefined;
 
 /**
+ * How long a nested host is given to end on its own before it is killed.
+ *
+ * A host inside a container has state to write down on the way out, so it is
+ * asked to stop first and given a while to do it. One still there after this
+ * is one that will not go, and the daemon is going.
+ */
+const STOP_WAIT_MS = 5000;
+
+/**
+ * One nested host asked to stop, and a promise for the moment it is gone.
+ *
+ * `SIGTERM` first, which is what `disconnect` sends. The answer comes with the
+ * end of the process rather than its exit, because that is where the relay
+ * reports it: a caller waiting for this one has the sink's close as well.
+ *
+ * The end of the process waits on its pipes, and a process it started can
+ * hold them after it is gone. So the `SIGKILL` also lets go of this side of
+ * the pipes, which ends the process here whoever else still has them.
+ */
+const stop = (child: ChildProcessWithoutNullStreams): Promise<void> => new Promise((done) => {
+  if (child.exitCode !== null || child.signalCode !== null) { done(); return; }
+  const kill = setTimeout(() => {
+    child.kill('SIGKILL');
+    child.stdin.destroy();
+    child.stdout.destroy();
+    child.stderr.destroy();
+  }, STOP_WAIT_MS);
+  child.once('close', () => { clearTimeout(kill); done(); });
+  child.kill('SIGTERM');
+});
+
+/**
  * The launcher, as the port a host carries.
  *
  * Its per-connection state is one map: the CLI process in stdio mode whose
@@ -1132,6 +1164,18 @@ export const devContainer = (options: DevContainerOptions = {}): ContainerPort =
       // it is the host's business, and the host has already forgotten a
       // connection the client itself asked to end.
       child.kill('SIGTERM');
+    },
+
+    /*
+     * Every nested host this launcher started, ended.
+     *
+     * A copy of the map's values, because each ending takes its own entry out
+     * of it. The containers are left where they are, as they are for a
+     * disconnect: the CLI keeps them, and a daemon that starts again finds the
+     * folder's labelled container rather than making a second one.
+     */
+    close: async (): Promise<void> => {
+      await Promise.all([...live.values()].map((child) => stop(child)));
     },
   };
 };

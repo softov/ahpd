@@ -396,6 +396,16 @@ export interface HostOptions {
    * event, and the two are raised from the same place.
    */
   events?: HostHandlers;
+  /**
+   * What plugins asked to run when this host closes, in load order.
+   *
+   * The fold fills this from `registerClose`, one entry per registration, and
+   * `close` runs them after the sessions have closed and before the stores do.
+   * Each entry carries its plugin's name, so one that fails is logged against
+   * the plugin that owns the work - decision
+   * `a-plugin-is-told-when-the-host-closes`.
+   */
+  closers?: { by: string; close: () => void | Promise<void> }[];
 }
 
 /**

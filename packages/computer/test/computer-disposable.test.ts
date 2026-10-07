@@ -11,6 +11,7 @@ import { fileResources } from '../../sdk/src/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
@@ -32,11 +33,14 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Real timers first: a close waits for work that a faked clock would never
+  // let finish. Then everything the test started, because a machine removed
+  // after its folder is gone writes into a path that is not there, and a
+  // removal refused for that reason arms a timer all over again.
   vi.useRealTimers();
-  // The scripted docker this file spawns is stopped behind the case and may
-  // still be writing its state file, so the folder is removed with retries.
-  if (loose !== undefined) rmSync(loose, { recursive: true, force: true, maxRetries: 100, retryDelay: 50 });
+  await closeAll();
+  if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (state !== undefined) rmSync(state, { recursive: true, force: true });
   state = undefined;
@@ -141,17 +145,21 @@ const agentWith = (needs: Record<string, MachineNeed> = {}): Agent => ({
   machine: () => needs,
 });
 
-const load = (
+const load = async (
   pluginOptions: Record<string, unknown>,
   agents: Agent[] = [],
   log: (message: string) => void = () => {},
   more: Partial<HostOptions> = {},
   hostId?: string,
   configDir = stateDir(),
-) => loadPlugins(
-  [{ name: SOURCE, options: pluginOptions }],
-  { base: base(agents, more), configDir, cwd: REPO, log, ...(hostId === undefined ? {} : { hostId }) },
-);
+) => {
+  const result = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    { base: base(agents, more), configDir, cwd: REPO, log, ...(hostId === undefined ? {} : { hostId }) },
+  );
+  keeping(result.options);
+  return result;
+};
 
 /** The options every test starts from: the fixture as the runtime. */
 const options = (state: string, more: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -164,7 +172,9 @@ const options = (state: string, more: Record<string, unknown> = {}): Record<stri
 /** One host, several sessions, so the count can be seen moving. */
 async function room(hostOptions: HostOptions) {
   const p = peer();
-  const client = createHost(hostOptions).accept(p);
+  const host = createHost(hostOptions);
+  keeping(hostOptions, host);
+  const client = host.accept(p);
   await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
@@ -976,13 +986,14 @@ it('adopts its own leftover whatever else is still loading', async () => {
    * one decide would leave the machine alone instead of holding it, which is
    * the same daemon removing its own leftover later.
    */
-  const { problems } = await loadPlugins(
+  const { options: loaded, problems } = await loadPlugins(
     [
       { name: SOURCE, options: options(state, { profiles: { claude: { title: 'Claude', disposable: true } } }) },
       { name: './packages/computer/test/fixtures/slow.mjs' },
     ],
     { base: base([], { sessions: store }), configDir: stateDir(), cwd: REPO, log: (line) => { lines.push(line); } },
   );
+  keeping(loaded);
   expect(problems).toEqual([]);
 
   await until(() => lines.some((one) => one.includes('left-behind')), 400);
@@ -1948,8 +1959,27 @@ const spyingOnGit = (dir: string): { log: string; bin: string } => {
   return { log, bin };
 };
 
-/** What ahpd left behind in the temporary directory, by the prefix it makes its own. */
-const leftOver = (): string[] => readdirSync(tmpdir()).filter((one) => one.startsWith('ahpd-bringback-'));
+/**
+ * What ahpd left behind in the temporary directory, by the prefix it makes its own.
+ *
+ * This reads the directory the whole run shares - one per run, since
+ * `tools/test-tmpdir.ts` points `TMPDIR` at it - so a folder another test
+ * file's fetch is in the middle of using is in the answer for the length of
+ * that fetch and gone after it. A folder this test left behind stays, which is
+ * what is asked for here: the question is put again until the answer is either
+ * nothing or a folder that outlasts a fetch.
+ *
+ * The wait is on the timer this module captured: most of this file's cases fake
+ * `setTimeout`, and a faked one would never let this answer.
+ */
+const leftOver = async (): Promise<string[]> => {
+  const deadline = Date.now() + 5_000;
+  for (;;) {
+    const there = readdirSync(tmpdir()).filter((one) => one.startsWith('ahpd-bringback-'));
+    if (there.length === 0 || Date.now() >= deadline) return there;
+    await wait(25);
+  }
+};
 
 /** The commit a ref is at, as the host's own git answers it, and nothing where there is no such ref. */
 const refOf = (repo: string, ref: string): string =>
@@ -2015,7 +2045,7 @@ it('brings a machine\'s commit back through a bundle, and the host\'s git reads 
   expect(said.some((one) => one.includes('/opt/ahpd/git') || one.includes(gitDir))).toBe(false);
   // Nothing is left behind: not the file, and not the ref that held work which
   // is on the branch now.
-  expect(leftOver()).toEqual([]);
+  expect(await leftOver()).toEqual([]);
   expect(refOf(repo, `refs/ahpd/machines/${box.name}/work`)).toBe('');
 });
 
@@ -2052,7 +2082,7 @@ it('fetches a machine on no branch to the hidden ref, and moves no branch of the
   // And what was bundled is what the machine's HEAD was, since that is the only
   // name a repository with no branch checked out has for it.
   expect(bundleAsked(state)).toEqual(['git', '-C', tree, 'bundle', 'create', '-', 'HEAD', '--not', before]);
-  expect(leftOver()).toEqual([]);
+  expect(await leftOver()).toEqual([]);
 });
 
 it('fetches what a machine committed before the machine goes', async () => {
@@ -2113,7 +2143,7 @@ it('fetches what a machine committed before the machine goes', async () => {
   // The host has the work: a commit that was only in a volume the removal has
   // since taken away is on the branch.
   expect(execFileSync('git', ['-C', repo, 'rev-parse', 'work'], { stdio: 'pipe' }).toString().trim()).toBe(made);
-  expect(leftOver()).toEqual([]);
+  expect(await leftOver()).toEqual([]);
 });
 
 /*

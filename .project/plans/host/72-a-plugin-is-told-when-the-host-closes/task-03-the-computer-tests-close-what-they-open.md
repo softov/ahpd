@@ -1,6 +1,6 @@
 ---
 title: The computer tests close what they open
-status: todo
+status: done
 depends: [task-02-the-computer-plugin-stops-on-close.md]
 layer: "computer tests"
 refs:
@@ -36,3 +36,11 @@ Every computer test closes the hosts, loads and launchers it made before it remo
 - `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass from the root.
 
 ## Resume
+
+- `packages/computer/test/support/closing.ts` is new. It holds `keeping(load, host?)`, which keeps a host or a hostless load; `keepingPort(port)`; and `closeAll()`.
+- `closeAll()` closes every host, then every hostless load through its own closers, then every launcher. A launcher shared between a host and a load is closed once, by the identity of its `closers` array.
+- Eleven test files register through `keeping` and call `await closeAll()` in an async `afterEach`, before they remove their folders. They are the disposable, devcontainer, needs, options, owner, plugin, session, state seed and uptime files, plus `computer-devcontainer.test.ts` and `devcontainer.test.ts`.
+- The removal in `computer-disposable.test.ts` no longer retries. `maxRetries` and `retryDelay` are gone from the package, so a writer that is still alive fails the test instead of being hidden by the retry.
+- `leftOver()` in `computer-disposable.test.ts` asks again until the answer is nothing or a folder that outlasts a fetch. The run shares one temporary directory between test files, so a neighbour's fetch is in the answer for as long as that fetch takes.
+- The wait is on the timer the module captured, because most of that file's cases fake `setTimeout`. The `leftOver` helper was async already; one of its three call sites was left unawaited, and the test `fetches what a machine committed before the machine goes` failed on it for two runs. It awaits now.
+- A quiet-folder wait, `atRest(folders)`, was written here first and removed by task 05. Waiting for the folders to stop being written into hid the real fault: the host's own machine leave runs behind `close()`.

@@ -9,6 +9,7 @@ import { loadPlugins } from '../../server/src/plugins.js';
 import { claimedBy } from '../src/runtime.js';
 import { keepProbe, ownedOf, OWNERS_FILE } from '../src/owners.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -31,7 +32,9 @@ const DOCKER = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url));
 
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Everything the test started, closed before its folders go.
+  await closeAll();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (state !== undefined) rmSync(state, { recursive: true, force: true });
@@ -146,14 +149,20 @@ const optionsOf = (dockerState: string, devState?: string, more: Record<string, 
   };
 };
 
-const load = (pluginOptions: Record<string, unknown>, configDir = stateDir()) => loadPlugins(
-  [{ name: SOURCE, options: pluginOptions }],
-  { base: base(), configDir, cwd: REPO, log: () => {} },
-);
+const load = async (pluginOptions: Record<string, unknown>, configDir = stateDir()) => {
+  const result = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    { base: base(), configDir, cwd: REPO, log: () => {} },
+  );
+  keeping(result.options);
+  return result;
+};
 
 /** A host opened on one connection, signed in as ana. */
 async function serving(options: HostOptions) {
-  const client = createHost(options).accept(peer());
+  const host = createHost(options);
+  keeping(options, host);
+  const client = host.accept(peer());
   await client.handle({
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] },

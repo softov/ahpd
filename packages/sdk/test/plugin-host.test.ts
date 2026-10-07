@@ -37,7 +37,7 @@ const contributed: Agent = {
   displayName: 'Contributed backend',
 };
 
-const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {} };
+const contribution: Contribution = { by: 'fixture', agents: [contributed], tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {}, closers: [] };
 
 it('answers whether it keeps a session, from the store and by the id in the URI', async () => {
   const store = memorySessions();
@@ -171,6 +171,7 @@ it('marks a contributed key dynamic only where something answers for it', () => 
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
 
   expect(options.sessionConfig?.computer).toMatchObject({ enumDynamic: true });
@@ -190,6 +191,7 @@ it('publishes a session setting a plugin contributed, with its value on the sess
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
   expect(problems).toEqual([]);
 
@@ -243,6 +245,7 @@ it('routes a completions request to whoever registered the key', async () => {
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
   const host = createHost(options);
   const client = host.accept(peer());
@@ -293,6 +296,7 @@ it('seeds a contributed key from its own answerer when a config is resolved', as
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
   const client = createHost(options).accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
@@ -337,6 +341,7 @@ it('answers the rest of the form when a seed fails', async () => {
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
   const client = createHost(options).accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
@@ -372,6 +377,7 @@ it('answers with nothing when the answerer fails', async () => {
     ports: {},
     providers: {},
     events: {},
+    closers: [],
   }]);
   const client = createHost(options).accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
@@ -398,6 +404,7 @@ it('advertises every scheme it serves on the handshake and on the root state', a
     ports: {},
     providers: { notes },
     events: {},
+    closers: [],
   }]);
 
   const host = createHost(options);
@@ -481,6 +488,7 @@ it('names a scheme that says nothing of itself, and keeps one built-in subject o
       file: { read: async () => ({ data: 'x', encoding: 'utf-8' as const }) },
     },
     events: {},
+    closers: [],
   }]);
 
   const client = createHost(options).accept(peer());
@@ -514,7 +522,7 @@ it('advertises only what a read-only provider implements', async () => {
   };
   const { options } = foldHostOptions(base(), [{
     by: 'fixture', agents: [], tools: [], sessionConfig: {}, sessionCompletions: {},
-    ports: {}, providers: { quiet }, events: {},
+    ports: {}, providers: { quiet }, events: {}, closers: [],
   }]);
   const client = createHost(options).accept(peer());
   const ready = await client.handle({
@@ -572,7 +580,7 @@ it('drops a clashing agent alone, and says which plugin lost the id', () => {
   const asAgents = (by: string, ...providers: string[]): Contribution => ({
     by,
     agents: providers.map((provider) => ({ ...echo({ path: '/x' }), provider })),
-    tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {},
+    tools: [], sessionConfig: {}, sessionCompletions: {}, ports: {}, providers: {}, events: {}, closers: [],
   });
   const folded = foldHostOptions({ ...base(), agents: [] }, [asAgents('a', 'x', 'y'), asAgents('b', 'y', 'z')]);
   expect(folded.options.agents?.map((one) => one.provider)).toEqual(['x', 'y', 'z']);

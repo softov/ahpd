@@ -467,6 +467,8 @@ A disposable machine's state lives in its profile's state volume, so a second di
 
 **A hand-written copy-in is paid on every create**, so a disposable profile prefers a state volume or a mount. A need delivered as a copy is paid again for every session's machine and lost with it, which is the opposite of what a profile picked per session wants.
 
+**Stopping the daemon stops the waiting, not the machines.** A machine a session has just left is read back before ahpd exits, so what it committed is on the host rather than only in a machine the next start finds. A removal that is already running is waited for before ahpd exits, so the machine it was removing is gone rather than half removed, and a disposal timer that has not fired yet is cleared, so nothing is removed after the daemon has gone. A machine with nobody in it is left exactly where it is. A later start reads those machines as any start does: the ones whose session it still holds are adopted, and their delay starts again when that session leaves. An inner host a dev container session started is ended with the daemon rather than left running in the machine.
+
 ## Agent state
 
 An agent declares its state directory as a state need, with the few host files that seed it:

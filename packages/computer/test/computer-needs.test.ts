@@ -11,6 +11,7 @@ import type { Part } from '../src/parts.js';
 import { dockerRuntime, stateVolumeOf } from '../src/runtime.js';
 import { revealed } from '../src/secrets.js';
 import { loadPlugins } from '../../server/src/plugins.js';
+import { closeAll, keeping } from './support/closing.js';
 import type { Agent } from '../../sdk/src/types/agent.js';
 import type { HostOptions, HostTool } from '../../sdk/src/types/host.js';
 import type { MachineNeed } from '../../sdk/src/types/machine.js';
@@ -33,8 +34,11 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
 let home: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Real timers first, then every load this test made, closed before its
+  // folder goes: a load on its own has already read what is out there.
   vi.useRealTimers();
+  await closeAll();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
@@ -95,10 +99,14 @@ interface Held {
 const configHome = (): string =>
   loose ?? (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-needs-config-')));
 
-const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vault?: Vault) => loadPlugins(
-  [{ name: SOURCE, options: pluginOptions }],
-  { base: base(agents, vault), configDir: configHome(), cwd: REPO, log: () => {} },
-);
+const load = async (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vault?: Vault) => {
+  const result = await loadPlugins(
+    [{ name: SOURCE, options: pluginOptions }],
+    { base: base(agents, vault), configDir: configHome(), cwd: REPO, log: () => {} },
+  );
+  keeping(result.options);
+  return result;
+};
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {
   write(uri: string, content: { data: string; encoding: string }, owner?: string): Promise<void>;
@@ -840,6 +848,7 @@ it('reads an agent need whose default names a secret, for the machine\'s owner a
     { base: base([agent('codex', DEFAULTED)], store), configDir: dir, cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
+  keeping(options);
 
   await written(options, 'ada', { profile: 'codex' }, 'user:ada');
   // The plain default is given at create; the vault's is never, and it is
@@ -1048,6 +1057,7 @@ const loadLogged = async (pluginOptions: Record<string, unknown>, vault: Vault) 
     { base: base([agent('claude', VAULTED)], vault), configDir: configHome(), cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   return { options, lines };
 };
 
@@ -1229,6 +1239,7 @@ const loadParts = async (
     { base: base(agents), configDir: configHome(), cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
+  keeping(options);
   return { options, lines };
 };
 

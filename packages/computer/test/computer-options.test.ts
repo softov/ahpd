@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { closeAll, keeping } from './support/closing.js';
 import { optionsSchema } from '../src/plugin.js';
 
 /*
@@ -46,19 +47,26 @@ const documented = (): string[] => {
  * `configDir` names, and a test that did that put a file in the repository.
  */
 let home: string | undefined;
-afterEach(() => {
+afterEach(async () => {
+  // Every load this test made, closed before its folder goes: a load on its
+  // own has already read what is out there and armed what it found.
+  await closeAll();
   if (home !== undefined) rmSync(home, { recursive: true, force: true });
   home = undefined;
 });
 
 const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-options-')));
 
-const load = (options: Record<string, unknown>) => loadPlugins([{ name: SOURCE, options }], {
-  base: { path: '/tmp/computer-options', agents: [echo({ path: '/tmp/computer-options' })] },
-  configDir: stateDir(),
-  cwd: REPO,
-  log: () => {},
-});
+const load = async (options: Record<string, unknown>) => {
+  const result = await loadPlugins([{ name: SOURCE, options }], {
+    base: { path: '/tmp/computer-options', agents: [echo({ path: '/tmp/computer-options' })] },
+    configDir: stateDir(),
+    cwd: REPO,
+    log: () => {},
+  });
+  keeping(result.options);
+  return result;
+};
 
 it('declares every option its README lists', () => {
   expect(declared()).toEqual(expect.arrayContaining(documented()));

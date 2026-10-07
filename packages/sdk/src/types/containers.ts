@@ -119,4 +119,17 @@ export interface ContainerPort {
    * what ends here is the relay, which is this host's own process.
    */
   disconnect(connectionId: string): void | Promise<void>;
+  /**
+   * Stop every relay this launcher started, and answer once they have ended.
+   *
+   * The daemon's own stop. A nested host left running is a process nobody is
+   * talking to and a container still holding pipes, so a launcher that started
+   * one ends it here rather than leaving it for the rest of the process's life
+   * - decision `a-plugin-is-told-when-the-host-closes`. The containers
+   * themselves stay, as they do for `disconnect`: what ends is the relay.
+   *
+   * Optional, because a launcher with no process of its own has nothing to
+   * end, and a caller that never closes one still stops the daemon.
+   */
+  close?(): Promise<void>;
 }

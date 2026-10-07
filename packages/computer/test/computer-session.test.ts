@@ -9,10 +9,12 @@ import { memoryPolicies } from '../../sdk/src/policies.js';
 import { memorySessions } from '../../sdk/src/sessions.js';
 import { fileUsers } from '../../sdk/src/users.js';
 import { acpAgent } from '../../agent-acp/src/index.js';
+import { closeAll, keeping } from './support/closing.js';
 import { idOf } from '../../sdk/src/catalog.js';
 import type { AutomationStore, StartSession } from '../../sdk/src/types/automations.js';
 import type { Bag } from '../../sdk/src/types/common.js';
 import type { ComputerPort } from '../../sdk/src/types/computers.js';
+import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { Policies } from '../../sdk/src/types/policies.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { SessionStore } from '../../sdk/src/types/sessions.js';
@@ -83,6 +85,9 @@ afterEach(async () => {
   for (const one of opened.splice(0)) {
     await one.client.handle({ method: 'disposeSession', params: { channel: one.uri } });
   }
+  // Then the hosts themselves: a session disposed is a backend that is still
+  // finishing, and a host closed is the end of it.
+  await closeAll();
 });
 
 /**
@@ -116,7 +121,7 @@ async function probe(options: {
 }) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-in-computer-'));
   const sessions = options.sessions ?? memorySessions();
-  const host = createHost({
+  const hostOptions = {
     path,
     agents: [harness(options)],
     sessions,
@@ -125,7 +130,9 @@ async function probe(options: {
     ...(options.users === undefined ? {} : { users: options.users }),
     ...(options.policies === undefined ? {} : { policies: options.policies }),
     ...(options.policiesCheck === undefined ? {} : { policiesCheck: options.policiesCheck }),
-  });
+  } as HostOptions;
+  const host = createHost(hostOptions);
+  keeping(hostOptions, host);
   const p = peer();
   const client = host.accept(p);
   await client.handle({

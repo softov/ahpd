@@ -1,6 +1,6 @@
 ---
 title: The computer plugin stops its timers and nested hosts on close
-status: todo
+status: done
 depends: [task-01-a-plugin-can-register-a-close.md]
 layer: "computer"
 refs:
@@ -36,3 +36,12 @@ After `host.close()` resolves, the computer plugin has no timer armed, no remova
 - `packages/computer/test/devcontainer.test.ts`: the launcher's `close()` ends a connected nested host. When it resolves, the sink has its close.
 
 ## Resume
+
+- `close?(): Promise<void>` went on `ContainerPort` in `packages/sdk/src/types/containers.ts`, optional the way `AutomationStore.close?` is. The port doubles in `container-relay.test.ts` and `containers.test.ts` implement none, and a launcher that owns no process has nothing to end.
+- `packages/computer/src/devcontainer.ts` gained a module-level `STOP_WAIT_MS` of 5000 and a `stop(child)` helper, both above `devContainer`. `stop` asks with `SIGTERM`, kills after the wait, and answers on the child's `close` rather than its `exit`. The relay reports the ending on `close`, so a caller with this answered has the sink's close too. `close()` runs `stop` over `[...live.values()]`, a copy because each ending takes its own entry out of the map.
+- `packages/computer/src/plugin.ts`: `closed` and `removals` sit beside `disposables`. `arm` and `watch` return early once closed. Each removal's own promise is kept in `removals` for as long as it runs, so the closer can wait for it.
+- The closer is registered at the end of `apply`. It sets `closed` first, awaits `listing`, clears every timer in `disposables`, awaits the removals in flight, then closes the launcher. The flag is set first because the startup scan arms a leftover machine as it finds one.
+- `relay` is now declared above the container block as `let relay: ContainerPort | undefined`, with `const launcher = devContainer(...)` inside it, because the closer needs the launcher and the block is conditional.
+- Tests: `packages/computer/test/computer-close.test.ts` is new, with the three cases the task names. `devcontainer.test.ts` gained `ends the host inside on close, and answers once it has gone`, so it holds 37. Emptying the closer's body makes all three of the new file's cases fail.
+- The session case waits for the machine's own teardown before it closes. What a machine committed is read back behind the dispose, so a close right after one lands in the middle of that work. `quiet(state)` waits until the record has stopped growing for five polls of 50ms.
+- `pnpm typecheck` from the root passes, and `npx vitest run packages/computer` passes with 395 tests.

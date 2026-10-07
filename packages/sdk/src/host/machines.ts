@@ -15,6 +15,7 @@ export interface Machines {
   sessionMachines: Map<string, { source: string; machine: string }>;
   enteredIn: Map<string, string>;
   inMachine(id: string | undefined, uri: string, entering: boolean): void;
+  settled(): Promise<void>;
   bringBackOf(uri: string): Promise<BroughtBack | undefined>;
   followOf(uri: string): Promise<void>;
   leaveForgotten(uri: string, config: Record<string, unknown> | undefined): void;
@@ -131,25 +132,55 @@ export function createMachines(ctx: HostContext): Machines {
   const enteredIn = new Map<string, string>();
 
   /**
+   * The enters and the leaves this host started and has not seen finish.
+   *
+   * Kept so that a close can wait for them: a port's own calls land after the
+   * answer that asked for them, and a folder removed while one is in flight is
+   * a removal of a folder something is still writing into.
+   */
+  const inFlight = new Set<Promise<void>>();
+
+  /**
    * Tell the port that a session is in a machine, or that it is not any more.
    *
    * The port may do work before it answers - a plugin that finds its machines
    * by listing them at startup cannot count a session into one it has not found
    * yet - so either may answer a promise, and a promise nobody waits on that
    * throws takes this process down rather than losing one machine's count.
-   * Nothing here is held up by it either: a session starting is not a session
-   * that failed because a plugin's own bookkeeping did.
+   * Nothing that starts a session or ends one is held up by it either: a
+   * session starting is not a session that failed because a plugin's own
+   * bookkeeping did. The promise is kept, and `settled` is what waits for it.
    */
   const inMachine = (id: string | undefined, uri: string, entering: boolean): void => {
     if (id === undefined) return;
     // Asked inside a promise rather than around a call, because a port that
     // throws before it answers is the same failure as one that rejects after,
     // and a `try` around the call would have caught only the first of them.
-    void Promise.resolve()
+    const done: Promise<void> = Promise.resolve()
       .then(() => (entering ? options.computers?.enter?.(id, uri) : letGo(id, uri)))
       .catch((error: unknown) => {
         ctx.log(`computers: ${entering ? 'enter' : 'leave'} of ${id} for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
-      });
+      })
+      .then(() => { inFlight.delete(done); });
+    inFlight.add(done);
+  };
+
+  /**
+   * Wait until every enter and leave this host started has finished.
+   *
+   * A session's start and its leaving are not held up by the port, so what a
+   * leave does - reading the machine's work out, and reading the machine again
+   * - lands after the call that asked for it. A host that closes waits here, so
+   * what a daemon leaves behind is a machine nothing is still reading rather
+   * than a removal in the middle of one - decision
+   * `a-plugin-is-told-when-the-host-closes`.
+   *
+   * The set is looked at again after each round, so nothing started while this
+   * waited is left behind. A failure is already a line in the log by the time
+   * its promise settles, so nothing here throws.
+   */
+  const settled = async (): Promise<void> => {
+    while (inFlight.size > 0) await Promise.all([...inFlight]);
   };
 
   /**
@@ -412,5 +443,5 @@ export function createMachines(ctx: HostContext): Machines {
     config.computer = machine;
   };
 
-  return { sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
+  return { sessionMachines, enteredIn, inMachine, settled, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
 }

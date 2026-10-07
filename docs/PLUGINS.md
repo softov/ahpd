@@ -138,6 +138,7 @@ against its contract before it is recorded.
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |
 | `registerRoute(handler)` | register, open key | one HTTP route served on this host's own listener, under `/plugins/<name>/` |
+| `registerClose(close)` | register, open key | one function the host runs when it closes, once its sessions have closed and before its stores do |
 
 ### A route authenticates its own caller
 
@@ -162,6 +163,21 @@ The path reaches your handler whole, prefix and all, so `new URL(request.url).pa
 A route is served whether `http` is on or off, and on the daemon's own port rather than one of its own, so a tunnel forwards it like everything else here and no second port is opened for you. `/api` is unaffected.
 
 A handler that throws is answered 500 with the shape of the failure, its reason goes to the daemon's log against your plugin's name, and the daemon keeps serving.
+
+### A plugin is told when the host closes
+
+`registerClose(close)` takes a function the host runs once, when it closes: after every session has closed and before the stores do. That is where a plugin stops the work it owns and nothing else knows about, a timer it armed, a removal it started, a process it spawned. A plugin that leaves that work running leaves it running for the rest of the daemon's life.
+
+```ts
+export const apply: Plugin['apply'] = (host) => {
+  const timer = setTimeout(sweep, 60_000);
+  host.registerClose(() => { clearTimeout(timer); });
+};
+```
+
+A function may answer a promise, and the host waits for it before it closes its stores. A plugin with a removal or a child process still running waits for it here, rather than answering while it writes into something the daemon is taking away.
+
+Called more than once, each function is kept and each runs, in the order they were registered. A failure is logged against your plugin's name and does not stop the next plugin's close. A plugin that registered none is not asked for one: having nothing to stop is the ordinary case.
 
 ### What a backend needs from a machine
 
