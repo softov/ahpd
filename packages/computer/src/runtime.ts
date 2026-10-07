@@ -527,6 +527,26 @@ export interface ComputerRuntime {
    */
   exec(id: string, command: string[], env?: Record<string, string>, provider?: string): Promise<ExecResult>;
   /**
+   * Host paths written into a machine, each at the path it already has.
+   *
+   * A host file a session is handed by path is a file only if the machine holds
+   * one at that path, and a running machine takes no new mount - decision
+   * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. The copy is
+   * read-only, so nothing inside a machine writes over what it was handed, and
+   * the folder above each path is made on the way in.
+   *
+   * A machine that is not there, or is not running, is an error: there is no
+   * copy to be had, and a caller reads the runtime's own sentence.
+   */
+  putIn(id: string, paths: string[]): Promise<void>;
+  /**
+   * Host paths taken back out of a machine, with whatever is under them.
+   *
+   * What a session's folder is removed with when the session goes: the copy is
+   * this host's, made for one session, and nothing else in the machine reads it.
+   */
+  takeOut(id: string, paths: string[]): Promise<void>;
+  /**
    * Bring the commits a machine made in a git directory of its own back into
    * the host's repository, and answer what became of them.
    *
@@ -3209,6 +3229,34 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
+    },
+
+    /*
+     * Host files written into a machine, each at the path it already has.
+     *
+     * As root, in one command: the machine's own user cannot make the folders
+     * above a path this host chose - `/home/softov/...` inside a container
+     * belongs to root - and a file the machine's user owns is one it could
+     * write over, which is the whole of what read-only means here. The bytes
+     * arrive on the command's own input, so a file of any size crosses as one
+     * stream rather than as part of a command line.
+     */
+    putIn: async (id, paths) => {
+      const at = await containerOrFail(id);
+      for (const path of paths) {
+        const bytes = readFileSync(path);
+        await must(
+          ['exec', '-i', '--user', '0', at, 'sh', '-c', 'mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 0444 "$1"', 'sh', path],
+          undefined,
+          bytes,
+        );
+      }
+    },
+
+    /** The same paths, taken back out with whatever is under them, as root too. */
+    takeOut: async (id, paths) => {
+      const at = await containerOrFail(id);
+      for (const path of paths) await must(['exec', '--user', '0', at, 'rm', '-rf', path]);
     },
 
     /** What a machine committed, brought back by fetch: `bringBackOfMachine`. */

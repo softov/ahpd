@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync } from 'node:fs';
 import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { idOf } from '../catalog.js';
 import { computerId, computerSource, machineRefusal, openComputer } from '../computers.js';
 import { RpcError } from '../rpc.js';
 import type { Scope } from '../scopes.js';
@@ -15,6 +16,8 @@ export interface Machines {
   sessionMachines: Map<string, { source: string; machine: string }>;
   enteredIn: Map<string, string>;
   inMachine(id: string | undefined, uri: string, entering: boolean): void;
+  putIn(uri: string, paths: string[]): Promise<void>;
+  takeOut(id: string | undefined, uri: string): void;
   settled(): Promise<void>;
   bringBackOf(uri: string): Promise<BroughtBack | undefined>;
   followOf(uri: string): Promise<void>;
@@ -106,7 +109,7 @@ const notOwn = (found: GitDir, made: { repository: string } | undefined): string
 };
 
 export function createMachines(ctx: HostContext): Machines {
-  const { options, agents, charged, checked } = ctx;
+  const { options, agents, charged, checked, kept } = ctx;
 
   /**
    * The machine a session made from a source, and the source it named.
@@ -141,28 +144,77 @@ export function createMachines(ctx: HostContext): Machines {
   const inFlight = new Set<Promise<void>>();
 
   /**
-   * Tell the port that a session is in a machine, or that it is not any more.
+   * A call this host made to the port, kept until it answers.
    *
    * The port may do work before it answers - a plugin that finds its machines
    * by listing them at startup cannot count a session into one it has not found
-   * yet - so either may answer a promise, and a promise nobody waits on that
+   * yet - so a call may answer a promise, and a promise nobody waits on that
    * throws takes this process down rather than losing one machine's count.
    * Nothing that starts a session or ends one is held up by it either: a
    * session starting is not a session that failed because a plugin's own
    * bookkeeping did. The promise is kept, and `settled` is what waits for it.
+   *
+   * Asked inside a promise rather than around a call, because a port that
+   * throws before it answers is the same failure as one that rejects after, and
+   * a `try` around the call would have caught only the first of them.
    */
-  const inMachine = (id: string | undefined, uri: string, entering: boolean): void => {
-    if (id === undefined) return;
-    // Asked inside a promise rather than around a call, because a port that
-    // throws before it answers is the same failure as one that rejects after,
-    // and a `try` around the call would have caught only the first of them.
+  const watched = (what: string, work: () => unknown): void => {
     const done: Promise<void> = Promise.resolve()
-      .then(() => (entering ? options.computers?.enter?.(id, uri) : letGo(id, uri)))
+      .then(work)
       .catch((error: unknown) => {
-        ctx.log(`computers: ${entering ? 'enter' : 'leave'} of ${id} for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
+        ctx.log(`computers: ${what} failed: ${error instanceof Error ? error.message : String(error)}`);
       })
       .then(() => { inFlight.delete(done); });
     inFlight.add(done);
+  };
+
+  /** Tell the port that a session is in a machine, or that it is not any more. */
+  const inMachine = (id: string | undefined, uri: string, entering: boolean): void => {
+    if (id === undefined) return;
+    watched(
+      `${entering ? 'enter' : 'leave'} of ${id} for ${uri}`,
+      () => (entering ? options.computers?.enter?.(id, uri) : letGo(id, uri)),
+    );
+  };
+
+  /**
+   * The files a message names, put into the machine its session runs in.
+   *
+   * A message's attachment is a file this host wrote and the message names it
+   * by path, so a session in a machine reads it only once the machine holds one
+   * at the same path - decision
+   * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. Awaited by
+   * the caller, because the model's next turn is the thing that reads the path:
+   * this is the one call here that is not bookkeeping and is not left behind.
+   *
+   * A session in no machine has nothing to copy into. A port that fails is a
+   * line and nothing more: the message is worth sending either way, and the
+   * file it names is on this host whatever the machine has.
+   */
+  const putIn = async (uri: string, paths: string[]): Promise<void> => {
+    const named = ctx.heldAs(uri);
+    const id = enteredIn.get(named);
+    if (id === undefined || paths.length === 0) return;
+    try {
+      await options.computers?.putIn?.(id, paths);
+    }
+    catch (error) {
+      ctx.log(`computers: putting a message's attachments into ${id} for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  /**
+   * A gone session's attachments folder, taken back out of its machine.
+   *
+   * A session being removed is the one moment this is asked, and the machine is
+   * named rather than read back out of `enteredIn`, as `letGo`'s is. In flight
+   * like an enter or a leave, so a host that closes waits for it rather than
+   * leaving a machine writing into a folder something is removing.
+   */
+  const takeOut = (id: string | undefined, uri: string): void => {
+    const folder = kept.attachmentsDir?.(idOf(uri));
+    if (id === undefined || folder === undefined) return;
+    watched(`taking ${folder} out of ${id} for ${uri}`, () => options.computers?.takeOut?.(id, [folder]));
   };
 
   /**
@@ -443,5 +495,5 @@ export function createMachines(ctx: HostContext): Machines {
     config.computer = machine;
   };
 
-  return { sessionMachines, enteredIn, inMachine, settled, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
+  return { sessionMachines, enteredIn, inMachine, putIn, takeOut, settled, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
 }

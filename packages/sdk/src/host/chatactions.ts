@@ -1,5 +1,6 @@
 import { idOf, Status } from '../catalog.js';
 import { localPath } from '../fileuri.js';
+import { filesOf, needsWriting, snapshot } from './attachments.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
@@ -31,10 +32,44 @@ export function chatAction(
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, connections,
     contributedDefaults, decided, described, dispatch, drafts, fire, first, keepProvider, kept,
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
-    ownerFor, owners, past, principalFor, propertyOf, renameChat, restart, restartChat, restarting,
+    ownerFor, owners, past, principalFor, propertyOf, putIn, renameChat, restart, restartChat, restarting,
     rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf, storedConfig,
     summaryMoved, value, waitingFor, wheres,
   } = ctx;
+
+  /** The message an action carries, which its text and its attachments ride on. */
+  const messageOf = (one: Record<string, unknown>): Record<string, unknown> =>
+    (typeof one.message === 'object' && one.message !== null ? one.message : {}) as Record<string, unknown>;
+  /**
+   * A message whose attachments are files before anything reads them.
+   *
+   * The bytes a client pasted are written under the session's own folder and
+   * the message names them, so what is applied, stored and echoed is the path
+   * - decision
+   * `an-attachments-bytes-are-written-to-disk-and-the-message-names-the-file`.
+   * A store that keeps no files has no folder to write into, and every message
+   * is then the one that arrived.
+   *
+   * A session running in a machine is handed the files it was told about, at
+   * the paths the message names, so a path is a file on both sides - decision
+   * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. The copy
+   * comes after the writing and before the action is applied, which is where
+   * the machine's session is handed the same paths this one read. A copy that
+   * fails is said in a line and the message goes on: the bytes are here
+   * whether or not the machine took its copy of them.
+   */
+  const settledMessage = async (message: Record<string, unknown>, uri: string): Promise<Record<string, unknown>> => {
+    const settled = await snapshot({
+      message,
+      id: idOf(uri),
+      store: kept,
+      connection,
+      onProblem: (line) => log(`${uri}: ${line}`),
+    });
+    const dir = kept.attachmentsDir?.(idOf(uri));
+    if (dir !== undefined) await putIn(uri, filesOf(settled, dir));
+    return settled;
+  };
 
   /*
    * A worker's chat is read-only, whichever side of a restart it is on.
@@ -51,6 +86,37 @@ export function chatAction(
   if (worker && !WORKER_ACTIONS.has(type)) {
     refuse(connection.peer, channel, action, origin, `${channel} is a read-only subagent chat`);
     return;
+  }
+  /*
+   * A message's attachments, written before the action is applied.
+   *
+   * A pasted picture arrives as its own bytes and a file only the client has
+   * does not arrive at all, so both are written under the session's own folder
+   * and the message names them - decision
+   * `an-attachments-bytes-are-written-to-disk-and-the-message-names-the-file`.
+   * Here, ahead of everything else this action does, because a session resumed
+   * for it reads a transcript and a turn started by it runs a model, and
+   * neither should be reached with bytes the host means to write.
+   *
+   * Writing them is a file's worth of work, so the action waits and this
+   * connection's later dispatches wait behind it: a client that sends a
+   * message and then a stop means that order. The settled action goes back
+   * through `conn.applyNow`, which applies it as this client's own dispatch -
+   * so everything the turn causes still carries the `clientSeq` the client
+   * sent, exactly as if the message had arrived naming a file.
+   *
+   * A message with nothing to write is applied here and now, in the tick it
+   * arrived in, which is every message that carries no attachment.
+   */
+  if ((type === 'chat/turnStarted' || type === 'chat/pendingMessageSet')) {
+    const uri = sessionFor(channel);
+    const message = messageOf(action);
+    if (needsWriting(message, kept, idOf(uri))) {
+      return settledMessage(message, uri).then((settled) => {
+        if (!connections.has(connection)) return;
+        return conn.applyNow({ ...params, action: { ...action, message: settled } }, origin);
+      });
+    }
   }
   /*
    * Which chat a client action is about.
@@ -877,7 +943,7 @@ export function chatAction(
           no('This backend cannot take a message mid-turn');
           break;
         }
-        if (!session.steer(String(action.id ?? ''), String(message.text ?? ''))) {
+        if (!session.steer(String(action.id ?? ''), String(message.text ?? ''), messageAttachments(message))) {
           no('Nothing is running in this chat to steer');
         }
         break;
@@ -900,6 +966,7 @@ export function chatAction(
           messageFrom(message),
           connection,
           String(action.id ?? ''),
+          messageAttachments(message),
         ),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );

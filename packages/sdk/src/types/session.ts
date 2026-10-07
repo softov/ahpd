@@ -358,10 +358,14 @@ export interface Session {
    * running has nothing to inject into, and the caller says so rather than
    * quietly turning it into an ordinary message.
    *
+   * `attachments` are the message's own, as `begin` takes them: the files the
+   * host wrote for whatever the client pasted, which is what the correction is
+   * about as often as the words are.
+   *
    * Optional. A backend that cannot take a message mid-turn leaves it out,
    * and this host refuses steering for that backend with that as the reason.
    */
-  steer?(id: string, text: string): boolean;
+  steer?(id: string, text: string, attachments?: MessageAttachment[]): boolean;
 
   /**
    * Start a turn with what was said, optionally naming a model.
@@ -408,8 +412,12 @@ export interface Session {
    * The queue is the session's, not a client's: a client that held a message
    * would be the only thing that could ever send it, and nothing in a client
    * watches for a turn to end. The same `id` twice edits what is waiting.
+   *
+   * `attachments` are the message's own, as `begin` takes them, and are held
+   * with it: a picture pasted into a message that waits its turn is still a
+   * picture when the turn comes.
    */
-  queue(id: string, text: string, model?: Chosen, from?: MessageFrom): void;
+  queue(id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]): void;
   /** Take one back, while it is still waiting. */
   unqueue(id: string): void;
   /**

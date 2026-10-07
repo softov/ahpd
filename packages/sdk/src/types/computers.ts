@@ -327,6 +327,34 @@ export interface ComputerPort {
    */
   follow?(id: string): Promise<void>;
   /**
+   * Host files put into a machine, each at the path it already has.
+   *
+   * A message's attachment is a file this host wrote and the message names it
+   * by path, so a session running in a machine reads that file only if the
+   * machine holds one at the same path - decision
+   * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. A running
+   * machine takes no new mount, and a machine an operator made ahead of time
+   * belongs to no session, so the files arrive one message at a time instead.
+   * Read-only, because the bytes are a copy of what somebody sent.
+   *
+   * A copy that cannot be made is thrown, and the caller says so in a line: the
+   * message still goes, with a path the machine cannot read and nothing worse.
+   * Absent on a port that cannot write into a machine, which is a host whose
+   * machines never hold a session's attachments.
+   */
+  putIn?(id: string, paths: string[]): Promise<void>;
+  /**
+   * Host paths taken back out of a machine, with whatever is under them.
+   *
+   * Asked when the session they were made for is gone: the copy is this host's
+   * and belongs to one session, and a machine that outlives it is not one to
+   * leave a person's files in. A machine that has gone with the session is
+   * nothing to do, and one that is not running cannot be reached.
+   *
+   * Absent on a port that cannot write into a machine, as `putIn` is.
+   */
+  takeOut?(id: string, paths: string[]): Promise<void>;
+  /**
    * Make a machine from a source a session named, and answer its id.
    *
    * The host calls this once, before the session's backend is started, when

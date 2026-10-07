@@ -819,7 +819,33 @@ if (verb === 'exec') {
     process.exit(1);
   }
   const said = command.join(' ');
-  (held.commands ??= []).push({ id, ...(user === undefined ? {} : { user }), ...(workdir === undefined ? {} : { workdir }), env, command, dockerEnv: dockerNames() });
+  /*
+   * A command this fixture runs for real keeps the pipe it was started with,
+   * so whether it is one is read here, before stdin is touched.
+   */
+  const runnable = (held.passthrough ?? []).find((prefix) => said.includes(prefix));
+  /*
+   * The bytes on the command's own input, which is how a file is written into
+   * a machine. Read to the end only for a command a test lists in
+   * `inputCommands`, because a caller may keep this pipe open for the whole
+   * life of the process it started - the host that runs inside a dev container
+   * does - and a read to the end would never finish. Anything else is drained,
+   * so a caller that writes is not left waiting on a pipe nobody reads.
+   */
+  let input;
+  if (runnable === undefined) {
+    if ((held.inputCommands ?? []).some((prefix) => said.includes(prefix))) input = (await readStdin()).toString('base64');
+    else process.stdin.resume();
+  }
+  (held.commands ??= []).push({
+    id,
+    ...(user === undefined ? {} : { user }),
+    ...(workdir === undefined ? {} : { workdir }),
+    env,
+    command,
+    dockerEnv: dockerNames(),
+    ...(input === undefined ? {} : { input }),
+  });
 
   // The probe the derivation runs: its markers around what the user's shell was
   // holding, NUL-separated as `/proc/self/environ` prints it.
@@ -884,7 +910,6 @@ if (verb === 'exec') {
   }
   // Recorded and answered, never run: the line starts the host program, and
   // the host here is a fake that would serve stdio instead of installing.
-  const runnable = (held.passthrough ?? []).find((prefix) => said.includes(prefix));
   if (runnable === undefined) {
     process.stdout.write(held.execOut ?? '');
     keep();

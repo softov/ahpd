@@ -120,7 +120,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, flushDeltas, log, fire, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
-    sessionMachines, enteredIn, inMachine, placedIn, followOf,
+    sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
     isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
     spawn, keepTitle, keepProvider,
@@ -218,6 +218,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // And the tools server this session opened, which stops answering with it.
     ctx.toolsServersGone(uri);
     if (gone !== undefined) stopUnwatched(gone);
+    const left = enteredIn.get(uri);
+    /*
+     * And the session's own files, taken back out of that machine.
+     *
+     * What a session in a machine was handed, one message at a time, is this
+     * host's copy made for that one session - decision
+     * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. A machine
+     * another session is still in keeps nothing of the one that has gone, and
+     * a machine that has gone with the session is nothing to take anything out
+     * of. Asked before the leave below, because a machine whose last session
+     * this is may start its own countdown the moment it hears that.
+     */
+    takeOut(left, uri);
     /*
      * And the machine it was running in, told that this session has left.
      *
@@ -232,7 +245,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * every one of them starts in. The session a daemon adopted a machine for
      * and never ran is let go by the listing that stops finding it.
      */
-    const left = enteredIn.get(uri);
     inMachine(left, uri, false);
     enteredIn.delete(uri);
     sessionMachines.delete(uri);
@@ -888,7 +900,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       if (command === '' || !options.terminals) {
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments);
-        else session.queue(queuedAs, text, model, from);
+        else session.queue(queuedAs, text, model, from, attachments);
         return undefined;
       }
       if (!session.ran) return `${provider} cannot run a command in a turn; use a terminal instead`;

@@ -80,6 +80,10 @@ const fake = () => {
     // And nothing to hand over either: a machine that commits in the host's own
     // git directory is already where the host is.
     follow: async (id) => { calls.push(`follow ${id}`); },
+    // A file written in and a folder taken out, which is what the provider asks
+    // for a session's attachments - recorded here, and nothing more.
+    putIn: async (id, paths) => { calls.push(`putIn ${id} ${paths.join(',')}`); },
+    takeOut: async (id, paths) => { calls.push(`takeOut ${id} ${paths.join(',')}`); },
     capabilities: () => ({
       runtime: 'docker',
       actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],

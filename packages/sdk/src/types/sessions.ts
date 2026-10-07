@@ -152,6 +152,24 @@ export interface SessionStore {
   /** Replace them. Empty forgets them, which is what removing the last one means. */
   setArtifacts(id: string, values: Record<string, unknown>[]): void;
   /**
+   * Where this session's attachments are kept, or nothing where this store
+   * keeps no files.
+   *
+   * A client pastes a picture and the host writes the bytes here before the
+   * message they belong to is applied, so what travels from then on is the
+   * path - decision
+   * `an-attachments-bytes-are-written-to-disk-and-the-message-names-the-file`.
+   * The store answers rather than the host because the store is what owns the
+   * directory a session's own file is written in, and a folder beside it is
+   * the same decision made again.
+   *
+   * Optional: a store that keeps nothing answers nothing, and every message
+   * goes on exactly as it arrived. A store that answers is a store whose
+   * `forget` removes the folder with the session, since a folder holding the
+   * bytes of a session that is gone is a folder nothing will ever read.
+   */
+  attachmentsDir?(id: string): string | undefined;
+  /**
    * The pull requests this session inherited and the ones it made its own,
    * or nothing where its branch was never asked about.
    *

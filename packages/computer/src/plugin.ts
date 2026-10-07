@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
 import { resolveNeeds, secretRef } from '@ahpd/sdk';
@@ -332,6 +333,26 @@ const within = (held: Record<string, unknown>, path: string): string | undefined
   const rest = path.slice(best.source.length);
   if (rest === '') return best.target;
   return `${best.target.endsWith('/') ? best.target.slice(0, -1) : best.target}${rest}`;
+};
+
+/** The folder a session's own files are under, as the host names it. */
+const ATTACHMENTS = 'attachments';
+
+/**
+ * Whether a path is one a session's attachments live under.
+ *
+ * The host writes them at `<its own state folder>/attachments/<session>/...`,
+ * and that is the only shape this plugin writes into a machine or removes from
+ * one. A path that is a folder named `attachments`, or the folder above it, is
+ * not one the host named for a session, and removing it would take every
+ * session's files with it. The path is resolved first, so a removal that
+ * reaches above the folder is no more one of these than any other path is.
+ */
+const underAttachments = (path: string): boolean => {
+  if (!isAbsolute(path)) return false;
+  const parts = resolve(path).split(sep);
+  const at = parts.lastIndexOf(ATTACHMENTS);
+  return at >= 0 && at < parts.length - 1;
 };
 
 export const apply: Plugin['apply'] = (host, options) => {
@@ -1277,12 +1298,49 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const follow: NonNullable<ComputerPort['follow']> = async (id) => made.follow(id);
 
+  /**
+   * The paths a machine is reached with, and a line for each that is not one.
+   *
+   * The port is asked with paths the host built, and this is what keeps it that
+   * way: a path outside a session's own folder reaches no machine, so nothing
+   * else on this host is written into one or removed from one.
+   */
+  const onlyAttachments = (paths: string[], refusing: (one: string) => string): string[] =>
+    paths.filter((one) => {
+      if (underAttachments(one)) return true;
+      host.log(refusing(one));
+      return false;
+    });
+
+  /**
+   * A message's files, written into the machine its session runs in.
+   *
+   * The runtime's own call, under the id a caller holds: a file arriving on a
+   * command's input, as root, and read-only once it is there is the runtime's
+   * business - decision
+   * `a-session-in-a-machine-gets-each-attachment-copied-into-it`. Two sessions
+   * in one machine each get their own, because the paths are the ones this host
+   * wrote and they are per session.
+   */
+  const putIn: NonNullable<ComputerPort['putIn']> = async (id, paths) => {
+    const wanted = onlyAttachments(paths, (one) => `${name}: not writing ${one} into ${id}: it is not a session's attachments path`);
+    if (wanted.length > 0) await made.putIn(id, wanted);
+  };
+
+  /** The same paths taken back out, which is a removal and nothing more. */
+  const takeOut: NonNullable<ComputerPort['takeOut']> = async (id, paths) => {
+    const wanted = onlyAttachments(paths, (one) => `${name}: not removing ${one} from ${id}: it is not a session's attachments path`);
+    if (wanted.length > 0) await made.takeOut(id, wanted);
+  };
+
   host.registerComputers({
     how: reach,
     nested: nestedHost,
     nestedDelete,
     bringBack,
     follow,
+    putIn,
+    takeOut,
     /*
      * The agents one was prepared for, read back from its own label.
      *

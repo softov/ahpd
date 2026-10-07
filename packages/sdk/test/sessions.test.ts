@@ -9,9 +9,9 @@
  * file.
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { PAGE } from '../src/paging.js';
@@ -613,6 +613,56 @@ it('keeps which harness a session runs on across a restart, and forgets it with 
   await new Promise((tick) => { setTimeout(tick, 5); });
   expect(row(dir, 'b')).toBeUndefined();
   expect(memorySessions().provider('a')).toBeUndefined();
+});
+
+it('keeps a session\'s attachments in a folder of its own, whatever the id says', () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  const attachments = join(dir, 'attachments');
+  /*
+   * An id is an opaque key, and three of them name the folder they are written
+   * in rather than one under it: `.` is that folder, `..` is the one above it,
+   * and an empty id names the folder itself. A session called any of the three
+   * keeps its attachments among every session's, or beside the sessions
+   * directory, where removing it takes the lot. So each gets a folder of its
+   * own, and a name no other id produces.
+   */
+  const ids = ['..', '.', 'a/../..', ''];
+  const folders = ids.map((id) => store.attachmentsDir?.(id));
+  for (const folder of folders) {
+    expect(typeof folder).toBe('string');
+    // Directly under the root, which is what strictly inside it means.
+    expect(dirname(folder as string)).toBe(attachments);
+  }
+  expect(new Set(folders).size).toBe(ids.length);
+});
+
+it('removes a session\'s own attachments with it, and no other session\'s', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  // One session nobody removes: its row, its folder and the file in it are what
+  // a removal of another session has to leave where they are.
+  store.setFlags('keep', READ);
+  const kept = store.attachmentsDir?.('keep') as string;
+  mkdirSync(kept, { recursive: true });
+  writeFileSync(join(kept, 'shot.png'), 'png');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+
+  const ids = ['..', '.', 'a/../..', ''];
+  for (const id of ids) {
+    const folder = store.attachmentsDir?.(id) as string;
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'shot.png'), 'png');
+    store.forget(id);
+  }
+  await new Promise((tick) => { setTimeout(tick, 5); });
+
+  expect(existsSync(dir)).toBe(true);
+  expect(existsSync(join(dir, 'keep.json'))).toBe(true);
+  expect(existsSync(join(kept, 'shot.png'))).toBe(true);
+  for (const id of ids) {
+    expect(existsSync(store.attachmentsDir?.(id) as string)).toBe(false);
+  }
 });
 
 it('reads a row written before harnesses were kept as one nothing was recorded for', () => {

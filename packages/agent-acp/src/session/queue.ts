@@ -189,7 +189,8 @@ export function createQueue(ctx: SessionContext): Queue {
       String(message.text ?? ''),
       next.model as Chosen | undefined,
       next.from as MessageFrom | undefined,
-      // A queued message carries no attachments: `Session.queue` takes none.
+      // Nothing here holds a queued message's attachments, so the turn this
+      // becomes carries its text alone.
       undefined,
       String(next.id),
     );

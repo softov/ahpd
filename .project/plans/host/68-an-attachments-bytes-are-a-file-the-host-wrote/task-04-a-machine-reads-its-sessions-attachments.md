@@ -1,37 +1,53 @@
 ---
 title: A session in a machine reads its attachments at the path the host wrote
-status: todo
+status: done
 depends: [task-01-an-attachment-becomes-a-file-the-host-wrote.md]
 layer: "computer"
 refs:
-  - "[code://packages/computer/src/gitdir.ts#L97-L104](../../../../packages/computer/src/gitdir.ts#L97-L104) - `GitBind`, a bind with `readOnly`, the shape to reuse"
-  - "[code://packages/computer/src/gitdir.ts#L313](../../../../packages/computer/src/gitdir.ts#L313) - `gitMounts`, where a machine's binds are put together"
-  - "[code://packages/computer/src/runtime.ts](../../../../packages/computer/src/runtime.ts) - where a machine is made with its binds"
-  - "[code://packages/computer/src/plugin.ts#L1593](../../../../packages/computer/src/plugin.ts#L1593) - `enter`, a session entering a machine that already exists"
+  - "[code://packages/sdk/src/host/attachments.ts#L102-L120](../../../../packages/sdk/src/host/attachments.ts#L102-L120) - `filesOf`, the files a message names under the session's own folder"
+  - "[code://packages/sdk/src/host/chatactions.ts#L43-L72](../../../../packages/sdk/src/host/chatactions.ts#L43-L72) - `settledMessage`, where the files are written and then handed over"
+  - "[code://packages/sdk/src/host/machines.ts#L180-L218](../../../../packages/sdk/src/host/machines.ts#L180-L218) - `putIn` and `takeOut`, which hold the machine and the folder"
+  - "[code://packages/sdk/src/types/computers.ts#L329-L356](../../../../packages/sdk/src/types/computers.ts#L329-L356) - the port the host reaches a machine's files through"
+  - "[code://packages/computer/src/runtime.ts#L3234-L3260](../../../../packages/computer/src/runtime.ts#L3234-L3260) - the copy as one `docker exec` per file, as root, read-only"
+  - "[code://packages/computer/src/plugin.ts#L1280-L1302](../../../../packages/computer/src/plugin.ts#L1280-L1302) - the plugin's own `putIn` and `takeOut`, and where they are registered"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L221-L233](../../../../packages/sdk/src/host/lifecycle.ts#L221-L233) - a removed session's folder taken back out of its machine"
 ---
 
 ## Objective
 
-A machine made for a session binds that session's attachments folder, `<sessions dir>/attachments/<session>`, read-only at the same path.
-A path that `partsOf` names resolves to the same file inside the machine as on the host.
+A session running in a machine is handed each file its message names, at the path the host wrote, read-only.
+The copy is made after the files are written and before the action is applied.
+The session's folder goes out of the machine when the session is removed.
 
 ## Files
 
-- `UPDATE: packages/computer/src/runtime.ts` - when a machine is made for a session, add one read-only bind of the session's attachments folder at its own path. Create the folder first if it does not exist, so the bind has a source.
-- `UPDATE: packages/computer/src/devcontainer.ts` - the same bind for a dev container, in the form its CLI takes.
-- `CREATE: packages/computer/test/computer-attachments.test.ts` - the cases below.
+- `CREATE: packages/sdk/src/host/attachments.ts` - `filesOf`, the settled message's files under the session's own folder.
+- `UPDATE: packages/sdk/src/host/chatactions.ts` - `settledMessage` awaits the copy before it applies the action.
+- `UPDATE: packages/sdk/src/host/machines.ts` - `putIn` and `takeOut` on `Machines`, and the promise plumbing both ride.
+- `UPDATE: packages/sdk/src/host/lifecycle.ts` - `teardown` takes the folder out of the machine the session was in.
+- `UPDATE: packages/sdk/src/types/computers.ts` - `ComputerPort.putIn?` and `takeOut?`, so `sdk` reaches a machine without importing the plugin.
+- `UPDATE: packages/computer/src/runtime.ts` - `ComputerRuntime.putIn` and `takeOut`, as root, one `docker exec` per file.
+- `UPDATE: packages/computer/src/plugin.ts` - the two on `registerComputers`.
+- `CREATE: packages/computer/test/computer-attachments.test.ts` and `packages/sdk/test/host-machine-attachments.test.ts`.
 
 ## Steps
 
-1. Find the code that makes a machine for a session. It must know the session and the host's sessions directory.
-2. Add the bind with the existing bind shape, `readOnly: true`.
-3. A running container takes no new mount. So a session that enters a machine made for another session gets no bind. Stop and ask before you decide what that session gets.
+1. `putIn(id, paths)` writes each file with one `docker exec -i --user 0 <machine> sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1" && chmod 0444 "$1"' sh <path>`, as root, with the bytes on that command's input. The machine's own user cannot make a host-shaped folder, and it could write over a file it owns.
+2. `takeOut(id, paths)`: one `docker exec --user 0 <machine> rm -rf <path>` per path.
+3. The plugin registers both on `host.registerComputers`, and the host reaches them through `ComputerPort`, so `sdk` never imports `computer`.
+4. Copy into the machine the session entered: one made for it, one made ahead of time, or one it shares.
+5. Log a copy that fails, and apply the action anyway.
+6. Refuse a path that is not below a folder named `attachments`. Do it before a copy and before a removal, and say so in a line.
 
 ## Validation
 
-- `computer-attachments.test.ts`: the arguments for a machine made for session `s` hold a read-only bind of `<sessions dir>/attachments/s` at the same path.
-- The same file: a dev container made for `s` has the same bind.
-- The same file: the code creates the folder before it makes the machine.
+- `computer-attachments.test.ts`: a session's file arrives in its machine at the same path, as root and read-only, with nothing mounted. A second session in the same machine gets its own, and a dev container works the same way. The folder leaves the machine with the session, and a store that keeps no files copies nothing. The plugin refuses a path that is no session's attachments, and says so in a line. It runs nothing in a machine for one.
+- `host-machine-attachments.test.ts`: the host asks for the copy after the write and before the turn, with the session's own folder. Two sessions in one machine each get their own, and a session in no machine gets nothing. Log a failed copy and run the turn. Ask for the folder back out on removal.
 - `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass from the root.
 
 ## Resume
+
+Built. Decision [a-session-in-a-machine-gets-each-attachment-copied-into-it](../../../decisions/a-session-in-a-machine-gets-each-attachment-copied-into-it.md) answers the fork of the first draft's step 3: every session in every machine gets its own files, one message at a time.
+A session that moves to another machine is not a removal, so its folder stays in the machine it left until that machine goes. The plan records this under Risks.
+
+A review finding then reached the two paths this task writes and removes. A path that is not below a folder named `attachments` is one this plugin did not get from a session. The folder holding every session is the one path a `rm -rf` must never reach. So both the copy and the removal refuse it, in a line, before anything is run in a machine. The store refuses the same shape on its own side, which is where the folder is named.

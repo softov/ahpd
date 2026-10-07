@@ -1,13 +1,13 @@
 ---
 title: A queued or steering message carries its attachments
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/types/session.ts#L364](../../../../packages/sdk/src/types/session.ts#L364) - `steer`"
-  - "[code://packages/sdk/src/types/session.ts#L412](../../../../packages/sdk/src/types/session.ts#L412) - `queue`"
-  - "[code://packages/sdk/src/host/lifecycle.ts#L775-L776](../../../../packages/sdk/src/host/lifecycle.ts#L775-L776) - `queue` called without them"
-  - "[code://packages/sdk/src/host/chatactions.ts#L847](../../../../packages/sdk/src/host/chatactions.ts#L847) - `steer` called with text only"
+  - "[code://packages/sdk/src/types/session.ts#L368](../../../../packages/sdk/src/types/session.ts#L368) - `steer`, which took text only"
+  - "[code://packages/sdk/src/types/session.ts#L420](../../../../packages/sdk/src/types/session.ts#L420) - `queue`, which took no attachments"
+  - "[code://packages/sdk/src/host/lifecycle.ts#L901-L902](../../../../packages/sdk/src/host/lifecycle.ts#L901-L902) - where `begin` and `queue` are called"
+  - "[code://packages/sdk/src/host/chatactions.ts#L946-L958](../../../../packages/sdk/src/host/chatactions.ts#L946-L958) - where `steer` and `beginOrRun` are called for a pending message"
 ---
 
 ## Objective
@@ -16,9 +16,9 @@ refs:
 
 ## Files
 
-- `UPDATE: packages/sdk/src/types/session.ts:364` and `:412`.
-- `UPDATE: packages/sdk/src/host/lifecycle.ts:776`.
-- `UPDATE: packages/sdk/src/host/chatactions.ts:847` - `messageAttachments(message)`.
+- `UPDATE: packages/sdk/src/types/session.ts:368` and `:420`.
+- `UPDATE: packages/sdk/src/host/lifecycle.ts:902`.
+- `UPDATE: packages/sdk/src/host/chatactions.ts:946` and `:958` - `messageAttachments(message)`.
 
 ## Steps
 
@@ -26,6 +26,6 @@ refs:
 
 ## Validation
 
-- A host test with a scripted session reads the attachments `queue` and `steer` were given.
+- A host test with a scripted session reads the attachments that `queue` and `steer` received.
 
 ## Resume

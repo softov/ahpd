@@ -1,7 +1,7 @@
 /** The two `SessionStore` implementations: one that forgets, one that does not. */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import type { Scope } from './scopes.js';
 import type { NestedRecord, PullRequestBaseline, SessionStore } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
@@ -176,6 +176,29 @@ interface Saved {
  * a name this version did not write decodes to nothing worth guessing at.
  */
 const fileNameOf = (id: string): string => `${encodeURIComponent(id)}.json`;
+
+/** The folder the sessions' attachments sit under, one folder per session. */
+const ATTACHMENTS = 'attachments';
+
+/**
+ * One session's folder under the attachments root, as a name.
+ *
+ * An id is an opaque key and a folder name is not. `.` names the folder it is
+ * written in, `..` names the one above it, and an empty name names the folder
+ * itself: a session called any of the three would keep its attachments among
+ * every session's, or beside the sessions directory, where removing it would
+ * take the lot. The three are escaped to names no id produces, so a session
+ * keeps a folder of its own under the root whatever it is called.
+ */
+const folderNameOf = (id: string): string => {
+  const encoded = encodeURIComponent(id);
+  return /^\.{0,2}$/.test(encoded) ? '%2E'.repeat(1 + encoded.length) : encoded;
+};
+
+/** Whether a path is inside a folder, and not merely prefixed by its name. */
+const below = (root: string, path: string): boolean =>
+  path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+
 const idIn = (name: string): string | undefined => {
   try { return decodeURIComponent(name); }
   catch { return undefined; }
@@ -210,6 +233,37 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   const inner = memorySessions();
   const dir = options.dir;
   const told = (message: string): void => { options.onProblem?.(message); };
+  /**
+   * One session's attachments: a folder of its own, named beside its file.
+   *
+   * The host writes a pasted picture here and the message names the file, so
+   * the bytes are written once rather than carried in every copy of the
+   * conversation - decision
+   * `an-attachments-bytes-are-written-to-disk-and-the-message-names-the-file`.
+   * Named by the same encoding as the file beside it, because an id is an
+   * opaque key and a folder name is not.
+   *
+   * Answered only for a folder that is strictly inside the attachments root.
+   * One this store cannot place there is a line in the log and no folder at
+   * all, because the folder that holds every session is the one thing a
+   * removal must never reach.
+   */
+  const attachmentsRoot = join(dir, ATTACHMENTS);
+  const attachmentsOf = (id: string): string | undefined => {
+    const folder = join(attachmentsRoot, folderNameOf(id));
+    if (below(attachmentsRoot, folder)) return folder;
+    told(`Not keeping the attachments of ${id} in ${folder}: it is not inside ${attachmentsRoot}`);
+    return undefined;
+  };
+  /** And a session that goes takes them with it, the way its file goes. */
+  const attachmentsGone = (id: string): void => {
+    const folder = attachmentsOf(id);
+    if (folder === undefined) return;
+    try { rmSync(folder, { recursive: true, force: true }); }
+    catch (error) {
+      told(`Could not remove ${folder}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   /** Every id this store has heard of, because the port has no way to list them. */
   const heard = new Set<string>();
   /** The ids that moved since the last save, and so the files to write. */
@@ -387,12 +441,20 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setPullRequests: (id, value) => { heard.add(id); inner.setPullRequests(id, value); dirty.add(id); later(); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { heard.add(id); inner.setChatTitle(id, chatUri, title); dirty.add(id); later(); },
-    forget: (id) => { heard.delete(id); inner.forget(id); dirty.add(id); later(); },
+    attachmentsDir: attachmentsOf,
+    forget: (id) => {
+      heard.delete(id);
+      inner.forget(id);
+      attachmentsGone(id);
+      dirty.add(id);
+      later();
+    },
     prune: (gone) => {
       for (const id of [...heard]) {
         if (!gone(id)) continue;
         heard.delete(id);
         inner.forget(id);
+        attachmentsGone(id);
         // The file goes with the row, by the same path a `forget` takes.
         dirty.add(id);
       }
