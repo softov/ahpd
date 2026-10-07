@@ -1,6 +1,7 @@
 ---
 title: A session stored with the sandbox on keeps it on, whatever its preset says
-status: accepted
+status: superseded
+superseded-by: decisions/a-preset-sandbox-off-wins-over-a-stored-on.md
 date: 2026-10-06
 refs:
   - "[code://packages/agent-claude/src/session.ts#L73](../../packages/agent-claude/src/session.ts#L73) - a session's values are the option defaults and its preset, nothing stored"
