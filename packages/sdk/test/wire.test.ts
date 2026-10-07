@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checker, collapse, framesIn, stale } from '../../../tools/wire.mjs';
+import { checker, collapse, framesIn, metaKeys, stale } from '../../../tools/wire.mjs';
 import { lineFor } from '../../server/src/wire.js';
+import { daemonRootConfig } from '../../server/src/rootconfig.js';
+import { loadPlugins } from '../../server/src/plugins.js';
+import { optionsFrom } from '../../server/src/commands/options.js';
+import { resultFrame } from '../src/rpc.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Principal, Users } from '../src/types/users.js';
+import type { PluginSpec } from '../src/types/plugin.js';
 
 /*
  * Everything this host sends, against everything the protocol declares.
@@ -77,7 +82,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
         outputStyles: ['default', 'concise'],
       }),
       mcpServerStatus: async () => [{ name: 'notes', status: 'connected' }],
-      reloadSkills: async () => ({ skills: [{ name: 'writing', description: 'How to write' }] }),
+      reloadSkills: async () => ({ skills: [{ name: 'writing', description: 'How to write', argumentHint: 'What to write about' }] }),
       reloadPlugins: async () => ({ plugins: [] }),
       supportedModels: async () => [{ model: 'claude-opus-5', displayName: 'Opus 5' }],
       streamInput: async () => {},
@@ -94,15 +99,33 @@ const { fileResources } = await import('../src/resources.js');
 const { memoryAutomations } = await import('../src/automations.js');
 const { hostTools } = await import('../src/tools.js');
 
+/** The team and project this capture's work is charged to. */
+const research = { id: 'research', title: 'Research' };
+const apollo = { id: 'apollo', title: 'Apollo' };
+
 /*
- * A person this capture runs as.
+ * A person this capture runs as, and one with work of her own.
  *
  * A host with no users directory has nobody to name, so every field a signed
  * in person adds to a frame stayed absent here - and a check that never sees
  * the field cannot catch it. The traffic below is a client on a host with a
- * directory, on a connection that is somebody.
+ * directory, on a connection that is somebody: `ana` is granted everything,
+ * so no frame is narrowed for want of a permission, her work is charged to a
+ * team and a project, and she is the one who made the automation the capture
+ * runs.
  */
-const ana: Principal = { id: 'ana', roles: [], can: () => true };
+const ana: Principal = {
+  id: 'ana',
+  roles: ['reviewer'],
+  // Granted rather than listed. What is being captured is the shape of a
+  // frame, and the shapes behind a permission this connection did not hold
+  // would be shapes nothing here checks.
+  can: () => true,
+  memberships: [`${research.id}:${apollo.id}`, research.id],
+  primary: `${research.id}:${apollo.id}`,
+  teams: [research],
+  projects: [apollo],
+};
 
 const people = (): Users => ({
   resource: {
@@ -111,16 +134,23 @@ const people = (): Users => ({
     authorization_servers: ['https://example.test/users'],
     required: false,
   },
-  verify: async () => undefined,
-  list: async () => [],
-  grantsOfRoles: async () => [],
-  grantsOfPerson: async () => undefined,
+  verify: async () => ana,
+  list: async () => [{
+    id: ana.id,
+    roles: [...ana.roles],
+    grants: ['session:create', 'config:read', 'config:settings'],
+    trusted: false,
+    memberships: [`${research.id}:${apollo.id}`],
+    primary: `${research.id}:${apollo.id}`,
+  }],
+  grantsOfRoles: async () => ['session:create', 'config:read'],
+  grantsOfPerson: async () => ['session:create', 'config:read', 'config:settings'],
   add: async () => {},
   roles: async () => [],
   addRole: async () => {},
   removeRole: async () => false,
-  teams: async () => [],
-  projects: async () => [],
+  teams: async () => [research],
+  projects: async () => [apollo],
   addTeam: async () => {},
   addProject: async () => {},
   removeTeam: async () => false,
@@ -148,18 +178,35 @@ function peer(): Peer {
   };
 }
 
+/** Every request this host refused, by method, so a refusal is not silent. */
+const refused: string[] = [];
+
 /**
- * One request, with its answer recorded as the response frame it becomes.
+ * One request, recorded as the exchange it was: what was asked, with what, and
+ * what came back.
  *
- * `handle` returns the `result` half; the transport wraps it. Recording it
- * this way is what lets snapshots be checked at all - a snapshot is answered
- * to a request and never notified.
+ * The answer goes through `resultFrame`, the same function `rpc.ts` builds the
+ * response frame with, so what is recorded is what the socket carries and not
+ * what the handler happened to return - `undefined` and the `{}` a client
+ * reads are two different things, and a check of the first proves nothing
+ * about the second.
+ *
+ * A refusal is recorded too. It carries no result, and its params are still
+ * the request's, so it is checked for those; and a request that starts
+ * answering something other than what it did here is a change the departures
+ * list is asked about below.
  */
 const asking = (client: { handle(r: { method: string; params: unknown }): Promise<unknown> }) =>
   async (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
-    const result = await client.handle({ method, params });
-    wire.push({ result });
-    return result;
+    try {
+      const result = await client.handle({ method, params });
+      wire.push({ asked: method, params, result: resultFrame(result) });
+      return result;
+    } catch (error) {
+      refused.push(method);
+      wire.push({ asked: method, params, error: error instanceof Error ? error.message : String(error) });
+      return undefined;
+    }
   };
 
 /** Say what a session's own CLI said. */
@@ -172,7 +219,96 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
   await settle();
 }
 
+/*
+ * Every `_meta` key this host may write, and where.
+ *
+ * `_meta` is the protocol's one open bag: no declaration names a key in it, and
+ * a closed-object schema has no opinion about what is in it - so it is exactly
+ * where a host invents a name no client has heard of, and the half of
+ * "everything this host sends" that the schema above cannot reach.
+ *
+ * A key is judged with the place it was found and not on its own. `command` is
+ * the reference client's on a completion item and an invention anywhere else,
+ * so a census of bare names could only allow a name everywhere.
+ */
+
+/** The key spaces a client reads by convention rather than by declaration. */
+const PREFIXED = ['ahpd.', 'vscode.', 'anthropic/', 'agentHost/'];
+
+/**
+ * The reference client's own keys, each at the place it reads it.
+ *
+ * `at` matches the end of the folded path, which is how one entry covers a key
+ * on an action and the same key on that action echoed in a result.
+ */
+const REFERENCE: { key: string; at: string; from: string }[] = [
+  // What the reference client picks a row's renderer by. A call it has no kind
+  // for carries no `_meta` at all rather than a guess.
+  { key: 'toolKind', at: 'action/_meta', from: 'docs/AHP.md' },
+  // A completion item has to say it is a command, or the reference client
+  // drops it without a word, and `description` is the menu's second column.
+  { key: 'command', at: 'attachment/_meta', from: 'docs/AHP.md' },
+  { key: 'description', at: 'attachment/_meta', from: 'docs/AHP.md' },
+];
+
+/**
+ * What this host writes under a name of its own, and the task that renames it.
+ *
+ * p4 empties this list. Until it does, this is the gap between the protocol's
+ * vocabulary and this host's, written where the next key has to be added to
+ * rather than left for a reader to find.
+ */
+const PENDING: { key: string; at: string; task: string }[] = [
+  { key: 'owner', at: '/changes/_meta', task: 'p4 task 02' },
+  { key: 'owner', at: '/summary/_meta', task: 'p4 task 02' },
+  { key: 'owner', at: '/state/_meta', task: 'p4 task 02' },
+  { key: 'sender', at: 'action/_meta', task: 'p4 task 02' },
+  { key: 'model', at: '/changes/_meta', task: 'p4 task 03' },
+  { key: 'model', at: '/state/_meta', task: 'p4 task 03' },
+  // On a skill, where this host puts its own field: the reference reads
+  // `argumentHint` on a completion item, which is allowed above.
+  { key: 'argumentHint', at: 'customizations/N/children/N/_meta', task: 'p4 task 03' },
+  { key: 'cacheWriteTokens', at: 'usage/_meta', task: 'p4 task 04' },
+  { key: 'cost', at: 'usage/_meta', task: 'p4 task 04' },
+];
+
+/** A key at a place, as the census reports it. */
+const where = (key: string, at: string): string => `${key} @ ${at}`;
+
+/** Whether a key at a place is one this file has looked at and written down. */
+const announced = (key: string, at: string): boolean =>
+  PREFIXED.some((prefix) => key.startsWith(prefix))
+  || REFERENCE.some((one) => one.key === key && at.endsWith(one.at))
+  || PENDING.some((one) => one.key === key && at.endsWith(one.at));
+
+/** The `_meta` keys in a frame that nothing here announces, as `key @ place`. */
+const strayMeta = (frame: Record<string, unknown>): string[] =>
+  metaKeys(frame).filter(({ key, at }) => !announced(key, at)).map(({ key, at }) => where(key, at));
+
 it('sends nothing the protocol does not declare, and nothing short of what it requires', async () => {
+  /*
+   * A plugin the daemon's own root config carries options for.
+   *
+   * Its `optionsSchema` is a plugin's: a `writeOnly` string, an integer with a
+   * `minimum`, and no titles anywhere. The daemon serves it as it stands beside
+   * its own keys, so the root config schema a `config:read` connection reads is
+   * the whole of what a client has to draw a form from.
+   */
+  const home = mkdtempSync(join(tmpdir(), 'ahpd-wire-'));
+  const config = join(home, 'config.json');
+  const spec: PluginSpec = {
+    name: './fixtures/plugin-secret/index.ts',
+    options: { apiKey: 'k-1', region: 'eu', retries: 2 },
+  };
+  writeFileSync(config, JSON.stringify({ plugins: [spec] }));
+  const { problems } = await loadPlugins([spec], {
+    base: { path: home, agents: [echo({ path: home, pace: 0 })] },
+    configDir: home,
+    cwd: join(import.meta.dirname, '../../server/test'),
+    log: () => {},
+  });
+  expect(problems).toEqual([]);
+
   const host = createHost({
     path: '/home/softov',
     agents: [claude({ paths: ['/home/softov'] }), echo({ path: '/home/softov', pace: 0 })],
@@ -181,14 +317,29 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     automations: memoryAutomations(),
     tools: hostTools(),
     users: people(),
+    rootConfig: daemonRootConfig(optionsFrom({ configFile: config })),
   });
   const client = host.accept(peer(), ana);
   const ask = asking(client);
 
+  /*
+   * Every action this client dispatches, numbered.
+   *
+   * `clientSeq` is required on one and is what a client uses to match its own
+   * actions against the server sequence they landed at, so a capture that left
+   * it off is a capture of a client the protocol does not describe.
+   */
+  let seq = 0;
+  const dispatch = (channel: string, action: Record<string, unknown>): void => {
+    seq += 1;
+    void client.handle({ method: 'dispatchAction', params: { channel, clientSeq: seq, action } });
+  };
+
   await ask('initialize', {
-    channel: 'ahp-root://', clientId: 'wire', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
+    channel: 'ahp-root://', clientId: 'wire', protocolVersions: ['1.0.0'], initialSubscriptions: ['ahp-root://'],
   });
-  await ask('resolveSessionConfig', {});
+  await ask('ping', { channel: 'ahp-root://' });
+  await ask('resolveSessionConfig', { channel: 'ahp-root://', provider: 'claude' });
   await ask('listSessions', { channel: 'ahp-root://' });
 
   const uri = 'ahp-session:/wire';
@@ -197,13 +348,23 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('subscribe', { channel: 'ahp-root://' });
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
+
+  // A second session, on the other backend: the two are separately asked for
+  // so the config schema is resolved for both, and their states differ in
+  // which optional keys they carry.
+  const echoUri = 'ahp-session:/wire-echo';
+  await ask('createSession', { channel: echoUri, provider: 'echo' });
+  await ask('subscribe', { channel: echoUri });
+  await ask('resolveSessionConfig', { channel: 'ahp-root://', provider: 'echo' });
   await settle();
 
   // A whole turn: prose, a tool that ran, its result, and the usage that ends
   // it. Every action on the chat channel comes out of these frames.
-  void client.handle({
-    method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+  // The turn names the model it runs on, which is how a session comes to have
+  // one at all: the protocol carries a model per message, not per session, so
+  // what the session is on is an extension on its state.
+  dispatch(chatUri, {
+    type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', model: { id: 'claude-opus-5' } },
   });
   await settle();
   await said(
@@ -229,93 +390,138 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
       subtype: 'success',
       is_error: false,
       duration_ms: 12,
-      usage: { input_tokens: 10, output_tokens: 4 },
+      // Cache writes and a price are both the SDK's, and neither is a field
+      // the protocol declares: they ride the usage's own `_meta`, which is the
+      // half of this capture that the census below is about.
+      usage: { input_tokens: 10, output_tokens: 4, cache_creation_input_tokens: 900 },
+      modelUsage: { 'claude-opus-5': { costUSD: 0.25, costBasis: 'exact' } },
     },
   );
 
   // The rest of the session channel: a title, the flags a client keeps, a
-  // config value, a draft, a queued message, and a mark on a file.
+  // config value, and a client saying it is watching.
   for (const action of [
     { type: 'session/isReadChanged', isRead: true },
     { type: 'session/isArchivedChanged', isArchived: false },
     { type: 'session/titleChanged', title: 'A wire capture' },
     { type: 'session/configChanged', config: { permissionMode: 'plan' } },
     { type: 'session/activeClientSet', activeClient: { clientId: 'wire', displayName: 'The wire capture', tools: [] } },
-  ]) void client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+  ]) dispatch(uri, action);
   for (const action of [
     { type: 'chat/draftChanged', draft: { text: 'half a thought', origin: { kind: 'user' } } },
     { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'and then this', origin: { kind: 'user' } } },
-  ]) void client.handle({ method: 'dispatchAction', params: { channel: chatUri, action } });
+  ]) dispatch(chatUri, action);
   await settle();
 
+  // Asked for again, so the answer is the state a client connecting late
+  // reads: the turn that just ended, and the model the session is on - which
+  // is under `_meta`, and only on the state, never on an action.
+  await ask('subscribe', { channel: uri });
+
   await ask('subscribe', { channel: `${uri}/annotations` });
-  void client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: `${uri}/annotations`,
-      action: {
-        type: 'annotations/set',
-        annotation: {
-          id: 'a1',
-          origin: { session: uri, chat: chatUri },
-          resource: 'file:///home/softov/a',
-          resolved: false,
-          entries: [],
-        },
-      },
+  dispatch(`${uri}/annotations`, {
+    type: 'annotations/set',
+    annotation: {
+      id: 'a1',
+      origin: { session: uri, chat: chatUri },
+      resource: 'file:///home/softov/a',
+      resolved: false,
+      entries: [],
     },
   });
   await settle();
 
   // A second chat, which is the other half of the session channel.
-  await ask('createChat', { channel: uri, chat: 'ahp-chat:/wire-2' });
-  await ask('subscribe', { channel: 'ahp-chat:/wire-2' });
-  await ask('completions', { channel: chatUri, text: '/', position: 1 });
-  await ask('sessionConfigCompletions', { channel: 'ahp-root://', provider: 'claude', key: 'branch', query: '' });
-  await ask('disposeChat', { channel: 'ahp-chat:/wire-2' });
+  const chatTwo = 'ahp-chat:/wire-2';
+  await ask('createChat', { channel: uri, chat: chatTwo });
+  await ask('subscribe', { channel: chatTwo });
+  // The cursor is after the slash, which is what makes it a slash command
+  // being typed rather than a path: a host asked with the offset before it
+  // answers an empty list, and the items' own `_meta` is what the reference
+  // client draws a command or a skill from.
+  await ask('completions', { kind: 'userMessage', channel: chatUri, text: '/', offset: 1 });
+  await ask('sessionConfigCompletions', { channel: 'ahp-root://', provider: 'claude', property: 'branch', query: '' });
+  await ask('disposeChat', { channel: chatTwo });
 
-  // A terminal, from the bytes a shell writes.
+  // A terminal, from the bytes a shell writes: claimed by this client rather
+  // than attached to a session, and started with no command of its own.
   const terminal = 'ahp-terminal:/wire';
-  await ask('createTerminal', { channel: terminal, cwd: 'file:///home/softov', command: 'echo hi' });
-  await ask('subscribe', { channel: terminal });
-  void client.handle({
-    method: 'dispatchAction', params: { channel: terminal, action: { type: 'terminal/resized', cols: 100, rows: 30 } },
+  await ask('createTerminal', {
+    channel: terminal, claim: { kind: 'client', clientId: 'wire' }, cwd: 'file:///home/softov',
   });
+  await ask('subscribe', { channel: terminal });
+  dispatch(terminal, { type: 'terminal/resized', cols: 100, rows: 30 });
   await settle(20);
   await ask('disposeTerminal', { channel: terminal });
 
-  // An automation, its run, and the run's own channel.
+  // A turn that stops to ask, which is the one action the protocol has for a
+  // question a person has to answer before the agent can go on.
+  sdk.canUseTool?.('AskUserQuestion', {
+    header: 'Which folder?',
+    questions: [{ question: 'Which folder?', options: [{ label: 'a' }, { label: 'b' }] }],
+  }, { toolUseID: 'q1' });
+  await settle();
+
+  // An automation, its run, and the run's own channel. Made by the person on
+  // the connection, so every frame that names an author names her, and run
+  // twice so the second page is asked for through a cursor the store issued.
   await ask('subscribe', { channel: 'ahp-automations://' });
   await ask('listAutomationTriggerDefinitions', { channel: 'ahp-root://' });
-  void client.handle({
-    method: 'dispatchAction',
-    params: {
-      channel: 'ahp-automations://',
-      action: {
-        type: 'automation/createRequested',
-        resource: 'ahp-automation:/nightly',
-        definition: {
-          title: 'Nightly review',
-          enabled: true,
-          message: { text: 'review what changed', origin: { kind: 'automation' } },
-          session: { provider: 'echo', workingDirectories: ['file:///home/softov'] },
-          triggers: [],
-        },
-      },
+  const nightly = 'ahp-automation:/nightly';
+  dispatch('ahp-automations://', {
+    type: 'automation/createRequested',
+    resource: nightly,
+    definition: {
+      title: 'Nightly review',
+      enabled: true,
+      message: { text: 'review what changed', origin: { kind: 'automation' } },
+      session: { provider: 'echo', workingDirectories: ['file:///home/softov'] },
+      triggers: [],
     },
   });
   await settle();
   const run = await ask('runAutomation', {
-    channel: 'ahp-automations://', automation: 'ahp-automation:/nightly', requestId: 'r1',
+    channel: 'ahp-automations://', automation: nightly, requestId: 'r1',
   }) as { resource: string };
   await settle();
   await ask('subscribe', { channel: run.resource });
-  await ask('fetchAutomationRuns', { channel: 'ahp-automations://', automation: 'ahp-automation:/nightly' });
+  await ask('runAutomation', { channel: 'ahp-automations://', automation: nightly, requestId: 'r2' });
+  await settle();
+  await ask('fetchAutomationRuns', { channel: 'ahp-automations://', automation: nightly, cursor: '1' });
 
   // And a reconnect, which is the one answer carrying several snapshots.
-  await ask('reconnect', { clientId: 'wire', subscriptions: ['ahp-root://', uri, chatUri], lastSeenServerSeq: 0 });
+  await ask('reconnect', {
+    channel: 'ahp-root://', clientId: 'wire', subscriptions: ['ahp-root://', uri, chatUri], lastSeenServerSeq: 0,
+  });
+
+  /*
+   * The requests this host serves that the protocol's own maps do not name.
+   *
+   * The reference window's own set, kept so a VS Code client can talk to this
+   * daemon as it talks to that host, and named in `docs/AHP.md` so the list is
+   * a decision rather than an oversight. Two of them are answered here, which
+   * is what makes them departures rather than gaps.
+   */
+  await ask('getManagedSettingsDiagnostics', {});
+  await ask('getNetworkDiagnosticsInfo', {});
+  await ask('vscode/reconcileAgentHostDetachedWorktrees', {
+    scope: 'file:///home/softov', activeHandles: [],
+  });
+
+  /*
+   * And the one departure that is refused rather than answered.
+   *
+   * `shutdown` stops the daemon, and this host was built with no way to stop,
+   * so it answers `-32601`. Which makes it the only frame in the capture that
+   * is not an answer, and the only exercise the recorder's refusal branch
+   * gets - a branch nothing goes down is a branch that does not hold.
+   */
+  await ask('shutdown', {});
+
   await ask('disposeSession', { channel: uri });
+  await ask('disposeSession', { channel: echoUri });
   await settle();
+  rmSync(home, { recursive: true, force: true });
 
   /*
    * The fixture, with the parts that move on every run taken out.
@@ -350,14 +556,196 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   if (stale()) execFileSync(process.execPath, ['tools/schema.mjs'], { stdio: 'inherit' });
   const check = checker();
   const defects = wire.flatMap((frame) => check.frame(frame));
-  const found = collapse(defects).map(([key, entry]) => `x${String(entry.count)}  ${key} (${entry.sample})`);
-  // Both directions matter: an undeclared key is this host inventing
-  // something a client cannot read, and a missing required one is this host
-  // not keeping its own promise. The same capture shows both.
-  expect(found).toEqual([]);
-  // And enough of it was actually routed to a declaration to mean anything: a
-  // capture nothing recognised would pass this test saying nothing.
-  expect(check.checked()).toBeGreaterThan(60);
+
+  /*
+   * What this capture still gets wrong, each line with the plan that pays it
+   * off.
+   *
+   * Not a list of things that are fine: every key here is a frame a strict
+   * reader of the protocol refuses today. Writing them down is what turns the
+   * check into a contract - the day the named plan lands, the line comes out,
+   * and a fix that lands without its line coming out is a fix that did not
+   * change the wire.
+   */
+  /*
+   * Where a plugin's options sit in the root config schema. The daemon picks
+   * the key as `plugins.<module as it was named>`, so the path below carries
+   * the module path this test loaded the plugin from.
+   */
+  const secret = 'plugins..~1fixtures~1plugin-secret~1index.ts';
+  const KNOWN: string[] = [
+    // p2: the seven handlers that answer `{}` where the protocol declares a
+    // `null` result, which is what `resultFrame` turns every one of them into.
+    'CommandMap.ping.result / type must be null', // p2
+    'CommandMap.createSession.result / type must be null', // p2
+    'CommandMap.disposeSession.result / type must be null', // p2
+    'CommandMap.createChat.result / type must be null', // p2
+    'CommandMap.disposeChat.result / type must be null', // p2
+    'CommandMap.createTerminal.result / type must be null', // p2
+    'CommandMap.disposeTerminal.result / type must be null', // p2
+    // p2: `fetchAutomationRuns` declares an empty result and this host answers
+    // the page there; the page moves to the `automation/set` action.
+    'FetchAutomationRunsResult / undeclared key `items`', // p2
+    // p2: a `ChatInputRequestedAction` carries the request and no turn.
+    'ActionEnvelope /action undeclared key `turnId`', // p2
+    'ChatInputRequestedAction / undeclared key `turnId`', // p2
+    // p2: `ConfigPropertySchema` requires a `type`, and neither the resolved
+    // session config nor the session's own state schema carries one.
+    'ResolveSessionConfigResult /schema missing required `type`', // p2
+    'SessionState /config/schema missing required `type`', // p2
+    // p2: a session's state is not addressed by a `resource`; the channel is.
+    'SessionState / undeclared key `resource`', // p2
+    /*
+     * p3: the daemon's own keys in the root config schema are JSON Schema
+     * fragments, and a client reads `ConfigPropertySchema`. Every one of them
+     * wants a `title`, the two numeric bounds and the regex are keys the
+     * declaration does not have, and four `type`s are arrays where it allows
+     * one string.
+     */
+    'RootState /config/schema/properties/paths missing required `title`', // p3
+    'RootState /config/schema/properties/paths/items missing required `title`', // p3
+    'RootState /config/schema/properties/port missing required `title`', // p3
+    'RootState /config/schema/properties/port/type enum must be equal to one of the allowed values', // p3
+    'RootState /config/schema/properties/host missing required `title`', // p3
+    'RootState /config/schema/properties/http missing required `title`', // p3
+    'RootState /config/schema/properties/http/type enum must be equal to one of the allowed values', // p3
+    'RootState /config/schema/properties/http/properties/host missing required `title`', // p3
+    'RootState /config/schema/properties/http/properties/host undeclared key `pattern`', // p3
+    'RootState /config/schema/properties/http/properties/port missing required `title`', // p3
+    'RootState /config/schema/properties/http/properties/port undeclared key `minimum`', // p3
+    'RootState /config/schema/properties/http/properties/port undeclared key `maximum`', // p3
+    'RootState /config/schema/properties/http/properties/port/type enum must be equal to one of the allowed values', // p3
+    'RootState /config/schema/properties/updateCheck missing required `title`', // p3
+    'RootState /config/schema/properties/advancedTools missing required `title`', // p3
+    'RootState /config/schema/properties/wire missing required `title`', // p3
+    'RootState /config/schema/properties/mcpServers missing required `title`', // p3
+    /*
+     * p3: and a plugin's `optionsSchema` goes on the wire as the plugin wrote
+     * it, beside the daemon's. `writeOnly` and `minimum` are the two keys the
+     * declaration does not have, and the missing titles are the plugin's.
+     */
+    `RootState /config/schema/properties/${secret}/properties/options missing required \`title\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/apiKey missing required \`title\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/apiKey undeclared key \`writeOnly\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/region missing required \`title\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/retries missing required \`title\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/retries undeclared key \`minimum\``, // p3
+    `RootState /config/schema/properties/${secret}/properties/options/properties/retries/type enum must be equal to one of the allowed values`, // p3
+  ];
+
+  /*
+   * The requests this host serves that no map in the package names, keyed by
+   * the method `skipped()` reports them under.
+   *
+   * A method in no map is either a departure somebody decided on or a hole in
+   * the checker, and the only thing that tells them apart is being written
+   * down. Each names the heading in `docs/AHP.md` that records the decision.
+   */
+  const DEPARTURES: Record<string, string> = {
+    getManagedSettingsDiagnostics: 'What the window asks a host about itself',
+    getNetworkDiagnosticsInfo: 'What the window asks a host about itself',
+    shutdown: 'What the window asks a host about itself',
+    'vscode/reconcileAgentHostDetachedWorktrees': 'What the window asks a host about itself',
+  };
+
+  /*
+   * The one declaration this host widens on purpose, keyed by the finding.
+   *
+   * A partial is spread over the row a client holds, so a key left off is a
+   * field that did not move and an idled row would keep saying what its last
+   * tool was doing. The reference host sends `null` for that and its client
+   * reads it as cleared, so this one does too.
+   */
+  const WIDENED: Record<string, string> = {
+    'SessionSummaryChangedParams /changes/activity type must be string': 'Server notifications',
+  };
+
+  /*
+   * Both directions matter: an undeclared key is this host inventing something
+   * a client cannot read, and a missing required one is this host not keeping
+   * its own promise. The same capture shows both, and every one of them is
+   * either a defect with a plan or a departure with a reason.
+   */
+  const found = collapse(defects).map(([key]) => key).sort();
+  expect(found).toEqual([...KNOWN, ...Object.keys(WIDENED)].sort());
+
+  // Both ways round, so the list and the traffic cannot drift apart: a named
+  // departure the capture stopped making is a line nobody would notice going
+  // stale, and one the capture still makes and nobody named is a gap.
+  expect([...check.skipped().keys()].filter((method) => !(method in DEPARTURES))).toEqual([]);
+  expect(Object.keys(DEPARTURES).filter((method) => !check.skipped().has(method))).toEqual([]);
+
+  // And exactly one request in the capture is refused, which is the departure
+  // that refuses by design. Anything else here is a request that stopped
+  // working, recorded as an error frame rather than as an answer.
+  expect(refused).toEqual(['shutdown']);
+
+  /*
+   * The other half of everything this host sends: the names it invents.
+   *
+   * The schema closes every object it declares and the one object it does not
+   * is `_meta`, so a key this host makes up reaches a client unnoticed by every
+   * check above. What is left is to name each one, where it is written and
+   * whether the protocol or this host owns it.
+   */
+  const census = wire.flatMap((frame) => metaKeys(frame));
+  const stray = wire.flatMap((frame) => strayMeta(frame));
+  expect([...new Set(stray)].sort()).toEqual([]);
+
+  // Both ways round here too: a listed key the traffic stopped sending is a
+  // line that would otherwise sit here for ever, naming a rename of something
+  // nothing writes.
+  const missing = [...REFERENCE, ...PENDING].filter((one) =>
+    !census.some(({ key, at }) => key === one.key && at.endsWith(one.at)));
+  expect(missing.map((one) => where(one.key, one.at))).toEqual([]);
+
+  /*
+   * And enough of it reached a declaration to mean anything.
+   *
+   * A capture nothing recognised would pass this test saying nothing, which is
+   * the failure mode of a check whose subject is a list of things that could
+   * not be checked. 233 payloads go through a declaration today, against the
+   * 60 this file checked before the traffic above was widened; the floor is
+   * there to catch the capture quietly narrowing again, not to pin the count.
+   */
+  expect(check.checked()).toBeGreaterThan(200);
+});
+
+describe('the `_meta` census', () => {
+  const onItem = (meta: Record<string, unknown>): Record<string, unknown> => ({
+    asked: 'completions',
+    params: { channel: 'ahp-chat:/a', kind: 'userMessage', text: '/', offset: 1 },
+    result: { items: [{ insertText: '/compact', attachment: { type: 'simple', label: '/compact', _meta: meta } }] },
+  });
+  const onSkill = (meta: Record<string, unknown>): Record<string, unknown> => ({
+    method: 'session/chatUpdated',
+    params: {
+      channel: 'ahp-session:/a',
+      changes: { customizations: [{ type: 'plugin', children: [{ type: 'skill', name: 'writing', _meta: meta }] }] },
+    },
+  });
+
+  it('judges a key with the place it was found, and not on its own', () => {
+    // The reference client's own bag, on the item it reads it from.
+    expect(strayMeta(onItem({ command: 'compact', description: 'Compact the conversation' }))).toEqual([]);
+    /*
+     * The same two names on a skill's customization, where the reference reads
+     * neither: `command` there is a host saying "this is a slash command" about
+     * something that is not one, and a client drawing it as one is the defect
+     * this whole file exists to catch.
+     */
+    expect(strayMeta(onSkill({ command: 'compact' })))
+      .toEqual(['command @ /params/changes/customizations/N/children/N/_meta']);
+  });
+
+  it('names a key nothing here has written down', () => {
+    expect(strayMeta({ method: 'action', params: { action: { type: 'chat/delta', _meta: { invented: 1 } } } }))
+      .toEqual(['invented @ /params/action/_meta']);
+  });
+
+  it('takes ahpd\'s own key space without an entry per key', () => {
+    expect(strayMeta({ method: 'action', params: { action: { type: 'chat/delta', _meta: { 'ahpd.something': 1 } } } })).toEqual([]);
+  });
 });
 
 /*
@@ -391,6 +779,132 @@ describe('the strict schema', () => {
     // And one that is not a schema at all rather than an old one.
     writeFileSync(at, 'not json');
     expect(stale(at)).toBe(true);
+  });
+});
+
+/*
+ * The schema's own output, where the audit found it wrong.
+ *
+ * A `Partial<T>` is a second shape rather than a second name for the first: the
+ * root channel's session summary and a chat's summary share four field names
+ * and nothing else, and reading one as the other passes exactly the fields they
+ * do share. And `SessionStatus` is a set of flags rather than a list of names -
+ * a client sends `Idle | IsRead` and means both - so an enum of the members
+ * alone reports a status the type has as one it does not.
+ */
+describe('the generated schema', () => {
+  const check = checker();
+
+  /** Where a finding is and what it is, so the path is part of the assertion. */
+  const at = (found: { at: string; what: string }[]): string[] => found.map((one) => `${one.at} ${one.what}`);
+
+  /** What the root channel says moved about a session. */
+  const changed = (changes: unknown) => check.frame({
+    method: 'root/sessionSummaryChanged',
+    params: { channel: 'ahp-root://', session: 'ahp-session:/wire', changes },
+  });
+
+  /** A chat's own fields, changed on the session that holds it. */
+  const chatChanged = (changes: unknown) => check.frame({
+    method: 'action',
+    params: {
+      channel: 'ahp-session:/wire',
+      serverSeq: 1,
+      action: { type: 'session/chatUpdated', chat: 'ahp-chat:/wire', changes },
+    },
+  });
+
+  /** A session's state, with one field under test. */
+  const sessionWith = (status: unknown) => check.frame({
+    result: {
+      snapshot: {
+        resource: 'ahp-session:/wire',
+        fromSeq: 1,
+        state: {
+          lifecycle: 'ready', activeClients: [], chats: [], provider: 'claude', title: 'A wire capture', status,
+        },
+      },
+    },
+  });
+
+  it('checks a partial session summary as a session, not as whichever Partial it emitted first', () => {
+    // `project` and `_meta` are the session's own, and a chat has neither.
+    expect(at(changed({ project: { uri: 'file:///home/softov', displayName: 'softov' }, _meta: { 'ahpd.x': 1 } }))).toEqual([]);
+    // A key neither of them has is still a finding, so the line above is not
+    // passing because nothing is being checked.
+    expect(at(changed({ invented: 1 }))).toEqual(['/changes undeclared key `invented`']);
+  });
+
+  it('checks a partial chat summary as a chat', () => {
+    // `interactivity` and `movable` are the chat's, and a session has neither.
+    expect(at(chatChanged({ interactivity: 'full', movable: true }))).toEqual([]);
+    expect(at(chatChanged({ status: 33 }))).toEqual([]);
+    // Twice, and both are right: the envelope's union refuses the action and
+    // the action's own declaration refuses the field. The first is where it
+    // stands on the wire, the second is what it is.
+    expect(at(chatChanged({ project: { uri: 'file:///home/softov', displayName: 'softov' } })))
+      .toEqual(['/action/changes undeclared key `project`', '/changes undeclared key `project`']);
+  });
+
+  it('checks a status as any set of its flags, and nothing else', () => {
+    // 33 is `Idle | IsRead`, which no member names and a client sends anyway.
+    expect(at(sessionWith(33))).toEqual([]);
+    // 4 is a bit no member of this one sets, so it is not a status at all.
+    expect(at(sessionWith(4))).toEqual(['/status enum must be equal to one of the allowed values']);
+  });
+
+  it('checks the chats inside a partial session summary the same way', () => {
+    const chats = (one: Record<string, unknown>): string[] => at(changed({
+      chats: [{ resource: 'ahp-chat:/wire', title: 'A wire capture', ...one }],
+      defaultChat: 'ahp-chat:/wire',
+    }));
+    expect(chats({ status: 33 })).toEqual([]);
+    expect(chats({ status: 4 })).toEqual(['/changes/chats/N/status enum must be equal to one of the allowed values']);
+    expect(chats({ status: 33, invented: 1 })).toEqual(['/changes/chats/N undeclared key `invented`']);
+  });
+});
+
+/*
+ * Requests and answers, routed the way the protocol routes them.
+ *
+ * `CommandMap` and `ServerNotificationMap` are the protocol's own index of what
+ * each method carries, so a method's declaration can be read off the method
+ * rather than guessed from the shape of the frame. Everything here is what the
+ * recorder below writes down.
+ */
+describe('the protocol’s maps', () => {
+  const check = checker();
+  const asks = (frame: Record<string, unknown>): string[] => check.frame(frame).map((one) => one.what);
+
+  it('checks a result against the declaration its method names, a declared null included', () => {
+    // `ping` answers `null`, which is a value and not an absent one: a host that
+    // puts `{}` there has answered something the protocol does not declare.
+    expect(asks({ asked: 'ping', params: { channel: 'ahp-root://' }, result: {} })).toEqual(['type must be null']);
+    expect(asks({ asked: 'ping', params: { channel: 'ahp-root://' }, result: null })).toEqual([]);
+  });
+
+  it('checks a request against the declaration its method names', () => {
+    // `kind` has no default and the offset's name is the protocol's, not the
+    // SDK's.
+    expect(asks({ asked: 'completions', params: { channel: 'ahp-chat:/wire', text: '/', position: 1 } }))
+      .toEqual(['missing required `kind`', 'missing required `offset`', 'undeclared key `position`']);
+    expect(asks({ asked: 'completions', params: { kind: 'userMessage', channel: 'ahp-chat:/wire', text: '/', offset: 0 } }))
+      .toEqual([]);
+  });
+
+  it('routes a notification to its params declaration', () => {
+    const clean = {
+      method: 'root/sessionSummaryChanged',
+      params: { channel: 'ahp-root://', session: 'ahp-session:/wire', changes: { title: 'A wire capture' } },
+    };
+    expect(asks(clean)).toEqual([]);
+    expect(check.frame({ ...clean, params: { ...clean.params, invented: 1 } }).map((one) => one.def))
+      .toEqual(['SessionSummaryChangedParams']);
+  });
+
+  it('counts a method in neither map under its name', () => {
+    expect(asks({ asked: 'shutdown' })).toEqual([]);
+    expect([...check.skipped().keys()]).toEqual(['shutdown']);
   });
 });
 

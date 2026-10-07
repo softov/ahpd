@@ -3,7 +3,7 @@ import type { Agent, Listed, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { Session } from '../src/types/session.js';
 import type { Peer } from '../src/types/rpc.js';
-import { checker } from '../../../tools/wire.mjs';
+import { undeclaredIn } from './support/wire.js';
 
 /*
  * The host's worker-chat seam, driven by a backend that has no harness.
@@ -324,9 +324,7 @@ it('puts the worker channel\'s own actions on the wire', async () => {
 
 it('sends nothing the protocol does not declare', async () => {
   await running();
-  const check = checker();
-  const defects = wire.flatMap((frame) => check.frame(frame));
-  expect(defects.map((one) => `${one.def} ${one.at} ${one.what}`)).toEqual([]);
+  expect(undeclaredIn(wire)).toEqual([]);
 });
 
 it('writes no link on a call whose turn has already ended', async () => {

@@ -166,6 +166,22 @@ export function createPeer(wire: Wire): Peer {
 }
 
 /**
+ * The `result` a response frame carries, from whatever a handler returned.
+ *
+ * A result has to be a value, and `undefined` is not one: a handler that
+ * returns nothing would leave the key off the frame, which a client reads as
+ * an answer that never arrived rather than as an empty one. So it becomes `{}`
+ * - what the protocol declares for the methods that declare an object there,
+ * and a defect this host still owes a fix for on the ones that declare `null`.
+ *
+ * One function rather than a `?? {}` at the send site, because the wire test
+ * records through it. A recording taken from the handler's return would hold
+ * `undefined` where the socket carries `{}`, and would pass a check of the
+ * frame the wire never ran.
+ */
+export const resultFrame = (returned: unknown): unknown => returned ?? {};
+
+/**
  * One frame in, and whatever it deserves back.
  *
  * AHP is JSON-RPC with one deviation worth knowing: a *notification* is a
@@ -217,7 +233,7 @@ export function receive(raw: string, peer: Peer, handle: Handler): void {
   void (async () => {
     try {
       const result = await handle({ method, params }, peer);
-      if (id !== undefined) peer.send({ jsonrpc: '2.0', id, result: result ?? {} });
+      if (id !== undefined) peer.send({ jsonrpc: '2.0', id, result: resultFrame(result) });
     } catch (error) {
       if (id === undefined) return;
       const shaped = rpcShaped(error);

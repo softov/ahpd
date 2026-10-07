@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { metaKeys } from '../../../tools/wire.mjs';
 import { gitChanges } from '../src/changes.js';
 import type { ChangesetOperationContext } from '../src/types/changes.js';
 
@@ -91,6 +92,23 @@ describe('staging, as the changeset reports it', () => {
     const source = gitChanges();
     const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
     expect(state?.files?.[0]?._meta).toEqual({ staged: true, unstaged: true });
+  });
+
+  it('writes no `_meta` key on a row but the two a commit form is drawn from', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    writeFileSync(join(dir, 'fresh.txt'), 'new\n');
+    git(dir, 'add', 'tracked.txt');
+    const source = gitChanges();
+    const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
+    /*
+     * The same census the wire test runs over the whole capture, over the rows
+     * this file makes. `_meta` is the protocol's one open bag, so nothing else
+     * closes it: a third key here reaches every client with no schema
+     * noticing, and the two that are there are what a commit form is drawn
+     * from.
+     */
+    expect([...new Set(metaKeys({ state }).map((one) => one.key))].sort()).toEqual(['staged', 'unstaged']);
   });
 
   it('keeps a staged rename as one row under its new name', async () => {

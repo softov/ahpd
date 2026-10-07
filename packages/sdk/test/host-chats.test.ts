@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { checker } from '../../../tools/wire.mjs';
 import {
   resetSdk, actions, emit, hello, open, peer, sdk, serving,
   sessionQueries, settle, running,
 } from './support/host.js';
+import { undeclaredIn } from './support/wire.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -284,12 +284,8 @@ describe('a chat made out of another', () => {
   };
 
   /** Every frame a peer was sent, with the subscribe answers given, against the protocol schema. */
-  const defectsOf = (p: ReturnType<typeof peer>, answers: unknown[]): string[] => {
-    const check = checker();
-    return [...p.notes, ...answers.map((result) => ({ result }))]
-      .flatMap((frame) => check.frame(frame))
-      .map((one) => `${one.def} ${one.at} ${one.what}`);
-  };
+  const defectsOf = (p: ReturnType<typeof peer>, answers: unknown[]): string[] =>
+    undeclaredIn([...p.notes, ...answers.map((result) => ({ result }))]);
 
   it('says a fork came from that chat at that turn, wherever the chat is described', async () => {
     const { client, peer: p, uri, chatUri } = await running();

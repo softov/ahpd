@@ -1,0 +1,34 @@
+{
+  "name": "automation-capabilities",
+  "group": "A",
+  "description": "Automation capability markers preserve present empty objects, including customizations, and nested schedule configuration.",
+  "type": "InitializeResult",
+  "input": {
+    "protocolVersion": "0.8.0",
+    "serverSeq": 1,
+    "snapshots": [],
+    "automations": {
+      "create": {},
+      "schedules": {
+        "minIntervalMinutes": 5
+      },
+      "runCancellation": {},
+      "runHistoryLimit": 50,
+      "customizations": {}
+    }
+  },
+  "acceptableOutputs": [{
+    "protocolVersion": "0.8.0",
+    "serverSeq": 1,
+    "snapshots": [],
+    "automations": {
+      "create": {},
+      "schedules": {
+        "minIntervalMinutes": 5
+      },
+      "runCancellation": {},
+      "runHistoryLimit": 50,
+      "customizations": {}
+    }
+  }]
+}

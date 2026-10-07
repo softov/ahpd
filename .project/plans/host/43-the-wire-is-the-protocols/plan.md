@@ -1,10 +1,10 @@
 ---
 title: The wire is the protocol's, and the wire test proves every frame against AHP 1.0.0
 domain: host
-status: planned
+status: active
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-03
+revalidated: 2026-10-07
 requires:
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
@@ -20,14 +20,14 @@ refs:
 
 ## Goal
 
-Every frame ahpd sends is one AHP 1.0.0 declares: request results are the declared shapes, `null` included, actions carry only declared fields, the root config schema is one a client can read, and every `_meta` key ahpd invents says it is ahpd's.
-The wire test is what proves it, so it is extended first: every request and result by `CommandMap`, every notification by `ServerNotificationMap`, over a host with a users directory, a signed-in person on a team, an automation with an owner and its run, and the daemon's root config with a plugin's options.
+Every frame ahpd sends is one AHP 1.0.0 declares. Request results are the declared shapes, `null` included. Actions carry only declared fields. The root config schema is one a client can read. Every `_meta` key ahpd invents says it is ahpd's.
+The wire test is what proves it, so extend it first. Every request and result goes by `CommandMap`, and every notification by `ServerNotificationMap`. It runs over a host with a users directory, a signed-in person on a team, and an automation with an owner and its run. The host also holds the daemon's root config with a plugin's options.
 What ahpd keeps on purpose for VS Code parity stays, and is listed by name in the test and in `docs/AHP.md`.
 
 ## Reconnaissance
 
 The files read and the patterns to reuse are the `refs` above, each with its note.
-An audit on main ran the wire test's machinery over a wider host and reported the defects below; each one was re-read on `08371ca` before it became a task.
+An audit on main ran the wire test's machinery over a wider host and reported the defects below. Each one was re-read on `08371ca` before it became a task.
 
 ### Searches performed
 
@@ -48,7 +48,7 @@ rootConfig port schema -> RootState.config -> config:read connection
 
 ### Gaps
 
-- The wire test records `result` before `rpc.ts` turns it into the frame, checks no request params, no result outside a snapshot or a resolved config, and no notification but `action`.
+- The wire test records `result` before `rpc.ts` turns it into the frame. It checks no request params, no result outside a snapshot or a resolved config, and no notification but `action`.
 - `tools/schema.mjs` folds every `Partial<T>` into one `Partial` definition, and checks the bit-flag `SessionStatus` as an enum of single flags.
 
 ## Decisions locked in
@@ -65,26 +65,26 @@ rootConfig port schema -> RootState.config -> config:read connection
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The wire test checks every request, result and notification](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | planned | - |
+| [p1 - The wire test checks every request, result and notification](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | built 2026-10-07 | - |
 | [p2 - Results and actions are the protocol's shapes](../43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | planned | p1 |
 | [p3 - The root config schema is one a client can read](../43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | planned | p1 |
 | [p4 - Every `_meta` key ahpd invents is named `ahpd.<name>`](../43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) | planned | p1, and ahpapp and ahpc reading both names |
 
 ## Risks and tradeoffs
 
-- p2 changes two answers clients read: seven results become `null`, and `fetchAutomationRuns` answers `{}` with the page on `automation/set`; ahpc's `automationRuns` reads `result.runs` today and must read the entry (see the client hand-off note).
-- p4 renames keys ahpapp and ahpc read; landing it before both read the new name blanks a cost, a cache-write count, a staged mark and a session's model in those clients.
+- p2 changes two answers clients read. Seven results become `null`. `fetchAutomationRuns` answers `{}` with the page on `automation/set`. The client's `automationRuns` reads `result.runs` today and must read the entry (see the client hand-off note).
+- p4 renames keys ahpapp and ahpc read. Landing it before both read the new name blanks a cost, a cache-write count, a staged mark and a session's model in those clients.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [p1](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md).
+- **Done so far:** p1's tasks 01 to 05. The schema checks every `Partial<T>` and the flags of `SessionStatus`. The checker routes by the protocol's maps. The wire test records a whole host, and names every `_meta` key it writes. The protocol's own cases from tag `v1.0.0` run against the package's reducers, its round trips, its negotiation rows, and through ahpd's host.
+- **Next action:** p2. p1 is built and green; a review is what stands between it and `done`.
 - **Open questions:** p3's `http` type, explained to Softov and awaiting confirmation; `writeOnly` (not sent) and the timing keys (prefixed) are answered in p3 and p4.
-- **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package and owns the guard that rebuilds the strict schema when the package changes; the children were re-checked against 1.0.0 on 2026-10-03.
+- **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package. It owns the guard that rebuilds the strict schema when the package changes. The children were re-checked against 1.0.0 on 2026-10-03.
 - **Watch out for:** a fix that lands without removing its line from p1's known-defects list fails the wire test, and that is the point.
 
 ## Final verification checklist
 
 - [ ] p1 to p4 built, and the wire test's known-defects list and pending-rename list are empty.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

@@ -153,6 +153,9 @@ function narrow(errors) {
 const actionDef = (type) =>
   `${type.split('/').map((part) => part[0].toUpperCase() + part.slice(1)).join('')}Action`;
 
+/** A JSON Pointer step, where a method name carries a slash of its own. */
+const step = (part) => part.replace(/~/gu, '~0').replace(/\//gu, '~1');
+
 /**
  * A checker over one strict schema.
  *
@@ -161,6 +164,13 @@ const actionDef = (type) =>
  * `N` so one bad conversation is one finding rather than hundreds. `skipped`
  * counts the payloads nothing here knows how to route, which is the part of
  * the surface this is *not* checking and says so.
+ *
+ * A frame is routed by what the protocol says it is, never by its name:
+ * a recorded exchange - `{ asked, params, result }` - goes through
+ * `CommandMap`, whose entry names the params declaration and the result one,
+ * and a notification through `ServerNotificationMap`. Routing by name instead
+ * would check a payload against whatever definition happened to be called
+ * after it, which is how a session summary came to be checked as a chat.
  */
 export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
   // `discriminator` is why the generator tags its unions: ajv then reports the
@@ -169,23 +179,69 @@ export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
   addFormats(ajv);
   ajv.addSchema(schema, 'ahp');
 
+  /*
+   * The same declarations, with a snapshot's `state` open.
+   *
+   * `Snapshot.state` is a union of ten channel states and carries no tag, so
+   * a validator asked for one branch answers with the nine that are not - the
+   * union working correctly, and nothing a reader can act on. Which channel a
+   * snapshot is, is a fact of its resource, and `stateFor` is the only thing
+   * here that knows it; so the state is checked from there and the rest of
+   * the snapshot is checked with the key opened, where `resource`, `fromSeq`
+   * and an invented key are all still findings.
+   */
+  const snapshot = schema.$defs.Snapshot;
+  const open = snapshot === undefined ? undefined : {
+    ...schema,
+    $id: 'ahp-open',
+    $defs: {
+      ...schema.$defs,
+      Snapshot: {
+        ...snapshot,
+        properties: { ...snapshot.properties, state: true },
+        required: (snapshot.required ?? []).filter((one) => one !== 'state'),
+      },
+    },
+  };
+  if (open !== undefined) ajv.addSchema(open, 'ahp-open');
+  // A result may carry a snapshot, so results are checked where the state is
+  // open; params and notifications never do.
+  const results = open === undefined ? 'ahp' : 'ahp-open';
+
+  /*
+   * The protocol's own index of who sends what.
+   *
+   * A request travels one way or the other and each direction has a map of its
+   * own, and a notification likewise - so a method's declaration is read off
+   * the method rather than guessed from the shape of the frame. Which map holds
+   * one is what `holder` answers; a method in none of them is not routed.
+   */
+  const REQUESTS = ['CommandMap', 'ServerCommandMap'];
+  const NOTIFICATIONS = ['ServerNotificationMap', 'ClientNotificationMap'];
+  const holder = (names, method) => names.find((name) => {
+    const properties = schema.$defs[name]?.properties;
+    return properties !== undefined && Object.hasOwn(properties, method);
+  });
+
   const validators = new Map();
   const skipped = new Map();
   let checked = 0;
 
-  const against = (def, value, sample, into) => {
-    if (def === undefined || !schema.$defs[def]) {
-      const name = def ?? String(sample);
-      skipped.set(name, (skipped.get(name) ?? 0) + 1);
-      return;
-    }
-    if (!validators.has(def)) validators.set(def, ajv.compile({ $ref: `ahp#/$defs/${def}` }));
-    const validate = validators.get(def);
+  const skip = (name) => skipped.set(name, (skipped.get(name) ?? 0) + 1);
+
+  /** What a finding is reported under: the definition, or where it stands. */
+  const labelFor = (where, which, shape) => (typeof shape?.$ref === 'string'
+    ? shape.$ref.split('/').pop()
+    : `${where}.${which}`);
+
+  const run = (ref, label, value, sample, into) => {
+    if (!validators.has(ref)) validators.set(ref, ajv.compile({ $ref: ref }));
+    const validate = validators.get(ref);
     checked += 1;
     if (validate(value)) return;
     for (const error of narrow(validate.errors ?? [])) {
       into.push({
-        def,
+        def: label,
         at: (error.instancePath || '/').replace(/\/\d+/g, '/N'),
         what: error.keyword === 'additionalProperties'
           ? `undeclared key \`${error.params.additionalProperty}\``
@@ -195,6 +251,39 @@ export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
         sample,
       });
     }
+  };
+
+  /** One named definition, where a frame names one rather than a map entry. */
+  const against = (def, value, sample, into) => {
+    if (def === undefined || schema.$defs[def] === undefined) {
+      skip(def ?? String(sample));
+      return;
+    }
+    run(`ahp#/$defs/${def}`, def, value, sample, into);
+  };
+
+  /** One half of a map entry - a command's params or its result, or a notification's params. */
+  const half = (at, map, method, which, value, sample, into) => {
+    const shape = schema.$defs[map]?.properties?.[method]?.properties?.[which];
+    if (shape === undefined) return;
+    run(`${at}#/$defs/${map}/properties/${step(method)}/properties/${which}`,
+      labelFor(map, `${method}.${which}`, shape), value, sample, into);
+  };
+
+  /**
+   * A snapshot's own state, from the resource it names.
+   *
+   * The one thing the schema cannot say, because the union carries no tag: a
+   * subscribe answer's snapshot and every snapshot a reconnect or an
+   * initialize carries are checked here, and the rest of the frame by the map.
+   */
+  const states = (result, into) => {
+    if (result === null || typeof result !== 'object') return;
+    const each = (one) => {
+      if (one?.state !== undefined) against(stateFor(one.resource), one.state, one.resource, into);
+    };
+    each(result.snapshot);
+    for (const one of result.snapshots ?? []) each(one);
   };
 
   return {
@@ -211,36 +300,101 @@ export function checker(schema = JSON.parse(readFileSync(SCHEMA, 'utf8'))) {
        * so it comes off before anything is checked.
        */
       const { _ahpLog, ...message } = value;
-      // A subscribe answer: the snapshot names its own channel.
-      const snapshot = message.result?.snapshot;
-      if (snapshot?.state !== undefined) against(stateFor(snapshot.resource), snapshot.state, snapshot.resource, found);
-      // A reconnect answer carries several at once.
-      for (const one of message.result?.snapshots ?? []) {
-        if (one?.state !== undefined) against(stateFor(one.resource), one.state, one.resource, found);
-      }
-      /*
-       * A resolved config schema.
-       *
-       * The whole result, not the schema alone: `ResolveSessionConfigResult`
-       * declares both halves, and the echoed values are as much a payload as
-       * the questions they answer. Picking the schema out and guessing its
-       * type reported `sessionMutable` as undeclared - it is declared, on the
-       * *session* config schema, which is not the generic one.
-       */
-      if (message.result?.schema !== undefined && snapshot === undefined) {
-        against('ResolveSessionConfigResult', message.result, 'resolveSessionConfig', found);
-      }
-      // An action, envelope and payload both. The payload's declaration is
-      // named after its action type, which the package spells in PascalCase
-      // with the channel prefix - `chat/delta` is `ChatDeltaAction`.
-      if (message.method === 'action' && message.params) {
-        against('ActionEnvelope', message.params, message.params.channel, found);
-        const type = message.params.action?.type;
-        if (typeof type === 'string') against(actionDef(type), message.params.action, type, found);
+      void _ahpLog;
+
+      if (typeof message.asked === 'string') {
+        // A recorded exchange: the request one side sent and the answer back.
+        const map = holder(REQUESTS, message.asked);
+        if (map === undefined) {
+          skip(message.asked);
+        } else {
+          const ask = message.params?.channel ?? message.asked;
+          if (message.params !== undefined) half('ahp', map, message.asked, 'params', message.params, ask, found);
+          // A refusal has no result to check; its params are still the request's.
+          if (message.error === undefined && Object.hasOwn(message, 'result')) {
+            half(results, map, message.asked, 'result', message.result, message.asked, found);
+            states(message.result, found);
+          }
+        }
+      } else if (typeof message.method === 'string') {
+        const map = holder(NOTIFICATIONS, message.method);
+        if (map === undefined) skip(message.method);
+        else half('ahp', map, message.method, 'params', message.params, message.params?.channel ?? message.method, found);
+
+        /*
+         * An action's payload, under the envelope that carried it.
+         *
+         * The envelope is checked by the map, and the payload by the
+         * declaration its type names - the package spells it in PascalCase with
+         * the channel prefix, so `chat/delta` is `ChatDeltaAction`. A `$ref`
+         * names the envelope and not the branch inside it, so a finding in the
+         * payload would otherwise be reported against the union as a whole.
+         */
+        if (message.method === 'action' && message.params !== null && typeof message.params === 'object') {
+          const type = message.params.action?.type;
+          if (typeof type === 'string') against(actionDef(type), message.params.action, type, found);
+        }
+      } else if (message.result !== null && typeof message.result === 'object' && message.result !== undefined) {
+        /*
+         * An answer whose request is not in this capture.
+         *
+         * `validate.mjs` pairs a request with its answer, and the suite records
+         * the pair; a recording taken mid-flight, or one whose request line was
+         * dropped, still has a result in it, and both halves are worth checking
+         * whether or not the method that asked is on hand.
+         */
+        states(message.result, found);
+        /*
+         * A resolved config schema. The whole result, not the schema alone:
+         * `ResolveSessionConfigResult` declares both halves, and the echoed
+         * values are as much a payload as the questions they answer.
+         */
+        if (message.result.schema !== undefined) {
+          against('ResolveSessionConfigResult', message.result, 'resolveSessionConfig', found);
+        }
       }
       return found;
     },
   };
+}
+
+/**
+ * Every `_meta` key in a frame, with the path the object sits at.
+ *
+ * `_meta` is the protocol's one open bag: any key may go in it, nothing is
+ * declared, and a closed-object schema has no opinion about what is there. So
+ * it is where a host invents names, and where those names are invisible to
+ * every other check in this file.
+ *
+ * The key is reported with the path rather than on its own because the same
+ * key means different things in different places: `command` is the reference
+ * client's on a completion item and an invention on anything else, so a census
+ * that reported bare names could not tell the two apart and would have to
+ * allow the name everywhere.
+ *
+ * Array indices are folded the way the checker folds them, so one bad list is
+ * one entry rather than one per element.
+ */
+export function metaKeys(frame) {
+  const found = [];
+  const walk = (value, at) => {
+    if (Array.isArray(value)) {
+      value.forEach((one, index) => walk(one, `${at}/${index}`));
+      return;
+    }
+    if (typeof value !== 'object' || value === null) return;
+    for (const [key, held] of Object.entries(value)) {
+      const here = `${at}/${step(key)}`;
+      if (key === '_meta' && typeof held === 'object' && held !== null) {
+        for (const one of Object.keys(held)) {
+          found.push({ key: one, at: here.replace(/\/\d+/gu, '/N') });
+        }
+      }
+      walk(held, here);
+    }
+  };
+  walk(frame, '');
+  return found;
 }
 
 /** One line per defect, with a count, out of however many frames produced it. */

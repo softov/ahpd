@@ -21,5 +21,14 @@ export declare function checker(schema?: unknown): {
   skipped(): Map<string, number>;
   frame(value: unknown): Defect[];
 };
+/** One `_meta` key, and the path of the `_meta` object it sat in. */
+export interface MetaKey {
+  /** The key itself. */
+  key: string;
+  /** Where the `_meta` object is, with array indices folded to `N`. */
+  at: string;
+}
+
+export declare function metaKeys(frame: unknown): MetaKey[];
 export declare function collapse(defects: Defect[]): [string, { count: number; sample: string }][];
 export declare function framesIn(text: string): Generator<Record<string, unknown>>;

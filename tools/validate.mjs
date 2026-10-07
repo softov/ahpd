@@ -37,11 +37,37 @@ if (stale()) {
 const wire = checker();
 const defects = [];
 let frames = 0;
+
+/*
+ * A capture holds a request and the answer to it as two separate lines, and
+ * what the checker reads is the exchange: the method is the only thing that
+ * says which declaration either half is, and it is on the line the answer is
+ * not. So the two are paired here, by the `id` they share.
+ *
+ * A request still in flight when the capture ends is checked for its params
+ * alone, which is what a recording that stops mid-conversation has to say.
+ */
+const asked = new Map();
 for (const frame of framesIn(readFileSync(file, 'utf8'))) {
   if (frames >= limit) break;
   frames += 1;
+  const id = typeof frame.id === 'number' ? frame.id : undefined;
+  if (typeof frame.method === 'string' && id !== undefined) {
+    asked.set(id, { asked: frame.method, params: frame.params });
+    continue;
+  }
+  if (typeof frame.method !== 'string' && id !== undefined && ('result' in frame || 'error' in frame)) {
+    const request = asked.get(id) ?? {};
+    asked.delete(id);
+    defects.push(...wire.frame({
+      ...request,
+      ...('result' in frame ? { result: frame.result } : { error: frame.error }),
+    }));
+    continue;
+  }
   defects.push(...wire.frame(frame));
 }
+for (const request of asked.values()) defects.push(...wire.frame(request));
 
 const found = collapse(defects);
 process.stdout.write(

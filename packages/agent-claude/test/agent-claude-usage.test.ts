@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
+import { metaKeys } from '../../../tools/wire.mjs';
 import type { Bag, SubagentChat, SubagentRequest } from '@ahpd/sdk';
 
 /*
@@ -288,6 +289,19 @@ it('lets a guess made in an earlier turn spoil only that turn\'s cost', async ()
   sdk.push(...fixture('claude-empty-round.jsonl'), both(1.25, 0.2));
   await settle();
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.75, currency: 'USD' } });
+});
+
+it('writes no key into the usage\'s `_meta` that nothing has been told about', async () => {
+  const { main } = await replay([...fixture('claude-answered-round.jsonl'), result(0.5)]);
+  /*
+   * `_meta` is the protocol's one open bag: no declaration names a key in it,
+   * so a name added here reaches every client with no schema noticing. The
+   * wire test runs this same census over the whole capture; this is it over
+   * the part of it this file produces, so a key invented here fails here
+   * rather than in a capture nobody took.
+   */
+  expect(metaKeys(payload(reports(main).at(-1))).map((one) => one.key).sort())
+    .toEqual(['cacheWriteTokens', 'cost']);
 });
 
 it('falls back to the result\'s own count when the stream carried no partial messages', async () => {

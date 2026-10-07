@@ -68,13 +68,37 @@ function note(name, why) {
   return why === undefined ? true : true;
 }
 
-/** A type's declared name, where it has one worth referencing. */
-function nameOf(type) {
+/**
+ * A type's declared name, where it has one worth referencing.
+ *
+ * A generic alias is named after its arguments as well as itself, because
+ * `Partial<SessionSummary>` and `Partial<ChatSummary>` are two different
+ * shapes and a reader of the output cannot tell one `Partial` from the other.
+ * The first one emitted became the definition every later one pointed at, so
+ * the root channel's session summary was checked against a chat, and a chat's
+ * own `origin`, `interactivity` and `_meta` were the only ones that passed.
+ *
+ * An argument this cannot name - an anonymous object, a bare type parameter -
+ * gives no name back, and the caller inlines the type instead of inventing
+ * one. `AhpSuccessResponse<M>` inside its own declaration is not a shape any
+ * frame has, and naming it after the parameter would put a definition in the
+ * output that only says so. `seen` is what stops a generic alias that names
+ * itself from recursing.
+ */
+function nameOf(type, seen = new Set()) {
   const symbol = type.aliasSymbol ?? type.getSymbol();
   if (!symbol) return undefined;
   const name = symbol.getName();
   if (!name || name === '__type' || name === '__object') return undefined;
-  return name;
+  const args = type.aliasTypeArguments;
+  if (args === undefined || args.length === 0) return name;
+  if (args.some((one) => (one.flags & F.TypeParameter) !== 0)) return undefined;
+  if (seen.has(symbol)) return undefined;
+  seen.add(symbol);
+  const named = args.map((one) => nameOf(one, seen));
+  seen.delete(symbol);
+  if (named.some((one) => one === undefined)) return undefined;
+  return name + named.join('');
 }
 
 function isRecord(type) {
@@ -90,6 +114,35 @@ function literal(type) {
     return { const: checker.typeToString(type) === 'true' };
   }
   return undefined;
+}
+
+/**
+ * Every OR of the members, where the members are bit flags, and nothing
+ * otherwise.
+ *
+ * `SessionStatus` is the union this is for. Its `InProgress` is 8 and its
+ * `InputNeeded` is `InProgress | 16`, so a client sends `Idle | IsRead` - 33 -
+ * which no member names, and an enum of the members alone reports a value the
+ * type does have as one it does not. The closure is what the protocol means:
+ * any combination of the flags, and nothing else. A bit no member uses is
+ * still refused, so 4 - which is no flag of this one - stays a finding.
+ *
+ * The rule is the shape rather than the name, so the next flag enum needs no
+ * entry here: every member is a positive integer and at least two of them are
+ * powers of two. The protocol's other numeric unions are error codes, which
+ * are negative, and a negative code is not a flag. Six members is the ceiling
+ * because the closure is at most the 64 subsets of them.
+ */
+function flagValues(values) {
+  if (values.length < 2 || values.length > 6) return undefined;
+  if (!values.every((one) => Number.isInteger(one) && one > 0)) return undefined;
+  if (values.filter((one) => (one & (one - 1)) === 0).length < 2) return undefined;
+  const reachable = new Set([0]);
+  for (const one of values) {
+    for (const held of [...reachable]) reachable.add(held | one);
+  }
+  reachable.delete(0);
+  return [...reachable].sort((one, other) => one - other);
 }
 
 /**
@@ -124,7 +177,9 @@ function schemaOf(type, seen, asDefinition = false) {
     // reporting every value it is not.
     const consts = parts.map((one) => literal(one));
     if (consts.every((one) => one !== undefined)) {
-      return { enum: consts.map((one) => one.const) };
+      const values = consts.map((one) => one.const);
+      const flags = flagValues(values);
+      return { enum: flags ?? values };
     }
     const drawn = parts.map((one) => schemaOf(one, seen));
     /*

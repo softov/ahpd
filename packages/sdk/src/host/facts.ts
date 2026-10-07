@@ -24,7 +24,7 @@ export interface Facts {
 export function createFacts(ctx: HostContext): Facts {
   const {
     options, sessions, owners, connections, worktrees, githubFacts, kept, log, lent, dispatch,
-    dirOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, heldAs,
+    dirOf, leadOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, heldAs,
   } = ctx;
 
   /**
@@ -142,6 +142,21 @@ export function createFacts(ctx: HostContext): Facts {
     ctx.summaryMoved(uri);
   };
   /**
+   * What the agent running a session put in its `_meta`.
+   *
+   * Read off the backend's own state rather than kept here, so a key it adds
+   * or drops is one this host follows without having to know about it. Empty
+   * for a session nothing is running, which is not a gap: a browsed row has no
+   * agent to have written anything.
+   */
+  const agentMeta = (uri: string): Bag => {
+    const held = sessions.get(uri);
+    const lead = held === undefined ? undefined : leadOf(held);
+    const meta = (lead?.sessionState() as { _meta?: unknown } | undefined)?._meta;
+    return typeof meta === 'object' && meta !== null ? (meta as Bag) : {};
+  };
+
+  /**
    * What is true of a session because of where it is.
    *
    * Spread into a `SessionState` and into a `SessionSummary` alike, so only
@@ -159,7 +174,25 @@ export function createFacts(ctx: HostContext): Facts {
      * for a session that is somewhere.
      */
     const owner = kept.owner(idOf(uri));
-    if (dir === undefined) return owner === undefined ? {} : { _meta: { owner } };
+    /*
+     * The map has two producers and both have to be in it.
+     *
+     * The backend adds its own keys beside the protocol's fields - the model a
+     * session is on is one - and this host adds the directory's facts. Every
+     * place a session is described spreads this helper, and `_meta` is
+     * replaced whole rather than merged, so a description that carried only
+     * this host's keys would erase the backend's on the state, on the browsed
+     * state, on the row and on the notification alike.
+     *
+     * The host's keys win a collision: a fact read from the directory is this
+     * host's answer about where the session is, and the backend has no way to
+     * know it.
+     */
+    const byAgent = agentMeta(uri);
+    if (dir === undefined) {
+      const meta = { ...byAgent, ...(owner === undefined ? {} : { owner }) };
+      return Object.keys(meta).length === 0 ? {} : { _meta: meta };
+    }
     /*
      * The project's name is the directory's own, not its path.
      *
@@ -173,11 +206,10 @@ export function createFacts(ctx: HostContext): Facts {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const told = metaOf(uri);
+    const meta = { ...byAgent, ...told, ...(owner === undefined ? {} : { owner }) };
     return {
       project,
-      ...(told === undefined && owner === undefined
-        ? {}
-        : { _meta: { ...told, ...(owner === undefined ? {} : { owner }) } }),
+      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
       // Not `changes`: `SessionSummary` declares it and `SessionState` does
       // not, so it goes on the row rather than in both - which is the rule
       // this helper states and had broken.
