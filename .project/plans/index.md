@@ -152,8 +152,9 @@ Reference: [00-host.md](host/00-host.md)
 | [66 p3 - An ACP agent in a folder nobody trusted](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/plan.md) | medium | planned 2026-10-06; task 01 todo, after p1 task 03 | host 66 p1 | - |
 | [67 - A machine commits in a repository of its own, and ahpd fetches the work back](host/67-a-machine-commits-in-its-own-repository/plan.md) | high | planned 2026-10-06; tasks 01-09 todo, `sessionTree` shared or copy; supersedes host/65 p2's git allowlist | host 65 p2 (no `deferred.md` there to close), container 05 p7 | - |
 | [68 - An attachment's bytes are a file the host wrote, and every backend reads attachments through one helper with one set of limits](host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md) | medium | planned 2026-10-06 | - | claude 20, acp 14, pi 15, plugin 36 |
+| [69 - Streamed deltas are merged for a short window in the host's dispatch, for every backend](host/69-a-streamed-delta-is-merged-before-it-goes-out/plan.md) | medium | planned 2026-10-06 | - | - |
 
-Next free number in `host`: `69`.
+Next free number in `host`: `70`.
 
 ## claude
 
