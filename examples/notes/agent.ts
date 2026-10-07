@@ -268,7 +268,7 @@ export function notes(options: NotesOptions): Agent {
     const ask = async (turn: Bag, request: Bag): Promise<Bag | undefined> => {
       const part: Bag = { id: String(request.id), kind: 'inputRequest', request };
       (turn.responseParts as Bag[]).push(part);
-      start.emit('chat', { type: 'chat/inputRequested', turnId: turn.id, request });
+      start.emit('chat', { type: 'chat/inputRequested', request });
       doing('Waiting on you');
       const given = await new Promise<Bag | undefined>((settle) => {
         wants({
@@ -566,7 +566,8 @@ export function notes(options: NotesOptions): Agent {
       workingDirectories: () => [`file://${where}`],
 
       sessionState: () => ({
-        resource: start.uri,
+        // No `resource`: it is declared on `SessionSummary` and not on
+        // `SessionState`, and a client subscribed to this channel named it.
         provider: 'notes',
         title,
         status: status(),

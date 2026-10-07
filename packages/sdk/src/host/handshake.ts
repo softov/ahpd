@@ -283,7 +283,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         },
       };
     },
-    ping: async () => ({}),
+    ping: async () => null,
     /**
      * A client that dropped, coming back.
      *

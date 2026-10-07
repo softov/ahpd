@@ -203,7 +203,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         // `chat` is required on every input request and was never sent.
         const entry: Bag = { id, chat: where, kind: 'chatInput', request };
         pending.set(id, { id, entry, questions: list(raw.questions), asked, answers: new Map(), settle });
-        ctx.emitOn(scope, { type: 'chat/inputRequested', turnId: turn.id, request });
+        ctx.emitOn(scope, { type: 'chat/inputRequested', request });
         ctx.inputNeededSet(entry);
         ctx.touch();
         return;

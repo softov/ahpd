@@ -212,3 +212,28 @@ describe('an error the handler throws', () => {
     });
   });
 });
+
+describe('the result a handler returned', () => {
+  /*
+   * `null` is a value the protocol declares for a result and `undefined` is no
+   * value at all, so the two leave here differently. A method whose
+   * declaration is `null` - the acknowledgements, `ping` among them - is
+   * answered `null`, and a handler that returned nothing keeps the empty
+   * object a client reads as an answer that arrived.
+   */
+  const answered = async (returned: unknown): Promise<unknown> => {
+    const socket = wire();
+    const peer = createPeer(socket);
+    receive(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }), peer, async () => returned);
+    await vi.waitFor(() => expect(socket.written).toHaveLength(1));
+    return socket.written[0];
+  };
+
+  it('goes on the wire as `null`', async () => {
+    expect(await answered(null)).toEqual({ jsonrpc: '2.0', id: 1, result: null });
+  });
+
+  it('goes on the wire as `{}` where the handler returned nothing', async () => {
+    expect(await answered(undefined)).toEqual({ jsonrpc: '2.0', id: 1, result: {} });
+  });
+});

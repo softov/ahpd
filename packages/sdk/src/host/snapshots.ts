@@ -221,7 +221,15 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       const restored = read
         .map((one) => ({ one, uri: subagentChatUri(channel, String(one.toolCallId ?? '')) }))
         .filter(({ uri }) => !subagents.has(uri));
-      const theirs = lead.sessionState();
+      /*
+       * The backend's answer with `resource` taken off it.
+       *
+       * `SessionState` declares no such key: the channel the client asked
+       * about is the resource, and this host says so in the answer it wraps
+       * around this. A backend that echoes its own URI is echoing a field the
+       * protocol has no place for, which a strict client calls a defect.
+       */
+      const { resource: _resource, ...theirs } = lead.sessionState();
       const mine = decided.get(channel);
       const state = {
         ...theirs,

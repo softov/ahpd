@@ -1,10 +1,10 @@
 ---
 title: chat/inputRequested carries only its request
-status: todo
+status: done
 depends: []
 layer: "agent-claude, examples"
 refs:
-  - "[code://packages/agent-claude/src/session.ts#L2085](../../../../packages/agent-claude/src/session.ts#L2085) - `emitOn(scope, { type: 'chat/inputRequested', turnId: turn.id, request })`"
+  - "[code://packages/agent-claude/src/session/asking.ts#L206](../../../../packages/agent-claude/src/session/asking.ts#L206) - `emitOn(scope, { type: 'chat/inputRequested', request })`"
   - "[code://examples/notes/agent.ts#L271](../../../../examples/notes/agent.ts#L271) - the same action in the notes example"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `ChatInputRequestedAction` is `type` and `request` (`channels-chat/actions.ts:908-912`)"
 ---
@@ -15,7 +15,7 @@ No `chat/inputRequested` ahpd sends carries `turnId`, live or replayed in a `rec
 
 ## Files
 
-- `UPDATE: packages/agent-claude/src/session.ts:2085` - the action is `{ type, request }`.
+- `UPDATE: packages/agent-claude/src/session/asking.ts:206` - the action is `{ type, request }`.
 - `UPDATE: examples/notes/agent.ts:271` - the same.
 - `UPDATE: packages/sdk/test/wire.test.ts` - the `ChatInputRequestedAction` `turnId`, `ActionEnvelope /action` `turnId` and `ReconnectResult` `turnId` lines leave `KNOWN`.
 

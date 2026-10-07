@@ -362,12 +362,8 @@ it('reads a finished run as completed in the catalogue, with its session still c
   }) as { resource: string };
   await until(async () => (await runState(client, run.resource)).lifecycle.status === 'completed');
 
-  const page = await client.handle({
-    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
-  }) as {
-    items: { resource: string; lifecycle: { status: string; completedAt?: string }; sessionCount: number }[];
-  };
-  const summary = page.items.find((one) => one.resource === run.resource);
+  const entry = await held(client);
+  const summary = entry.runs.find((one) => one.resource === run.resource);
   expect(summary?.lifecycle.status).toBe('completed');
   expect(summary?.lifecycle.completedAt).toBeTypeOf('string');
   expect(summary?.sessionCount).toBe(1);
@@ -435,60 +431,111 @@ it('settles a run by hand, and never reopens one that ended', async () => {
   expect('startedAt' in (third?.lifecycle ?? {})).toBe(false);
 });
 
-it('records what it has run, and pages it', async () => {
-  const { client } = await connected();
-  await write(client, DEFINITION);
-  for (let i = 0; i < 3; i++) {
+/** The catalogue's one entry, as a client reads it. */
+type Held = {
+  runs: {
+    resource: string;
+    automation: string;
+    lifecycle: { status: string; startedAt?: string; completedAt?: string };
+    sessionCount: number;
+  }[];
+  runsNextCursor?: string;
+};
+const held = async (
+  client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
+): Promise<Held> => (await entries(client))[0] as Held;
+
+/** Run one automation `times` over, waiting for the store to have them all. */
+const runTimes = async (
+  client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
+  times: number,
+): Promise<void> => {
+  for (let i = 0; i < times; i++) {
     await client.handle({
       method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
     });
   }
-  await settle();
-  const page = await client.handle({
-    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
-  }) as { items: { automation: string; sessionCount: number }[]; nextCursor?: string };
-  expect(page.items).toHaveLength(3);
-  expect(page.items.every((one) => one.automation === ONE && one.sessionCount === 1)).toBe(true);
+};
+
+it('records what it has run, and shows it on the entry', async () => {
+  const { client } = await connected();
+  await write(client, DEFINITION);
+  await runTimes(client, 3);
+
+  const entry = await held(client);
+  expect(entry.runs).toHaveLength(3);
+  expect(entry.runs.every((one) => one.automation === ONE && one.sessionCount === 1)).toBe(true);
   // Three fits in a page, so there is nothing to ask for next.
-  expect(page.nextCursor).toBeUndefined();
+  expect(entry.runsNextCursor).toBeUndefined();
+
+  // And the request itself only acknowledges. The protocol's result for it is
+  // empty because the page is not the answer: it is the entry, on the channel
+  // the client is already subscribed to.
+  await expect(client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
+  })).resolves.toEqual({});
 });
 
-it('pages a history longer than a page, on the cursor it issued', async () => {
+it('grows the entry by a page, on the cursor the entry itself carries', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
-  for (let i = 0; i < 21; i++) {
-    await client.handle({
-      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
-    });
-  }
-  await settle();
-  const first = await client.handle({
-    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE },
-  }) as { items: unknown[]; nextCursor?: string };
-  expect(first.items).toHaveLength(20);
-  expect(first.nextCursor).toBe('20');
+  await runTimes(client, 45);
 
-  // The cursor the host issued is the one it answers: the run left over.
-  const second = await client.handle({
-    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor: first.nextCursor },
-  }) as { items: unknown[]; nextCursor?: string };
-  expect(second.items).toHaveLength(1);
-  expect(second.nextCursor).toBeUndefined();
+  // The first page is what a client is shown without asking for anything.
+  expect((await held(client)).runs).toHaveLength(20);
+  expect((await held(client)).runsNextCursor).toBe('20');
+
+  // The cursor the entry carries is the one the store answers, and asking for
+  // it is what makes the entry longer - for this client and every other.
+  await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor: '20' },
+  });
+  expect((await held(client)).runs).toHaveLength(40);
+  expect((await held(client)).runsNextCursor).toBe('40');
+
+  // The last page has no cursor, because there is nothing after it.
+  await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor: '40' },
+  });
+  expect((await held(client)).runs).toHaveLength(45);
+  expect((await held(client)).runsNextCursor).toBeUndefined();
+});
+
+it('moves the page for every subscriber, not only the one that asked', async () => {
+  const { host, client } = await connected();
+  const watcher = peer();
+  const other = host.accept(watcher);
+  await other.handle({
+    method: 'initialize', params: { clientId: 'b', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await other.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+
+  await write(client, DEFINITION);
+  await runTimes(client, 21);
+  const before = actions(watcher, AUTOMATIONS).length;
+
+  await client.handle({
+    method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor: '20' },
+  });
+  await settle();
+
+  // The protocol keeps the catalogue's subscribers synchronized: the one that
+  // asked and the one that did not read the same entry, off the same action.
+  const said_ = actions(watcher, AUTOMATIONS).slice(before).filter((one) => one.type === 'automation/set');
+  expect(said_).toHaveLength(1);
+  const entry = (said_[0] as { automation: Held }).automation;
+  expect(entry.runs).toHaveLength(21);
+  expect(entry.runsNextCursor).toBeUndefined();
 });
 
 it('refuses a runs cursor it did not issue, rather than answering from the start', async () => {
   const { client } = await connected();
   await write(client, DEFINITION);
-  for (let i = 0; i < 3; i++) {
-    await client.handle({
-      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: `r${String(i)}` },
-    });
-  }
-  await settle();
+  await runTimes(client, 3);
 
   // A cursor out of another store's history, one that is not a number, or one
-  // past the end. Answering the newest page for any of them is a client that
-  // pages for ever without noticing it is being told the same thing twice.
+  // past the end. Growing the page for any of them is a client that pages for
+  // ever without noticing it is being asked about runs it has already read.
   for (const cursor of ['x', '-1', '999']) {
     await expect(client.handle({
       method: 'fetchAutomationRuns', params: { channel: AUTOMATIONS, automation: ONE, cursor },
@@ -567,7 +614,7 @@ const controllable = () => {
       remove: () => false,
       run: async () => run,
       runOf: (resource: string) => (resource === run.resource ? run : undefined),
-      runs: () => ({ items: [] }),
+      runs: () => true,
       onChanged: (observer: (event: { automation?: string; run?: string; removed?: string }) => void) => {
         watcher = observer;
       },

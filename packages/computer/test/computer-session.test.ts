@@ -201,7 +201,7 @@ function clock(): { store: AutomationStore; due: (wanted: StartSession) => Promi
     remove: () => false,
     run: async (_resource, _origin, begin) => { start = begin; return undefined; },
     runOf: () => undefined,
-    runs: () => ({ items: [] }),
+    runs: () => true,
     onDue: (observer) => { asked = observer; },
   };
   return {

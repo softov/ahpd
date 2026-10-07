@@ -309,12 +309,13 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   });
   expect(problems).toEqual([]);
 
+  const automations = memoryAutomations();
   const host = createHost({
     path: '/home/softov',
     agents: [claude({ paths: ['/home/softov'] }), echo({ path: '/home/softov', pace: 0 })],
     resources: fileResources(),
     terminals: shellTerminals(),
-    automations: memoryAutomations(),
+    automations,
     tools: hostTools(),
     users: people(),
     rootConfig: daemonRootConfig(optionsFrom({ configFile: config })),
@@ -463,10 +464,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await settle();
 
   // An automation, its run, and the run's own channel. Made by the person on
-  // the connection, so every frame that names an author names her, and run
-  // twice so the second page is asked for through a cursor the store issued.
-  await ask('subscribe', { channel: 'ahp-automations://' });
-  await ask('listAutomationTriggerDefinitions', { channel: 'ahp-root://' });
+  // the connection, so every frame that names an author names her.
   const nightly = 'ahp-automation:/nightly';
   dispatch('ahp-automations://', {
     type: 'automation/createRequested',
@@ -480,6 +478,24 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     },
   });
   await settle();
+
+  /*
+   * And more history than a page, so the cursor has somewhere to go.
+   *
+   * Straight into the store, and before anything subscribes to the catalogue:
+   * a run made through `runAutomation` is a session, and nineteen more
+   * sessions is a capture of nineteen identical sessions with the one frame
+   * that matters buried in it. Nothing is watching yet, so the store's own
+   * announcements reach nobody - what the capture keeps is the entry holding
+   * them.
+   */
+  for (let i = 0; i < 19; i++) {
+    await automations.run(nightly, { kind: 'manual' }, async () => `ahp-session:/seeded-${String(i)}`);
+  }
+  await settle();
+
+  await ask('subscribe', { channel: 'ahp-automations://' });
+  await ask('listAutomationTriggerDefinitions', { channel: 'ahp-root://' });
   const run = await ask('runAutomation', {
     channel: 'ahp-automations://', automation: nightly, requestId: 'r1',
   }) as { resource: string };
@@ -487,7 +503,28 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('subscribe', { channel: run.resource });
   await ask('runAutomation', { channel: 'ahp-automations://', automation: nightly, requestId: 'r2' });
   await settle();
-  await ask('fetchAutomationRuns', { channel: 'ahp-automations://', automation: nightly, cursor: '1' });
+
+  /*
+   * The second page, asked for with the cursor the entry carries.
+   *
+   * `fetchAutomationRuns` answers `{}`: the protocol's result for it is empty,
+   * and the page itself is the automation's entry, which every subscriber of
+   * the catalogue reads off the `automation/set` the store dispatched as it
+   * grew - so the action is on the wire before this answer is.
+   */
+  await ask('fetchAutomationRuns', { channel: 'ahp-automations://', automation: nightly, cursor: '20' });
+  const fetched = wire.findIndex((one) => one.asked === 'fetchAutomationRuns');
+  expect(wire[fetched]).toEqual({
+    asked: 'fetchAutomationRuns',
+    params: { channel: 'ahp-automations://', automation: nightly, cursor: '20' },
+    result: {},
+  });
+  const arrival = wire[fetched - 1] as { params: { action: { type: string; automation: Record<string, unknown> } } };
+  expect(arrival.params.action.type).toBe('automation/set');
+  // Twenty-one runs, which is more than a page, and no cursor left because
+  // the history is exhausted.
+  expect(arrival.params.action.automation.runs).toHaveLength(21);
+  expect(arrival.params.action.automation.runsNextCursor).toBeUndefined();
 
   // And a reconnect, which is the one answer carrying several snapshots.
   await ask('reconnect', {
@@ -533,12 +570,23 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * whichever UUID it is.
    */
   let minted = 0;
+  let turns = 0;
   const names = new Map<string, string>();
   const steady = (text: string): string => text
     .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '2020-01-01T00:00:00.000Z')
     .replace(/"ahpd\.durationMs":\d+/g, '"ahpd.durationMs":0')
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, (found) => {
       if (!names.has(found)) names.set(found, `00000000-0000-4000-8000-${String(minted++).padStart(12, '0')}`);
+      return names.get(found) as string;
+    })
+    /*
+     * And the id a backend mints from the clock when an agent speaks first,
+     * which is `turn-${Date.now()}`. A generated id is mapped rather than
+     * blanked, so two turns in one capture stay two; the numbers are their
+     * own, so a turn appearing does not renumber the ids above.
+     */
+    .replace(/\bturn-\d{10,}\b/g, (found) => {
+      if (!names.has(found)) names.set(found, `turn-${turns++}`);
       return names.get(found) as string;
     });
   mkdirSync('packages/sdk/test/fixtures', { recursive: true });
@@ -574,27 +622,6 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    */
   const secret = 'plugins..~1fixtures~1plugin-secret~1index.ts';
   const KNOWN: string[] = [
-    // p2: the seven handlers that answer `{}` where the protocol declares a
-    // `null` result, which is what `resultFrame` turns every one of them into.
-    'CommandMap.ping.result / type must be null', // p2
-    'CommandMap.createSession.result / type must be null', // p2
-    'CommandMap.disposeSession.result / type must be null', // p2
-    'CommandMap.createChat.result / type must be null', // p2
-    'CommandMap.disposeChat.result / type must be null', // p2
-    'CommandMap.createTerminal.result / type must be null', // p2
-    'CommandMap.disposeTerminal.result / type must be null', // p2
-    // p2: `fetchAutomationRuns` declares an empty result and this host answers
-    // the page there; the page moves to the `automation/set` action.
-    'FetchAutomationRunsResult / undeclared key `items`', // p2
-    // p2: a `ChatInputRequestedAction` carries the request and no turn.
-    'ActionEnvelope /action undeclared key `turnId`', // p2
-    'ChatInputRequestedAction / undeclared key `turnId`', // p2
-    // p2: `ConfigPropertySchema` requires a `type`, and neither the resolved
-    // session config nor the session's own state schema carries one.
-    'ResolveSessionConfigResult /schema missing required `type`', // p2
-    'SessionState /config/schema missing required `type`', // p2
-    // p2: a session's state is not addressed by a `resource`; the channel is.
-    'SessionState / undeclared key `resource`', // p2
     /*
      * p3: the daemon's own keys in the root config schema are JSON Schema
      * fragments, and a client reads `ConfigPropertySchema`. Every one of them
@@ -634,18 +661,58 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   ];
 
   /*
-   * The requests this host serves that no map in the package names, keyed by
-   * the method `skipped()` reports them under.
+   * Everything this host serves that no map in the package names, keyed by
+   * the method `skipped()` reports it under, plus the one value it sends that
+   * no declaration allows.
    *
    * A method in no map is either a departure somebody decided on or a hole in
    * the checker, and the only thing that tells them apart is being written
-   * down. Each names the heading in `docs/AHP.md` that records the decision.
+   * down. Each names the heading in `docs/AHP.md` that records the decision,
+   * and the assertion below reads the section back - so this list and the
+   * section a person reads are the same set, or the suite says which moved.
    */
   const DEPARTURES: Record<string, string> = {
-    getManagedSettingsDiagnostics: 'What the window asks a host about itself',
-    getNetworkDiagnosticsInfo: 'What the window asks a host about itself',
+    activity: 'Server notifications',
     shutdown: 'What the window asks a host about itself',
-    'vscode/reconcileAgentHostDetachedWorktrees': 'What the window asks a host about itself',
+    getNetworkDiagnosticsInfo: 'What the window asks a host about itself',
+    getManagedSettingsDiagnostics: 'What the window asks a host about itself',
+    diagnosticsFetch: 'What the window asks a host about itself',
+    'vscode/createAgentHostDetachedWorktree': 'Worktrees the window manages',
+    'vscode/claimAgentHostDetachedWorktree': 'Worktrees the window manages',
+    'vscode/setAgentHostDetachedWorktreeArchived': 'Worktrees the window manages',
+    'vscode/deleteAgentHostDetachedWorktree': 'Worktrees the window manages',
+    'vscode/reconcileAgentHostDetachedWorktrees': 'Worktrees the window manages',
+    'vscode/removeSessionArtifact': 'Sessions and the catalogue',
+    'vscode/getAgentHostSessionStateFile': 'What the window asks a host about itself',
+    'vscode/collectAgentHostDebugLogs': 'What the window asks a host about itself',
+    'vscode/readAgentHostDebugLogsChunk': 'What the window asks a host about itself',
+    'vscode/devContainers/isDockerAvailable': 'CONTAINERS.md',
+    'vscode/devContainers/connect': 'CONTAINERS.md',
+    'vscode/devContainers/disconnect': 'CONTAINERS.md',
+    'vscode/devContainers/relaySend': 'CONTAINERS.md',
+    'vscode/devContainers/relayMessage': 'CONTAINERS.md',
+    'vscode/devContainers/output': 'CONTAINERS.md',
+    'vscode/devContainers/relayClose': 'CONTAINERS.md',
+    'vscode/devContainers/closeConnection': 'CONTAINERS.md',
+  };
+
+  /*
+   * The same list, read off the document.
+   *
+   * The section is the one headed "What is served outside the protocol", and
+   * a departure is a row whose first cell is a code span. `activity: null` is
+   * written with the value it carries, so the name is what stands before the
+   * colon.
+   */
+  const documented = (): string[] => {
+    const text = readFileSync(new URL('../../../docs/AHP.md', import.meta.url), 'utf8');
+    const start = text.indexOf('\n### What is served outside the protocol');
+    if (start < 0) throw new Error('docs/AHP.md has no section naming what is served outside the protocol');
+    const end = text.indexOf('\n### ', start + 1);
+    return text.slice(start, end < 0 ? undefined : end)
+      .split('\n')
+      .filter((line) => line.startsWith('| `'))
+      .map((line) => (line.split('|')[1] ?? '').replace(/`/g, '').trim().split(':')[0]!.trim());
   };
 
   /*
@@ -669,11 +736,15 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   const found = collapse(defects).map(([key]) => key).sort();
   expect(found).toEqual([...KNOWN, ...Object.keys(WIDENED)].sort());
 
-  // Both ways round, so the list and the traffic cannot drift apart: a named
-  // departure the capture stopped making is a line nobody would notice going
-  // stale, and one the capture still makes and nobody named is a gap.
+  // One way round, because the capture asks a few of these and never the
+  // rest: a method outside every map that the capture sent and nobody named
+  // is a frame a strict reader refuses and a person cannot look up.
   expect([...check.skipped().keys()].filter((method) => !(method in DEPARTURES))).toEqual([]);
-  expect(Object.keys(DEPARTURES).filter((method) => !check.skipped().has(method))).toEqual([]);
+
+  // And the other way, against the document rather than the traffic. Exact,
+  // so an entry here that nobody wrote down and a row written down that this
+  // file does not hold are the same failure.
+  expect(documented()).toEqual(Object.keys(DEPARTURES));
 
   // And exactly one request in the capture is refused, which is the departure
   // that refuses by design. Anything else here is a request that stopped

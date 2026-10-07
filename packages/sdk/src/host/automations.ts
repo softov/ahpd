@@ -303,16 +303,24 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
       if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
       return { resource: run.resource };
     },
-    /** A page of what one automation has done, newest first. */
+    /**
+     * Ask for one more page of what one automation has done, newest first.
+     *
+     * The answer is empty, because the protocol's result for this is: the page
+     * a client reads is the automation's entry, which the store grew and said
+     * so about, and every subscriber of the catalogue has it on the same
+     * `automation/set` - which the store dispatches before this answers.
+     *
+     * The cursor is the entry's `runsNextCursor`, and the store says whether
+     * it was one it issued. The protocol asks for an unrecognised cursor to be
+     * refused rather than guessed at, which is the refusal `fetchTurns` makes
+     * on an older page too.
+     */
     fetchAutomationRuns: async (params) => {
       const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
-      const page = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
-      // The store says "not mine" by answering nothing, so the sentence a
-      // client reads is written here. The protocol asks for an unrecognised
-      // cursor to be refused rather than guessed at, which is the same refusal
-      // `fetchTurns` makes on an older page.
-      if (page === undefined) throw new RpcError(-32602, `Unrecognised cursor ${String(cursor)}`);
-      return page;
+      const known = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
+      if (!known) throw new RpcError(-32602, `Unrecognised cursor ${String(cursor)}`);
+      return {};
     },
   };
 }

@@ -229,7 +229,8 @@ export function echo(options: EchoOptions): Agent {
       workingDirectories: () => [`file://${where}`],
 
       sessionState: () => ({
-        resource: start.uri,
+        // No `resource`: it is declared on `SessionSummary` and not on
+        // `SessionState`, and a client subscribed to this channel named it.
         provider: 'echo',
         title,
         status: status(),

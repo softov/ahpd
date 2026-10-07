@@ -64,7 +64,7 @@ describe('the handshake', () => {
     // or not the client has completed `initialize`. It is how a client tells
     // a live socket from one an idle proxy quietly dropped, and a liveness
     // check that needs a handshake first cannot do that.
-    expect(await client.handle({ method: 'ping', params: {} })).toEqual({});
+    expect(await client.handle({ method: 'ping', params: {} })).toBeNull();
   });
 
   it('serves nothing else until it has', async () => {

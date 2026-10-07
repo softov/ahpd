@@ -1,26 +1,26 @@
 ---
 title: Results and actions are the protocol's shapes
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
-revalidated: 2026-10-04
+revalidated: 2026-10-07
 requires:
   - plans/host/43-the-wire-is-the-protocols/plan.md
   - plans/host/43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md
   - plans/host/44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md
 refs:
-  - "[code://packages/sdk/src/rpc.ts#L220](../../../../packages/sdk/src/rpc.ts#L220) - `result ?? {}`, which also turns a handler's `null` into `{}`"
-  - "[code://packages/sdk/src/host/handshake.ts#L272](../../../../packages/sdk/src/host/handshake.ts#L272) - `ping` answers `{}`"
-  - "[code://packages/sdk/src/host/automations.ts#L306-L310](../../../../packages/sdk/src/host/automations.ts#L306-L310) - `fetchAutomationRuns` answers the store's page"
-  - "[code://packages/sdk/src/automations.ts#L51-L60](../../../../packages/sdk/src/automations.ts#L51-L60) - `entry()` always carries the first page of runs"
-  - "[code://packages/sdk/src/automations.ts#L260-L269](../../../../packages/sdk/src/automations.ts#L260-L269) - `runs()` answers `items` and `nextCursor`"
-  - "[code://packages/sdk/src/types/automations.ts#L208-L209](../../../../packages/sdk/src/types/automations.ts#L208-L209) - the store's `runs` signature"
-  - "[code://packages/agent-claude/src/session.ts#L2085](../../../../packages/agent-claude/src/session.ts#L2085) - `chat/inputRequested` with `turnId`"
+  - "[code://packages/sdk/src/rpc.ts#L183](../../../../packages/sdk/src/rpc.ts#L183) - `resultFrame`, where a handler's `null` stays `null` and its nothing stays `{}`"
+  - "[code://packages/sdk/src/host/handshake.ts#L286](../../../../packages/sdk/src/host/handshake.ts#L286) - `ping` answers `null`"
+  - "[code://packages/sdk/src/host/automations.ts#L319-L324](../../../../packages/sdk/src/host/automations.ts#L319-L324) - `fetchAutomationRuns` answers `{}` and leaves the page to the store"
+  - "[code://packages/sdk/src/automations.ts#L67-L90](../../../../packages/sdk/src/automations.ts#L67-L90) - `entry()` carries the runs in view and the next cursor"
+  - "[code://packages/sdk/src/automations.ts#L294-L303](../../../../packages/sdk/src/automations.ts#L294-L303) - `runs()` advances how many are shown, and announces the automation"
+  - "[code://packages/sdk/src/types/automations.ts#L221](../../../../packages/sdk/src/types/automations.ts#L221) - the store's `runs` signature"
+  - "[code://packages/agent-claude/src/session/asking.ts#L206](../../../../packages/agent-claude/src/session/asking.ts#L206) - `chat/inputRequested` with `type` and `request`"
   - "[code://examples/notes/agent.ts#L271](../../../../examples/notes/agent.ts#L271) - the same in the notes example"
-  - "[code://packages/sdk/src/host/sessionconfig.ts#L285-L308](../../../../packages/sdk/src/host/sessionconfig.ts#L285-L308) - `published()`, the one road a backend's session schema leaves by"
-  - "[code://packages/sdk/src/host/snapshots.ts#L209-L212](../../../../packages/sdk/src/host/snapshots.ts#L209-L212) - the session state spreads the backend's whole answer"
-  - "[code://docs/AHP.md#L742-L763](../../../../docs/AHP.md#L742-L763) - the bare requests, described and not marked as outside the protocol"
+  - "[code://packages/sdk/src/host/sessionconfig.ts#L300-L314](../../../../packages/sdk/src/host/sessionconfig.ts#L300-L314) - `published()`, the one road a backend's session schema leaves by"
+  - "[code://packages/sdk/src/host/snapshots.ts#L224-L232](../../../../packages/sdk/src/host/snapshots.ts#L224-L232) - the session state is the backend's answer with `resource` taken off"
+  - "[code://docs/AHP.md#L750-L771](../../../../docs/AHP.md#L750-L771) - the requests for VS Code parity, whose list the new section makes complete"
   - "npm://@microsoft/agent-host-protocol@1.0.0 - `CommandMap` results `null` (`src/types/common/messages.ts:164-173`); `FetchAutomationRunsResult {}`, delivered by action (`channels-automation/commands.ts:95-125`); `ChatInputRequestedAction` has `type` and `request` (`channels-chat/actions.ts:908-912`); `SessionConfigSchema` requires `type`; `SessionState` declares no `resource`"
 ---
 
@@ -60,6 +60,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | The host sets `type: 'object'` on every session config schema it publishes | the request, 2026-10-03: "the host sets it" | 04 |
 | `SessionState` carries no `resource`: the host strips it from a backend's answer, and echo, notes, acp and cofold stop sending it | the request, 2026-10-03, item 5; the host strip (defaulted: one place covers a third-party backend too) | 04 |
 | `activity: null`, the bare requests, the `vscode/*` requests and the `vscode/devContainers/*` notifications stay, written down as deliberate departures | the request, 2026-10-03: "Keep, for VS Code parity (do not change)" | 05 |
+| `DEPARTURES` holds every entry the document's section names, and the two are compared as sets; the capture's own traffic is checked one way only | (defaulted: the capture asks four of the twenty-two, so the both-ways check against the traffic cannot hold once the section names them all; Softov may reverse it) | 05 |
 
 ## Proposed architecture
 
@@ -71,11 +72,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The seven acknowledgements answer null](task-01-the-seven-acknowledgements-answer-null.md) | todo | - |
-| [02 - An older page of runs arrives on automation/set](task-02-an-older-page-of-runs-arrives-on-automation-set.md) | todo | - |
-| [03 - chat/inputRequested carries only its request](task-03-input-requested-carries-only-its-request.md) | todo | - |
-| [04 - The session state says only what SessionState declares](task-04-the-session-state-says-only-what-it-declares.md) | todo | - |
-| [05 - The departures kept for VS Code are written down](task-05-the-departures-are-written-down.md) | todo | - |
+| [01 - The seven acknowledgements answer null](task-01-the-seven-acknowledgements-answer-null.md) | done | - |
+| [02 - An older page of runs arrives on automation/set](task-02-an-older-page-of-runs-arrives-on-automation-set.md) | done | - |
+| [03 - chat/inputRequested carries only its request](task-03-input-requested-carries-only-its-request.md) | done | - |
+| [04 - The session state says only what SessionState declares](task-04-the-session-state-says-only-what-it-declares.md) | done | - |
+| [05 - The departures kept for VS Code are written down](task-05-the-departures-are-written-down.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -84,10 +85,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** p1 first; then [task-01-the-seven-acknowledgements-answer-null.md](task-01-the-seven-acknowledgements-answer-null.md), and 02 to 05 in any order.
+- **Done so far:** all five tasks, which is the plan. `KNOWN` holds no line naming p2.
+- **Next action:** none. Reviewed and closed on 2026-10-07.
 - **Open questions:** none.
-- **Watch out for:** each task removes its own lines from p1's `KNOWN` list, and only those.
+- **Watch out for:** `docs/AHP.md` and `packages/sdk/test/wire.test.ts` now hold the same twenty-two departures, and either one moving alone fails the wire test.
 
 ## Final verification checklist
 

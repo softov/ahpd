@@ -66,7 +66,7 @@ rootConfig port schema -> RootState.config -> config:read connection
 | Plan | Status | Depends on |
 | --- | --- | --- |
 | [p1 - The wire test checks every request, result and notification](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | built 2026-10-07 | - |
-| [p2 - Results and actions are the protocol's shapes](../43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | planned | p1 |
+| [p2 - Results and actions are the protocol's shapes](../43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | built 2026-10-07 | p1 |
 | [p3 - The root config schema is one a client can read](../43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | planned | p1 |
 | [p4 - Every `_meta` key ahpd invents is named `ahpd.<name>`](../43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) | planned | p1, and ahpapp and ahpc reading both names |
 
@@ -77,8 +77,8 @@ rootConfig port schema -> RootState.config -> config:read connection
 
 ## Resume state
 
-- **Done so far:** p1's tasks 01 to 05. The schema checks every `Partial<T>` and the flags of `SessionStatus`. The checker routes by the protocol's maps. The wire test records a whole host, and names every `_meta` key it writes. The protocol's own cases from tag `v1.0.0` run against the package's reducers, its round trips, its negotiation rows, and through ahpd's host.
-- **Next action:** p2. p1 is built and green; a review is what stands between it and `done`.
+- **Done so far:** p1's tasks 01 to 05 and p2's tasks 01 to 05. The schema checks every `Partial<T>` and the flags of `SessionStatus`. The checker routes by the protocol's maps. The wire test records a whole host, and names every `_meta` key it writes. The protocol's own cases from tag `v1.0.0` run against the package's reducers, its round trips, its negotiation rows, and through ahpd's host. Every result the protocol declares `null` is `null`, and the automation page arrives on `automation/set`. A session state carries no `resource`, and its config schema says it is an object. `docs/AHP.md` names the twenty-two departures kept for VS Code.
+- **Next action:** p3. p1 and p2 are built and green; a review is what stands between each of them and `done`.
 - **Open questions:** p3's `http` type, explained to Softov and awaiting confirmation; `writeOnly` (not sent) and the timing keys (prefixed) are answered in p3 and p4.
 - **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package. It owns the guard that rebuilds the strict schema when the package changes. The children were re-checked against 1.0.0 on 2026-10-03.
 - **Watch out for:** a fix that lands without removing its line from p1's known-defects list fails the wire test, and that is the point.

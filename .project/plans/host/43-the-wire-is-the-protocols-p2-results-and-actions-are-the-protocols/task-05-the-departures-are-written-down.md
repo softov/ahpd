@@ -1,12 +1,12 @@
 ---
 title: The departures kept for VS Code are written down
-status: todo
+status: done
 depends: []
 layer: "docs"
 refs:
-  - "[code://docs/AHP.md#L146](../../../../docs/AHP.md#L146) - `activity: null` on `root/sessionSummaryChanged`, already explained in its row"
-  - "[code://docs/AHP.md#L699-L763](../../../../docs/AHP.md#L699-L763) - the worktree and diagnostics requests, described but not marked as outside `CommandMap`"
-  - "[code://packages/sdk/src/host/vscodemethods.ts#L380-L493](../../../../packages/sdk/src/host/vscodemethods.ts#L380-L493) - the `vscode/devContainers/*` requests and the `relayClose` and `closeConnection` notifications, which `docs/AHP.md` does not mention"
+  - "[code://docs/AHP.md#L144](../../../../docs/AHP.md#L144) - `activity: null` on `root/sessionSummaryChanged`, already explained in its row"
+  - "[code://docs/AHP.md#L701-L771](../../../../docs/AHP.md#L701-L771) - the worktree and diagnostics requests, described but not marked as outside `CommandMap`"
+  - "[code://packages/sdk/src/host/vscodemethods.ts#L381-L493](../../../../packages/sdk/src/host/vscodemethods.ts#L381-L493) - the `vscode/devContainers/*` requests and the `relayClose` and `closeConnection` notifications, which `docs/AHP.md` does not mention"
   - "[code://packages/sdk/test/wire.test.ts](../../../../packages/sdk/test/wire.test.ts) - p1's `DEPARTURES` list"
 ---
 

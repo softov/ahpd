@@ -291,14 +291,20 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
    * declare it. A field the protocol has no place for is one a client cannot
    * read and a strict validator calls a defect, so it is read here and left
    * off what is published. The same rule `HOSTS_OWN` applies to values.
+   *
+   * `type` is set here rather than asked of the backend. `SessionConfigSchema`
+   * declares it as a required `object`, and a backend that lists `properties`
+   * without saying what they are properties of publishes a schema a strict
+   * client refuses.
    */
   const published = (schema: Bag): Bag => {
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : undefined) as Bag | undefined;
-    if (properties === undefined) return schema;
+    if (properties === undefined) return { ...schema, type: 'object' };
     return {
       ...schema,
+      type: 'object',
       properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
         if (typeof value !== 'object' || value === null) return [key, value];
         const { scope: _scope, ...rest } = value as Bag & { scope?: unknown };

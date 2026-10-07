@@ -196,7 +196,7 @@ it('does not read a refusal itself: a store that says the session is not there s
   const { client } = await serving(store, (line) => said.push(line));
   await open(client, 'ahp-session:/held');
 
-  await expect(dispose(client, 'ahp-session:/held')).resolves.toEqual({});
+  await expect(dispose(client, 'ahp-session:/held')).resolves.toBeNull();
   expect(said.some((line) => line.includes('could not delete'))).toBe(false);
 
   // And the same store refusing a session it does have is not read as deleted.
@@ -211,8 +211,8 @@ it('disposes under an agent that cannot delete, and says once that the session m
   await open(client, 'ahp-session:/one');
   await open(client, 'ahp-session:/two');
 
-  await expect(dispose(client, 'ahp-session:/one')).resolves.toEqual({});
-  await expect(dispose(client, 'ahp-session:/two')).resolves.toEqual({});
+  await expect(dispose(client, 'ahp-session:/one')).resolves.toBeNull();
+  await expect(dispose(client, 'ahp-session:/two')).resolves.toBeNull();
 
   // Once per provider, not once per session: a line that repeats itself on
   // every disposal is a line nobody reads.

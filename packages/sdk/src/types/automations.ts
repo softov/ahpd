@@ -206,15 +206,19 @@ export interface AutomationStore {
   /** One run's own state, for the channel a client watches it on. */
   runOf(resource: string): AutomationRun | undefined;
   /**
-   * A page of an automation's runs, newest first.
+   * Bring one more page of an automation's runs into view.
    *
-   * Nothing for a cursor this store did not issue. An omitted cursor is the
-   * newest page and a cursor the store issued is the page after it; anything
-   * else is answered with nothing rather than from the start, because a page
-   * of new runs for a question about old ones is a client that pages for ever
-   * without noticing.
+   * It answers whether the cursor was one this store issued, and nothing a
+   * client reads: `FetchAutomationRunsResult` is empty, and the page itself
+   * arrives on the catalogue as an `automation/set` carrying the automation's
+   * entry with the longer `runs` and the next `runsNextCursor`.
+   *
+   * The cursor is the entry's own `runsNextCursor`. An omitted cursor means
+   * the page already in view; anything else is answered false rather than
+   * advancing, because a page of new runs for a question about old ones is a
+   * client that pages for ever without noticing.
    */
-  runs(resource: string, cursor?: string): { items: Bag[]; nextCursor?: string } | undefined;
+  runs(resource: string, cursor?: string): boolean;
 
   /**
    * Let go of a session a run was holding.

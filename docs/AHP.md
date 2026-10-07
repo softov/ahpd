@@ -94,7 +94,7 @@ is.
 | `resourceRequest` | ✅ | Answered yes for any `file:` URI, as the reference host answers it, and logged. It withholds nothing, because the write half is served without it; a URI this host does not mediate is refused `-32009`. |
 | `listAutomationTriggerDefinitions` | 🧩 | *Event* triggers only. A schedule is protocol-defined and never listed; manual is not a trigger at all, and an empty trigger list on a definition is what manual-only means. Answered on `ahp-root://`, which is what it declares. |
 | `runAutomation` | 🧩 | The session is created here rather than in the store, because only this file knows what a session is - the store is handed a function and gets a URI back. |
-| `fetchAutomationRuns` | 🧩 | A page of one automation's runs, newest first. |
+| `fetchAutomationRuns` | 🧩 | Answers `{}` and nothing else, which is what the protocol declares for it: the page is not the result. Asking grows the automation's entry by one page of runs, newest first, and every subscriber of `ahp-automations://` reads the longer `runs` and the next `runsNextCursor` off the `automation/set` that follows, so the client that asked and the clients that did not are told the same thing. The cursor is the entry's own `runsNextCursor`, and one this host did not issue is refused `-32602`; one count per automation, so every client sees the same page. |
 
 ## Server-to-client commands
 
@@ -769,6 +769,41 @@ and IPv6 and fetches it, timed, with the body kept to 64 KiB.
 `getManagedSettingsDiagnostics` is an empty list: the policy layer it reports
 on is Copilot's. `shutdown` answers `{}` and then stops the daemon the way
 `ahpd stop` does, and `-32601` on a host built without a way to stop.
+
+### What is served outside the protocol
+
+Everything above this section is AHP 1.0.0, in the shapes the reference host
+serves. What follows is not, and is served anyway: the reference window's own
+requests and one of its values, in the shapes it reads, kept so that the window
+runs against this host unchanged. A client that speaks only the protocol never
+sends one of them and never misses one. Each is named once, with why it stays
+and where it is described. A request in neither the package nor this table is
+refused `-32601`.
+
+| What | Why it stays |
+| --- | --- |
+| `activity: null` | A row that went idle has to say so. The partial is spread over the row a client holds, so a key left off would keep the last tool call showing, and the reference host sends `null` where its client reads cleared. [Server notifications](#server-notifications) |
+| `shutdown` | The window stops a daemon it started. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `getNetworkDiagnosticsInfo` | The window's diagnostics screen, where the host reports itself. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `getManagedSettingsDiagnostics` | The same screen, where the policy layer being reported on is Copilot's. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `diagnosticsFetch` | The same screen, which looks one endpoint up and fetches it. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `vscode/createAgentHostDetachedWorktree` | The window's own handle on a tree, so its new-session-in-a-worktree flow runs unchanged. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/claimAgentHostDetachedWorktree` | The same flow, which marks a handle as a session's. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/setAgentHostDetachedWorktreeArchived` | The same flow, which archives a clean tree and puts it back. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/deleteAgentHostDetachedWorktree` | The same flow, which removes a tree and its branch. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/reconcileAgentHostDetachedWorktrees` | The same flow, which lets go of the trees the window has forgotten. [Worktrees the window manages](#worktrees-the-window-manages) |
+| `vscode/removeSessionArtifact` | The window takes an artifact pill off with its own request. [Sessions and the catalogue](#sessions-and-the-catalogue) |
+| `vscode/getAgentHostSessionStateFile` | The backend's own record of a session, read by the window's debug view. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `vscode/collectAgentHostDebugLogs` | The window's own bundle of logs, for a bug report. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `vscode/readAgentHostDebugLogsChunk` | The same bundle, read back a megabyte at a time. [What the window asks a host about itself](#what-the-window-asks-a-host-about-itself) |
+| `vscode/devContainers/isDockerAvailable` | The window drives a dev container from its own client and not from here, so the whole surface is the relay it holds. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/connect` | The same surface: it opens the relay into the container. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/disconnect` | The same surface: it ends the relay. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/relaySend` | The same surface: one frame written to the host inside. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/relayMessage` | A notification of that surface: one frame back from the host inside. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/output` | A notification of that surface: the CLI's and the container's own output, which a person watches while an image builds. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/relayClose` | A notification of that surface: the relay ended, and it was not this client that ended it. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/closeConnection` | A notification of that surface: the connection is gone, so forget it. [CONTAINERS.md](CONTAINERS.md) |
 
 ### Authentication
 

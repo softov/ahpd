@@ -187,7 +187,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     workingDirectories: () => [uriOf(where)],
 
     sessionState: () => ({
-      resource: start.uri,
+      // No `resource`: it is declared on `SessionSummary` and not on
+      // `SessionState`, and a client subscribed to this channel named it.
       provider,
       title: ctx.title,
       status: status(),

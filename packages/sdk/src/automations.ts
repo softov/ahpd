@@ -32,6 +32,16 @@ export function memoryAutomations(): AutomationStore {
   const held = new Map<string, Automation>();
   /** Runs by automation, newest first. */
   const history = new Map<string, AutomationRun[]>();
+  /**
+   * How many of an automation's runs it shows.
+   *
+   * One count per automation rather than per connection, because the protocol
+   * says every subscriber of the catalogue is kept synchronized: two clients
+   * reading one automation read the same page, and one of them asking for an
+   * older one is what moves it for both. A new run does not move this count,
+   * so the newest runs stay in view and the oldest fall off the end.
+   */
+  const loaded = new Map<string, number>();
   /** Every run by its own URI, for the channel a client watches it on. */
   const byRun = new Map<string, AutomationRun>();
   const listeners: ((event: { automation?: string; run?: string; removed?: string }) => void)[] = [];
@@ -49,16 +59,20 @@ export function memoryAutomations(): AutomationStore {
     ...(run.primarySession !== undefined ? { primarySession: run.primarySession } : {}),
   });
 
+  /** How many runs of one automation a client has been shown, newest first. */
+  const shown = (resource: string): number =>
+    Math.min(loaded.get(resource) ?? PAGE, (history.get(resource) ?? []).length);
+
   /** Rebuild the entry a client reads, so `runs` and `operations` are never stale. */
   const entry = (automation: Automation): AutomationEntry => {
     const enabled = automation.definition.enabled !== false;
     const { owner, ...rest } = automation;
+    const runs = history.get(automation.resource) ?? [];
+    const count = shown(automation.resource);
     return {
       ...rest,
-      runs: (history.get(automation.resource) ?? []).slice(0, PAGE).map(summary),
-      ...((history.get(automation.resource) ?? []).length > PAGE
-        ? { runsNextCursor: String(PAGE) }
-        : {}),
+      runs: runs.slice(0, count).map(summary),
+      ...(count < runs.length ? { runsNextCursor: String(count) } : {}),
       // `run` only where it would do something. A disabled automation is one
       // somebody switched off, and offering the button anyway is a control
       // that argues with the switch beside it.
@@ -129,6 +143,7 @@ export function memoryAutomations(): AutomationStore {
       if (!held.delete(resource)) return false;
       for (const run of history.get(resource) ?? []) byRun.delete(run.resource);
       history.delete(resource);
+      loaded.delete(resource);
       said({ removed: resource });
       return true;
     },
@@ -258,28 +273,33 @@ export function memoryAutomations(): AutomationStore {
       return true;
     },
 
+    /*
+     * Bring one more page of an automation's runs into view.
+     *
+     * The page is not answered here, because the protocol does not carry one:
+     * `FetchAutomationRunsResult` is empty, and what a client reads is the
+     * automation's entry, on the catalogue it is already subscribed to. So this
+     * grows what that entry holds and says the automation moved, and every
+     * subscriber - the one that asked and every other - reads the longer list
+     * off the same `automation/set`.
+     *
+     * The cursor is the entry's own `runsNextCursor` and nothing else, so a
+     * client pages by reading what it was last shown rather than by counting
+     * for itself. An omitted cursor is the page in view, which is how a client
+     * catches up on runs it has not seen; anything that is not the cursor this
+     * store issued is refused rather than guessed at, because a page of new
+     * runs for a question about old ones is a client that pages for ever
+     * without noticing.
+     */
     runs: (resource, cursor) => {
       const all = history.get(resource) ?? [];
-      // An omitted cursor is the newest page.
-      if (cursor === undefined) {
-        return {
-          items: all.slice(0, PAGE).map(summary),
-          ...(PAGE < all.length ? { nextCursor: String(PAGE) } : {}),
-        };
+      const count = shown(resource);
+      if (cursor !== undefined && cursor !== String(count)) return false;
+      if (count < all.length) {
+        loaded.set(resource, Math.min(count + PAGE, all.length));
+        said({ automation: resource });
       }
-      // Anything else has to be one this store issued, and it issues the index
-      // of the next run: a number, not zero, and inside the history. A cursor
-      // that is none of those is answered with nothing, so the host can refuse
-      // it rather than hand back the newest runs for a question about older
-      // ones.
-      if (!/^\d+$/.test(cursor)) return undefined;
-      const at = Number(cursor);
-      if (at <= 0 || at >= all.length) return undefined;
-      const page = all.slice(at, at + PAGE);
-      return {
-        items: page.map(summary),
-        ...(at + PAGE < all.length ? { nextCursor: String(at + PAGE) } : {}),
-      };
+      return true;
     },
 
     onChanged: (observer) => { listeners.push(observer); },

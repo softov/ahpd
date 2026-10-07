@@ -320,7 +320,7 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       void fire({ type: 'terminal_open', terminal: uri, cwd: asked });
       log(`opened ${uri} in ${asked}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
-      return {};
+      return null;
     },
     disposeTerminal: async (params) => {
       const uri = String(params.channel ?? '');
@@ -331,7 +331,7 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       terminals.delete(uri);
       log(`closed ${uri}`);
       dispatch(ROOT, { type: 'root/terminalsChanged', terminals: terminalInfo() });
-      return {};
+      return null;
     },
   };
 }

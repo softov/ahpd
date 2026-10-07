@@ -603,7 +603,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
           dispatch(uri, { type: 'session/activeClientSet', activeClient });
           retool(uri);
         }
-        return {};
+        return null;
       }
       finally { release(); }
     },
@@ -727,7 +727,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const refused = await beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), connection);
         if (refused !== undefined) throw new Error(refused);
       }
-      return {};
+      return null;
     },
     disposeChat: async (params) => {
       // Either spelling, like `subscribe` and a dispatch.
@@ -758,14 +758,14 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
-      return {};
+      return null;
     },
     disposeSession: async (params) => {
       // The caller, because a delete is not a write: `session:write` lets a
       // member change their own sessions and says nothing about ending
       // somebody else's, and this one cannot be undone.
       await removeSession(heldAs(String(params.channel ?? '')), connection.principal);
-      return {};
+      return null;
     },
     /**
      * The configuration a session would have, before one exists.

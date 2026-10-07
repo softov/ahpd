@@ -151,7 +151,7 @@ it('a session\'s host on the other side of the relay is a real one', async () =>
     params: { connectionId: 'box', data: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'ping', params: {} }) },
   });
   await until(() => frames(peer, 2).length > 0);
-  expect(frames(peer, 2)[0]?.result).toEqual({});
+  expect(frames(peer, 2)[0]?.result).toBeNull();
 
   // And what it printed outside the protocol arrived as output, not a frame.
   expect(peer.seen.some((one) => one.method === 'vscode/devContainers/output')).toBe(true);
