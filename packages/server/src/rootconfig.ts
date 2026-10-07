@@ -52,6 +52,94 @@ const flagOf = (key: ConfigKey): string => {
 /** Whether two values would be written the same way, which is all this asks. */
 const same = (one: unknown, other: unknown): boolean => JSON.stringify(one) === JSON.stringify(other);
 
+/** The types a property may be, which is the five the protocol declares. */
+const TYPES = ['string', 'number', 'boolean', 'array', 'object'];
+
+/** A key as a title, for a level that declares none: `apiKey` reads `Api Key`. */
+const titleOf = (key: string): string => key
+  .replace(/([a-z0-9])([A-Z])/gu, '$1 $2')
+  .split(/[^A-Za-z0-9]+/u)
+  .filter((word) => word.length > 0)
+  .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+  .join(' ');
+
+/**
+ * What a bound says, as the one sentence the description carries instead.
+ *
+ * A property schema declares no bound, so a client is told in words what a
+ * value may be; the write is refused by the check either way.
+ */
+const boundOf = (of: Record<string, unknown>): string | undefined => {
+  const least = of['minimum'];
+  const most = of['maximum'];
+  if (typeof least === 'number' && typeof most === 'number') return `Between ${least} and ${most}.`;
+  if (typeof least === 'number') return `At least ${least}.`;
+  if (typeof most === 'number') return `At most ${most}.`;
+  return typeof of['pattern'] === 'string' ? `Matches ${of['pattern']}.` : undefined;
+};
+
+/** The one type a schema is sent as. */
+const typeOf = (of: Record<string, unknown>): string => {
+  const declared = of['type'];
+  const first = Array.isArray(declared) ? declared.find((one) => one !== 'null') : declared;
+  if (first === 'integer') return 'number';
+  if (typeof first === 'string' && TYPES.includes(first)) return first;
+  // Nothing said: an object where there are keys to show, a string otherwise.
+  return of['properties'] !== undefined
+    || (typeof of['additionalProperties'] === 'object' && of['additionalProperties'] !== null)
+    ? 'object'
+    : 'string';
+};
+
+/**
+ * A schema, as a property of the protocol's root config.
+ *
+ * The daemon's fields and a plugin's `optionsSchema` are JSON Schema, written
+ * to check a file. A client reads the protocol's property schema, which
+ * declares one type, a title, and no bound - so a bound and a pattern are said
+ * in the description, an `integer` is a `number`, and every other keyword is
+ * dropped. What a value may be is unchanged: a write is still checked against
+ * the schema as written.
+ *
+ * `key` names the level, because the protocol requires a title and a plugin's
+ * options have only their keys. A level that declares no title of its own
+ * takes the one of the level above it, which is the `key` it is handed.
+ */
+const conforming = (key: string, schema: unknown): Record<string, unknown> => {
+  const of = (typeof schema === 'object' && schema !== null ? schema : {}) as Record<string, unknown>;
+  const type = typeOf(of);
+  const said = [of['description'], boundOf(of)].filter((one): one is string => typeof one === 'string' && one.length > 0);
+  const written = of['title'];
+  const out: Record<string, unknown> = {
+    type,
+    title: typeof written === 'string' && written.length > 0 ? written : titleOf(key),
+    ...(said.length === 0 ? {} : { description: said.join(' ') }),
+  };
+  for (const kept of ['default', 'enum', 'enumLabels', 'enumDescriptions', 'readOnly', 'required']) {
+    if (of[kept] !== undefined) out[kept] = of[kept];
+  }
+  if (type === 'array') {
+    if (of['minItems'] !== undefined) out['minItems'] = of['minItems'];
+    if (of['maxItems'] !== undefined) out['maxItems'] = of['maxItems'];
+    if (of['items'] !== undefined) out['items'] = conforming(key, of['items']);
+  }
+  if (type === 'object') {
+    const properties = of['properties'];
+    if (typeof properties === 'object' && properties !== null && !Array.isArray(properties)) {
+      out['properties'] = Object.fromEntries(
+        Object.entries(properties as Record<string, unknown>).map(([name, one]) => [name, conforming(name, one)]),
+      );
+    }
+    // An object here is the shape of the values under keys the schema does not
+    // name; `true` and `false` say nothing a property schema can carry.
+    const additional = of['additionalProperties'];
+    if (typeof additional === 'object' && additional !== null && !Array.isArray(additional)) {
+      out['additionalProperties'] = conforming(key, additional);
+    }
+  }
+  return out;
+};
+
 /**
  * The values a client asked for, with every `<set>` at any depth taken out.
  *
@@ -137,14 +225,20 @@ export function daemonRootConfig(
 
   /**
    * What one daemon key answers, which is the file's own value for every key
-   * but the MCP servers.
+   * but two.
    *
    * An env entry or a header on a server is a credential wherever it is, so
    * those answer as set and the rest of the server is answered as it was
    * written - the same mask a plugin's own options go through.
+   *
+   * `http` is the object a client reads, whatever way the file spells it out:
+   * `true` is on with every default, which is the object with nothing in it.
    */
-  const answered = (key: string, value: unknown): unknown =>
-    key === 'mcpServers' ? maskValue({ type: 'object', additionalProperties: mcpServerSchema }, value) : value;
+  const answered = (key: string, value: unknown): unknown => {
+    if (key === 'mcpServers') return maskValue({ type: 'object', additionalProperties: mcpServerSchema }, value);
+    if (key === 'http') return value === true ? {} : value;
+    return value;
+  };
 
   /** Every `plugins` entry the file holds, with the key it is carried under. */
   const entries = (held: Record<string, unknown>): { key: string; name: string; spec: PluginSpec }[] => {
@@ -169,8 +263,9 @@ export function daemonRootConfig(
           enabled: { type: 'boolean', title: 'Enabled', description: `Load ${name} at the next start.` },
           // No schema for a plugin that did not load: its own is in a module
           // that was never imported, and a form that guessed one would refuse
-          // values the plugin would have taken.
-          options: schema ?? {},
+          // values the plugin would have taken. An object with nothing in it
+          // is a shape a client can draw, and no promise about its keys.
+          options: schema ?? { type: 'object', title: 'Options' },
         },
       },
       // The same mask every served answer uses: a credential is never sent
@@ -188,22 +283,26 @@ export function daemonRootConfig(
           ...Object.fromEntries(DAEMON_KEYS.map((key) => {
             const said = serverFields[key].description;
             const overrode = typed[key] !== undefined && !same(typed[key], held[key]);
-            return [key, {
-              ...(configSchema.properties[key] as Record<string, unknown>),
-              description: overrode
-                ? `${said} This run was started with ${flagOf(key)}, so what is here is not what this daemon is using.`
-                : said,
-            }];
+            const mapped = conforming(key, configSchema.properties[key]);
+            // `http` is one type whatever order the field names them in: a
+            // file may hold `true` or `false`, and a client reads the object.
+            if (key === 'http') mapped['type'] = 'object';
+            return [key, overrode
+              ? { ...mapped, description: `${said} This run was started with ${flagOf(key)}, so what is here is not what this daemon is using.` }
+              : mapped];
           })),
-          ...Object.fromEntries(entries(held).map(({ key, name, spec }) => [key, pluginKey(name, spec).schema])),
+          ...Object.fromEntries(entries(held).map(({ key, name, spec }) => [key, conforming(key, pluginKey(name, spec).schema)])),
         },
       };
     },
     /** What the file holds, and no key the file does not hold. */
     values: () => {
       const held = readEntry(file);
+      // A stored `false` is the key switched off, which holding no value at
+      // all already says. Every other shape is answered as the file holds it.
+      const carried = DAEMON_KEYS.filter((key) => Object.hasOwn(held, key) && !(key === 'http' && held[key] === false));
       return {
-        ...Object.fromEntries(DAEMON_KEYS.filter((key) => Object.hasOwn(held, key)).map((key) => [key, answered(key, held[key])])),
+        ...Object.fromEntries(carried.map((key) => [key, answered(key, held[key])])),
         ...Object.fromEntries(entries(held).map(({ key, name, spec }) => [key, pluginKey(name, spec).value])),
       };
     },

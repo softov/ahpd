@@ -338,11 +338,13 @@ export const mcpServers = (
 export const serverFields = {
   port: {
     type: 'integer',
+    title: 'Port',
     description: 'Listen here. Default 9187; 0 picks a free one.',
     cli: { value: 'N' },
   },
   host: {
     type: 'string',
+    title: 'Bind address',
     description: 'Bind here. Default 127.0.0.1. Pass 0.0.0.0 to accept from other machines, which needs a token.',
     cli: { value: 'ADDR' },
   },
@@ -352,7 +354,8 @@ export const serverFields = {
   },
   paths: {
     type: 'array',
-    items: { type: 'string' },
+    title: 'Folders',
+    items: { type: 'string', title: 'Folder' },
     description: 'A directory this host serves. Repeatable; the first is the default a client gets when it names none.',
     cli: { flag: '--path', value: 'DIR' },
   },
@@ -406,6 +409,7 @@ export const serverFields = {
   },
   advancedTools: {
     type: 'boolean',
+    title: 'Advanced tools',
     description: "Offer the tools that declare they need advanced permission, such as the computer's three.",
   },
   clientToolTimeoutMs: {
@@ -441,6 +445,7 @@ export const serverFields = {
   },
   wire: {
     type: 'string',
+    title: 'Wire capture',
     description: 'Append every frame, both directions, to this file as JSON lines.',
     cli: { value: 'FILE' },
   },
@@ -453,9 +458,10 @@ export const serverFields = {
   },
   http: {
     type: ['object', 'boolean'],
+    title: 'HTTP API',
     properties: {
-      port: { type: 'integer', minimum: 0, maximum: 65535 },
-      host: { type: 'string', pattern: '^\\S+$' },
+      port: { type: 'integer', title: 'Port', minimum: 0, maximum: 65535 },
+      host: { type: 'string', title: 'Host', pattern: '^\\S+$' },
     },
     description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
   },
@@ -468,6 +474,7 @@ export const serverFields = {
     // not: this JSON Schema cannot say that an object is a map. `mcpServers`
     // checks each of them.
     type: 'object',
+    title: 'MCP servers',
     description: 'The MCP servers every session is offered, by the name a person gave them: a stdio server is a command an agent starts, and an http one is an endpoint it calls. An env or a header is a credential wherever it is, so each answers <set>. A session adds the servers of its own client plugins over these. Set in the configuration file only.',
   },
   plugins: {
@@ -489,6 +496,7 @@ export const serverFields = {
   },
   updateCheck: {
     type: 'boolean',
+    title: 'Update check',
     description: 'Ask npm, in the background, whether a newer version exists. On by default; --no-update-check, NO_UPDATE_NOTIFIER, CI and "updateCheck": false in the configuration turn it off.',
     cli: { negatable: true },
   },

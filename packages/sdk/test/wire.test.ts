@@ -614,51 +614,12 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
    * check into a contract - the day the named plan lands, the line comes out,
    * and a fix that lands without its line coming out is a fix that did not
    * change the wire.
+   *
+   * Empty since p3: the root config schema this host sends is the
+   * `ConfigPropertySchema` a client reads, the daemon's keys and every
+   * plugin's options alike.
    */
-  /*
-   * Where a plugin's options sit in the root config schema. The daemon picks
-   * the key as `plugins.<module as it was named>`, so the path below carries
-   * the module path this test loaded the plugin from.
-   */
-  const secret = 'plugins..~1fixtures~1plugin-secret~1index.ts';
-  const KNOWN: string[] = [
-    /*
-     * p3: the daemon's own keys in the root config schema are JSON Schema
-     * fragments, and a client reads `ConfigPropertySchema`. Every one of them
-     * wants a `title`, the two numeric bounds and the regex are keys the
-     * declaration does not have, and four `type`s are arrays where it allows
-     * one string.
-     */
-    'RootState /config/schema/properties/paths missing required `title`', // p3
-    'RootState /config/schema/properties/paths/items missing required `title`', // p3
-    'RootState /config/schema/properties/port missing required `title`', // p3
-    'RootState /config/schema/properties/port/type enum must be equal to one of the allowed values', // p3
-    'RootState /config/schema/properties/host missing required `title`', // p3
-    'RootState /config/schema/properties/http missing required `title`', // p3
-    'RootState /config/schema/properties/http/type enum must be equal to one of the allowed values', // p3
-    'RootState /config/schema/properties/http/properties/host missing required `title`', // p3
-    'RootState /config/schema/properties/http/properties/host undeclared key `pattern`', // p3
-    'RootState /config/schema/properties/http/properties/port missing required `title`', // p3
-    'RootState /config/schema/properties/http/properties/port undeclared key `minimum`', // p3
-    'RootState /config/schema/properties/http/properties/port undeclared key `maximum`', // p3
-    'RootState /config/schema/properties/http/properties/port/type enum must be equal to one of the allowed values', // p3
-    'RootState /config/schema/properties/updateCheck missing required `title`', // p3
-    'RootState /config/schema/properties/advancedTools missing required `title`', // p3
-    'RootState /config/schema/properties/wire missing required `title`', // p3
-    'RootState /config/schema/properties/mcpServers missing required `title`', // p3
-    /*
-     * p3: and a plugin's `optionsSchema` goes on the wire as the plugin wrote
-     * it, beside the daemon's. `writeOnly` and `minimum` are the two keys the
-     * declaration does not have, and the missing titles are the plugin's.
-     */
-    `RootState /config/schema/properties/${secret}/properties/options missing required \`title\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/apiKey missing required \`title\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/apiKey undeclared key \`writeOnly\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/region missing required \`title\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/retries missing required \`title\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/retries undeclared key \`minimum\``, // p3
-    `RootState /config/schema/properties/${secret}/properties/options/properties/retries/type enum must be equal to one of the allowed values`, // p3
-  ];
+  const KNOWN: string[] = [];
 
   /*
    * Everything this host serves that no map in the package names, keyed by

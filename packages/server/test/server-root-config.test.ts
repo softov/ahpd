@@ -52,6 +52,8 @@ const withPlugins = async (entries: unknown[], load = entries as PluginSpec[], c
 const SCHEMA = './fixtures/plugin-schema/index.ts';
 /** A plugin whose `apiKey` is `writeOnly` and whose `region` is an ordinary option. */
 const SECRET = './fixtures/plugin-secret/index.ts';
+/** A plugin whose options carry item bounds, on an array and on a string. */
+const BOUNDED = './fixtures/plugin-bounded/index.ts';
 /** The backend that keeps its credentials in a preset's environment. */
 const CLAUDE = './packages/agent-claude/src/index.ts';
 /** The backend whose own search providers keep a key of their own. */
@@ -74,6 +76,89 @@ describe('the daemon keys root config carries', () => {
     put({ port: 9000, host: '127.0.0.1', paths: ['/from-file'], connectionToken: 'secret' });
     const root = daemonRootConfig(optionsFrom({ configFile: config }), {});
     expect(await root.values()).toEqual({ port: 9000, host: '127.0.0.1', paths: ['/from-file'] });
+  });
+});
+
+describe('the schema a client reads', () => {
+  const properties = (): Record<string, Record<string, unknown>> =>
+    (port().schema() as { properties: Record<string, Record<string, unknown>> }).properties;
+
+  it('gives every daemon key one of the five types and a title of its own', () => {
+    const written = properties();
+    for (const [key, property] of Object.entries(written)) {
+      expect(property['title']).toEqual(expect.any(String));
+      expect(property['title']).not.toBe(key);
+    }
+    expect(written['port']).toMatchObject({ type: 'number', title: 'Port' });
+    expect(written['host']).toMatchObject({ type: 'string', title: 'Bind address' });
+    expect(written['paths']).toMatchObject({ type: 'array', title: 'Folders', items: { type: 'string', title: 'Folder' } });
+    expect(written['updateCheck']).toMatchObject({ type: 'boolean', title: 'Update check' });
+    expect(written['advancedTools']).toMatchObject({ type: 'boolean', title: 'Advanced tools' });
+    expect(written['wire']).toMatchObject({ type: 'string', title: 'Wire capture' });
+    expect(written['mcpServers']).toMatchObject({ type: 'object', title: 'MCP servers' });
+  });
+
+  it('gives http one type, its two settings, and their bounds as words', () => {
+    expect(properties()['http']).toMatchObject({
+      type: 'object',
+      title: 'HTTP API',
+      properties: {
+        port: { type: 'number', title: 'Port', description: 'Between 0 and 65535.' },
+        host: { type: 'string', title: 'Host', description: 'Matches ^\\S+$.' },
+      },
+    });
+  });
+
+  it('names a property by its key, and takes an unnamed level from the schema above it', async () => {
+    const root = await withPlugins([{ name: SECRET, options: { region: 'eu' } }]);
+    const options = keySchema(root, `plugins.${SECRET}`)['options'] as { title?: string; properties: Record<string, Record<string, unknown>> };
+    expect(options.title).toBe('Options');
+    expect(options.properties['apiKey']).toMatchObject({ type: 'string', title: 'Api Key' });
+    expect(options.properties['region']).toMatchObject({ type: 'string', title: 'Region' });
+  });
+
+  it('folds a lone bound into the description, and drops the keyword', async () => {
+    const root = await withPlugins([{ name: SECRET, options: { region: 'eu' } }]);
+    const options = keySchema(root, `plugins.${SECRET}`)['options'] as { properties: Record<string, Record<string, unknown>> };
+    expect(options.properties['retries']).toEqual({ type: 'number', title: 'Retries', description: 'At least 0.' });
+  });
+
+  it('keeps the item bounds of an array and drops them from a string', async () => {
+    const root = await withPlugins([{ name: BOUNDED, options: {} }]);
+    const options = keySchema(root, `plugins.${BOUNDED}`)['options'] as { properties: Record<string, Record<string, unknown>> };
+    expect(options.properties['paths']).toMatchObject({ type: 'array', title: 'Paths', minItems: 1, maxItems: 4 });
+    expect(options.properties['label']).toEqual({ type: 'string', title: 'Label' });
+  });
+});
+
+describe('the http key', () => {
+  it('is one type, and a stored true is answered as the object it stands for', async () => {
+    put({ http: true });
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    expect(await root.values()).toEqual({ http: {} });
+    // Nobody wrote, so the file still holds what it held.
+    expect(held()).toEqual({ http: true });
+  });
+
+  it('answers no http at all for a stored false', async () => {
+    put({ http: false });
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    expect(await root.values()).toEqual({});
+  });
+
+  it('stores the object a client writes, and takes the key back for a null', async () => {
+    put({ http: true });
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    expect(await root.write({ http: { port: 8081 } })).toEqual({ restartNeeded: true });
+    expect(held()).toEqual({ http: { port: 8081 } });
+    await root.write({ http: null });
+    expect(held()).toEqual({});
+  });
+
+  it('is still checked against the file\'s own schema, bound and all', async () => {
+    const root = port();
+    await expect(root.write({ http: { port: 70000 } })).rejects.toThrow('http.port must be an integer');
+    expect(held()).toEqual({ port: 9187, host: '127.0.0.1', paths: ['/from-file'] });
   });
 });
 
@@ -119,7 +204,8 @@ describe('each configured plugin as a key', () => {
     expect(keySchema(root, key)['enabled']).toMatchObject({ type: 'boolean' });
     expect(keySchema(root, key)['options']).toMatchObject({
       type: 'object',
-      properties: { command: { type: 'string' }, retries: { type: 'integer', minimum: 0 } },
+      title: 'Options',
+      properties: { command: { type: 'string', title: 'Command' }, retries: { type: 'number', title: 'Retries', description: 'At least 0.' } },
     });
     expect(await root.values()).toMatchObject({ [key]: { enabled: true, options: { command: 'run', greeting: 'hi' } } });
   });
@@ -130,7 +216,9 @@ describe('each configured plugin as a key', () => {
     const root = await withPlugins([{ name: unchecked, enabled: false, options: { anything: 1 } }]);
     const key = `plugins.${unchecked}`;
     expect((await root.values())[key]).toEqual({ enabled: false, options: { anything: '<set>' } });
-    expect(keySchema(root, key)['options']).toEqual({});
+    // Nothing is known of its options, so the schema says only that they are
+    // an object, which is a shape a client can draw and no promise about keys.
+    expect(keySchema(root, key)['options']).toEqual({ type: 'object', title: 'Options' });
   });
 
   it('writes enabled and options into the entry, and says a restart is needed', async () => {

@@ -67,7 +67,7 @@ rootConfig port schema -> RootState.config -> config:read connection
 | --- | --- | --- |
 | [p1 - The wire test checks every request, result and notification](../43-the-wire-is-the-protocols-p1-the-wire-test-checks-every-frame/plan.md) | built 2026-10-07 | - |
 | [p2 - Results and actions are the protocol's shapes](../43-the-wire-is-the-protocols-p2-results-and-actions-are-the-protocols/plan.md) | built 2026-10-07 | p1 |
-| [p3 - The root config schema is one a client can read](../43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | planned | p1 |
+| [p3 - The root config schema is one a client can read](../43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | built 2026-10-07 | p1 |
 | [p4 - Every `_meta` key ahpd invents is named `ahpd.<name>`](../43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) | planned | p1, and ahpapp and ahpc reading both names |
 
 ## Risks and tradeoffs
