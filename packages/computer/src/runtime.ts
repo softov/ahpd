@@ -1,16 +1,16 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { partTarget } from '@ahpd/sdk';
-import type { Owner, ResolvedSeed } from '@ahpd/sdk';
+import { gitArgv, partTarget } from '@ahpd/sdk';
+import type { BroughtBack, Owner, ResolvedSeed } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
 import { byName, DOCKER_OWN, DOCKER_OWN_PREFIX, dockerOwn } from './byname.js';
-import { cliMountOf, guardedMounts, idsOfUser, MACHINE_USER, MACHINE_WORKTREE, releaseLock, userLabelOf, volumeFlagOf } from './gitdir.js';
-import type { GitGuard, GitMounts } from './gitdir.js';
+import { cliMountOf, cliVolumeOf, copyOf, gitVolumeOf, guardFor, guardedMounts, idsOfUser, MACHINE_GIT, MACHINE_USER, seedOf, treeOf, userLabelOf, volumeFlagOf } from './gitdir.js';
+import type { GitGuard, GitMounts, SessionTree } from './gitdir.js';
 import { archiveOf, FILLED_MARKER, firstFileOf, IMAGE_PATH, MACHINE_PARTS, once, partsLabel, partsSaid, pathWith, volumeOf } from './parts.js';
 import type { ArchiveEntry, MadePart, Tarball } from './parts.js';
 import type { Cli, CliOptions, Reach } from './devcontainer.js';
@@ -457,8 +457,18 @@ export interface MachineSpec {
    * the folder, for a session in a folder below it.
    */
   repository?: string;
-  /** How the git directory is guarded; `bind` when absent. */
+  /** How the git directory is guarded; `fetch` when absent. */
   gitGuard?: GitGuard;
+  /**
+   * Whether the machine works in the host's tree or in a copy of it, at the
+   * tree's own path in the volume it commits into; `shared` when absent.
+   *
+   * A copy machine binds nothing of the host's tree: the volume holds the
+   * working tree and the machine's git directory together, and what the agent
+   * commits reaches the host by fetch - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   */
+  sessionTree?: SessionTree;
   /**
    * The `<uid>:<gid>` the machine's commands run as, recorded as the
    * `ahpd.user` label: the host user's, on a machine with a git directory.
@@ -516,6 +526,31 @@ export interface ComputerRuntime {
    * only that agent's vault-read variables; a runtime itself ignores it.
    */
   exec(id: string, command: string[], env?: Record<string, string>, provider?: string): Promise<ExecResult>;
+  /**
+   * Bring the commits a machine made in a git directory of its own back into
+   * the host's repository, and answer what became of them.
+   *
+   * The commits leave the machine as a bundle on a pipe, and the host's git
+   * reads nothing of the machine but the private file this host writes them
+   * into - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * `undefined` for a machine that is not here, like `inspect`'s answer.
+   */
+  bringBack(id: string): Promise<BroughtBack | undefined>;
+  /**
+   * Put a machine where the host's branch is, before a turn reads it.
+   *
+   * A machine that commits in a git directory of its own reads history the host
+   * already has and writes commits the host does not, so between two turns the
+   * two drift: a commit made on the host - a person's in the tree, or one a
+   * changeset operation made - is not in what the agent's git reads. This hands
+   * it over, and only where the machine holds nothing the host has not fetched.
+   *
+   * Nothing of the host's is written, and `undefined` for a machine that is not
+   * here, like `inspect`'s answer.
+   */
+  follow(id: string): Promise<void>;
   /** Start one that is stopped. */
   start(id: string): Promise<void>;
   /** Stop and start one, whichever it was. */
@@ -694,6 +729,16 @@ export interface DockerOptions extends CommandOptions {
 
 /** How a part reaches a machine: from its own image, or from a volume filled from it. */
 export type PartRoute = 'image' | 'volume';
+
+/**
+ * The directory this host keeps its own files for a machine in.
+ *
+ * The daemon's configuration where it named one, which is where its other
+ * records are; else the system's temporary directory, which is what a runtime
+ * made by a test or by hand still needs to write a linked worktree's gitfile
+ * into. Nothing here is read back from the machine.
+ */
+const stateDirOf = (options: DockerOptions): string => options.configDir ?? tmpdir();
 
 /**
  * Whether a refused image mount was refused for the mount type itself.
@@ -898,26 +943,21 @@ const agentsSaid = (value: unknown): string[] =>
   (typeof value === 'string'
     ? value.split(',').map((one) => one.trim()).filter((one) => one !== '')
     : []);
-/**
- * When the machine stopped, from the record `inspect` answered.
- *
- * Docker writes the moment into `State.FinishedAt`, and the zero time while the
- * container is still up. A machine that is still up is stopped by the removal
- * this is read for, which begins now - and so is one whose time cannot be read,
- * which is a machine this cannot place rather than one that stopped at the
- * epoch. Nothing but a lock's own time is decided by this.
- */
-const stoppedAt = (found: Record<string, unknown>): Date => {
-  const state = (typeof found.State === 'object' && found.State !== null ? found.State : {}) as Record<string, unknown>;
-  const said = typeof state.FinishedAt === 'string' ? Date.parse(state.FinishedAt) : Number.NaN;
-  return Number.isFinite(said) && said > 0 ? new Date(said) : new Date();
-};
-
 /** The labels `docker inspect` recorded, as a flat record. */
 const labelsOf = (found: Record<string, unknown>): Record<string, unknown> => {
   const config = (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
   return (typeof config.Labels === 'object' && config.Labels !== null ? config.Labels : {}) as Record<string, unknown>;
 };
+
+/** One machine's mounts, as its own record says them. */
+const mountsOf = (found: Record<string, unknown>): unknown[] => (Array.isArray(found.Mounts) ? found.Mounts : []);
+
+/**
+ * Where a machine's uncommitted work is named while it is carried out of the
+ * machine: a ref in the machine's own git directory, which goes with it, and
+ * never the ref of the host's the work lands under.
+ */
+const STASHED = 'refs/ahpd/uncommitted';
 
 /** The agents a machine was prepared for, from the record `inspect` answered. */
 export const preparedFor = (found: Record<string, unknown>): string[] =>
@@ -1076,7 +1116,10 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  *   plain Docker label and a limit reach a container the CLI makes;
  * - each part, as a `--mount type=image` in `runArgs` where `route` is
  *   `image`, or as a read-only volume in `mounts` where it is `volume`, and the
- *   `ahpd.parts` label beside them.
+ *   `ahpd.parts` label beside them;
+ * - the git mounts, as `mounts` too: the host's objects read-only, the file a
+ *   linked worktree's `.git` is replaced by, and the volume the machine commits
+ *   into, with the guard as the `ahpd.git` label in `runArgs`.
  *
  * A read-only mount is the CLI's own string spelling and not the object form,
  * because the CLI renders an object mount as `type`, `source` and `target` and
@@ -1090,13 +1133,18 @@ const madeWith = (spec: MachineSpec): Record<string, string> => {
  */
 const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: PartRoute, git?: GitMounts): Record<string, unknown> => {
   const held: Record<string, unknown> = { ...config };
+  const tree = spec.sessionTree ?? 'shared';
+  const guard = guardFor(spec.gitGuard, tree);
   const readOnly = (spec.mounts ?? []).filter(readOnlyMount);
   // A part from its volume is a read-only mount like any other, and the CLI's
   // `--mount` has no word for read-only either.
   const volumes = route === 'volume' ? spec.parts ?? [] : [];
-  // The git directory and its read-only binds, in their order, after the rest.
+  // The git mounts: the host's objects read-only, the gitfile a linked worktree
+  // needs, and the volume the machine commits into, in that order, after the rest.
+  // Under `copy` the volume is the workspace mount above and not one of these.
   const binds = git?.binds ?? [];
-  if (readOnly.length > 0 || volumes.length > 0 || binds.length > 0) {
+  const own = git?.volume === undefined || tree === 'copy' ? [] : [cliVolumeOf(gitVolumeOf(spec.name), git.volume)];
+  if (readOnly.length > 0 || volumes.length > 0 || binds.length > 0 || own.length > 0) {
     held.mounts = [
       ...(Array.isArray(held.mounts) ? (held.mounts as unknown[]) : []),
       ...readOnly.map((mount) => {
@@ -1107,6 +1155,7 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
       }),
       ...volumes.map((part) => `type=volume,source=${volumeOf(part)},target=${partTarget(part.id)},readonly`),
       ...binds.map(cliMountOf),
+      ...own,
     ];
   }
   const plain = madeWith(spec);
@@ -1123,18 +1172,26 @@ const overrideOf = (spec: MachineSpec, config: Record<string, unknown>, route?: 
   /*
    * With a git directory, the tree at its own path, as on the Docker route: the
    * worktree's `.git` file names the git directory by its host path, and its
-   * read-only bind has to land where the file is.
+   * read-only bind has to land where the file is. Under `copy` the CLI's own
+   * workspace mount is the machine's volume instead: it is the checkout the
+   * machine works in, and nothing of the host's tree is bound - the volume is
+   * mounted once, here, rather than again among the mounts below.
    */
   if (git !== undefined && spec.devcontainer !== undefined) {
     const root = spec.repository ?? spec.devcontainer;
-    held.workspaceMount = `source=${root},target=${root},type=bind`;
-    held.workspaceFolder = spec.devcontainer;
+    if (tree === 'copy') {
+      held.workspaceMount = `source=${gitVolumeOf(spec.name)},target=${git.volume ?? root},type=volume`;
+      held.workspaceFolder = git.volume ?? root;
+    }
+    else {
+      held.workspaceMount = `source=${root},target=${root},type=bind`;
+      held.workspaceFolder = spec.devcontainer;
+    }
   }
   const runArgs = [...(Array.isArray(held.runArgs) ? (held.runArgs as string[]) : [])];
   runArgs.push('--label', `${MACHINE_NAME}=${spec.name}`);
-  // The user every command runs as, and the entry whose lock goes with it.
   if (spec.user !== undefined) runArgs.push('--label', `${MACHINE_USER}=${spec.user}`);
-  if (git?.entry !== undefined) runArgs.push('--label', `${MACHINE_WORKTREE}=${git.entry}`);
+  if (spec.gitDir !== undefined) runArgs.push('--label', `${MACHINE_GIT}=${guard}`);
   const agents = spec.agents ?? [];
   if (agents.length > 0) {
     runArgs.push('--label', `${MACHINE_AGENTS}=${agents.join(',')}`);
@@ -1231,6 +1288,47 @@ export const profileOf = (found: Record<string, unknown>): string | undefined =>
   const held = labels[MACHINE_PROFILE];
   if (typeof held === 'string' && held !== '') return held;
   return disposableOf(found)?.profile;
+};
+
+/**
+ * Whether a path is in a git directory: the directory itself, or something in it.
+ *
+ * Read from the path alone, because nothing else in a record says where a
+ * session's git directory was: a mount of one names `<root>/.git` or a linked
+ * worktree's `<repo>/.git/worktrees/<name>`, and a mount of something in it has
+ * a path after that. A named volume, a state directory, a part's own mount and
+ * a session's folder all answer no.
+ */
+const inGitDirectory = (source: string): boolean => /(^|\/)\.git(\/|$)/.test(source);
+
+/**
+ * Whether a machine was made under the old `bind` guard, from its own record.
+ *
+ * A machine this plan made carries `ahpd.git`, and one that does not was made
+ * before the label existed. `bind`, gone from `gitGuard`, was both of the
+ * guards before this: the machine mounted the host's git directory, or the tree
+ * holding it, with every path git reads pinned read-only over it - `hooks/`,
+ * `config`, `worktrees/`, `modules/`, the session's worktree entry, and under
+ * the allowlist the directory itself, so that it stayed a mount point the
+ * writable paths inside it could be bound over - and a main checkout's root
+ * writable with the files git must not see written pinned. `open` is the other
+ * guard, and it mounts the host's git directory writable and *nothing* of it
+ * read-only: a machine with no label and no read-only mount in a git directory
+ * is one whose guard was `open`, and this plan keeps it as it is - decision
+ * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`, whose
+ * predecessor lists both guards' mounts.
+ *
+ * A machine this plan makes is excluded by its label rather than by its mounts,
+ * and has to be: under `fetch` the host's `<gitDir>/objects` is mounted
+ * read-only, which is the same mount by a guard that is nothing of the sort.
+ */
+export const madeUnderBind = (found: Record<string, unknown>): boolean => {
+  if (labelsOf(found)[MACHINE_GIT] !== undefined) return false;
+  return mountsOf(found).some((mount) => {
+    if (typeof mount !== 'object' || mount === null) return false;
+    const held = mount as Record<string, unknown>;
+    return held.RW === false && typeof held.Source === 'string' && inGitDirectory(held.Source);
+  });
 };
 
 /**
@@ -1720,6 +1818,123 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     });
 
   /**
+   * The ids a machine's commands run as, read from its label where it names
+   * them and inside the machine where they are a name, or nothing.
+   */
+  const idsOfMachine = async (spec: MachineSpec, container: string): Promise<{ uid: number; gid: number } | undefined> => {
+    const named = idsOfUser(spec.user);
+    if (named !== undefined) return named;
+    const read = async (flag: string): Promise<string> =>
+      (await must(['exec', ...(spec.user === undefined ? [] : ['-u', spec.user]), container, 'id', flag])).trim();
+    try {
+      const [uid, gid] = [await read('-u'), await read('-g')];
+      return /^\d+$/.test(uid) && /^\d+$/.test(gid) ? { uid: Number(uid), gid: Number(gid) } : undefined;
+    }
+    catch { return undefined; }
+  };
+
+  /**
+   * Seed a machine's own git directory, in the machine, from the tree it was given.
+   *
+   * The machine's git directory is a volume, which Docker made owned by root,
+   * and every command in there runs as the machine's user: nothing could be
+   * written in it until the volume's own directory is that user's, which is one
+   * `chown` as root and nothing else. Everything after it is the machine's own
+   * git, as that user, so every file it writes stays the host user's - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * What it writes is the tree's repository and nothing more: the host's
+   * objects reachable through `objects/info/alternates`, the branch the tree is
+   * on at the commit it is at, the index that commit names, and the two config
+   * values a commit needs. The commit itself is never read into the working
+   * tree - a `reset --hard` would rewrite the host's own files, mounted at the
+   * same path - so a host change nobody committed shows up in the machine as
+   * the uncommitted change it is.
+   *
+   * A machine whose repository could not be made is not a machine: it is removed
+   * before git's own words are thrown, so nothing is left up with nothing to
+   * commit into.
+   */
+  const seedGit = async (machine: string, spec: MachineSpec, git: GitMounts, container: string): Promise<void> => {
+    /*
+     * Under `copy` the volume holds the tree as well: it is mounted at the
+     * tree's own path, so `git.volume` is the tree the seed reads the host's
+     * branch and identity from, and the machine's git directory is `.git`
+     * inside it. Under `shared` the volume is the git directory itself, mounted
+     * over the host tree's own `.git`, and the tree is the host's.
+     */
+    const root = git.copy === true ? git.volume : spec.repository ?? spec.folder ?? spec.devcontainer;
+    const at = git.copy === true ? (git.volume === undefined ? undefined : posix.join(git.volume, '.git')) : git.volume;
+    const objects = git.objects;
+    if (root === undefined || at === undefined || git.volume === undefined || objects === undefined) return;
+    const seed = seedOf(root);
+    const asUser = (args: string[]): Promise<string> =>
+      must(['exec', ...(spec.user === undefined ? [] : ['--user', spec.user]), container, ...args]);
+    const own = [`--git-dir=${at}`, `--work-tree=${root}`];
+    try {
+      const ids = await idsOfMachine(spec, container);
+      if (ids === undefined) options.log?.(`${machine} leaves its git directory root's: the ids of its user could not be read inside it`);
+      else if (ids.uid !== 0 || ids.gid !== 0) {
+        // The volume's own mount point, which is the git directory under
+        // `shared` and the tree it sits in under `copy`: either way it is what
+        // Docker made root's and what the machine's git has to write in.
+        await must(['exec', '--user', '0', container, 'chown', `${String(ids.uid)}:${String(ids.gid)}`, git.volume]);
+      }
+      /*
+       * A git directory at `at` itself, and not the `<at>/.git` a plain `init`
+       * would make: the volume is mounted where git looks for the directory, so
+       * the layout has to be the directory's own. `--bare` writes it, and
+       * `core.bare` is then turned off, which is what tells the machine's git
+       * that this directory belongs to a working tree - the one the gitfile
+       * names it from, or the folder the volume is mounted over.
+       */
+      await asUser(['git', 'init', '--bare', '-q', at]);
+      await asUser(['git', `--git-dir=${at}`, 'config', 'core.bare', 'false']);
+      /*
+       * Where the history is: the host's objects, read-only at the mount they
+       * were given, named as the machine's alternate. Written through `cp -a`
+       * rather than a shell, so an image whose git comes without one seeds the
+       * same way, and owned as the machine's own user, who is what its git runs
+       * as. `info/` is carried by the archive as well, since a git that does not
+       * make it on `init` would otherwise have nowhere to put the file.
+       */
+      const owner = ids ?? { uid: 0, gid: 0 };
+      await must(
+        ['cp', '-a', '-', `${container}:${posix.join(at, 'objects')}`],
+        undefined,
+        archiveOf([
+          { name: 'info/', bytes: Buffer.alloc(0), directory: true, ...owner },
+          { name: 'info/alternates', bytes: Buffer.from(`${objects}\n`, 'utf8'), ...owner },
+        ]),
+      );
+      // The identity a commit needs, and nothing else of the host's config.
+      if (seed.name !== undefined) await asUser(['git', ...own, 'config', 'user.name', seed.name]);
+      if (seed.email !== undefined) await asUser(['git', ...own, 'config', 'user.email', seed.email]);
+      // The branch the tree is on, at the commit it is at; a tree on no branch
+      // gives a machine on none, whose work is fetched to the hidden ref only.
+      if (seed.branch !== undefined) await asUser(['git', ...own, 'symbolic-ref', 'HEAD', `refs/heads/${seed.branch}`]);
+      if (seed.commit !== undefined) {
+        await asUser(seed.branch === undefined
+          ? ['git', ...own, 'update-ref', '--no-deref', 'HEAD', seed.commit]
+          : ['git', ...own, 'update-ref', `refs/heads/${seed.branch}`, seed.commit]);
+        /*
+         * The index that commit names, so git in the machine is clean before
+         * the agent has touched anything - and under `copy` the tree as well,
+         * since the working tree in there is the volume's own and holds
+         * nothing yet: the checkout is the seed. Nothing of the host's is
+         * written either way, because under `shared` the tree is the host's
+         * own and only the index moves.
+         */
+        await asUser(['git', ...own, 'reset', ...(git.copy === true ? ['--hard'] : []), '-q']);
+      }
+    }
+    catch (error) {
+      await ran(options, ['rm', '-f', container]);
+      throw error;
+    }
+  };
+
+  /**
    * The containers a connect adopted, as the record beside the configuration
    * says them.
    *
@@ -1821,6 +2036,630 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     const at = await containerOf(id);
     if (at === undefined) throw new Error(`${id} names a container this host did not make, and no computer is named that`);
     return at;
+  };
+
+  /**
+   * What one command in a machine is, whichever of the two roads reaches it.
+   *
+   * A dev container is reached by the same `docker exec` as any other machine,
+   * with the user and environment its own definition asks for, and every other
+   * machine with the user its label names: the two roads `exec` takes, in one
+   * place, because `bringBack` runs a command in a machine the way every other
+   * caller does - and needs the argv, since what it pipes out is bytes rather
+   * than words.
+   */
+  const argvInto = async (
+    id: string,
+    at: string,
+    found: Record<string, unknown>,
+    command: string[],
+    env: Record<string, string>,
+  ): Promise<{ argv: string[]; env: Record<string, string> }> => {
+    if (devcontainerFolder(found) !== undefined) {
+      // Under the machine id a caller holds, which is what the create and the
+      // relay keep their probe against, not the name Docker answers for it.
+      const reached = await reachedDevContainer(options, id, found);
+      // Against the container id, as `how` and the relay reach it.
+      const container = text(found.Id) === '' ? at : text(found.Id);
+      return execArgv({ ...reached, id: container }, command, env);
+    }
+    const user = userLabelOf(labelsOf(found));
+    const given = byName(env);
+    return {
+      argv: ['exec', '-i', ...(user === undefined ? [] : ['--user', user]), ...given.flags, at, ...command],
+      env: given.env,
+    };
+  };
+
+  /**
+   * Run one and let what it writes to stdout land in a file, byte for byte.
+   *
+   * `ran` collects text, which is what a sentence needs and what would corrupt
+   * anything else: a bundle on a pipe is a pack, holding bytes that are not
+   * UTF-8 at all, and a string in between is a bundle whose own checksum no
+   * longer holds. So the child's stdout goes straight into a file and only its
+   * stderr is read as text. The write is waited for as well as the process: a
+   * file read while its last block is still on the way is a file read
+   * half-written.
+   */
+  const poured = async (
+    into: { argv: string[]; env: Record<string, string> },
+    path: string,
+  ): Promise<{ code: number; stderr: string }> => {
+    const child = spawn(options.command, [...(options.args ?? []), ...into.argv], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, ...(options.env ?? {}), ...into.env },
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    });
+    let stderr = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => { stderr += chunk; });
+    const out = createWriteStream(path, { mode: 0o600 });
+    // A child that never started has no stdout to pipe, and the file still has
+    // to be closed: the rejection below is the answer, not this.
+    if (child.stdout === null) out.end();
+    else child.stdout.pipe(out);
+    const ended = new Promise<number>((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code) => { resolve(code ?? 0); });
+    });
+    const written = new Promise<void>((resolve, reject) => {
+      out.on('error', reject);
+      out.on('close', () => { resolve(); });
+    });
+    const [code] = await Promise.all([ended, written]);
+    return { code, stderr };
+  };
+
+  /**
+   * One git command on this host, in a tree, with the argv every git here runs.
+   *
+   * Everything the host's git does about a machine's work is done in the tree -
+   * where the machine's folder is and where a person's own checkout is - and
+   * never inside the machine's volume, not even to read: everything that comes
+   * from a machine arrives on a pipe, and a path in there is a repository the
+   * machine wrote. A command that fails answers its own exit code rather than
+   * throwing, because a fast-forward that does not apply is a question with an
+   * answer.
+   */
+  const hostGit = (tree: string, args: string[]): { code: number; stdout: string; stderr: string } => {
+    const held = spawnSync('git', gitArgv(tree, args), { encoding: 'utf8' });
+    return { code: held.status ?? 1, stdout: held.stdout ?? '', stderr: held.stderr ?? '' };
+  };
+
+  /*
+   * What a machine committed, brought back by fetch - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * The machine's commits leave it as a bundle written to stdout, poured
+   * straight into a file ahpd made private, and the host's git is handed that
+   * file and nothing else: a fetch from a path inside the machine's volume
+   * would have the host's git run `upload-pack` against a repository the
+   * machine wrote.
+   *
+   * Every branch of the machine's comes back, not only the one it is on: an
+   * agent that made a branch of its own and went back to the one it was seeded
+   * with leaves that commit on no branch a single-branch fetch would look at,
+   * in a volume the removal takes with the machine - and a branch made in a
+   * machine is work as much as a commit is.
+   *
+   * A branch of the host's moves only where the machine's commit leads on from
+   * where that branch is, and - for the branch the host's tree has checked out
+   * - with nothing staged; a branch the host does not have is made at the
+   * machine's commit. Anywhere else the work waits in a ref of ahpd's own -
+   * `refs/ahpd/machines/<machine>/<branch>` - which is also what the next
+   * fetch measures from, so a bundle carries only what is new since the last
+   * one, and so work that waited is not fetched twice.
+   *
+   * A function of its own rather than only a verb, because `remove` runs it
+   * too: the volume holding the machine's git directory goes with the machine,
+   * and that is the last moment its commits exist anywhere.
+   */
+
+  /** Where a ref of the host's is, and nothing at all where it has none. */
+  const hostRef = (tree: string, ref: string): string =>
+    hostGit(tree, ['rev-parse', '--verify', '--quiet', ref]).stdout.trim();
+
+  /**
+   * One branch of a machine's, brought back.
+   *
+   * `branch` is its name, or `''` for a machine on no branch, whose work is
+   * bundled from its `HEAD` and moves no branch of the host's. `onHost` is the
+   * branch the host's own tree has checked out, which is the only branch of the
+   * host's whose move has an index to disturb.
+   */
+  const bringBackBranch = async (
+    id: string,
+    at: string,
+    found: Record<string, unknown>,
+    tree: string,
+    branch: string,
+    onHost: string,
+  ): Promise<BroughtBack> => {
+    const ref = branch === '' ? 'HEAD' : `refs/heads/${branch}`;
+    const hidden = `refs/ahpd/machines/${id}/${branch === '' ? 'HEAD' : branch}`;
+    /** One git command in the machine, in the folder it was given. */
+    const inMachine = async (...args: string[]): Promise<Ran> => {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
+      return await ran(options, into.argv, undefined, into.env);
+    };
+    /*
+     * Where this branch's work starts from: the commit the host last fetched of
+     * it, which is the hidden ref while any of it waits, or - before the first
+     * fetch - the branch the machine was seeded from, which is the host's own
+     * branch of that name. A branch the host has never had is one the machine
+     * made, and its work starts from where the seed put the machine: the host's
+     * `HEAD`.
+     */
+    const from = hostRef(tree, hidden)
+      || (branch === '' ? '' : hostRef(tree, ref))
+      || hostRef(tree, 'HEAD');
+    // A tree with no commit at all has nothing a machine's work could lead on
+    // from, and nothing to bring it back to.
+    if (from === '') return { moved: false };
+    const tip = (await inMachine('rev-parse', '--verify', '--quiet', ref)).stdout.trim();
+    // A branch that is where the host last left it has nothing new on it, which
+    // is the whole of what the last fetch settled. A branch the machine does
+    // not have is in this list only where it was just asked for.
+    if (tip === '' || tip === from) return { moved: false };
+    // The bundle lands here: a directory only this process may read, holding a
+    // file only this process may read, gone whether the fetch worked or not.
+    const scratch = mkdtempSync(join(tmpdir(), 'ahpd-bringback-'));
+    const bundle = join(scratch, 'work.bundle');
+    try {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, 'bundle', 'create', '-', ref, '--not', from], {});
+      const made = await poured(into, bundle);
+      if (made.code !== 0) {
+        /*
+         * A machine that has committed nothing has nothing beyond the commit
+         * the host already has, and git refuses to write a bundle of nothing.
+         * That is not a machine that failed, it is a machine that did no work.
+         */
+        if (made.stderr.includes('Refusing to create empty bundle')) return { moved: false };
+        throw new Error(`git bundle in ${id} exited ${String(made.code)}: ${made.stderr.trim() || 'no output'}`);
+      }
+      /*
+       * The fetch, with every object in the pack checked: what a machine wrote
+       * is not to be trusted into the host's repository unread, and git's own
+       * fsck is what says whether what came back is history anybody can read.
+       */
+      const taken = hostGit(tree, [
+        '-c', 'transfer.fsckObjects=true',
+        'fetch', '--no-tags', '--no-write-fetch-head', bundle, `+${ref}:${hidden}`,
+      ]);
+      if (taken.code !== 0) {
+        throw new Error(`git fetch in ${tree} exited ${String(taken.code)}: ${taken.stderr.trim() || taken.stdout.trim() || 'no output'}`);
+      }
+      const arrived = hostRef(tree, hidden);
+      // A machine on no branch has no branch of the host's to move: its work
+      // waits where it landed, and the next turn or a person picks it up.
+      if (branch === '') {
+        options.log?.(`the work of ${id} waits in ${hidden}: the machine is on no branch`);
+        return { moved: false, waiting: hidden };
+      }
+      const old = hostRef(tree, ref);
+      /*
+       * Under `copy` the host's tree is a checkout of its own, so the branch it
+       * is on moves by being merged rather than by an index being reset: a
+       * fast-forward writes the machine's files where a person's own checkout
+       * is, which is the whole of what the fetch has to hand over there. The
+       * merge refuses wherever the machine's commit is not one the branch leads
+       * on from, or where the tree holds changes it would write over, and the
+       * work waits under the hidden ref exactly as it does below - decision
+       * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+       *
+       * A branch of the host's the tree is not on is not a checkout of anything
+       * there: it moves as a ref, as it does under `shared`.
+       */
+      if (copyOf(mountsOf(found)) && branch === onHost) {
+        if (old === arrived) {
+          // The branch already holds the machine's commit: nothing is moved,
+          // and the ref that was to say otherwise has nothing to keep.
+          hostGit(tree, ['update-ref', '-d', hidden]);
+          return { moved: false };
+        }
+        const merged = hostGit(tree, ['merge', '--ff-only', arrived]);
+        if (merged.code !== 0) {
+          options.log?.(`the work of ${id} waits in ${hidden}: ${branch} does not lead on from it, or the tree holds changes the merge would write over`);
+          return { moved: false, waiting: hidden };
+        }
+        // The work is on the branch now, so the ref that held it keeps nothing.
+        hostGit(tree, ['update-ref', '-d', hidden]);
+        return { moved: true };
+      }
+      /*
+       * A branch the host does not have is made at the machine's commit: there
+       * is no history of the host's for it to lead on from, and a branch an
+       * agent made in a machine is the whole of what it is. A branch the host
+       * does have moves only where the machine's commit leads on from where it
+       * is: a fast-forward that threw away a person's commit is ahpd taking
+       * what is not its own.
+       */
+      if (old !== '' && hostGit(tree, ['merge-base', '--is-ancestor', old, arrived]).code !== 0) {
+        options.log?.(`the work of ${id} waits in ${hidden}: ${branch} moved on the host`);
+        return { moved: false, waiting: hidden };
+      }
+      /*
+       * Staged changes stop the move only for the branch the host's tree has
+       * checked out: moving any other ref of the host's touches no index, and
+       * the index is reset below for that branch alone.
+       */
+      if (branch === onHost && hostGit(tree, ['diff', '--cached', '--quiet']).code !== 0) {
+        options.log?.(`the work of ${id} waits in ${hidden}: the index holds staged changes`);
+        return { moved: false, waiting: hidden };
+      }
+      if (old === arrived) {
+        // The branch already holds the machine's commit: nothing is moved, and
+        // the ref that was to say otherwise has nothing to keep.
+        hostGit(tree, ['update-ref', '-d', hidden]);
+        return { moved: false };
+      }
+      const moved = old === ''
+        ? hostGit(tree, ['update-ref', ref, arrived])
+        : hostGit(tree, ['update-ref', ref, arrived, old]);
+      if (moved.code !== 0) {
+        throw new Error(`git update-ref of ${ref} in ${tree} exited ${String(moved.code)}: ${moved.stderr.trim() || 'no output'}`);
+      }
+      if (branch === onHost) {
+        /*
+         * The index the branch now names, so the files the agent wrote read as
+         * committed rather than as a change nobody made. The working tree is not
+         * touched: it is the machine's folder and a person's, and what is in it
+         * is what the machine left there.
+         */
+        const index = hostGit(tree, ['reset', '-q']);
+        if (index.code !== 0) {
+          throw new Error(`git reset in ${tree} exited ${String(index.code)}: ${index.stderr.trim() || 'no output'}`);
+        }
+      }
+      // The work is on the branch now, so the ref that held it keeps nothing.
+      hostGit(tree, ['update-ref', '-d', hidden]);
+      return { moved: true };
+    }
+    finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  };
+
+  const bringBackOfMachine = async (id: string): Promise<BroughtBack | undefined> => {
+    const at = await containerOf(id);
+    if (at === undefined) return undefined;
+    const found = await recordOf(at);
+    if (Object.keys(found).length === 0) return undefined;
+    // A machine with no git directory of its own has nothing to bring back,
+    // and one whose guard left the host's own mounted wrote in the host's
+    // repository already, where every commit of it is.
+    if (labelsOf(found)[MACHINE_GIT] !== 'fetch') return { moved: false };
+    const tree = treeOf(mountsOf(found));
+    if (tree === undefined) return { moved: false };
+    /** One git command in the machine, in the folder it was given. */
+    const asked = async (...args: string[]): Promise<Ran> => {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
+      return await ran(options, into.argv, undefined, into.env);
+    };
+    /*
+     * Every branch the machine holds, asked of the machine itself rather than
+     * read off its `HEAD`: the one it is on is among them, and one it is not on
+     * may hold the only copy of an agent's work. A machine on no branch - a
+     * tree checked out detached - brings its `HEAD` back as well, and its work
+     * reaches no branch of the host's whatever else is true.
+     */
+    const listed = await asked('for-each-ref', '--format=%(refname:short)', 'refs/heads/');
+    const held = listed.code === 0
+      ? listed.stdout.split('\n').map((one) => one.trim()).filter((one) => one !== '')
+      : [];
+    const where = await asked('symbolic-ref', '-q', '--short', 'HEAD');
+    const branch = where.code === 0 ? where.stdout.trim() : '';
+    // The branch the machine is on is in the list already; a list that came
+    // back empty still has it, so a machine whose branches could not be asked
+    // for is brought back the way it was before.
+    const targets = [...new Set([...held, branch])];
+    // The branch the host's own tree has checked out, which is the one branch
+    // of the host's whose move has an index to disturb.
+    const onHost = hostGit(tree, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim();
+    let moved = false;
+    const waiting: string[] = [];
+    for (const target of targets) {
+      const one = await bringBackBranch(id, at, found, tree, target, onHost);
+      if (one.moved) moved = true;
+      if (one.waiting !== undefined) waiting.push(one.waiting);
+    }
+    return waiting.length === 0 ? { moved } : { moved, waiting: waiting.join(', ') };
+  };
+
+  /*
+   * What a machine never committed, kept in the host's repository before the
+   * machine goes - `remove` under `copy`.
+   *
+   * The machine's working tree is inside the volume that is removed with it, so
+   * a file an agent changed and never committed is in the one place that is
+   * about to stop existing. `git stash create` writes the commit such work
+   * would be stashed as and stores it nowhere, and the host fetches it to
+   * `refs/ahpd/machines/<machine>/uncommitted` - a ref of ahpd's own, which a
+   * person can read the work out of and which no branch of theirs moves for -
+   * decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * The bundle carries only what the host has not already fetched, measured
+   * from where the last fetch left it, exactly as `bringBack` measures its own.
+   */
+  const keepUncommitted = async (id: string, at: string, found: Record<string, unknown>, tree: string): Promise<void> => {
+    const inMachine = async (...args: string[]): Promise<Ran> => {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
+      return await ran(options, into.argv, undefined, into.env);
+    };
+    // Nothing to keep in a tree holding nothing nobody committed, and nothing
+    // to do in one git will not take a stash of either.
+    if ((await inMachine('status', '--porcelain')).stdout.trim() === '') return;
+    const made = await inMachine('stash', 'create');
+    const commit = made.stdout.trim();
+    if (made.code !== 0 || commit === '') {
+      options.log?.(`what ${id} never committed is not kept: git stash in it exited ${String(made.code)}${commit === '' && made.code === 0 ? ', holding nothing it takes' : ''}`);
+      return;
+    }
+    const branch = (await inMachine('symbolic-ref', '-q', '--short', 'HEAD')).stdout.trim();
+    const hidden = `refs/ahpd/machines/${id}/${branch === '' ? 'HEAD' : branch}`;
+    const from = hostGit(tree, ['rev-parse', '--verify', '--quiet', hidden]).stdout.trim()
+      || hostGit(tree, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim();
+    const kept = `refs/ahpd/machines/${id}/uncommitted`;
+    // The stash commit has to be named by a ref for a bundle to carry it, and
+    // the ref is in the machine's own git directory, which goes with it.
+    await inMachine('update-ref', STASHED, commit);
+    const scratch = mkdtempSync(join(tmpdir(), 'ahpd-bringback-'));
+    const bundle = join(scratch, 'uncommitted.bundle');
+    try {
+      const into = await argvInto(id, at, found, [
+        'git', '-C', tree, 'bundle', 'create', '-', STASHED, ...(from === '' ? [] : ['--not', from]),
+      ], {});
+      const pouredOut = await poured(into, bundle);
+      if (pouredOut.code !== 0) {
+        throw new Error(`git bundle of what ${id} never committed exited ${String(pouredOut.code)}: ${pouredOut.stderr.trim() || 'no output'}`);
+      }
+      const taken = hostGit(tree, [
+        '-c', 'transfer.fsckObjects=true',
+        'fetch', '--no-tags', '--no-write-fetch-head', bundle, `+${STASHED}:${kept}`,
+      ]);
+      if (taken.code !== 0) {
+        throw new Error(`git fetch of what ${id} never committed exited ${String(taken.code)}: ${taken.stderr.trim() || taken.stdout.trim() || 'no output'}`);
+      }
+      options.log?.(`what ${id} never committed is kept in ${kept}`);
+    }
+    finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  };
+
+  /**
+   * Whether the commit a machine's branch is about to be pointed at leads on
+   * from where that branch is now, so that re-pointing it drops nothing.
+   *
+   * `true` where the machine has no branch of that name, and where it is
+   * already at the commit named: there is nothing there to lose either way.
+   * Asked in the machine, because the branch asked about is the machine's own.
+   */
+  const movesOver = async (
+    inMachine: (...args: string[]) => Promise<Ran>,
+    branch: string,
+    tip: string,
+  ): Promise<boolean> => {
+    const held = await inMachine('rev-parse', '--verify', '--quiet', `refs/heads/${branch}`);
+    const at = held.code === 0 ? held.stdout.trim() : '';
+    if (at === '' || at === tip) return true;
+    return (await inMachine('merge-base', '--is-ancestor', at, tip)).code === 0;
+  };
+
+  /*
+   * The host's branch, handed to a machine that works in a copy of the tree.
+   *
+   * The machine's own checkout is in its own volume, so the host's commit is
+   * not something it can be pointed at: it has to be written into the machine's
+   * working tree, and that is a merge. It is `--ff-only`, so a machine holding
+   * work the host's branch does not lead on from keeps it, and it is done only
+   * where the machine's tree is clean - an agent's work in progress is not
+   * ahpd's to merge over. Either way the machine is left exactly as it is and
+   * the log says why.
+   *
+   * The commit itself is not copied anywhere: it is an object of the host's,
+   * which the machine's git reads through the alternates the seed gave it - so
+   * the only writes are the machine's own ref, index and working tree.
+   */
+  const followOfCopy = async (id: string, at: string, found: Record<string, unknown>, tree: string): Promise<void> => {
+    /*
+     * Where the host is, read in the tree: the branch a person's own checkout
+     * put it on - none at all where it is detached - and the commit it is at.
+     * A tree with no commit has nothing to hand over and nothing to be at.
+     */
+    const branch = hostGit(tree, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim();
+    const tip = hostGit(tree, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim();
+    if (tip === '') return;
+    /** One git command in the machine, in the tree it works in. */
+    const inMachine = async (...args: string[]): Promise<Ran> => {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
+      return await ran(options, into.argv, undefined, into.env);
+    };
+    // Where the machine is: the same two answers, asked of it.
+    const held = await inMachine('symbolic-ref', '-q', '--short', 'HEAD');
+    const onBranch = held.code === 0 ? held.stdout.trim() : '';
+    const mine = (await inMachine('rev-parse', '--verify', '--quiet', 'HEAD')).stdout.trim();
+    // A machine with no commit of its own - a seed that did not happen - has
+    // nothing a hand-over could be moving.
+    if (mine === '') return;
+    // Already there, both halves of it: nothing is written, so nothing of the
+    // machine's - a file an agent left in its tree above all - is touched for
+    // nothing.
+    if (mine === tip && onBranch === branch) return;
+    if (mine !== tip) {
+      /*
+       * A commit the host's repository does not have is the machine's own work
+       * and the only copy of it, so the machine stays on it: the fetch is
+       * `bringBack`, and where it leaves work waiting the host has it and its
+       * branch still does not lead on from it, which is the check below.
+       */
+      if (hostGit(tree, ['cat-file', '-e', `${mine}^{commit}`]).code !== 0) {
+        options.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`);
+        return;
+      }
+      if (hostGit(tree, ['merge-base', '--is-ancestor', mine, tip]).code !== 0) {
+        options.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`);
+        return;
+      }
+      /*
+       * The merge writes the machine's own working tree, so it is only run
+       * where that tree holds nothing nobody committed: a file an agent is
+       * working on is not ahpd's to write over, and a machine left where it is
+       * costs a turn rather than the work.
+       */
+      if ((await inMachine('status', '--porcelain')).stdout.trim() !== '') {
+        options.log?.(`the machine ${id} is not moved: its tree holds changes nobody committed`);
+        return;
+      }
+    }
+    /*
+     * A host on no branch hands over a commit with no branch to name it: the
+     * machine goes to the same commit on no branch, and a branch of its own is
+     * left where it was rather than moved or removed.
+     */
+    if (branch === '') {
+      await inMachine('update-ref', '--no-deref', 'HEAD', tip);
+      if (mine !== tip) await inMachine('reset', '--hard', '-q');
+      return;
+    }
+    /*
+     * The branch the host is on, made in the machine where it does not have it:
+     * a machine put on a branch of its own that the host is not on would fetch
+     * its next commit to a branch nobody is on. The machine does not move to
+     * make it - the branch is made where the machine already is.
+     *
+     * A branch of the machine's that already carries that name is re-pointed
+     * only where the commit it is pointed at leads on from it: a branch of the
+     * machine's holding a commit its `HEAD` is not on top of is the only copy
+     * of an agent's work, and `-B` would drop it - the same check the machine's
+     * own `HEAD` gets above.
+     */
+    if (onBranch !== branch && !(await movesOver(inMachine, branch, mine))) {
+      options.log?.(`the machine ${id} is not moved: its branch ${branch} holds work it is not on top of`);
+      return;
+    }
+    if (onBranch !== branch) await inMachine('checkout', '-q', '-B', branch, mine);
+    if (mine !== tip) {
+      const merged = await inMachine('merge', '--ff-only', tip);
+      if (merged.code !== 0) {
+        options.log?.(`the machine ${id} is not moved: ${branch} could not be merged into its tree`);
+        return;
+      }
+    }
+  };
+
+  /*
+   * The host's branch, handed to a machine - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * A machine that commits in a git directory of its own reads history the host
+   * already has, through the alternates, and writes commits the host does not -
+   * so between two turns the two drift. A person commits in the tree the two
+   * share, a changeset operation makes one, and the machine's git still answers
+   * from where the machine left off. This is the machine being told where the
+   * host is: the branch checked out in the tree, the commit it is at, and an
+   * index that names it.
+   *
+   * Only where the machine holds nothing the host has not fetched. What it is
+   * at has to be a commit the host's repository has - one it has not is work
+   * that exists nowhere else, and the machine is the only place it is - and the
+   * host's branch has to lead on from it, and from the branch of that name it
+   * is about to re-point. Anywhere else the machine is left exactly as it is,
+   * and the log says why: moving it would be dropping a commit on the floor,
+   * and the way out is a fetch (`bringBack`) and then this again.
+   *
+   * Nothing of the host's is written and no object is copied: a commit the host
+   * made is an object the machine's git can already read through the alternates,
+   * so the only writes are the machine's own ref and index. `reset` is not
+   * `--hard`: the folder is the host's own working tree, holding what the agent
+   * left there, and this only says which commit that is.
+   */
+  const followOfMachine = async (id: string): Promise<void> => {
+    const at = await containerOf(id);
+    if (at === undefined) return;
+    const found = await recordOf(at);
+    if (Object.keys(found).length === 0) return;
+    // A machine with no git directory of its own already answers from the
+    // host's - its git *is* the host's - and one whose guard left the host's
+    // mounted wrote in the host's repository in the first place.
+    if (labelsOf(found)[MACHINE_GIT] !== 'fetch') return;
+    const tree = treeOf(mountsOf(found));
+    if (tree === undefined) return;
+    // A machine that works in a copy of the tree is a checkout of its own, so
+    // the host's commit has to be merged into it rather than pointed at.
+    if (copyOf(mountsOf(found))) return await followOfCopy(id, at, found, tree);
+    /*
+     * Where the host is, read in the tree: the branch a person's own checkout
+     * put it on - none at all where it is detached - and the commit it is at.
+     * A tree with no commit has nothing to hand over and nothing to be at.
+     */
+    const branch = hostGit(tree, ['symbolic-ref', '-q', '--short', 'HEAD']).stdout.trim();
+    const tip = hostGit(tree, ['rev-parse', '--verify', '--quiet', 'HEAD']).stdout.trim();
+    if (tip === '') return;
+    /** One git command in the machine, in the folder it was given. */
+    const inMachine = async (...args: string[]): Promise<Ran> => {
+      const into = await argvInto(id, at, found, ['git', '-C', tree, ...args], {});
+      return await ran(options, into.argv, undefined, into.env);
+    };
+    // Where the machine is: the same two answers, asked of it.
+    const held = await inMachine('symbolic-ref', '-q', '--short', 'HEAD');
+    const onBranch = held.code === 0 ? held.stdout.trim() : '';
+    const where = await inMachine('rev-parse', '--verify', '--quiet', 'HEAD');
+    const mine = where.code === 0 ? where.stdout.trim() : '';
+    // A machine with no commit of its own - a seed that did not happen - has
+    // nothing a hand-over could be leaving behind.
+    if (mine === '') return;
+    // Already there, both halves of it: the branch the host is on and the
+    // commit it is at. Nothing is written, so nothing of the machine's - the
+    // index an agent is working in above all - is touched for nothing.
+    if (mine === tip && onBranch === branch) return;
+    if (mine !== tip) {
+      /*
+       * A commit the host's repository does not have is the machine's own work
+       * and the only copy of it, so the machine stays on it. Nothing is fetched
+       * here: the fetch is `bringBack`, and where it leaves work waiting the
+       * host has it and the branch still does not lead on from it, which is the
+       * check below.
+       */
+      if (hostGit(tree, ['cat-file', '-e', `${mine}^{commit}`]).code !== 0) {
+        options.log?.(`the machine ${id} is not moved: it is at ${mine}, which the host has not fetched`);
+        return;
+      }
+      // What the host's branch does not lead on from - a person's own rebase,
+      // reset or commit of their own - is a history the machine's commit is not
+      // in, and moving the machine to the branch would be dropping it.
+      if (hostGit(tree, ['merge-base', '--is-ancestor', mine, tip]).code !== 0) {
+        options.log?.(`the machine ${id} is not moved: ${branch === '' ? 'the host is detached' : branch} does not lead on from ${mine}`);
+        return;
+      }
+    }
+    /*
+     * The branch, made in the machine where it does not have it: a person who
+     * checked another branch out in the tree asked for the machine to be in the
+     * same place, and a branch of the machine's own that the host is not on is
+     * left where it is rather than moved or removed.
+     *
+     * A branch of the machine's that already carries that name is re-pointed
+     * only where the host's commit leads on from it: a branch holding a commit
+     * the host's branch is not on top of - work the fetch has not brought back
+     * yet - is the only copy of it, and this would drop it. The same check the
+     * machine's own `HEAD` gets above, on the branch that is not the one it is
+     * standing on.
+     */
+    if (branch !== '' && !(await movesOver(inMachine, branch, tip))) {
+      options.log?.(`the machine ${id} is not moved: its branch ${branch} holds work the host's does not lead on from`);
+      return;
+    }
+    if (branch === '') await inMachine('update-ref', '--no-deref', 'HEAD', tip);
+    else {
+      await inMachine('update-ref', `refs/heads/${branch}`, tip);
+      await inMachine('symbolic-ref', 'HEAD', `refs/heads/${branch}`);
+    }
+    // The index, so the folder reads as the commit it is at rather than as
+    // changes nobody made.
+    await inMachine('reset', '-q');
   };
 
   return {
@@ -1984,8 +2823,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
          * nothing behind.
          */
         const config = configOf(spec.devcontainer);
-        // The git directory's binds, every source made on the host first.
-        const git = spec.gitDir === undefined ? undefined : guardedMounts(spec.gitDir, spec.repository ?? spec.devcontainer, spec.gitGuard);
+        /*
+         * The tree the machine is given, and the guard its git directory is
+         * made with. Under `copy` the machine's volume is the CLI's own
+         * workspace mount, in place of the host's tree - `overrideOf` writes
+         * that - so the volume is not among the mounts it adds.
+         */
+        const tree = spec.sessionTree ?? 'shared';
+        const guard = guardFor(spec.gitGuard, tree);
+        // The git mounts, every source made on the host first, so a refusal
+        // leaves nothing made.
+        const git = spec.gitDir === undefined
+          ? undefined
+          : guardedMounts(spec.gitDir, spec.repository ?? spec.devcontainer, stateDirOf(options), guard, tree);
         /*
          * Each state volume seeded before `up`, from the definition's own image
          * and owned by the machine's own user where it has one, else by its
@@ -2067,6 +2917,12 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         }
         const id = named ?? await namedByFolder(made.containerId, spec.devcontainer);
         /*
+         * The machine's own git directory, seeded in the container the CLI made
+         * - reached by its id, which is what every command before the name is
+         * read back goes through.
+         */
+        if (git !== undefined) await seedGit(spec.name, spec, git, made.containerId);
+        /*
          * The probe, taken once for the container this `up` answered.
          *
          * Every command in a dev container afterwards is a `docker exec` with
@@ -2090,11 +2946,19 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
       if (image === undefined) {
         throw new Error(`${spec.name} names neither an image nor a folder's devcontainer.json, so there is nothing to make it from`);
       }
-      // The git directory's binds, every source made on the host first, so a
-      // refusal leaves nothing made.
+      /*
+       * The tree the machine is given, and the guard its git directory is made
+       * with. Under `copy` the machine's volume is mounted at the tree's own
+       * path in place of it, so the folder is not bound at all - the volume
+       * holds the working tree and the machine's git directory together.
+       */
+      const tree = spec.sessionTree ?? 'shared';
+      const guard = guardFor(spec.gitGuard, tree);
+      // The git mounts, every source made on the host first, so a refusal
+      // leaves nothing made.
       const git = spec.gitDir === undefined || spec.folder === undefined
         ? undefined
-        : guardedMounts(spec.gitDir, spec.repository ?? spec.folder, spec.gitGuard);
+        : guardedMounts(spec.gitDir, spec.repository ?? spec.folder, stateDirOf(options), guard, tree);
       const flags = ['--name', spec.name, '--label', spec.label];
       if (spec.agents !== undefined && spec.agents.length > 0) {
         flags.push('--label', `${MACHINE_AGENTS}=${spec.agents.join(',')}`);
@@ -2151,10 +3015,17 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         // keys its own record by the working directory finds the same key
         // inside and out - Claude's history is one such record.
         // A folder below a repository's root brings the whole tree instead, so
-        // the rest of it is not missing to git in there.
-        ...(spec.folder === undefined ? [] : [`${spec.repository ?? spec.folder}:${spec.repository ?? spec.folder}`]),
-        // Then the git directory and what git on the host runs, read-only over it.
+        // the rest of it is not missing to git in there. Under `copy` the tree
+        // is the machine's own and this is not bound at all: the volume below
+        // lands at that path instead.
+        ...(spec.folder === undefined || tree === 'copy'
+          ? []
+          : [`${spec.repository ?? spec.folder}:${spec.repository ?? spec.folder}`]),
+        // Then the git mounts: the host's objects read-only, the file a linked
+        // worktree's `.git` is replaced by, and the volume the machine commits
+        // into.
         ...(git?.binds ?? []).map(volumeFlagOf),
+        ...(git?.volume === undefined ? [] : [`${gitVolumeOf(spec.name)}:${git.volume}`]),
       ])];
       for (const mount of mounted) flags.push('-v', mount);
       /*
@@ -2163,7 +3034,11 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
        * user's. The label is what each later `docker exec` reads it back from.
        */
       if (spec.user !== undefined) flags.push('--user', spec.user, '--label', `${MACHINE_USER}=${spec.user}`);
-      if (git?.entry !== undefined) flags.push('--label', `${MACHINE_WORKTREE}=${git.entry}`);
+      // And how the git directory is guarded, which a later daemon reads back
+      // to tell a machine of its own from one made under the allowlist this
+      // plan removes - task 07. Under `copy` it is `fetch`, which is what the
+      // machine's own git directory in its volume is.
+      if (spec.gitDir !== undefined) flags.push('--label', `${MACHINE_GIT}=${guard}`);
       /*
        * Each state volume at its state directory, after the binds, and the label
        * that says the machine has them.
@@ -2208,6 +3083,9 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         for (const copy of copies) await must(['cp', copy.source, `${spec.name}:${copy.target}`]);
         await must(['start', spec.name]);
       }
+      // The machine's own git directory, seeded from the tree now that there is
+      // a machine to seed it in.
+      if (git !== undefined) await seedGit(spec.name, spec, git, spec.name);
       return { id: spec.name, image, status: 'running', created: new Date().toISOString() };
     },
 
@@ -2223,24 +3101,57 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
      */
     restart: async (id) => { await must(['restart', await containerOrFail(id)]); },
     /*
-     * Take one away, and with a machine made without a profile its state
-     * volumes, which nothing else would ever mount: one per agent its label
-     * names, as `stateVolumeOf` names them, and a volume that is not there is
-     * nothing to remove. A profile's state volumes outlive every machine.
+     * Take one away, with its own git directory and with a machine made without
+     * a profile its state volumes, which nothing else would ever mount: one per
+     * agent its label names, as `stateVolumeOf` names them, and a volume that
+     * is not there is nothing to remove. A profile's state volumes outlive
+     * every machine; the git volume is this machine's and goes with it, once
+     * the commits it holds have been fetched into the host's repository - the
+     * last of the moments in task 05.
      */
     remove: async (id) => {
       const at = await containerOrFail(id);
       const found = await recordOf(at);
       const labels = labelsOf(found);
-      // Read before the removal, which is what makes a machine still up stop: a
-      // lock newer than this was taken after the machine was gone.
-      const stopped = stoppedAt(found);
-      await must(['rm', '-f', at]);
-      // The session's own worktree lock, which nothing can hold once the container is gone.
-      const entry = labels[MACHINE_WORKTREE];
-      if (typeof entry === 'string' && entry !== '') await releaseLock(entry, stopped, options.log);
-      if (labels[MACHINE_STATE] !== 'volume' || profileOf(found) !== undefined) return;
       const named = namedOf(found) ?? id;
+      /*
+       * What it committed, before the container goes.
+       *
+       * The git volume is removed with the machine below, so this is the last
+       * moment the commits in it exist anywhere. A failure does not stop the
+       * removal - a machine somebody asked to remove is a machine that goes -
+       * and what was not fetched is named in the log rather than refused: the
+       * hidden ref holding work that waited is in the host's repository, where
+       * removing this machine does not reach.
+       */
+      try {
+        await bringBackOfMachine(id);
+      }
+      catch (error) {
+        options.log?.(`the work of ${id} could not be brought back before it went: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      /*
+       * And what it never committed, which under `copy` is in the machine's own
+       * working tree and nowhere else - the fetch above carries only commits.
+       * Same terms as that one: a failure is named in the log and the machine
+       * still goes, since a machine somebody asked to remove is a machine that
+       * goes.
+       */
+      const working = treeOf(mountsOf(found));
+      if (working !== undefined && copyOf(mountsOf(found))) {
+        try {
+          await keepUncommitted(id, at, found, working);
+        }
+        catch (error) {
+          options.log?.(`what ${id} never committed could not be kept before it went: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      await must(['rm', '-f', at]);
+      // The machine's own git directory goes with the machine where it had one:
+      // a machine whose profile leaves the host's git directory open mounts no
+      // volume of its own, so there is nothing there to remove.
+      if (labels[MACHINE_GIT] === 'fetch') await ran(options, ['volume', 'rm', gitVolumeOf(named)]);
+      if (labels[MACHINE_STATE] !== 'volume' || profileOf(found) !== undefined) return;
       for (const provider of preparedFor(found)) {
         await ran(options, ['volume', 'rm', stateVolumeOf({ id: named }, provider)]);
       }
@@ -2248,32 +3159,24 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
 
     exec: async (id, command, env) => {
       const at = await containerOrFail(id);
-      const given = byName(env ?? {});
       /*
        * A dev container is reached by the same `docker exec` as any other
        * machine, with the user and environment its own definition asks for -
        * which is exactly what the CLI's own exec builds - decision
        * `a-dev-container-is-reached-by-docker-exec`.
        */
-      const found = await recordOf(at);
-      if (devcontainerFolder(found) !== undefined) {
-        // Under the machine id a caller holds, which is what the create and the
-        // relay keep their probe against, not the name Docker answers for it.
-        const reached = await reachedDevContainer(options, id, found);
-        // Against the container id, as `how` and the relay reach it.
-        const container = text(found.Id) === '' ? at : text(found.Id);
-        const into = execArgv({ ...reached, id: container }, command, env ?? {});
-        const held = await ran(options, into.argv, undefined, into.env);
-        // Not tolerated and not thrown: a command that failed is the tool
-        // working, and its exit code is what the caller asked for.
-        return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
-      }
-      const user = userLabelOf(labelsOf(found));
-      const held = await ran(options, ['exec', '-i', ...(user === undefined ? [] : ['--user', user]), ...given.flags, at, ...command], undefined, given.env);
+      const into = await argvInto(id, at, await recordOf(at), command, env ?? {});
+      const held = await ran(options, into.argv, undefined, into.env);
       // Not tolerated and not thrown: a command that failed is the tool
       // working, and its exit code is what the caller asked for.
       return { output: `${held.stdout}${held.stderr}`.trim(), code: held.code };
     },
+
+    /** What a machine committed, brought back by fetch: `bringBackOfMachine`. */
+    bringBack: bringBackOfMachine,
+
+    /** The host's branch, handed to the machine: `followOfMachine`. */
+    follow: followOfMachine,
 
     /**
      * What one machine is using, once.

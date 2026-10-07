@@ -26,7 +26,19 @@ let loose: string | undefined;
 afterEach(() => {
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
 });
+
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let home: string | undefined;
+const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-nested-start-config-')));
 
 const base = (): HostOptions => ({
   path: '/tmp/nested-start',
@@ -36,7 +48,7 @@ const base = (): HostOptions => ({
 
 const load = (options: Record<string, unknown>) => loadPlugins(
   [{ name: SOURCE, options }],
-  { base: base(), configDir: REPO, cwd: REPO, log: () => {} },
+  { base: base(), configDir: stateDir(), cwd: REPO, log: () => {} },
 );
 
 const providerOf = (options: HostOptions) => options.resourceProviders?.computer as {

@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { optionsSchema } from '../src/plugin.js';
@@ -37,9 +38,24 @@ const documented = (): string[] => {
   return names;
 };
 
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let home: string | undefined;
+afterEach(() => {
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
+});
+
+const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-options-')));
+
 const load = (options: Record<string, unknown>) => loadPlugins([{ name: SOURCE, options }], {
   base: { path: '/tmp/computer-options', agents: [echo({ path: '/tmp/computer-options' })] },
-  configDir: REPO,
+  configDir: stateDir(),
   cwd: REPO,
   log: () => {},
 });
@@ -74,13 +90,16 @@ it('takes a profile\'s state and stateScope by their values, and refuses anythin
 });
 
 it('takes a profile\'s gitGuard by its values, and refuses anything else by name', async () => {
-  const both = await load({ profiles: { bound: { gitGuard: 'bind' }, open: { gitGuard: 'open' } } });
-  expect(both.problems).toEqual([]);
-  expect(both.loaded.map((one) => one.name)).toEqual([NAME]);
+  // `bind` is the guard plan host/67 removes, kept readable so a profile
+  // written for it still loads; it is read as `fetch`, which the plugin test
+  // asks of the machine a session makes.
+  const all = await load({ profiles: { fetched: { gitGuard: 'fetch' }, open: { gitGuard: 'open' }, bound: { gitGuard: 'bind' } } });
+  expect(all.problems).toEqual([]);
+  expect(all.loaded.map((one) => one.name)).toEqual([NAME]);
 
   const loose = await load({ profiles: { bots: { gitGuard: 'loose' } } });
   expect(loose.loaded).toEqual([]);
-  expect(loose.problems.join('\n')).toContain('profiles.bots.gitGuard is bind or open, and loose is neither');
+  expect(loose.problems.join('\n')).toContain('profiles.bots.gitGuard is fetch, open or bind, and loose is neither');
 });
 
 it('takes a profile\'s nestedDelete by its values, and refuses anything else by name', async () => {

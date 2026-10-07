@@ -108,7 +108,7 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
     {
       definition: {
         name: 'release_computer',
-        description: 'Stop a disposable computer and remove it. Nothing on it survives.',
+        description: 'Remove a disposable computer. Nothing on it survives.',
         inputSchema: {
           type: 'object',
           properties: { id: { type: 'string', description: 'The name from its computer:// URI.' } },
@@ -122,7 +122,12 @@ export function computerTools(runtime: ComputerRuntime, options: ToolOptions): H
         if (id === undefined) return 'Which computer? Give the name from its computer:// URI.';
         const held = await find(id);
         if ('said' in held) return held.said;
-        await runtime.stop(held.machine);
+        /*
+         * Removed without a stop first: `remove` fetches what the machine
+         * committed before its volume goes, and that fetch runs a command in
+         * the machine, which a stopped container refuses. `docker rm -f` stops
+         * it anyway.
+         */
         await runtime.remove(held.machine);
         return `${held.machine} is gone.`;
       },

@@ -27,12 +27,24 @@ let loose: string | undefined;
 afterEach(() => {
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
 });
 
 const temp = (): string => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-state-'));
   return loose;
 };
+
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let home: string | undefined;
+const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-state-config-')));
 
 const agent = (provider: string, needs: Record<string, MachineNeed>): Agent => ({
   provider,
@@ -63,7 +75,7 @@ const load = async (state: string, needs: Record<string, MachineNeed>, extra: Re
       name: SOURCE,
       options: { command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: state }, sessionSetting: false, profiles: { box: { agents: ['claude'] } } },
     }],
-    { base: { path: '/tmp/computer-state', agents: [agent('claude', needs)], resources: fileResources() }, configDir: loose ?? REPO, cwd: REPO, log: (line) => { lines.push(line); } },
+    { base: { path: '/tmp/computer-state', agents: [agent('claude', needs)], resources: fileResources() }, configDir: stateDir(), cwd: REPO, log: (line) => { lines.push(line); } },
   );
   expect(problems).toEqual([]);
   const provider = options.resourceProviders?.computer as {

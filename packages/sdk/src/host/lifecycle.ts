@@ -120,7 +120,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
     dispatch, broadcast, log, fire, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
-    sessionMachines, enteredIn, inMachine, placedIn,
+    sessionMachines, enteredIn, inMachine, placedIn, followOf,
     isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
     spawn, keepTitle, keepProvider,
@@ -806,9 +806,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `sender` is who asked, held against this turn for as long as it runs.
    *
-   * A promise only for a turn that had to be asked about: everything else is
-   * answered here and now, which is what keeps the actions of a turn in the
-   * order they were already written in.
+   * A promise only for a turn that had to be asked about, or one in a machine:
+   * everything else is answered here and now, which is what keeps the actions of
+   * a turn in the order they were already written in.
    */
   const beginOrRun = (
     session: Session,
@@ -880,6 +880,27 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return undefined;
     };
     /*
+     * The machine the session is in, put where the host's branch is.
+     *
+     * A machine commits in a git directory of its own, so a commit made on the
+     * host since it last looked is not in the history the agent's next turn
+     * reads - decision
+     * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. The
+     * port's call decides the rest, and a machine holding work the host has not
+     * fetched is left as it is, and says so in the log.
+     *
+     * A queued message is not handed it: the turn it becomes runs behind the one
+     * that is running, in a machine an agent is working in, and a hand-over
+     * writes the machine's own ref and index - not something to do to a machine
+     * between two commands of a turn. The fetch at the running turn's end is
+     * what puts that machine where the host is.
+     *
+     * A session in no machine asks nothing and is begun here and now, which is
+     * every turn of a session on this host.
+     */
+    const turn = (): string | undefined | Promise<string | undefined> =>
+      (queuedAs !== undefined || enteredIn.get(session.uri) === undefined ? run() : followOf(session.uri).then(run));
+    /*
      * The turn's own check, beside the one above.
      *
      * The session was checked when it was created, for its harness and the
@@ -897,7 +918,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const principal = principalFor(who ?? kept.owner(idOf(session.uri)));
     const store = options.policies;
-    if (options.policiesCheck !== true || store === undefined || principal === undefined) return run();
+    if (options.policiesCheck !== true || store === undefined || principal === undefined) return turn();
     const held = sessions.get(session.uri);
     return checked(principal, charged.get(session.uri)?.scope, [{
       kind: 'agent',
@@ -906,7 +927,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         computer: machineFor(held?.config ?? {}),
         ...(model === undefined ? {} : { model: model.id }),
       },
-    }]).then((why) => why === undefined ? run() : why);
+    }]).then((why) => why === undefined ? turn() : why);
   };
 
   /**
@@ -915,13 +936,25 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * For the two call sites that stand in a `switch` and cannot wait. An answer
    * that came already is taken at once; one that is still to come is taken when
    * it comes, and a turn nothing refused is begun then as well.
+   *
+   * A promise that rejects is a refusal too, in the thrown error's own words: an
+   * answer later than the tick it was asked in comes from a backend, a machine
+   * or a policy check, and a backend that throws while the turn is begun - a CLI
+   * that is gone, a machine that will not take a command - is a turn the client
+   * asked for and is not getting. Left unhandled it is a rejection nobody reads
+   * and a client waiting for an answer that never comes.
    */
   const beginTurn = (
     begun: string | undefined | Promise<string | undefined>,
     refused: (why: string) => void,
   ): void => {
     if (typeof begun === 'string') refused(begun);
-    else if (begun !== undefined) void begun.then((why) => { if (why !== undefined) refused(why); });
+    else if (begun !== undefined) {
+      void begun.then(
+        (why) => { if (why !== undefined) refused(why); },
+        (error: unknown) => { refused(error instanceof Error ? error.message : String(error)); },
+      );
+    }
   };
 
   /**

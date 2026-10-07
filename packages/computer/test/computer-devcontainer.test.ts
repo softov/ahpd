@@ -8,6 +8,7 @@ import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
 import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { fileUsers } from '../../sdk/src/users.js';
+import { MACHINE_OBJECTS } from '../src/gitdir.js';
 import { dockerRuntime } from '../src/runtime.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -1731,7 +1732,6 @@ it('mounts a worktree folder\'s git directory through the override, and runs eac
   mkdirSync(join(tree, '.devcontainer'));
   writeFileSync(join(tree, '.devcontainer', 'devcontainer.json'), '{ "image": "base" }');
   const gitDir = join(repo, '.git');
-  const entry = join(gitDir, 'worktrees', 'tree');
   const me = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
 
   const { options: loaded, problems } = await loadPlugins(
@@ -1749,36 +1749,43 @@ it('mounts a worktree folder\'s git directory through the override, and runs eac
     snapshot: { state: { config?: { values?: Record<string, unknown> } } };
   };
 
+  const id = String(opened.snapshot.state.config?.values?.computer).replace('computer://', '');
   const config = overrideOf(devState)?.config ?? {};
+  /*
+   * The machine's own git directory, not the host's: a volume landed at
+   * `/opt/ahpd/git`, the file this host wrote standing in for the tree's
+   * `.git`, and the one path of the host's git directory a machine reads - its
+   * objects, read-only, at the path of ahpd's own that the machine's own
+   * `objects/info/alternates` names - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   */
   expect(config.mounts).toEqual([
-    `type=bind,source=${gitDir},target=${gitDir},readonly`,
-    `type=bind,source=${gitDir}/objects,target=${gitDir}/objects`,
-    `type=bind,source=${gitDir}/objects/info,target=${gitDir}/objects/info,readonly`,
-    `type=bind,source=${gitDir}/refs,target=${gitDir}/refs`,
-    `type=bind,source=${gitDir}/logs,target=${gitDir}/logs`,
-    `type=bind,source=${gitDir}/hooks,target=${gitDir}/hooks,readonly`,
-    `type=bind,source=${gitDir}/config,target=${gitDir}/config,readonly`,
-    `type=bind,source=${gitDir}/worktrees,target=${gitDir}/worktrees,readonly`,
-    `type=bind,source=${entry},target=${entry}`,
-    `type=bind,source=${entry}/config.worktree,target=${entry}/config.worktree,readonly`,
-    `type=bind,source=${entry}/commondir,target=${entry}/commondir,readonly`,
-    `type=bind,source=${entry}/gitdir,target=${entry}/gitdir,readonly`,
-    `type=bind,source=${gitDir}/modules,target=${gitDir}/modules,readonly`,
-    `type=bind,source=${tree}/.git,target=${tree}/.git,readonly`,
+    `type=bind,source=${gitDir}/objects,target=${MACHINE_OBJECTS},readonly`,
+    `type=bind,source=${join(dir, 'config', 'computers.gitfile')},target=${tree}/.git,readonly`,
+    `type=volume,source=ahpd-git-${id},target=/opt/ahpd/git`,
   ]);
   // The tree at its own path, so the `.git` file's bind lands on the file.
   expect(config.workspaceMount).toBe(`source=${tree},target=${tree},type=bind`);
   expect(config.workspaceFolder).toBe(tree);
-  expect(config.runArgs).toEqual(expect.arrayContaining(['--label', `ahpd.user=${me}`, '--label', `ahpd.worktree=${entry}`]));
+  expect(config.runArgs).toEqual(expect.arrayContaining(['--label', `ahpd.user=${me}`, '--label', 'ahpd.git=fetch']));
 
-  // Every `docker exec` into it as the host user: the probe at create, and a command after.
-  const id = String(opened.snapshot.state.config?.values?.computer).replace('computer://', '');
+  // Every `docker exec` into it as the host user: the probe at create, the
+  // seed's own git commands, and a command after.
   const how = await loaded.computers?.how(id, { command: 'true' });
   const args = how?.args ?? [];
   expect(args[args.indexOf('-u') + 1]).toBe(me);
   const commands = dockerHeld(dockerState).commands;
   expect(commands.length).toBeGreaterThan(0);
-  expect(commands.every((one) => one.user === me)).toBe(true);
+  /*
+   * The one command that is not the host user's is the chown that takes the
+   * machine's own git directory for it: a named volume is root's until
+   * somebody says otherwise, and only root can say. Every other command - the
+   * probe, the seed's git, and the host's own afterwards - is the host user's,
+   * so the agent's files in the tree are the host user's too.
+   */
+  const chowns = commands.filter((one) => one.command.includes('chown'));
+  expect(chowns.map((one) => one.user)).toEqual(['0']);
+  expect(commands.filter((one) => !one.command.includes('chown')).every((one) => one.user === me)).toBe(true);
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 2);
 });

@@ -398,10 +398,13 @@ const recordOf = (found) => ({
     Memory: 0,
   },
   // As `docker inspect` reports them, because a caller's path is read
-  // through these to find where it is inside the machine.
+  // through these to find where it is inside the machine - and `RW`, which is
+  // what says whether the machine may write what is mounted there. The short
+  // form spells read-only as a third `:ro` and nothing else is read-only, so a
+  // scripted machine that leaves the mode off is one writing where it is bound.
   Mounts: (found.mounts ?? []).map((one) => {
-    const [source, target] = one.split(':');
-    return { Type: 'bind', Source: source, Destination: target };
+    const [source, target, mode] = one.split(':');
+    return { Type: 'bind', Source: source, Destination: target, RW: mode !== 'ro' };
   }),
 });
 
@@ -849,6 +852,27 @@ if (verb === 'exec') {
       process.exit(0);
     }
     process.exit(1);
+  }
+  /*
+   * One command answered as a test wants it, ahead of the `failCommands` below
+   * and of the one `execOut` that answers everything else.
+   *
+   * `execOut` gives every command the same text, which is what a probe needs
+   * and not what a machine's git does: git is asked which branch is checked out,
+   * where that branch is, and then for a bundle of it, and those are three
+   * different answers. Nor can it be bytes, which is what a bundle on a pipe is.
+   * So a test may list answers
+   * here, and the first whose `when` the command contains answers it: with a
+   * sentence (`out`, `err`), with the whole of a file (`file`, written exactly
+   * as it is), or with a code that is not git's own.
+   */
+  const answer = (held.answers ?? []).find((one) => said.includes(one.when));
+  if (answer !== undefined) {
+    if (answer.out !== undefined) process.stdout.write(answer.out);
+    if (answer.file !== undefined) process.stdout.write(readFileSync(answer.file));
+    if (answer.err !== undefined) process.stderr.write(answer.err);
+    keep();
+    process.exit(answer.code ?? 0);
   }
   // The line is quoted for `/bin/sh -c`, so a prefix is looked for inside it
   // rather than at its start.

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
+import { gitWorktrees } from '../../sdk/src/repo/worktrees.js';
 import { describePlugin, loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions, HostTool, ToolCall } from '../../sdk/src/types/host.js';
@@ -28,7 +29,19 @@ let loose: string | undefined;
 afterEach(() => {
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
 });
+
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let home: string | undefined;
+const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-config-')));
 
 const peer = (): Peer => ({
   send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
@@ -41,9 +54,13 @@ const base = (): HostOptions => ({
   resources: fileResources(),
 });
 
-const load = (options: Record<string, unknown>) => loadPlugins(
+const load = (
+  options: Record<string, unknown>,
+  more: Partial<HostOptions> = {},
+  log: (line: string) => void = () => {},
+) => loadPlugins(
   [{ name: SOURCE, options }],
-  { base: base(), configDir: REPO, cwd: REPO, log: () => {} },
+  { base: { ...base(), ...more }, configDir: stateDir(), cwd: REPO, log },
 );
 
 const at = {} as ToolCall;
@@ -334,7 +351,7 @@ it('lists its manifest and title without importing the entry', async () => {
     ahpd: { ...real.ahpd, entry: './entry.js' },
   }));
 
-  const row = await describePlugin(dir, { configDir: REPO, cwd: REPO });
+  const row = await describePlugin(dir, { configDir: stateDir(), cwd: REPO });
   expect(row.state).toBe('ready');
   // The key is the directory as written; the package's own name is `module`.
   expect(row.name).toBe(dir);
@@ -504,6 +521,203 @@ it('makes a machine from a named profile, and refuses one it does not define', a
     data: JSON.stringify({ profile: 'nope' }),
     encoding: 'utf-8',
   })).rejects.toThrow(/no profile called nope; it has claude, plain/);
+});
+
+/*
+ * Plan host/67 task 01: a profile's `gitGuard` is `fetch`, the default, or
+ * `open` - decision
+ * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+ *
+ * A profile written for the guard this plan removes says `bind`, which is read
+ * as `fetch` with one line naming the profile, so the safest layout is what an
+ * old file gets. What this task changes is the reading, so the answer is asked
+ * where it is used: the machine a session makes from the profile. Under
+ * `fetch` the machine runs as the host user, which is half of what that guard
+ * means; under `open` at a repository root it keeps the image's user.
+ */
+const repositoryAt = (dir: string): { repo: string; gitDir: string } => {
+  const repo = join(dir, 'repo');
+  mkdirSync(repo);
+  const run = (...args: string[]) => spawnSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.email', 'test@example.com');
+  run('config', 'user.name', 'Test');
+  writeFileSync(join(repo, 'tracked.txt'), 'tracked\n');
+  run('add', '-A');
+  run('commit', '-q', '-m', 'first');
+  return { repo, gitDir: join(repo, '.git') };
+};
+
+/**
+ * One host with the git port, and the machine a session makes from a profile.
+ *
+ * The folder the session works in is `<state>/../repo` unless another is named,
+ * which is the repository `repositoryAt` makes beside it.
+ */
+const guardOf = async (
+  state: string,
+  profiles: Record<string, unknown>,
+  folder?: string,
+): Promise<{ argv: string[]; user?: string | undefined; error?: string | undefined }> => {
+  const lines: string[] = [];
+  const loaded = await load(
+    { command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: state }, profiles },
+    { worktrees: gitWorktrees() },
+    (line) => lines.push(line),
+  );
+  if (loaded.problems.length > 0) return { argv: [], error: loaded.problems.map((one) => String(one)).join('\n') };
+  const host = createHost(loaded.options);
+  const client = host.accept(peer());
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  let failed: unknown;
+  await client.handle({
+    method: 'createSession',
+    params: {
+      channel: 'ahp-session:/guard',
+      provider: 'base',
+      config: { computer: 'disposable:claude' },
+      workingDirectories: [folder ?? join(state, '..', 'repo')],
+    },
+  }).catch((error: unknown) => { failed = error; });
+  if (failed !== undefined) {
+    return { argv: [], error: failed instanceof Error ? failed.message : String(failed) };
+  }
+  const made = JSON.parse(readFileSync(state, 'utf8')) as { machines: { name: string }[]; calls: string[][] };
+  const argv = made.calls.find((one) => one[0] === 'run') ?? [];
+  const at = argv.indexOf('--user');
+  return { argv, user: at === -1 ? undefined : argv[at + 1] };
+};
+
+it('reads a profile\'s gitGuard as fetch, taking bind as fetch and keeping open', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-computer-guard-'));
+  loose = dir;
+  repositoryAt(dir);
+  const me = `${String(process.getuid?.())}:${String(process.getgid?.())}`;
+
+  // Spelled out, and left out: both are `fetch`, the default.
+  for (const [key, profile] of [
+    ['spelled', { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'fetch' }],
+    ['silent', { image: 'node:22', disposable: true, sessionFolder: true }],
+    ['old', { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'bind' }],
+  ] as [string, Record<string, unknown>][]) {
+    const { user, error } = await guardOf(join(dir, `${key}.json`), { claude: profile });
+    expect(error, key).toBeUndefined();
+    expect(user, key).toBe(me);
+  }
+
+  // And the old word is not silent about it: one line, naming the profile.
+  const lines: string[] = [];
+  await load(
+    { command: process.execPath, args: [FIXTURE], env: { DOCKER_FAKE_STATE: join(dir, 'log.json') },
+      profiles: { claude: { image: 'node:22', gitGuard: 'bind' } } },
+    {},
+    (line) => lines.push(line),
+  );
+  expect(lines.filter((line) => line.includes('profiles.claude.gitGuard is bind'))).toHaveLength(1);
+
+  // `open` is unchanged: at a repository root it keeps the image's user.
+  const opened = await guardOf(join(dir, 'open.json'), {
+    claude: { image: 'node:22', disposable: true, sessionFolder: true, gitGuard: 'open' },
+  });
+  expect(opened.error).toBeUndefined();
+  expect(opened.user).toBeUndefined();
+
+  // And a third answer is refused, naming the three a profile may give.
+  const refused = await guardOf(join(dir, 'closed.json'), {
+    claude: { image: 'node:22', gitGuard: 'closed' },
+  });
+  expect(refused.error).toMatch(/profiles\.claude\.gitGuard/);
+  expect(refused.error).toMatch(/fetch/);
+  expect(refused.error).toMatch(/open/);
+  expect(refused.error).toMatch(/bind/);
+});
+
+/*
+ * Plan host/67 task 09: a profile's `sessionTree` is `shared`, the default, or
+ * `copy` - decision
+ * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+ *
+ * `shared` is the layout every task before this one built: the host's tree is
+ * bound into the machine at its own path, read-write, so the host sees the
+ * agent's edits as it makes them. `copy` gives the machine a checkout of its
+ * own in the volume it commits into, mounted at the tree's own path, with
+ * nothing of the host's tree bound - what reaches the host of the agent's work
+ * is what the fetch brings back.
+ *
+ * A folder that is not a repository has nothing to copy: the machine is refused
+ * rather than made with the host's folder bound, which is what `copy` promises
+ * it does not do.
+ */
+it('reads a profile\'s sessionTree as shared, and copies the tree where it says copy', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-computer-tree-'));
+  loose = dir;
+  const { repo } = repositoryAt(dir);
+  // A volume of the machine's own, its own path marked by the name it carries.
+  const ownVolume = (argv: string[]): string[] =>
+    argv.filter((one) => one.startsWith('ahpd-git-') && one.endsWith(`:${repo}`));
+
+  // Spelled out, and left out: both are `shared`, and the host's tree is bound
+  // into the machine at its own path, with the machine's git directory in its
+  // volume beside it.
+  for (const [key, profile] of [
+    ['spelled', { image: 'node:22', disposable: true, sessionFolder: true, sessionTree: 'shared' }],
+    ['silent', { image: 'node:22', disposable: true, sessionFolder: true }],
+  ] as [string, Record<string, unknown>][]) {
+    const { argv, error } = await guardOf(join(dir, `${key}.json`), { claude: profile });
+    expect(error, key).toBeUndefined();
+    expect(argv, key).toContain(`${repo}:${repo}`);
+    expect(ownVolume(argv), key).toEqual([]);
+  }
+
+  // Under `copy` the tree is the machine's own: nothing of the host's folder is
+  // bound, and the volume is mounted at the tree's own path instead.
+  const copied = await guardOf(join(dir, 'copy.json'), {
+    claude: { image: 'node:22', disposable: true, sessionFolder: true, sessionTree: 'copy' },
+  });
+  expect(copied.error).toBeUndefined();
+  expect(copied.argv).not.toContain(`${repo}:${repo}`);
+  expect(ownVolume(copied.argv)).toHaveLength(1);
+});
+
+it('refuses a profile whose sessionTree is neither shared nor copy', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-computer-tree-'));
+  loose = dir;
+  repositoryAt(dir);
+  // A third answer is refused at load, naming the two a profile may give.
+  const refused = await guardOf(join(dir, 'both.json'), {
+    claude: { image: 'node:22', sessionTree: 'both' },
+  });
+  expect(refused.error).toMatch(/profiles\.claude\.sessionTree/);
+  expect(refused.error).toMatch(/shared/);
+  expect(refused.error).toMatch(/copy/);
+});
+
+it('refuses a machine asked to copy a folder that is not a repository', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-computer-plain-'));
+  loose = dir;
+  mkdirSync(join(dir, 'plain'));
+  /*
+   * A folder that is not a repository has no commit for a copy to be made at,
+   * so there is no checkout for the machine to work in and nothing for a fetch
+   * to bring back. The machine is refused - rather than made with the host's
+   * folder bound, which is exactly what `copy` promises it does not do, or with
+   * an empty volume, which would lose everything the agent wrote in it.
+   */
+  const plain = await guardOf(join(dir, 'plain.json'), {
+    claude: { image: 'node:22', disposable: true, sessionFolder: true, sessionTree: 'copy' },
+  }, join(dir, 'plain'));
+  expect(plain.error).toMatch(/sessionTree copy/);
+  expect(plain.error).toMatch(/not a repository/);
+
+  // While `shared`, which binds the folder as it always did, is made as before.
+  const shared = await guardOf(join(dir, 'shared.json'), {
+    claude: { image: 'node:22', disposable: true, sessionFolder: true },
+  }, join(dir, 'plain'));
+  expect(shared.error).toBeUndefined();
+  expect(shared.argv).toContain(`${join(dir, 'plain')}:${join(dir, 'plain')}`);
 });
 
 /*

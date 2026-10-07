@@ -1,6 +1,6 @@
 ---
 title: gitGuard is fetch or open
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:
@@ -35,3 +35,11 @@ A profile's `gitGuard` is `fetch`, the default, or `open`; `bind` is still accep
 - `npx tsc -b` clean; `npx vitest run packages/computer/test/computer-plugin.test.ts` passes.
 
 ## Resume
+
+- **Implemented** 2026-10-06 on `build/agents/c016a0e4`.
+- `GitGuard` is `'fetch' | 'open'`; `guardedMounts` and `runsAsHost` default to `fetch` and take their old branch under that name, so a machine's mounts and user are what they were under `bind`.
+- `Profile.gitGuard` is `'fetch' | 'open'`, the schema enum is `['fetch', 'open', 'bind']`, `profilesOf` reads `bind` as `fetch`, and the answers check takes three values and logs `profiles.<key>.gitGuard is bind, which is now fetch: the machine commits in a git directory of its own` once.
+- The answers check's refusal for every field now reads `fetch, open or bind` where three values are given; `computer-options.test.ts` was updated for the new sentence.
+- `computer-plugin.test.ts` gained one case, which makes a machine from profiles saying `fetch`, nothing, `bind` and `open` and reads the `--user` flag of each: the first three run as the host user, `open` at a repository root keeps the image's user.
+- `computer-git-guard.test.ts` passes `gitGuard: 'fetch'` where it passed `'bind'`; its subject - what the writable allowlist leaves open - is what task 02 removes, and the file is rewritten there.
+- `npx tsc -b` clean; `npx vitest run packages/computer` passes (20 files, 347 tests).

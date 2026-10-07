@@ -12,12 +12,12 @@ import type { VaultRead } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import { ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf, stateVolumeOf } from './runtime.js';
+import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, madeUnderBind, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf, stateVolumeOf } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
-import { hostUser, runsAsHost, userLabelOf } from './gitdir.js';
-import type { GitGuard } from './gitdir.js';
+import { guardFor, hostUser, runsAsHost, userLabelOf } from './gitdir.js';
+import type { GitGuard, SessionTree } from './gitdir.js';
 
 /**
  * The package as a plugin.
@@ -118,8 +118,8 @@ export const optionsSchema = {
           },
           gitGuard: {
             type: 'string',
-            enum: ['bind', 'open'],
-            description: "How a git directory in a session's machine is guarded: bind, what git on the host runs read-only and every command as the host user, or open, all of it writable. bind when absent.",
+            enum: ['fetch', 'open', 'bind'],
+            description: "How a git directory in a session's machine is guarded: fetch, the machine committing in a git directory of its own so the host fetches the work back, or open, the host's git directory writable in the machine. fetch when absent. bind is read as fetch.",
           },
           nestedDelete: {
             type: 'string',
@@ -220,6 +220,11 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // somewhere else - decision
       // `a-session-folder-reaches-a-machine-only-where-its-profile-allows`.
       ...(said.sessionFolder === true ? { sessionFolder: true } : {}),
+      // And where a machine made for a session works: in the host's tree, the
+      // default, or in a copy of it of its own - decision
+      // `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+      // Absent is `shared`.
+      ...(said.sessionTree === 'shared' || said.sessionTree === 'copy' ? { sessionTree: said.sessionTree } : {}),
       // And whether the repository that folder sits inside comes with it, the
       // root a folder below it would otherwise mount in its place. The same
       // gate one step wider, from the same decision: the folder being the
@@ -232,8 +237,12 @@ const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
       // is `volume` and `owner`.
       ...(said.state === 'volume' || said.state === 'host' ? { state: said.state } : {}),
       ...(said.stateScope === 'owner' || said.stateScope === 'shared' ? { stateScope: said.stateScope } : {}),
-      // How a git directory in its machines is guarded. Absent is `bind`.
-      ...(said.gitGuard === 'bind' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
+      // How a git directory in its machines is guarded. Absent is `fetch`, and
+      // `bind` - the guard this plan removes - is read as `fetch` too, so a
+      // profile written for it keeps working and gets the safer layout. The
+      // line saying so is the check's, where the whole option is read.
+      ...(said.gitGuard === 'fetch' || said.gitGuard === 'open' ? { gitGuard: said.gitGuard } : {}),
+      ...(said.gitGuard === 'bind' ? { gitGuard: 'fetch' as const } : {}),
       // What deleting one of its machines' sessions when it is not running
       // does to the machine's own copy. Absent is `inside`.
       ...(said.nestedDelete === 'inside' || said.nestedDelete === 'record' ? { nestedDelete: said.nestedDelete } : {}),
@@ -389,23 +398,36 @@ export const apply: Plugin['apply'] = (host, options) => {
     one.parts = one.parts.filter((part) => partIds.has(part));
   }
   /*
-   * A `secretUnreadable`, `state`, `stateScope`, `gitGuard` or `nestedDelete`
-   * that is neither of its two answers is fatal here rather than dropped: the
-   * loader's check does not reach into a profile, and a value read as the
-   * default would make a machine other than the one its operator asked for.
+   * A `secretUnreadable`, `state`, `stateScope`, `gitGuard`, `sessionTree` or
+   * `nestedDelete` that is not one of its answers is fatal here rather than
+   * dropped: the loader's check does not reach into a profile, and a value read
+   * as the default would make a machine other than the one its operator asked
+   * for.
+   *
+   * `gitGuard` takes a third value, `bind`, which is no longer a guard of its
+   * own: a profile written for it is read as `fetch` - the safer layout - and
+   * one line says so, because a profile quietly guarded differently from what
+   * its file asks for is a thing an operator has to be able to find out.
    */
-  const answers: [field: string, values: [string, string]][] = [
+  const answers: [field: string, values: string[]][] = [
     ['secretUnreadable', ['fail', 'drop']],
     ['state', ['volume', 'host']],
     ['stateScope', ['owner', 'shared']],
-    ['gitGuard', ['bind', 'open']],
+    ['gitGuard', ['fetch', 'open', 'bind']],
+    ['sessionTree', ['shared', 'copy']],
     ['nestedDelete', ['inside', 'record']],
   ];
+  const asList = (values: string[]): string =>
+    values.length < 3 ? values.join(' or ') : `${values.slice(0, -1).join(', ')} or ${values[values.length - 1] as string}`;
   for (const [key, one] of Object.entries(options.profiles as Record<string, unknown> | undefined ?? {})) {
     for (const [field, values] of answers) {
       const said = typeof one === 'object' && one !== null ? (one as Record<string, unknown>)[field] : undefined;
-      if (said !== undefined && !values.includes(said as string)) {
-        throw new Error(`plugin ${name}: profiles.${key}.${field} is ${values.join(' or ')}, and ${String(said)} is neither`);
+      if (said === undefined) continue;
+      if (!values.includes(said as string)) {
+        throw new Error(`plugin ${name}: profiles.${key}.${field} is ${asList(values)}, and ${String(said)} is neither`);
+      }
+      if (field === 'gitGuard' && said === 'bind') {
+        host.log(`${name}: profiles.${key}.gitGuard is bind, which is now fetch: the machine commits in a git directory of its own`);
       }
     }
   }
@@ -866,6 +888,51 @@ export const apply: Plugin['apply'] = (host, options) => {
   };
 
   /*
+   * What is said about a machine made with the host's git directory writable.
+   *
+   * Such a machine wrote its commits into the host's own git directory, so
+   * there is nothing in it to bring back - and it is a machine this daemon's
+   * guard would never make, because that directory is one the host's own git
+   * writes links and refs into. It is removed rather than adopted or entered,
+   * and the session is told, in the one sentence both roads say - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+   *
+   * The id is whatever the caller holds, as every other sentence about a
+   * machine spells it, so the session reads the machine it asked for.
+   */
+  const underBindSaid = (id: string): string =>
+    `computer://${id} was made with the host's git directory writable, so it was removed; the next turn makes a new one`;
+
+  /**
+   * Remove such a machine, and answer whether it went.
+   *
+   * Another daemon's machine is left where it is, with one line saying so: a
+   * daemon neither enters another's machine nor removes it, which is the rule
+   * every disposable machine already follows - decision
+   * `a-daemon-adopts-only-the-disposable-machines-whose-session-it-keeps`. One
+   * with no daemon label at all is nobody's, and goes.
+   *
+   * A removal Docker refuses costs the removal and not the answer: the line
+   * says why the machine is still there, the sentence is still the truth about
+   * what it is, and the caller still treats it as a machine not to use.
+   */
+  const dropUnderBind = async (found: Record<string, unknown>, id: string): Promise<boolean> => {
+    const theirs = hostOf(found);
+    if (theirs !== undefined && theirs !== host.hostId) {
+      host.log(`${name}: left the machine ${id} alone; it was made with the host's git directory writable, and it is another daemon's machine`);
+      return false;
+    }
+    host.log(`${name}: ${underBindSaid(id)}`);
+    try {
+      await made.remove(id);
+    }
+    catch (error) {
+      host.log(`${name}: could not remove ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return true;
+  };
+
+  /*
    * The machines a daemon before this one left behind.
    *
    * The timers died with it, so a labelled disposable machine found at startup
@@ -881,6 +948,23 @@ export const apply: Plugin['apply'] = (host, options) => {
    */
   const listing = made.list().then(async (found) => {
     for (const one of found) {
+      /*
+       * A machine made under the guard this plan replaced, which `madeUnderBind`
+       * reads from the record: no label saying which guard made it, and a
+       * read-only bind of a path in a git directory, which is where the old
+       * guard pinned what git writes and laid its writable binds over. It goes
+       * here rather than being adopted, and it is never armed: `dropUnderBind`
+       * says what is written down about it.
+       *
+       * The record is read rather than the row, because `Mounts` is what says
+       * this and a listing carries none. A machine this daemon cannot read is
+       * one that is not there, and its row stands.
+       */
+      const record = await made.inspect(one.id);
+      if (record !== undefined && madeUnderBind(record)) {
+        await dropUnderBind(record, one.id);
+        continue;
+      }
       /*
        * A disposable machine names the session it was made for, and only the
        * daemon that made it and keeps that session adopts it: a session id is
@@ -948,10 +1032,22 @@ export const apply: Plugin['apply'] = (host, options) => {
   const withGit = (
     asked: MachineSource,
     root: string | undefined,
-    guard: GitGuard = 'bind',
+    guard: GitGuard = 'fetch',
     repository = false,
-  ): Pick<MachineSpec, 'gitDir' | 'repository' | 'user' | 'gitGuard'> => {
+    tree: SessionTree = 'shared',
+  ): Pick<MachineSpec, 'gitDir' | 'repository' | 'user' | 'gitGuard' | 'sessionTree'> => {
     if (root === undefined) return {};
+    /*
+     * Under `copy` the machine works in a checkout of its own, so a folder the
+     * machine would be given with no git directory beside it has nothing to
+     * copy. Both ways out are wrong - binding the host's folder breaks what
+     * `copy` promises, and a volume with nothing seeded in it loses everything
+     * the agent writes, since there is no git to keep it - so the machine is
+     * refused, saying which folder had nothing in it.
+     */
+    if (tree === 'copy' && (asked.gitDir === undefined || (asked.repository !== undefined && !repository))) {
+      throw new Error(`the profile says sessionTree copy, and ${asked.repository ?? root} is not a repository a machine for this session may be given, so there is no checkout to work in; set sessionTree shared, or give the session a folder with a repository in it`);
+    }
     /*
      * The folder is below a repository's root, and that root is not the
      * session's folder: a session working in `~/.config/nvim` would otherwise
@@ -968,12 +1064,21 @@ export const apply: Plugin['apply'] = (host, options) => {
       noted(`the profile does not say sessionRepository, so ${asked.folder} is mounted without ${asked.repository}, the repository it is in, and without its git directory`);
       return {};
     }
-    const tree = asked.repository ?? root;
+    const at = asked.repository ?? root;
     if (asked.gitDir === undefined) return asked.repository === undefined ? {} : { repository: asked.repository };
-    const user = runsAsHost(asked.gitDir, tree, guard) ? hostUser() : undefined;
+    /*
+     * The guard the machine is made with, which under `copy` is `fetch`: the
+     * machine commits in a git directory of its own and nothing of the host's
+     * git directory is mounted but the objects, read-only. Everything that
+     * reads the guard - the user's commands run as, the label a later daemon
+     * reads back - reads this one.
+     */
+    const held = guardFor(guard, tree);
+    const user = runsAsHost(asked.gitDir, at, held) ? hostUser() : undefined;
     return {
       gitDir: asked.gitDir,
-      gitGuard: guard,
+      gitGuard: held,
+      sessionTree: tree,
       ...(asked.repository === undefined ? {} : { repository: asked.repository }),
       ...(user === undefined ? {} : { user }),
     };
@@ -993,6 +1098,21 @@ export const apply: Plugin['apply'] = (host, options) => {
   const reach: ComputerPort['how'] = async (id, asked) => {
     const held = await made.inspect(id);
     if (held === undefined) return undefined;
+    /*
+     * A machine made with the host's git directory writable, asked for by a
+     * session now: removed, and refused in the sentence that says why - this is
+     * the road a session is told on, since the port's `enter` is a call the
+     * host makes and swallows, and the sentence has to reach whoever started
+     * the session rather than the log alone. A machine the startup listing
+     * already removed is not here to be asked about, and a session's next turn
+     * makes a new one from the source it named.
+     */
+    if (madeUnderBind(held)) {
+      const gone = await dropUnderBind(held, id);
+      throw new Error(gone
+        ? underBindSaid(id)
+        : `computer://${id} was made with the host's git directory writable, and it is another daemon's machine; make a machine of your own for this session or run it on the host`);
+    }
     const values = { ...await namedFor(id, held, asked.provider), ...(asked.env ?? {}) };
     /** The docker program's own environment, with the values `-e NAME` reads laid over it. */
     const spawnEnvOf = (over: Record<string, string>): Record<string, string> | undefined =>
@@ -1107,10 +1227,31 @@ export const apply: Plugin['apply'] = (host, options) => {
     return key === undefined ? undefined : profiles?.[key]?.nestedDelete;
   };
 
+  /**
+   * What a machine committed, brought back into the host's repository.
+   *
+   * The runtime's own call, under the id a caller holds: the runtime reads the
+   * machine, its mounts and its git, so there is nothing here for the port to
+   * decide - a machine of another provider is another provider's to answer for,
+   * and `undefined` is that answer.
+   */
+  const bringBack: NonNullable<ComputerPort['bringBack']> = async (id) => made.bringBack(id);
+
+  /**
+   * The host's branch, handed to a machine before its next turn reads it.
+   *
+   * The runtime's own call too, under the id a caller holds, and for the same
+   * reason: it is the runtime that reads the machine, its mounts and both
+   * repositories, so there is nothing here for the port to decide.
+   */
+  const follow: NonNullable<ComputerPort['follow']> = async (id) => made.follow(id);
+
   host.registerComputers({
     how: reach,
     nested: nestedHost,
     nestedDelete,
+    bringBack,
+    follow,
     /*
      * The agents one was prepared for, read back from its own label.
      *
@@ -1365,6 +1506,7 @@ export const apply: Plugin['apply'] = (host, options) => {
               profile.sessionFolder === true ? asked.folder : undefined,
               profile.gitGuard,
               profile.sessionRepository === true,
+              profile.sessionTree,
             ),
             disposable: { profile: key, ...(profile.disposableAlone === true ? { alone: true } : {}) },
             // The session this machine is made for, which is what a daemon

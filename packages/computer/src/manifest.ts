@@ -128,6 +128,23 @@ export interface Profile {
    */
   sessionFolder?: boolean;
   /**
+   * Whether a machine made for a session from this profile works in the host's
+   * tree or in a copy of it.
+   *
+   * `shared`, the default, binds the tree into the machine at its own path,
+   * read-write, so the host sees the agent's edits as it makes them. `copy`
+   * gives the machine a checkout of its own in the volume it commits into,
+   * mounted at the tree's own path, with nothing of the host's tree bound: the
+   * agent's work reaches the host only as the commits ahpd fetches back - so
+   * what is still uncommitted when the machine goes is kept as a stash commit
+   * under `refs/ahpd/machines/<machine>/uncommitted` - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. A folder
+   * that is not a repository has nothing to copy, so a machine asked for one is
+   * refused. Meaningless without `sessionFolder`, which is what puts a folder
+   * there at all.
+   */
+  sessionTree?: 'shared' | 'copy';
+  /**
    * Whether a machine made for a session from this profile carries the
    * repository that session's folder sits inside.
    *
@@ -175,11 +192,12 @@ export interface Profile {
    */
   stateScope?: 'owner' | 'shared';
   /**
-   * How a git directory in a session's machine is guarded: `bind`, the
-   * default, puts what git on the host runs read-only and runs every command
-   * as the host user; `open` leaves it all writable.
+   * How a git directory in a session's machine is guarded: `fetch`, the
+   * default, gives the machine a git directory of its own and mounts the
+   * host's objects read-only, so the work comes back by fetch; `open` leaves
+   * the host's git directory writable in the machine.
    */
-  gitGuard?: 'bind' | 'open';
+  gitGuard?: 'fetch' | 'open';
   /**
    * What deleting a session that ran in a machine from this profile, and is not
    * running, does to the copy the machine keeps.

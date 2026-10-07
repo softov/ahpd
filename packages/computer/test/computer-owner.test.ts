@@ -34,12 +34,24 @@ let loose: string | undefined;
 afterEach(() => {
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (state !== undefined) rmSync(state, { recursive: true, force: true });
+  state = undefined;
 });
 
 const temp = (): string => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-owner-'));
   return loose;
 };
+
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let state: string | undefined;
+const stateDir = (): string => (state ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-owner-config-')));
 
 /** What the scripted Docker holds. */
 interface DockerHeld {
@@ -134,7 +146,7 @@ const optionsOf = (dockerState: string, devState?: string, more: Record<string, 
   };
 };
 
-const load = (pluginOptions: Record<string, unknown>, configDir = REPO) => loadPlugins(
+const load = (pluginOptions: Record<string, unknown>, configDir = stateDir()) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],
   { base: base(), configDir, cwd: REPO, log: () => {} },
 );

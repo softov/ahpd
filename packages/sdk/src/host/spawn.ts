@@ -78,7 +78,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
     dispatch, log, described, links, resumedSessions,
     sessionHolding, respell, dirOf, operationsMoved, refreshWatched, refreshFacts,
-    fire, charged, senders, senderOf, sentBy, enteredIn, inMachine,
+    fire, charged, senders, senderOf, sentBy, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, learnModels,
   } = ctx;
 
@@ -683,11 +683,24 @@ export function createSpawn(ctx: HostContext): Spawn {
         // A turn starting or finishing moves the catalogue too, and a client
         // watching only the list is the one that most needs telling.
         summaryMoved(uri);
-        // And a finished turn is when the branch is worth asking about again:
-        // the agent may have changed it, or somebody may have in a terminal.
+        /*
+         * And a finished turn is when the branch is worth asking about again:
+         * the agent may have changed it, or somebody may have in a terminal.
+         *
+         * The machine's own commits first, where the session is in one: a
+         * machine that commits in a git directory of its own leaves the host's
+         * branch where it was until ahpd fetches, so the facts read after this
+         * are the facts of a folder whose branch holds the turn's work -
+         * decision `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`.
+         * A session in no machine has nothing to fetch, and its facts are read
+         * without waiting for an answer nobody was asked for.
+         */
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
           const dir = dirOf(uri);
-          if (dir !== undefined) refreshFacts(dir);
+          if (dir !== undefined) {
+            if (enteredIn.get(uri) === undefined) refreshFacts(dir);
+            else void bringBackOf(uri).then(() => { refreshFacts(dir); });
+          }
         }
         // A turn starting or ending is the whole of what disables and re-enables
         // a changeset's operations, and it moves nothing inside the changeset

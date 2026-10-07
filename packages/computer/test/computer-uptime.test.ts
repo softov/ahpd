@@ -35,12 +35,24 @@ afterEach(() => {
   vi.useRealTimers();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
 });
 
 const temp = (): string => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-uptime-'));
   return loose;
 };
+
+/*
+ * The state directory a load is given, which is a temporary one of its own.
+ *
+ * A load with this repository as its state directory writes into the checkout:
+ * a machine made on a linked worktree leaves `computers.gitfile` at whatever
+ * `configDir` names, and a test that did that put a file in the repository.
+ */
+let home: string | undefined;
+const stateDir = (): string => (home ??= mkdtempSync(join(tmpdir(), 'ahpd-uptime-config-')));
 
 /** One machine the fixture already holds, with the state and labels given. */
 interface Seeded {
@@ -105,7 +117,7 @@ const base = (usage?: Usage): HostOptions => ({
 });
 
 /** The plugin as loaded, with what it said kept. */
-function load(hostOptions: HostOptions, state: string, more: Record<string, unknown> = {}, configDir = REPO) {
+function load(hostOptions: HostOptions, state: string, more: Record<string, unknown> = {}, configDir = stateDir()) {
   const lines: string[] = [];
   return {
     lines,

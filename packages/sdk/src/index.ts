@@ -33,6 +33,7 @@ export {
   PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INTERNAL_ERROR,
 } from './rpc.js';
 export { gitBranches } from './repo/git.js';
+export { gitArgv } from './repo/hardened.js';
 export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { localPath, uriOf } from './fileuri.js';

@@ -181,6 +181,26 @@ export interface KeptFor {
 export type NestedDelete = 'inside' | 'record';
 
 /**
+ * What became of the work a machine had committed, when ahpd brought it back.
+ *
+ * `moved` is the host's branch now holding it. Where it could not be moved, the
+ * work is not lost: it is under a ref of ahpd's own in the host's repository -
+ * `waiting`, when the caller has any use for the name - and the machine's next
+ * turn, a person's commit, or a look at the branch can still pick it up.
+ */
+export interface BroughtBack {
+  /** Whether the host's branch was moved to the machine's commit. */
+  moved: boolean;
+  /**
+   * The ref of ahpd's own the work waits in, where the branch was not moved.
+   *
+   * `refs/ahpd/machines/<machine>/<branch>` in the host's repository, holding the
+   * machine's commit until somebody fast-forwards the branch onto it.
+   */
+  waiting?: string;
+}
+
+/**
  * One machine, reached as a process.
  *
  * `how` answers the descriptor, or nothing when there is no machine with that
@@ -262,6 +282,50 @@ export interface ComputerPort {
    * reach the copy, and says so in a line, so the record still goes.
    */
   nestedDelete?(id: string): Promise<NestedDelete | undefined>;
+  /**
+   * Bring the work a machine committed back into the host's repository, and
+   * answer what became of it.
+   *
+   * A machine whose profile guards its git directory with `fetch` commits in a
+   * git directory of its own, so its work is nowhere on the host until it is
+   * fetched - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. This is
+   * that fetch: the machine's commits leave it as a bundle on a pipe, and the
+   * host's git reads nothing but the file ahpd writes them into.
+   *
+   * The host's branch moves only where the machine's commit leads on from it
+   * with nothing staged, and the work waits under a ref of ahpd's own wherever
+   * it does not. A machine with no git directory of its own, or one that has
+   * committed nothing, answers `moved: false` without a fetch.
+   *
+   * `undefined` is "there is no such machine", the same answer `how` gives.
+   * Absent on a port whose machines commit in the host's own git directory,
+   * where there is nothing to bring back.
+   */
+  bringBack?(id: string): Promise<BroughtBack | undefined>;
+  /**
+   * Put a machine where the host's branch is, before a turn reads it.
+   *
+   * A machine whose profile guards its git directory with `fetch` commits in a
+   * git directory of its own - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
+   * between two turns the two repositories drift: a commit made on the host, by
+   * a person in the tree or by a changeset operation, is not in the history the
+   * agent's git reads. This is that commit being handed over.
+   *
+   * The host's checked-out branch and commit are what the machine's `HEAD`, its
+   * branch and its index become, and only where the machine holds nothing the
+   * host has not fetched: a machine at a commit the host's repository has not,
+   * or one the host's branch does not lead on from, is left exactly as it is
+   * and the log says so, because moving it would be dropping its work. Nothing
+   * of the host's is written, and no object is copied - a commit the host made
+   * is already readable in the machine.
+   *
+   * A machine that is not there is nothing to move, like `bringBack`'s
+   * `undefined`. Absent on a port whose machines commit in the host's own git
+   * directory, where there is nothing to hand over.
+   */
+  follow?(id: string): Promise<void>;
   /**
    * Make a machine from a source a session named, and answer its id.
    *

@@ -23,7 +23,7 @@ export interface ResourceMethods {
 export function createResourceMethods(ctx: HostContext, conn: ConnectionContext): ResourceMethods {
   const { connection } = conn;
   const {
-    changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext, opKey,
+    bringBackOf, followOf, changesetAt, contentMoved, dispatch, fire, inFlight, lastError, log, operationContext, opKey,
     options, ownerFor, recordPullRequest, refreshFacts, statusOf, watches, wroteThrough,
   } = ctx;
 
@@ -35,6 +35,16 @@ export function createResourceMethods(ctx: HostContext, conn: ConnectionContext)
  * held to the protocol's by the type on the next line, so it cannot drift.
  */
 const WRITE_MODES: string[] = ['truncate', 'append', 'insert'] satisfies WriteMode[];
+
+/**
+ * `-32011`, for an operation whose folder is not in the state it was read in.
+ *
+ * The protocol's own `Conflict`: a changeset was read, something moved
+ * underneath it, and the verb the client is asking for no longer applies to
+ * what it was shown - which is exactly a machine whose commit is not on the
+ * branch yet.
+ */
+const CONFLICT = -32011;
 
   /**
    * Which store serves a URI.
@@ -294,6 +304,26 @@ const WRITE_MODES: string[] = ['truncate', 'append', 'insert'] satisfies WriteMo
       if ((statusOf(at.owner) & Status.InProgress) !== 0)
         throw new RpcError(-32004, `${at.owner} is mid-turn`);
 
+      /*
+       * And what the machine committed, before anything acts on the folder.
+       *
+       * The agent's commits are in a git directory of the machine's own until
+       * ahpd fetches them - decision
+       * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
+       * an operation running first would act on a changeset that does not hold
+       * the work the turn just did.
+       *
+       * Where the work could not be moved onto the branch the operation is
+       * refused rather than run: something of the host's is in the way - a
+       * commit of a person's, or staged changes - and what the operation would
+       * commit is not what the machine wrote. Under a ref of ahpd's own the
+       * work is kept, and a look at the branch picks it up.
+       */
+      const brought = await bringBackOf(at.owner);
+      if (brought?.waiting !== undefined) {
+        throw new RpcError(CONFLICT, `the work of ${at.owner} waits in ${brought.waiting}: nothing acts on ${at.dir} until it is on the branch`);
+      }
+
       const key = opKey(channel, operationId);
       inFlight.add(key);
       lastError.delete(key);
@@ -319,6 +349,20 @@ const WRITE_MODES: string[] = ['truncate', 'append', 'insert'] satisfies WriteMo
         refreshFacts(at.dir);
         await options.changes?.refresh?.(at.dir).catch(() => false);
         await contentMoved(at.owner);
+        /*
+         * And where the operation left the branch, the machine is handed it.
+         *
+         * The fetch above brought the machine's own work to the host; this is
+         * the other direction - a commit, a checkout, a discard or a revert has
+         * moved the host's branch, its index, or both, and a machine still at
+         * where it was would run its next turn against a history the folder it
+         * shares is no longer in - decision
+         * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it`. A
+         * machine that could not be moved is a line in the log and nothing
+         * else: the operation has already happened, and it is the machine's
+         * next turn that is one branch behind.
+         */
+        await followOf(at.owner);
         return {
           ...(result.message !== undefined ? { message: result.message } : {}),
           // What the operation produced, when it produced something worth

@@ -32,10 +32,13 @@ const FIXTURE = fileURLToPath(new URL('./fixtures/docker.mjs', import.meta.url))
 
 /** A temporary directory removed after the test that made it. */
 let loose: string | undefined;
+let home: string | undefined;
 afterEach(() => {
   vi.useRealTimers();
   if (loose !== undefined) rmSync(loose, { recursive: true, force: true });
   loose = undefined;
+  if (home !== undefined) rmSync(home, { recursive: true, force: true });
+  home = undefined;
 });
 
 const temp = (): string => {
@@ -82,9 +85,15 @@ interface Held {
 
 /**
  * The daemon's configuration folder: the test's own temporary directory where
- * it made one, so a `computers.json` it writes goes with the test.
+ * it made one, so a `computers.json` it writes goes with the test, and a
+ * temporary one of its own where it made none.
+ *
+ * Never this repository: a machine made on a linked worktree leaves
+ * `computers.gitfile` at whatever `configDir` names, which is a file in the
+ * checkout a person then finds in `git status`.
  */
-const configHome = (): string => loose ?? REPO;
+const configHome = (): string =>
+  loose ?? (home ??= mkdtempSync(join(tmpdir(), 'ahpd-computer-needs-config-')));
 
 const load = (pluginOptions: Record<string, unknown>, agents: Agent[] = [], vault?: Vault) => loadPlugins(
   [{ name: SOURCE, options: pluginOptions }],

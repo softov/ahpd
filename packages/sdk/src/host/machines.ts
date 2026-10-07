@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { computerId, computerSource, machineRefusal, openComputer } from '../computers.js';
 import { RpcError } from '../rpc.js';
 import type { Scope } from '../scopes.js';
+import type { BroughtBack } from '../types/computers.js';
 import type { Principal } from '../types/users.js';
 import type { Owner } from '../types/usage.js';
 import type { GitDir } from '../types/worktrees.js';
@@ -14,6 +15,8 @@ export interface Machines {
   sessionMachines: Map<string, { source: string; machine: string }>;
   enteredIn: Map<string, string>;
   inMachine(id: string | undefined, uri: string, entering: boolean): void;
+  bringBackOf(uri: string): Promise<BroughtBack | undefined>;
+  followOf(uri: string): Promise<void>;
   leaveForgotten(uri: string, config: Record<string, unknown> | undefined): void;
   machineFor(config: Record<string, unknown>): string;
   admitted(
@@ -143,10 +146,93 @@ export function createMachines(ctx: HostContext): Machines {
     // throws before it answers is the same failure as one that rejects after,
     // and a `try` around the call would have caught only the first of them.
     void Promise.resolve()
-      .then(() => (entering ? options.computers?.enter?.(id, uri) : options.computers?.leave?.(id, uri)))
+      .then(() => (entering ? options.computers?.enter?.(id, uri) : letGo(id, uri)))
       .catch((error: unknown) => {
         ctx.log(`computers: ${entering ? 'enter' : 'leave'} of ${id} for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
       });
+  };
+
+  /**
+   * What one machine committed, brought back onto the host.
+   *
+   * A machine that commits in a git directory of its own keeps its work there
+   * until ahpd fetches it - decision
+   * `a-machine-commits-in-its-own-repository-and-the-host-fetches-it` - so
+   * this is the host asking for it, and the answer is what became of it: on
+   * the branch, or waiting in a ref of ahpd's own.
+   *
+   * A port that fails is a line in the log and no answer rather than a throw.
+   * Every moment this is asked at is a moment that goes on without it - a turn
+   * still ends, a session still leaves, a machine still goes - and a failure
+   * there is a fact about one machine, not a reason for the host to fail what
+   * somebody asked of it. What the caller does with the answer is the caller's:
+   * a fetch that could not be made is not the same as work that waits.
+   */
+  const askedOf = async (id: string, uri: string): Promise<BroughtBack | undefined> => {
+    try {
+      return await options.computers?.bringBack?.(id);
+    }
+    catch (error) {
+      ctx.log(`computers: bringing the work of ${id} back for ${uri} failed: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+  };
+
+  /**
+   * The machine a session is in, asked for what it committed.
+   *
+   * The name is normalised first, because a caller holds whichever spelling of
+   * the session it was handed - a client's `ahp-session:/<id>`, a changeset
+   * URI's owner - and the machines a session entered are kept under the one
+   * name this host holds it by.
+   */
+  const bringBackOf = async (uri: string): Promise<BroughtBack | undefined> => {
+    const named = ctx.heldAs(uri);
+    const id = enteredIn.get(named);
+    return id === undefined ? undefined : await askedOf(id, named);
+  };
+
+  /**
+   * The machine a session is in, put where the host's branch is.
+   *
+   * A machine that commits in a git directory of its own reads history the host
+   * already has and writes commits the host does not, so a commit made on the
+   * host since it last looked - a person's in the tree, or one a changeset
+   * operation made - is not in what the agent's next turn reads. This is that
+   * commit being handed over, and the port's own call decides the rest: a
+   * machine holding work the host has not fetched is left as it is, and says so
+   * in the log, because it is the port that can look at both repositories.
+   *
+   * The same shape as `bringBackOf`, and for the same reason: the name is
+   * normalised, a session in no machine asks nothing, and a port that fails is
+   * a line in the log rather than a turn that does not start. What a machine
+   * that could not be moved costs is one turn on a branch that is behind - the
+   * same as before this existed - and refusing the turn would cost the work.
+   */
+  const followOf = async (uri: string): Promise<void> => {
+    const named = ctx.heldAs(uri);
+    const id = enteredIn.get(named);
+    if (id === undefined) return;
+    try {
+      await options.computers?.follow?.(id);
+    }
+    catch (error) {
+      ctx.log(`computers: setting ${id} to the host's branch for ${named} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  /**
+   * A session leaving its machine: what the machine committed comes back first.
+   *
+   * The machine is named rather than read back out of `enteredIn`, because the
+   * leave is asked for in a promise and the map is cleared by the caller
+   * before that promise runs - a machine whose work was never fetched because
+   * of the order these two lines run in would be a machine whose volume is
+   * removed with the commits still in it.
+   */
+  const letGo = async (id: string, uri: string): Promise<void> => {
+    await askedOf(id, uri);
+    await options.computers?.leave?.(id, uri);
   };
 
   /**
@@ -326,5 +412,5 @@ export function createMachines(ctx: HostContext): Machines {
     config.computer = machine;
   };
 
-  return { sessionMachines, enteredIn, inMachine, leaveForgotten, machineFor, admitted, placedIn };
+  return { sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn };
 }

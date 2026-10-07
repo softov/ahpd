@@ -1,7 +1,7 @@
 ---
 title: A machine commits in a repository of its own, and ahpd fetches the work back
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -108,15 +108,15 @@ after:  ... -> -v <root> + <gitDir>/objects:ro + volume ahpd-git-<machine> as th
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - gitGuard is fetch or open](task-01-gitguard-is-fetch-or-open.md) | todo | - |
-| [02 - A machine gets a git directory of its own](task-02-a-machine-gets-a-git-directory-of-its-own.md) | todo | 01 |
-| [03 - The machine's repository is seeded from the host's](task-03-the-machines-repository-is-seeded-from-the-hosts.md) | todo | 02 |
-| [04 - ahpd brings the work back by fetch](task-04-ahpd-brings-the-work-back-by-fetch.md) | todo | 03 |
-| [05 - The work comes back when it matters](task-05-the-work-comes-back-when-it-matters.md) | todo | 04 |
-| [06 - The machine follows the host's branch](task-06-the-machine-follows-the-hosts-branch.md) | todo | 04 |
-| [07 - A machine made under bind is replaced](task-07-a-machine-made-under-bind-is-replaced.md) | todo | 02 |
-| [08 - COMPUTER.md says how a machine commits](task-08-docs.md) | todo | 05, 06, 07, 09 |
-| [09 - A profile can give a machine a copy of the folder](task-09-a-profile-can-give-a-machine-a-copy-of-the-folder.md) | todo | 04, 06 |
+| [01 - gitGuard is fetch or open](task-01-gitguard-is-fetch-or-open.md) | done | - |
+| [02 - A machine gets a git directory of its own](task-02-a-machine-gets-a-git-directory-of-its-own.md) | done | 01 |
+| [03 - The machine's repository is seeded from the host's](task-03-the-machines-repository-is-seeded-from-the-hosts.md) | done | 02 |
+| [04 - ahpd brings the work back by fetch](task-04-ahpd-brings-the-work-back-by-fetch.md) | done | 03 |
+| [05 - The work comes back when it matters](task-05-the-work-comes-back-when-it-matters.md) | done | 04 |
+| [06 - The machine follows the host's branch](task-06-the-machine-follows-the-hosts-branch.md) | done | 04 |
+| [07 - A machine made under bind is replaced](task-07-a-machine-made-under-bind-is-replaced.md) | done | 02 |
+| [08 - COMPUTER.md says how a machine commits](task-08-docs.md) | done | 05, 06, 07, 09 |
+| [09 - A profile can give a machine a copy of the folder](task-09-a-profile-can-give-a-machine-a-copy-of-the-folder.md) | done | 04, 06 |
 
 ## Risks and tradeoffs
 
@@ -129,10 +129,16 @@ after:  ... -> -v <root> + <gitDir>/objects:ro + volume ahpd-git-<machine> as th
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-gitguard-is-fetch-or-open.md](task-01-gitguard-is-fetch-or-open.md), once host/65 p2 is merged.
+- **Built 2026-10-07:** every task done; one review found five defects, all fixed in one round and verified.
+- **Done so far:** tasks 01, 02, 03, 04 and 05: `gitGuard` is `fetch` or `open` with `bind` read as `fetch`; under `fetch` a machine mounts the host's `objects/` read-only at `/opt/ahpd/host-objects` and gets a git directory of its own in the volume `ahpd-git-<machine>`; once the machine is up that git directory is seeded from the host's tree, so git in the machine is clean, on the tree's branch, at the tree's commit, with the identity a commit needs; `ComputerPort.bringBack(id)` carries the machine's commits to the host - a bundle poured out of `docker exec` into a private `0600` file, read by the host's `git fetch` with fsck on, into `refs/ahpd/machines/<id>/<branch>`, then a fast-forward of the host's branch and a `reset -q` of the tree where the old tip is an ancestor and nothing is staged, and the hidden ref where it waits; and the four moments call it: a turn ending or cancelled (`spawn.ts`, before the facts are re-read), an operation on the changeset (`resourcemethods.ts`, before it runs, refusing with `-32011` where the work waits), a session leaving its machine (`machines.ts`, before the port's `leave`), and `remove` before the container goes (`runtime.ts`, a failure logged and the removal going on). The objects' target is `/opt/ahpd/host-objects` and not `<gitDir>/objects`, because on a main checkout the machine's own git directory is a volume at `<root>/.git` and a bind inside a mount would shadow the machine's object store - task 03's Resume has it in full.
+  And task 06 closes the other direction: `ComputerPort.follow(id)` (`ComputerRuntime.follow`, `followOfMachine` in the runtime) reads the host's branch and commit in the tree with the hardened argv and hands them to the machine - `update-ref`, `symbolic-ref HEAD` for a branch the host switched to, `reset -q`, or `update-ref --no-deref HEAD` for a detached host - and only where the machine holds nothing the host has not fetched, which is two checks in the host's repository (`cat-file -e` for a commit never fetched, `merge-base --is-ancestor` for a branch that does not lead on from it), each a log line and a return, and nothing written when the machine is already on the host's branch at its commit. The two moments are a turn starting - in `lifecycle.ts`'s `beginOrRun`, the single road every turn takes, and not for a message queued behind a running turn - and a changeset operation that has run (`resourcemethods.ts`, after `contentMoved`); `spawn.ts`'s hook is the backend's own `chat/turnStarted`, which is after the turn has begun. A port that throws is a log line and the turn still starts. That change surfaced a hole it had to close with it: `beginTurn` now refuses a promise that rejects, in the error's own words, where a synchronous throw had reached the dispatch's own catch.
+  And task 07 closes the machines a daemon before this one left behind: `madeUnderBind` reads a machine whose labels hold no `ahpd.git` whose mounts hold a read-only bind of a path in a git directory, the startup listing removes such a machine before anything is adopted or entered with the sentence in the log, and a session asking for one through `how` has it removed and is told the sentence - the read-only bind and not the writable one, which the task's *Resume* has in full, because the old `open` guard mounted the git directory writable and nothing else.
+  And task 09 closes the other shape a session's tree can take: a profile's `sessionTree` is `shared`, the default, or `copy`, and under `copy` the machine's volume is mounted at the tree's own root path holding the working tree and `.git` together, nothing of the host's tree is bound, the guard collapses to `fetch`, the seed ends `reset --hard -q`, `bringBack` moves the host's tree with `merge --ff-only` and leaves the work under the hidden ref where that refuses, `follow` merges into the machine only where its tree is clean, and `remove` keeps what was never committed in `refs/ahpd/machines/<machine>/uncommitted`; a folder with no repository is refused under `copy` in one sentence. Task 09's Resume has it in full, `listedTree` reading real Docker's `Name` among it.
+  And task 08 is the docs: `docs/COMPUTER.md`'s `gitGuard` row rewritten for `fetch` and `open` with `bind` read as `fetch`, a `sessionTree` row beside it, the "A worktree brings its repository." paragraph rewritten with the allowlist gone and the fetch, the follow, what does not work in a machine and the `copy` layout in paragraphs after it, and the security note rewritten to say that nothing of the host's git directory is writable in a `fetch` machine and that a link under its root refuses one.
+  And a review of the built plan found five defects, all five fixed: `release_computer` removes a machine without stopping it first, so the fetch in `remove` can run at all; the host's refs are read with `rev-parse --verify --quiet`, so a branch the host does not have is made at the machine's commit rather than never landing; every branch a machine holds comes back, each under a hidden ref of its own, and `follow` re-points a branch of the machine's only where the host's commit leads on from it; the suites hand the loader a temporary state directory instead of this repository, with the run's `globalSetup` failing a run that leaves `computers.gitfile` at the root; and the two paragraphs of `docs/COMPUTER.md` that still spoke of one branch are corrected.
+- **Next action:** the plan is built end to end - all nine tasks `implemented` - and it waits on the review that closes it. `implemented.md` and `deferred.md` are written; what waits is the plain `git stash create` of task 09 keeping tracked modifications only, and no remote reaching a machine, so `git push` and LFS do not work in one.
 - **Open questions:** none; Softov chose "Host fetches from machine", and every other choice is a defaulted row above.
-- **Watch out for:** never let the host's git open a path inside the machine's volume, not even to read; everything from the machine arrives on a pipe.
+- **Watch out for:** never let the host's git open a path inside the machine's volume, not even to read; everything from the machine arrives on a pipe. `bringBack` takes the tree from the machine's own mounts (`treeOf`), since nothing else names the folder of a `docker run` machine, and it answers `undefined` for a machine with no record - the four moments of task 05 have to live with that.
   `docker exec` today answers text through `ran`, which would corrupt a pack; the bundle needs its own byte stream.
   A dev container is reached through `reachedDevContainer`, not plain `docker exec`; `bringBack` has to take both roads, as `exec` does.
 
@@ -142,5 +148,5 @@ after:  ... -> -v <root> + <gitDir>/objects:ro + volume ahpd-git-<machine> as th
 - [ ] A commit in the machine is on the host's branch after the turn ends, and the host's `git status` in the folder is clean.
 - [ ] A host commit between turns reaches the machine before its next turn.
 - [ ] A machine made under `bind` is not entered after a restart.
-- [ ] `npx tsc -b` clean; `npx vitest run packages/computer packages/sdk/test` pass.
+- [ ] `pnpm build`, `pnpm typecheck` and `pnpm boundary` clean; `npx vitest run` from the root passes, with the real-Docker cases in `computer-git-fetch.test.ts` run rather than skipped.
 - [ ] `plans/index.md` updated.

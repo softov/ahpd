@@ -744,7 +744,7 @@ export function createHost(options: HostOptions): Host {
     loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, asking,
     charged, ownerFor, principals, principalFor, forWhom, senderOf,
     charge, checked, scoping, settle,
-    sessionMachines, enteredIn, inMachine, leaveForgotten, machineFor, admitted, placedIn,
+    sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,
     isolating, mergedConfig, propertyOf, sessionSchema, runningSchema, seeded,
     contributedDefaults, storedConfig,
     rootConfig, descriptors, daemonSchema, daemonProperties, daemonKey,

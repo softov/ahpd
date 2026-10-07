@@ -70,6 +70,16 @@ const fake = () => {
       calls.push(`exec ${id} ${command.join(' ')}`);
       return { output: 'hello', code: 0 };
     },
+    // A machine with no repository of its own: there is never anything to
+    // bring back, which is what the ports of a runtime that commits in the
+    // host's own git directory answer too.
+    bringBack: async (id) => {
+      calls.push(`bringBack ${id}`);
+      return { moved: false };
+    },
+    // And nothing to hand over either: a machine that commits in the host's own
+    // git directory is already where the host is.
+    follow: async (id) => { calls.push(`follow ${id}`); },
     capabilities: () => ({
       runtime: 'docker',
       actions: ['create', 'destroy', 'exec', 'start', 'stop', 'restart'],
@@ -151,8 +161,11 @@ it('makes a machine with the configured limits, uses it and releases it', async 
   expect(calls).toContain('exec box sh -lc echo hi');
 
   expect(String(await by(tools, 'release_computer').run({ id: 'box' }, at))).toContain('gone');
-  expect(calls).toContain('stop box');
   expect(calls).toContain('remove box');
+  // And nothing stops it first: the removal is where a machine's commits are
+  // fetched out of it, and a stopped container refuses the command that fetches
+  // them, so a stop in front of the removal is the one that loses them.
+  expect(calls).not.toContain('stop box');
 });
 
 it('refuses past the maximum, a name already taken, and a machine it does not have', async () => {
