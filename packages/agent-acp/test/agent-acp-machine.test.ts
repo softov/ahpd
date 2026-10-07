@@ -209,6 +209,9 @@ it('gives a host spawn none of the machine env', async () => {
     uri: 'ahp-session:/host',
     chatUri: 'ahp-chat:/host',
     settings: {},
+    // This case is not about trust, and an absent answer is untrusted -
+    // decision `a-folder-is-untrusted-until-a-client-says-otherwise`.
+    trusted: () => true,
     schema: () => ({ type: 'object', properties: {} }),
     emit: (_channel: string, action: Bag) => {
       if (action.type === 'chat/error' || action.type === 'chat/turnComplete') ended.push(String(action.type));
@@ -236,6 +239,7 @@ it('hands a machine port none of the machine env with the command it runs there'
     uri: 'ahp-session:/boxed',
     chatUri: 'ahp-chat:/boxed',
     settings: { computer: 'computer://box' },
+    trusted: () => true,
     computers: {
       how: async (_id: string, spawn: { env?: Record<string, string> }) => {
         asked.push(spawn);
@@ -322,7 +326,14 @@ it('reaches a disposable machine: plain values at create, a $secret by name on e
     COPILOT_HOME: '/ahpd/copilot',
     PATH: `/opt/ahpd/copilot/bin:/opt/ahpd/node/bin:${BASE_PATH}`,
   });
-});
+  /*
+   * Four times the default, because this case is not waiting on a timer: it
+   * makes two machines and asks how one of them runs a command, and every one
+   * of those is a spawn of the fixture's own processes. Alone it takes about
+   * five seconds - the default exactly - so on a machine running the rest of
+   * the package beside it, it fails for being busy rather than for being wrong.
+   */
+}, 20_000);
 
 /*
  * A shipped row's sign-in counts a variable the preset gives its machine, for
@@ -359,6 +370,7 @@ const signedIn = async (placed: boolean) => {
     uri: `ahp-session:/signin-${String(placed)}`,
     chatUri: `ahp-chat:/signin-${String(placed)}`,
     settings: placed ? { computer: 'computer://box' } : {},
+    trusted: () => true,
     ...(placed
       ? {
           computers: {

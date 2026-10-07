@@ -1,6 +1,6 @@
 ---
 title: An ACP session in an untrusted folder
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:

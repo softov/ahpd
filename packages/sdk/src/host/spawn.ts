@@ -9,10 +9,13 @@ import { meter } from '../meter.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../clientcalls.js';
 import { chatUriFor, subagentChatUri } from './channels.js';
 import { CLOSING } from './common.js';
+import { sameFolder, trusted } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
+import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
+import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 
 /**
@@ -49,7 +52,14 @@ export interface Spawn {
   keepTitle(uri: string, chatUri: string, title: string): void;
   /** Write down which harness a session runs on, under every id it answers to. */
   keepProvider(uri: string, agent: Agent, session: Session): void;
-  /** Start one backend's session, and the worker chats it goes on to ask for. */
+  /**
+   * Start one backend's session, and the worker chats it goes on to ask for.
+   *
+   * `sender` is the connection that sent the turn this start is for, when a
+   * client sent it. It is what the start's `trusted` is read from and nothing
+   * else is, so a start nobody's connection asked for - an automation, a host
+   * tool, a daemon restarting what it held - is a start with no trust at all.
+   */
   spawn(
     agent: Agent,
     uri: string,
@@ -59,6 +69,7 @@ export interface Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
+    sender?: Connection,
   ): Session;
 }
 
@@ -67,7 +78,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
     dispatch, log, described, links, resumedSessions,
     sessionHolding, respell, dirOf, operationsMoved, refreshWatched, refreshFacts,
-    fire, charged, senders, senderOf, enteredIn, inMachine,
+    fire, charged, senders, senderOf, sentBy, enteredIn, inMachine,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, learnModels,
   } = ctx;
 
@@ -326,6 +337,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     workingDirectory?: string,
     credentials?: Record<string, string>,
     additional?: string[],
+    sender?: Connection,
   ): Session => {
     /*
      * The backend that actually runs this session.
@@ -395,9 +407,45 @@ export function createSpawn(ctx: HostContext): Spawn {
       ctx.served.set(uri, held);
       return opened;
     };
+    /*
+     * What this backend is told about the folders it is handed.
+     *
+     * Read from the connection that sent the turn that starts or restarts this
+     * backend, and on a host with people only when that connection is the
+     * session's owner - decision
+     * `a-folder-is-untrusted-until-a-client-says-otherwise`. A turn somebody
+     * else sends into this session is not theirs to widen, which is why the
+     * two are compared rather than the value simply passed along; and an
+     * automation, a host tool and a daemon coming back up have no connection
+     * at all, so what they start is untrusted - which is the same answer as a
+     * window that pushed nothing.
+     *
+     * Where the host has no people directory there is nobody to be other than
+     * the sender, and the sender decides - decision
+     * `the-sender-decides-on-a-host-with-no-people`. `ownerFor` answers
+     * `undefined` for every connection there, so comparing owners would refuse
+     * every folder on such a host and make the value a window pushes dead on
+     * it.
+     *
+     * A worktree this host made is read as the repository it was cut from: it
+     * is a folder the window has never opened and so cannot have pushed, and
+     * one the host made is trusted exactly when its repository is - decision
+     * `a-worktree-inherits-its-repositorys-trust`.
+     */
+    const trustedBy = (folder: string): boolean => {
+      if (sender === undefined) return false;
+      if (options.users !== undefined) {
+        const who = ctx.ownerFor(sender);
+        if (who === undefined || who !== kept.owner(idOf(uri))) return false;
+      }
+      const made = ctx.worktrees.get(uri);
+      const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
+      return trusted(vouched, sender.config?.workspaceTrust, sender.trustedFolders);
+    };
     const session = used.create({
       uri,
       chatUri,
+      trusted: trustedBy,
       /*
        * The tools bound to this session: this host's own, and whatever the
        * clients already in it provide.
@@ -478,6 +526,11 @@ export function createSpawn(ctx: HostContext): Spawn {
         if (action.type === 'chat/turnStarted' && typeof action.queuedMessageId === 'string') {
           const waiting = senders.get(action.queuedMessageId);
           if (waiting !== undefined) senders.set(turn, waiting);
+          // The window follows it too, for the same reason and by the same
+          // hand: a move asked for in a queued message is asked about on the
+          // connection that queued it.
+          const queuedBy = sentBy.get(action.queuedMessageId);
+          if (queuedBy !== undefined) sentBy.set(turn, queuedBy);
         }
         const sender = senderOf(turn);
         /*
@@ -523,7 +576,10 @@ export function createSpawn(ctx: HostContext): Spawn {
         }
         // A turn that has ended is let go of, once what a usage record will want
         // has been read off it and what a history needs is the store's.
-        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') senders.delete(turn);
+        if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
+          senders.delete(turn);
+          sentBy.delete(turn);
+        }
         // A nested session's record follows the title and the last turn.
         if (action.type === 'session/titleChanged' && typeof action.title === 'string') moveNested(idOf(uri), { title: action.title });
         else if (channel === 'chat' && action.type === 'chat/turnComplete') moveNested(idOf(uri), {});
@@ -643,7 +699,7 @@ export function createSpawn(ctx: HostContext): Spawn {
         // anything.
         if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
           && ctx.moving.get(uri)?.chat === chatUri) {
-          const move = ctx.moving.get(uri) as { chat: string; directory: string; isolation: boolean };
+          const move = ctx.moving.get(uri) as Move;
           ctx.moving.delete(uri);
           void ctx.moveSession(uri, move).catch((error: unknown) => {
             log(`${uri} could not move to ${move.directory}: ${error instanceof Error ? error.message : String(error)}`);

@@ -19,6 +19,7 @@ export interface Owners {
   forWhom(owner: Owner | undefined, principal?: Principal): { owner: Owner; principal?: Principal } | undefined;
   senders: Map<string, Owner>;
   senderOf(turn: string): Owner | undefined;
+  sentBy: Map<string, Connection>;
   charge(uri: string, principal: Principal | undefined, named?: string): void;
   checked(
     principal: Principal | undefined,
@@ -95,6 +96,22 @@ export function createOwners(ctx: HostContext): Owners {
 
   /** Who sent this turn, or nobody where this host did not start it. */
   const senderOf = (turn: string): Owner | undefined => senders.get(turn);
+
+  /**
+   * The connection each running turn arrived on, by the same turn id.
+   *
+   * The owner beside it says whose the work is; this says which window asked,
+   * and only a window can be asked something back - trust is a window's rather
+   * than a person's, and two windows of one person may hold different
+   * `workspaceTrust` - decision
+   * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+   *
+   * Kept and let go of exactly as `senders` is, because it answers the same
+   * question about the same span: a turn nobody's window sent - an automation's,
+   * a host tool's - has an entry here for nobody, which is the answer and not
+   * an absence.
+   */
+  const sentBy = new Map<string, Connection>();
 
   /**
    * Resolve what a session is charged to and write the answer down.
@@ -206,7 +223,7 @@ export function createOwners(ctx: HostContext): Owners {
   };
 
   return {
-    charged, ownerFor, principals, principalFor, forWhom, senders, senderOf,
+    charged, ownerFor, principals, principalFor, forWhom, senders, senderOf, sentBy,
     charge, checked, scoping, settle,
   };
 }

@@ -2,6 +2,7 @@ import { idOf, Status } from '../catalog.js';
 import { localPath } from '../fileuri.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
+import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { ClientCallAnswer } from '../clientcalls.js';
 import type { Origin } from './state.js';
@@ -31,7 +32,7 @@ export function chatAction(
     contributedDefaults, decided, described, dispatch, drafts, fire, first, keepProvider, kept,
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
     ownerFor, owners, past, principalFor, propertyOf, renameChat, restart, restartChat, restarting,
-    served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf, storedConfig,
+    rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf, storedConfig,
     summaryMoved, value, waitingFor, wheres,
   } = ctx;
 
@@ -200,7 +201,7 @@ export function chatAction(
       if (was === null) charged.set(named, undefined);
       else if (was !== undefined) charged.set(named, { scope: was });
       else charge(named, connection.principal, typeof restored.scope === 'string' ? restored.scope : undefined);
-      const session = spawn(owner, named, chatUriFor(named), restored, { resume: id, seed }, ran);
+      const session = spawn(owner, named, chatUriFor(named), restored, { resume: id, seed }, ran, undefined, undefined, connection);
       keepProvider(named, owner, session);
       log(`resumed ${named}`);
       dispatch(named, { type: 'session/ready' });
@@ -215,7 +216,7 @@ export function chatAction(
         turn: String(action.turnId ?? ''),
         text: String(message.text ?? ''),
       });
-      const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), ownerFor(connection), undefined, messageAttachments(message));
+      const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message));
       if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
     })();
     return;
@@ -286,7 +287,7 @@ export function chatAction(
       void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
       const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
       beginTurn(
-        beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), ownerFor(connection), undefined, messageAttachments(message)),
+        beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message)),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );
       break;
@@ -352,10 +353,21 @@ export function chatAction(
       const path = (value: unknown): string => localPath(String(value ?? ''));
       const held = owner.additional ?? [];
       let after = held;
+      /*
+       * The folder this action puts the session into, and nothing for a
+       * removal: a set adds one, a replace moves the primary slot, and a
+       * removal enters nowhere.
+       *
+       * Worked out before anything is written, because it is what the window
+       * is asked about - and an answer of no means the session never went
+       * there, so the write has to be behind the question.
+       */
+      let entering: string | undefined;
       if (type === 'session/workingDirectorySet') {
         const one = path(action.directory);
         if (one === '' || one === owner.workingDirectory || held.includes(one)) break;
         after = [...held, one];
+        entering = one;
       }
       else if (type === 'session/workingDirectoryRemoved') {
         const one = path(action.directory);
@@ -374,12 +386,33 @@ export function chatAction(
         // `primaryReplacement` beside `immutablePrimary`.
         const one = path(action.directory);
         if (one === '' || one === owner.workingDirectory) break;
-        owner.workingDirectory = one;
+        entering = one;
       }
-      owner.additional = after;
-      void restart(uri, conn.tokensFor(owner.agent.provider), { additional: after })
-        .then(() => { dispatch(uri, action, origin); })
-        .catch((error: unknown) => { no(error instanceof Error ? error.message : String(error)); });
+      /*
+       * The window is asked about the folder before the session enters it - the
+       * question a move asks, answered from the same pushed value or by the
+       * same request - decision
+       * `a-folder-is-untrusted-until-a-client-says-otherwise`. A worktree the
+       * restart makes from it needs no question: one the host made is trusted
+       * exactly when its repository is, and the folder just answered for is
+       * where that worktree is cut from - decision
+       * `a-worktree-inherits-its-repositorys-trust`.
+       */
+      const auto = autoApproved({ ...owner.agent.defaults(), ...contributedDefaults(), ...owner.config }, rootConfig);
+      void (async () => {
+        try {
+          if (entering !== undefined) {
+            await requireTrust({ folder: entering, sender: connection, autoApproved: auto });
+          }
+          owner.additional = after;
+          if (entering !== undefined && type === 'session/workingDirectoryReplaced') owner.workingDirectory = entering;
+          await restart(uri, conn.tokensFor(owner.agent.provider), { additional: after }, connection);
+          dispatch(uri, action, origin);
+        }
+        catch (error) {
+          no(error instanceof Error ? error.message : String(error));
+        }
+      })();
       break;
     }
     case 'session/configChanged': {
@@ -623,7 +656,7 @@ export function chatAction(
                 no(wrong);
                 return false;
               }
-              await restart(uri, conn.tokensFor(owning.agent.provider));
+              await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection);
               return true;
             })();
             // The promise a close waits on, which is not the work's own: a refusal is
@@ -778,7 +811,7 @@ export function chatAction(
         next = had.filter((other) => other !== one);
       }
       beside.set(channel, next);
-      restartChat(owner.uri, channel, conn.tokensFor(held.agent.provider));
+      restartChat(owner.uri, channel, conn.tokensFor(held.agent.provider), connection);
       dispatch(channel, action, origin);
       break;
     }
@@ -865,7 +898,7 @@ export function chatAction(
           String(message.text ?? ''),
           modelIn(model),
           messageFrom(message),
-          ownerFor(connection),
+          connection,
           String(action.id ?? ''),
         ),
         (why) => refuse(connection.peer, channel, action, origin, why),
@@ -1024,6 +1057,7 @@ export function chatAction(
         owner.workingDirectory,
         undefined,
         beside.get(session.chatUri) ?? owner.additional,
+        connection,
       );
       log(`truncated ${session.chatUri} to ${turnId}`);
       break;

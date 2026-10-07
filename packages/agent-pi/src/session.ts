@@ -671,7 +671,15 @@ export function piSession(
       // The inline extension pi loads is this host's, and this is the handler
       // it calls before a tool runs.
       onToolCall: askBefore,
-      trustProject: trust !== 'deny',
+      /*
+       * Both have to say yes. `projectTrust` is this session's own answer and
+       * can only narrow: a folder the host did not vouch for loads none of its
+       * own extensions or settings however the session is configured, and an
+       * absent `Start.trusted` is the host having said nothing, which is the
+       * same answer - decision
+       * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+       */
+      trustProject: trust !== 'deny' && start.trusted?.(where) === true,
     });
     live = backend;
     unsubscribe = backend.subscribe(heard);

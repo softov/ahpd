@@ -299,9 +299,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
           delete connection.config;
+          delete connection.trustedFolders;
         }
         into(rootConfig, ours);
         if (Object.keys(mine).length > 0) into(connection.config ??= {}, mine);
+        /*
+         * A `workspaceTrust` push answers for every folder at once, so the
+         * folders this window said yes to one at a time are behind it: a window
+         * that has just said which folders it trusts is not still vouching for
+         * one it answered about earlier. A pushed `null` takes the key back,
+         * which is a new answer like any other and clears them too.
+         */
+        if (Object.prototype.hasOwnProperty.call(mine, 'workspaceTrust')) delete connection.trustedFolders;
         // What the echo carries, which is what a log line about it says too:
         // a value the daemon holds back is not a value the log may print.
         const echoConfig = { ...config, ...said };

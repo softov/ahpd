@@ -8,7 +8,7 @@ import { uriOf } from '../src/resources.js';
 import type { ComputerPort, MachineSource } from '../src/types/computers.js';
 import type { GitDir, Worktrees } from '../src/types/worktrees.js';
 import {
-  resetSdk, claude, complete, createHost, emit, hello, list, machine, open,
+  resetSdk, actions, claude, complete, createHost, emit, hello, hostTools, list, machine, open,
   peer, read, resolve, serving, sessionQueries, settle, running,
 } from './support/host.js';
 
@@ -367,7 +367,11 @@ describe('more than one directory', () => {
   });
 
   it('starts the agent again, resumed, when a directory is added to a running session', async () => {
-    const { client, uri } = await running();
+    const { client, uri, peer: p } = await running();
+    // The window vouches for the folder it is adding, because a folder is
+    // untrusted until a client says otherwise and this case is about the
+    // restart rather than about the question.
+    p.request = async () => ({ trusted: true });
     // The CLI names the conversation, and that name is what a resume asks for.
     await emit({ type: 'system', subtype: 'init', session_id: 'sdk-wide' });
     const before = sessionQueries().length;
@@ -591,5 +595,241 @@ describe('the repository a session\'s machine is handed', () => {
     await start(root, `devcontainer://${other}`);
     expect(questions).toEqual([other]);
     expect(asked[0]).toMatchObject({ source: `devcontainer://${other}`, gitDir: '/repo/.git' });
+  });
+});
+
+/*
+ * A session entering a folder, and the window that has to vouch for it.
+ *
+ * Trust is a window's rather than a folder's: it arrives on a connection, it
+ * names the folders that window has opened, and a folder nobody has vouched for
+ * is one a session must not walk into on its own - decision
+ * `a-folder-is-untrusted-until-a-client-says-otherwise`. So the host asks the
+ * connection whose turn asked for the move, and goes on only where the answer
+ * was yes.
+ *
+ * `set_workspace` is the host's own tool, so it is called here the way a model
+ * calls it: through the MCP server the backend was handed, from inside a turn,
+ * with the turn ended afterwards - because that is the moment the move is made.
+ */
+describe('a session entering a folder nobody vouched for', () => {
+  let dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs = [];
+  });
+
+  /** Two folders side by side, one of them the session's own. */
+  const folders = () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-vouched-'));
+    dirs.push(root);
+    const here = join(root, 'one');
+    const there = join(root, 'two');
+    mkdirSync(here);
+    mkdirSync(there);
+    return { here, there };
+  };
+
+  /** One question the host put to the client. */
+  type Asked = { method: string; params: Record<string, unknown> };
+
+  /**
+   * A host with one client, one session in `here`, and the host's own tools.
+   *
+   * `answer` is what the client says when the host asks it something; the
+   * default is the window that trusts whatever it is asked about. `trusts` is
+   * what that window pushed on connecting, which is the same answer arriving
+   * the other way round - a push says it for good, an answer only for the
+   * folder in hand.
+   */
+  const hosted = async (here: string, {
+    trusts = [], answer = () => ({ trusted: true }), root = {}, autoApprove, worktrees,
+  }: {
+    trusts?: string[];
+    answer?: (asked: Asked) => unknown;
+    root?: Record<string, unknown>;
+    autoApprove?: string;
+    worktrees?: Worktrees;
+  } = {}) => {
+    const asked: Asked[] = [];
+    const lines: string[] = [];
+    const p = peer();
+    p.request = async (method, params) => {
+      const one = { method, params: params as Record<string, unknown> };
+      asked.push(one);
+      return answer(one);
+    };
+    const host = createHost({
+      path: here,
+      agents: [claude({ paths: [here] })],
+      ...machine(),
+      ...(worktrees === undefined ? {} : { worktrees }),
+      tools: hostTools(),
+      onEvent: (line) => { lines.push(line); },
+    });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: 'ahp-root://',
+        action: {
+          type: 'root/configChanged',
+          config: { workspaceTrust: { enabled: true, trustedUris: trusts.map(uriOf) }, ...root },
+        },
+      },
+    });
+    const uri = 'ahp-session:/moves';
+    await client.handle({
+      method: 'createSession',
+      params: {
+        channel: uri, provider: 'claude', workingDirectories: [uriOf(here)],
+        ...(autoApprove === undefined ? {} : { config: { autoApprove } }),
+      },
+    });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    /** The host's `set_workspace`, called from a turn, then that turn ended. */
+    const move = async (folder: string, isolation = false): Promise<void> => {
+      await client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: `work in ${folder}` } } },
+      });
+      await settle();
+      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
+        tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
+      }> | undefined;
+      const tool = servers?.ahp?.tools.find((one) => one.name === 'set_workspace');
+      if (!tool) throw new Error('the host offered no set_workspace');
+      await tool.handler({ workspaceFolder: folder, isolation });
+      // The move is made when the turn that asked for it is over, and not
+      // before: the agent is started again there, and a restart mid-turn is a
+      // turn that never finishes.
+      await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+      await settle(8);
+    };
+    /** Where the session is, as the last CLI started for it was told. */
+    const cwd = (): string | undefined => sessionQueries().at(-1)?.options.cwd as string | undefined;
+    return { client, peer: p, asked, lines, uri, chatUri, move, cwd };
+  };
+
+  /** Whether the session was announced as having moved, and to where. */
+  const moved = (p: ReturnType<typeof peer>, uri: string): unknown[] =>
+    actions(p, uri)
+      .filter((one) => one.action.type === 'session/workingDirectoryReplaced')
+      .map((one) => one.action.directory);
+
+  it('asks the window, and stays where it is when the window says no', async () => {
+    const { here, there } = folders();
+    const { peer: p, asked, lines, uri, move, cwd } = await hosted(here, {
+      trusts: [here],
+      answer: () => ({ trusted: false }),
+    });
+    await move(there);
+
+    // The folder is not one this window pushed, so it was asked - and told no,
+    // which is the whole of what the window had to say about it.
+    expect(asked).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } }]);
+    expect(moved(p, uri)).toEqual([]);
+    // The session is still where it was, still running, and the failure is in
+    // the log rather than in a client's lap: nobody is waiting on a move.
+    expect(cwd()).toBe(here);
+    expect(lines.some((line) => line.includes(`Workspace trust was not granted for '${there}'`))).toBe(true);
+  });
+
+  it('moves where the window says it trusts the folder', async () => {
+    const { here, there } = folders();
+    const { peer: p, uri, move, cwd } = await hosted(here, { trusts: [here] });
+    await move(there);
+
+    expect(moved(p, uri)).toEqual([uriOf(there)]);
+    expect(cwd()).toBe(there);
+  });
+
+  it('refuses a folder when the client does not serve the question at all', async () => {
+    const { here, there } = folders();
+    const { peer: p, asked, uri, move, cwd } = await hosted(here, {
+      trusts: [here],
+      // What a client without the extension method answers: JSON-RPC's own
+      // "no such method" for the `vscode/` surface it does not implement.
+      answer: () => { throw Object.assign(new Error('no such method'), { code: -32601 }); },
+    });
+    await move(there);
+
+    expect(asked).toHaveLength(1);
+    expect(moved(p, uri)).toEqual([]);
+    expect(cwd()).toBe(here);
+  });
+
+  it('asks nothing when the host is set to approve everything', async () => {
+    const { here, there } = folders();
+    const { peer: p, asked, uri, move, cwd } = await hosted(here, {
+      trusts: [here],
+      root: { globalAutoApproveEnabled: true },
+    });
+    await move(there);
+
+    expect(asked).toEqual([]);
+    expect(moved(p, uri)).toEqual([uriOf(there)]);
+    expect(cwd()).toBe(there);
+  });
+
+  it('asks nothing when the session itself is set to auto-approve', async () => {
+    const { here, there } = folders();
+    const { asked, uri, move, cwd } = await hosted(here, { trusts: [here], autoApprove: 'autoApprove' });
+    await move(there);
+
+    expect(asked).toEqual([]);
+    expect(cwd()).toBe(there);
+  });
+
+  it('asks about the folder and nothing about the worktree it makes from it', async () => {
+    const { here, there } = folders();
+    const created: { repository: string; path: string }[] = [];
+    const worktrees: Worktrees = {
+      repository: async (dir) => dir,
+      branches: async () => ['main'],
+      create: async (one) => { created.push(one); },
+      dirty: async () => false,
+      remove: async () => {},
+      gitDir: async () => undefined,
+    };
+    const { asked, move, cwd } = await hosted(here, { trusts: [here], worktrees });
+    await move(there, true);
+
+    // Once: the folder the session was sent to. The worktree is made beside the
+    // repository rather than under it, so it is a folder no window could have
+    // vouched for - and one the host made is trusted when the repository it was
+    // cut from is, which is what the window was just asked about.
+    expect(asked).toEqual([{ method: 'vscode/requestWorkspaceTrust', params: { workspace: uriOf(there) } }]);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.repository).toBe(there);
+    // And the session runs in it, with nothing asked about it.
+    expect(String(cwd())).toContain('two.worktrees');
+  });
+
+  it('refuses a folder a client adds, and does not add it', async () => {
+    const { here, there } = folders();
+    const { client, peer: p, uri } = await hosted(here, { trusts: [here], answer: () => ({ trusted: false }) });
+    const before = sessionQueries().length;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/workingDirectorySet', directory: uriOf(there) } },
+    });
+    await settle(8);
+
+    const refused = actions(p, uri)
+      .map((one) => one.rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused).toEqual([`Workspace trust was not granted for '${there}'`]);
+    // Nothing started again, and the session still holds the one folder: a
+    // refusal is the folder not being added, not the action being dropped.
+    expect(sessionQueries().length).toBe(before);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { workingDirectories: string[] } };
+    }).snapshot.state;
+    expect(state.workingDirectories).toEqual([uriOf(here)]);
   });
 });

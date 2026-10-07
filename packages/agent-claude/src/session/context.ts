@@ -41,6 +41,15 @@ export interface ClaudeSessionOptions extends SessionOptions {
   /** The list the CLI reports, as the harness offers it; absent is the CLI's. */
   offerModels?: (cli: { id: string; name: string }[]) => Promise<{ id: string; name: string }[]>;
   /**
+   * Whether one folder is one the host vouched for, carried from `Start`.
+   *
+   * The query reads it for the CLI's `settingSources`, which is what decides
+   * whether a project's settings, its hooks and its `CLAUDE.md` reach this
+   * session at all. Absent is the host having said nothing, which is the same
+   * answer an absent `Start.trusted` is: untrusted.
+   */
+  trusted?: (folder: string) => boolean;
+  /**
    * The host's seam for a chat of one tool call's own.
    *
    * A subagent is a conversation inside one call, and the host owns what a

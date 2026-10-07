@@ -18,12 +18,20 @@ import type { Bag } from '@ahpd/sdk';
  * A file that is missing, unreadable or not JSON contributes nothing. This is
  * a best effort by design: the CLI still reads the same files, and a server
  * this misses is a server that works exactly as it did before.
+ *
+ * `trusted` is the host's answer about a folder, and the project's file is read
+ * only where it says yes. A `.mcp.json` names servers this host starts as
+ * commands, so a folder nobody vouched for contributes none of them - and an
+ * absent `trusted` is the host having said nothing, which is the same answer -
+ * decision `a-folder-is-untrusted-until-a-client-says-otherwise`. The home file
+ * is the person's own rather than a project's and is read either way, as the
+ * CLI's own `user` source is.
  */
-export function serversFor(directories: string[]): Record<string, Bag> {
+export function serversFor(directories: string[], trusted?: (folder: string) => boolean): Record<string, Bag> {
   const found: Record<string, Bag> = {};
   const files = [
     join(homedir(), '.claude.json'),
-    ...directories.map((dir) => join(dir, '.mcp.json')),
+    ...directories.filter((dir) => trusted?.(dir) === true).map((dir) => join(dir, '.mcp.json')),
   ];
   for (const file of files) {
     let held: unknown;

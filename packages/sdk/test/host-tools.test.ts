@@ -327,6 +327,9 @@ describe('tools the host contributes', () => {
           path: '/home/softov', agents: [claude({ paths: ['/home/softov', '/tmp'] })], ...machine(), tools: hostTools(),
         });
         const p_ = peer();
+        // The window vouches for the folder it is moving into, which is asked
+        // about before the session is started there.
+        p_.request = async () => ({ trusted: true });
         const client_ = host.accept(p_);
         await client_.handle(hello(['0.9.0']));
         const uri_ = 'ahp-session:/mover';

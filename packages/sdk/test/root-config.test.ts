@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { uriOf } from '../src/fileuri.js';
+import { trusted } from '../src/host/trust.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -133,12 +135,71 @@ it('shows the daemon its keys beside the host own, and nobody else', async () =>
   const member = await signedIn('member', 'member');
 
   const adminConfig = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(adminConfig.schema.properties)).toEqual(['defaultShell', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
+  expect(Object.keys(adminConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
   expect(adminConfig.values).toMatchObject({ daemonPort: 9187, advancedTools: false, apiKey: '<set>' });
 
   const memberConfig = (await rootOf(member.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(memberConfig.schema.properties)).toEqual(['defaultShell', 'artifactToolsCompactPrompts', 'deferredTitleGeneration']);
+  expect(Object.keys(memberConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration']);
   expect(memberConfig.values.daemonPort).toBeUndefined();
+});
+
+it('declares workspaceTrust as VS Code declares it', async () => {
+  const { signedIn, rootOf } = served();
+  const admin = await signedIn('admin', 'admin');
+  const config = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> } };
+  // VS Code's own property, `agentHostSchema.ts:864-877`, English strings out
+  // of `localize`: a client draws its trust control from this and nothing else.
+  expect(config.schema.properties.workspaceTrust).toEqual({
+    type: 'object',
+    title: 'Workspace Trust',
+    properties: {
+      enabled: { type: 'boolean', title: 'Enabled' },
+      trustedUris: {
+        type: 'array',
+        title: 'Trusted Folders',
+        items: { type: 'string', title: 'Folder URI' },
+      },
+    },
+    required: ['enabled', 'trustedUris'],
+    readOnly: true,
+  });
+});
+
+it('keeps a pushed workspaceTrust on the connection that pushed it', async () => {
+  const { signedIn, rootOf } = served();
+  const ana = await signedIn('admin', 'ana');
+  const ben = await signedIn('admin', 'ben');
+  const trust = { enabled: true, trustedUris: [uriOf('/a')] };
+  await ana.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { workspaceTrust: trust } } },
+  });
+  await settle();
+  // The person's own, as `defaultShell` is: a window's trust is that window's,
+  // and kept in one shared record the last client to connect would set the
+  // trust of every session on the host.
+  const mine = (await rootOf(ana.client)).config as { values: Record<string, unknown> };
+  expect(mine.values.workspaceTrust).toEqual(trust);
+  const theirs = (await rootOf(ben.client)).config as { values: Record<string, unknown> };
+  expect(theirs.values.workspaceTrust).toBeUndefined();
+});
+
+it('reads a folder as trusted from one connection\'s workspaceTrust', () => {
+  const ana = { enabled: true, trustedUris: [uriOf('/a')] };
+  expect(trusted('/a', ana)).toBe(true);
+  // A sibling sharing the first letters is not a child: a bare `startsWith`
+  // would open `/ab` under a trusted `/a`.
+  expect(trusted('/a/b', ana)).toBe(true);
+  expect(trusted('/ab', ana)).toBe(false);
+  expect(trusted('/b', ana)).toBe(false);
+  // `enabled: false` is VS Code's "workspace trust is turned off", so there is
+  // no untrusted folder.
+  expect(trusted('/anything', { enabled: false, trustedUris: [] })).toBe(true);
+  // And nothing pushed at all, which is an ahpc window, an ahpapp window and
+  // every automation - decision
+  // `a-folder-is-untrusted-until-a-client-says-otherwise`.
+  expect(trusted('/a', undefined)).toBe(false);
+  expect(trusted('/a', {})).toBe(false);
 });
 
 it('shows the host own root the daemon keys, and the echo of its write', async () => {
@@ -146,7 +207,7 @@ it('shows the host own root the daemon keys, and the echo of its write', async (
   const root = await asRoot('root');
 
   const rootConfig = (await rootOf(root.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
-  expect(Object.keys(rootConfig.schema.properties)).toEqual(['defaultShell', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
+  expect(Object.keys(rootConfig.schema.properties)).toEqual(['defaultShell', 'workspaceTrust', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'daemonPort', 'advancedTools', 'apiKey']);
   expect(rootConfig.values).toMatchObject({ daemonPort: 9187, advancedTools: false, apiKey: '<set>' });
 
   await root.client.handle({

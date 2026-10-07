@@ -557,7 +557,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // so a scope change before the first turn is resolved against who
         // owns the work rather than against whoever sent it.
         openSession(uri, provider, backendsOwn(config), running, undefined, conn.tokensFor(provider), peers, undefined,
-          forWhom(ownerFor(connection), connection.principal));
+          { ...forWhom(ownerFor(connection), connection.principal), sender: connection });
         if (!claims.has(given)) claims.set(given, { kind: 'session', of: uri });
         // Complete, which the protocol spells as `progress === total`.
         along(2, 'Ready');
@@ -700,7 +700,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ? asked.filter((one) => one !== held.workingDirectory)
         : held.additional;
       if (asked.length > 0) beside.set(chatUri, peers ?? []);
-      const chat = spawn(held.agent, uri, chatUri, backendsOwn(held.config), made, held.workingDirectory, undefined, peers);
+      const chat = spawn(held.agent, uri, chatUri, backendsOwn(held.config), made, held.workingDirectory, undefined, peers, connection);
       if (origin !== undefined) madeFrom.set(chatUri, origin);
       log(`opened ${chatUri} in ${uri}`);
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
@@ -713,7 +713,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // No action to refuse here: a first message that cannot run as a
         // command fails the call, which the client shows as the chat not
         // opening with it.
-        const refused = await beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), ownerFor(connection));
+        const refused = await beginOrRun(chat, held.agent.provider, crypto.randomUUID(), String(first_.text ?? ''), undefined, messageFrom(first_), connection);
         if (refused !== undefined) throw new Error(refused);
       }
       return {};

@@ -7,13 +7,44 @@ import { join } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
 import { ROOT, chatUriFor, named } from './channels.js';
 import { BANG, HOSTS_OWN } from './common.js';
+import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Session, MessageAttachment, MessageFrom } from '../types/session.js';
 import type { Owner } from '../types/usage.js';
 import type { Principal } from '../types/users.js';
+import type { Connection } from '../types/host.js';
 import type { Agent } from '../types/agent.js';
 import type { Held } from './state.js';
 import type { HostContext } from './context.js';
+
+/** A move a session's agent asked for, waiting for its turn to end. */
+export interface Move {
+  /** The chat whose turn asked, which is the one the move belongs to. */
+  chat: string;
+  /** The folder the session is asked to move into. */
+  directory: string;
+  /** Whether a worktree is made from it rather than working in it directly. */
+  isolation: boolean;
+  /**
+   * The window whose turn asked for it, which is the one to ask about trust.
+   *
+   * Absent where no window sent that turn - an automation's session, a host
+   * tool's - and a folder no window vouched for is one the session stays out
+   * of, which is the same answer and a refusal rather than an exception.
+   */
+  sender?: Connection;
+}
+
+/**
+ * About to make a worktree, before anything exists.
+ *
+ * Handed the repository it is cut from and the path it will be made at, which
+ * is the pair VS Code asks its window about in the same place - `onWillCreate`,
+ * `sessionWorkspaceConversionService.ts:408-413` - and for the same reason: the
+ * path is only known once the branch and the root are, and the question has to
+ * be answered before anything is created.
+ */
+export type BeforeWorktree = (repository: string, path: string) => Promise<void>;
 
 /**
  * What happens to a session between being opened and being gone.
@@ -30,15 +61,22 @@ export interface Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
+    sender?: Connection,
+    before?: BeforeWorktree,
   ): Promise<void>;
   /** The move `set_workspace` asked for, once the turn that asked is over. */
-  moveSession(uri: string, move: { chat: string; directory: string; isolation: boolean }): Promise<void>;
+  moveSession(uri: string, move: Move): Promise<void>;
   /** Start one chat again, in the directories it now has. */
-  restartChat(uri: string, chatUri: string, credentials: Record<string, string>): void;
+  restartChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
   /** What the backend is given: everything except what this host answered. */
   backendsOwn(config: Record<string, unknown>): Record<string, unknown>;
   /** Where a session actually runs, once isolation has been answered. */
-  isolated(uri: string, config: Record<string, unknown>, where: string | undefined): Promise<string | undefined>;
+  isolated(
+    uri: string,
+    config: Record<string, unknown>,
+    where: string | undefined,
+    before?: BeforeWorktree,
+  ): Promise<string | undefined>;
   /** A message's turn, whichever way it arrived. */
   beginOrRun(
     session: Session,
@@ -47,7 +85,7 @@ export interface Lifecycle {
     text: string,
     model: ReturnType<Lifecycle['modelIn']>,
     from: MessageFrom | undefined,
-    sender?: Owner,
+    sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
   ): string | undefined | Promise<string | undefined>;
@@ -72,7 +110,7 @@ export interface Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
   ): void;
 }
 
@@ -83,7 +121,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     dispatch, broadcast, log, fire, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, placedIn,
-    isolating, charged, senders, checked, principalFor, machineFor,
+    isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
+    contributedDefaults, rootConfig,
     spawn, keepTitle, keepProvider,
     sessionAdded, forgetSent, activeSessionsMoved,
   } = ctx;
@@ -423,6 +462,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     uri: string,
     credentials: Record<string, string>,
     keeping?: { additional?: string[]; directory?: string },
+    sender?: Connection,
+    before?: BeforeWorktree,
   ): Promise<void> => {
     const held = sessions.get(uri);
     if (!held) return;
@@ -442,8 +483,8 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
           log(`kept ${was.path}: ${error instanceof Error ? error.message : String(error)}`);
         });
     }
-    const to = await isolated(uri, mine, from);
-    const before = held.workingDirectory;
+    const to = await isolated(uri, mine, from, before);
+    const wasAt = held.workingDirectory;
     /*
      * Their names stay the session's while it starts again, and so does the
      * conversation: the backend is stopped without disposing the session it
@@ -518,6 +559,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         to,
         credentials,
         keeping?.additional ?? held.additional,
+        sender,
       );
     }
     catch (error) {
@@ -555,7 +597,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * which a set of sessions does not count twice and which cancels nothing
      * that was running: a pre-turn restart is not a second user.
      */
-    if (before === to) return;
+    if (wasAt === to) return;
     /*
      * Replaced, not removed and re-added.
      *
@@ -578,12 +620,40 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * label a person reads wherever the turn is listed, and the continuation
    * key that keeps the turn owning the file changes made in it.
    */
-  const moveSession = async (uri: string, move: { chat: string; directory: string; isolation: boolean }): Promise<void> => {
+  const moveSession = async (uri: string, move: Move): Promise<void> => {
     const held = sessions.get(uri);
     if (!held) return;
+    /*
+     * The window that asked is asked about the folder, before anything is
+     * moved or made.
+     *
+     * The same question a client adding a folder is asked, and answered from
+     * the same value: a folder the asking window has already pushed as trusted
+     * is entered without a round trip, and one it has not is entered only on
+     * its yes - decision
+     * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+     */
+    const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
+    const auto = autoApproved(effective, rootConfig);
+    await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
     decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
     offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
-    await restart(uri, {}, { additional: [], directory: move.directory });
+    await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
+      /*
+       * The repository the worktree is cut from, when it is not the folder the
+       * move asked for - a subdirectory of a repository the window may never
+       * have opened.
+       *
+       * The worktree itself is not asked about: the host makes it, and one the
+       * host made is trusted exactly when its repository is - decision
+       * `a-worktree-inherits-its-repositorys-trust`. The repository the window
+       * vouches for here is remembered on its connection, so the backend
+       * started in the worktree is told the same thing.
+       */
+      if (repository !== move.directory) {
+        await requireTrust({ folder: repository, sender: move.sender, autoApproved: auto });
+      }
+    });
     const lead = byChat.get(chatUriFor(uri));
     const now = sessions.get(uri)?.workingDirectory ?? move.directory;
     lead?.chat.begin(
@@ -610,7 +680,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * conversation - a chat that lost its history because a directory was added
    * to it would be a worse answer than refusing.
    */
-  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>): void => {
+  const restartChat = (uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void => {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
@@ -629,6 +699,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       held.workingDirectory,
       credentials,
       beside.get(chatUri) ?? held.additional,
+      sender,
     );
     log(`restarted ${chatUri}`);
   };
@@ -645,7 +716,12 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    * directory that is - the folder, or a worktree made for this session - is
    * exactly the decision the client made with `isolation`.
    */
-  const isolated = async (uri: string, config: Record<string, unknown>, where: string | undefined): Promise<string | undefined> => {
+  const isolated = async (
+    uri: string,
+    config: Record<string, unknown>,
+    where: string | undefined,
+    before?: BeforeWorktree,
+  ): Promise<string | undefined> => {
     const port = options.worktrees;
     if (!port || config.isolation !== 'worktree' || where === undefined) return where;
     const repository = await port.repository(where);
@@ -688,6 +764,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const symlink = (Array.isArray(wanted)
       ? wanted.filter((one): one is string => typeof one === 'string')
       : []).map((one) => one.trim()).filter((one) => one !== '');
+    // Asked after the path is known and before anything exists at it, which is
+    // where VS Code asks too: the window is shown the worktree it is about to
+    // be given, and a folder that does not exist yet is vouched for by the
+    // repository it is cut from rather than by itself.
+    await before?.(repository, path);
     await port.create({
       repository,
       base,
@@ -736,7 +817,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     text: string,
     model: ReturnType<typeof modelIn>,
     from: MessageFrom | undefined,
-    sender?: Owner,
+    sender?: Connection,
     queuedAs?: string,
     attachments?: MessageAttachment[],
   ): string | undefined | Promise<string | undefined> => {
@@ -760,6 +841,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     const uncharged = charged.get(session.uri)?.refusal;
     if (uncharged !== undefined) return uncharged;
+    /*
+     * Whose the work is, from the window that asked for it: the owner a session
+     * is charged to is a name, and the connection it arrived on is the window
+     * that can be asked something back. One conversion, here, because every
+     * call site had a connection in hand and was doing it itself.
+     */
+    const who = sender === undefined ? undefined : ownerFor(sender);
     const run = (): string | undefined => {
       /*
        * Who sent it, against the id this turn will be known by: the turn id when
@@ -769,7 +857,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * across there rather than looked for here under an id it will never
        * carry again.
        */
-      if (sender !== undefined) senders.set(queuedAs ?? turnId, sender);
+      if (who !== undefined) senders.set(queuedAs ?? turnId, who);
+      // And the window itself, under the same id, for whatever has to ask it
+      // something later - the move an agent asks for in this turn most of all.
+      if (sender !== undefined) sentBy.set(queuedAs ?? turnId, sender);
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       if (command === '' || !options.terminals) {
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments);
@@ -804,7 +895,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * The three ways there is nothing to ask are asked here rather than left to
      * `checked`, so a turn they cover is begun in the same tick it arrived in.
      */
-    const principal = principalFor(sender ?? kept.owner(idOf(session.uri)));
+    const principal = principalFor(who ?? kept.owner(idOf(session.uri)));
     const store = options.policies;
     if (options.policiesCheck !== true || store === undefined || principal === undefined) return run();
     const held = sessions.get(session.uri);
@@ -927,7 +1018,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     credentials?: Record<string, string>,
     additional?: string[],
     title?: string,
-    by?: { owner?: Owner; principal?: Principal },
+    by?: { owner?: Owner; principal?: Principal; sender?: Connection },
   ): void => {
     named(uri, 'session');
     if (sessions.has(uri))
@@ -948,7 +1039,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     // moment and a later root change waits for the next session.
     ctx.strategies.set(uri, ctx.strategyOf(uri));
     try {
-      const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional);
+      const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional, by?.sender);
       // Named before it is announced, when the maker had a name for it: a
       // row that appears as "New session" and is renamed a moment later is
       // two rows to a client that lists once. Written down for the same

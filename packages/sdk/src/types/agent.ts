@@ -146,6 +146,21 @@ export interface Start {
   /** Directories beside it the agent may also work in. */
   additional?: string[];
   /**
+   * Whether one folder is one the person who started this session trusts.
+   *
+   * The host answers it for any folder, the session's own included, because
+   * that is the question a backend asks before it loads something a project
+   * carries: a `CLAUDE.md`, a settings file, a `.mcp.json`, a plugin - the
+   * things a folder can make an agent do without anybody having read them. The
+   * host is the only thing that knows the answer, because trust arrives from a
+   * window on a connection and never from the folder.
+   *
+   * Absent is "the host said nothing", and a backend must read that as
+   * untrusted: a folder whose trust nobody stated is a folder nobody vouched
+   * for - decision `a-folder-is-untrusted-until-a-client-says-otherwise`.
+   */
+  trusted?: (folder: string) => boolean;
+  /**
    * Tools the host contributes to this session, for the backend to offer.
    *
    * The host's own, not this backend's: a backend that cannot take tools from

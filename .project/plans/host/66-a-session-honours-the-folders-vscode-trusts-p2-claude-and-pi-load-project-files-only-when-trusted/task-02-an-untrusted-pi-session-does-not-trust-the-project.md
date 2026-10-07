@@ -1,6 +1,6 @@
 ---
 title: An untrusted pi session does not trust the project
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:

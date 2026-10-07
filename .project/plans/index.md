@@ -146,10 +146,10 @@ Reference: [00-host.md](host/00-host.md)
 | [65 p4 - An image holds what its tag says](host/65-what-the-review-of-the-nine-built-plans-found-p4-parts/plan.md) | medium | built 2026-10-06 ([implemented.md](host/65-what-the-review-of-the-nine-built-plans-found-p4-parts/implemented.md)); reviewed and merged 2026-10-06 ([deferred.md](host/65-what-the-review-of-the-nine-built-plans-found-p4-parts/deferred.md)) | host 65, container 05 p3 | - |
 | [65 p5 - A nested host has one process per session, and a dev container is made only where it is allowed](host/65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/plan.md) | high | built 2026-10-06 ([implemented.md](host/65-what-the-review-of-the-nine-built-plans-found-p5-nested-hosts-and-dev-containers/implemented.md)); reviewed and merged 2026-10-06 | host 65, container 04, container 03 | - |
 | [65 p6 - Each verb takes only what it reads, and the records name the right things](host/65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/plan.md) | medium | built 2026-10-06 ([implemented.md](host/65-what-the-review-of-the-nine-built-plans-found-p6-small-cli-and-record-fixes/implemented.md)); reviewed and merged 2026-10-06 | host 65, daemon 15, daemon 12 | - |
-| [66 - A session honours the folders VS Code trusts](host/66-a-session-honours-the-folders-vscode-trusts/plan.md) | high | planned 2026-10-06; p1-p3 planned, Softov's four answers in ([deferred.md](host/66-a-session-honours-the-folders-vscode-trusts/deferred.md): ahpc and ahpapp must push the key) | - | host 45 task 01, which no longer declares `workspaceTrust` |
-| [66 p1 - The host declares workspaceTrust, keeps it per connection, and asks before a session moves](host/66-a-session-honours-the-folders-vscode-trusts-p1-the-host-declares-keeps-and-asks/plan.md) | high | planned 2026-10-06; tasks 01-04 todo | host 66 | 66 p2, 66 p3 |
-| [66 p2 - Claude and pi load a project's files only when it is trusted](host/66-a-session-honours-the-folders-vscode-trusts-p2-claude-and-pi-load-project-files-only-when-trusted/plan.md) | high | planned 2026-10-06; tasks 01-02 todo, after p1 task 03 | host 66 p1 | - |
-| [66 p3 - An ACP agent in a folder nobody trusted](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/plan.md) | medium | planned 2026-10-06; task 01 todo, after p1 task 03 | host 66 p1 | - |
+| [66 - A session honours the folders VS Code trusts](host/66-a-session-honours-the-folders-vscode-trusts/plan.md) | high | built 2026-10-06 ([implemented.md](host/66-a-session-honours-the-folders-vscode-trusts/implemented.md)); ahpc and ahpapp must push the key ([deferred.md](host/66-a-session-honours-the-folders-vscode-trusts/deferred.md)) | - | host 45 task 01, which no longer declares `workspaceTrust` |
+| [66 p1 - The host declares workspaceTrust, keeps it per connection, and asks before a session moves](host/66-a-session-honours-the-folders-vscode-trusts-p1-the-host-declares-keeps-and-asks/plan.md) | high | built 2026-10-06 ([implemented.md](host/66-a-session-honours-the-folders-vscode-trusts-p1-the-host-declares-keeps-and-asks/implemented.md)) | host 66 | 66 p2, 66 p3 |
+| [66 p2 - Claude and pi load a project's files only when it is trusted](host/66-a-session-honours-the-folders-vscode-trusts-p2-claude-and-pi-load-project-files-only-when-trusted/plan.md) | high | built 2026-10-06 ([implemented.md](host/66-a-session-honours-the-folders-vscode-trusts-p2-claude-and-pi-load-project-files-only-when-trusted/implemented.md)) | host 66 p1 | - |
+| [66 p3 - An ACP agent in a folder nobody trusted](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/plan.md) | medium | built 2026-10-06 ([implemented.md](host/66-a-session-honours-the-folders-vscode-trusts-p3-an-acp-agent-in-an-untrusted-folder/implemented.md)) | host 66 p1 | - |
 | [67 - A machine commits in a repository of its own, and ahpd fetches the work back](host/67-a-machine-commits-in-its-own-repository/plan.md) | high | planned 2026-10-06; tasks 01-09 todo, `sessionTree` shared or copy; supersedes host/65 p2's git allowlist | host 65 p2 (no `deferred.md` there to close), container 05 p7 | - |
 | [68 - An attachment's bytes are a file the host wrote, and every backend reads attachments through one helper with one set of limits](host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md) | medium | planned 2026-10-06 | - | claude 20, acp 14, pi 15, plugin 36 |
 | [69 - Streamed deltas are merged for a short window in the host's dispatch, for every backend](host/69-a-streamed-delta-is-merged-before-it-goes-out/plan.md) | medium | planned 2026-10-06 | - | - |
@@ -305,7 +305,7 @@ Next free number in `pi`: `16`.
 
 Reference: [00-acp.md](acp/00-acp.md)
 
-Worked in this order: 01, 02, plugin 18, 03, 04, 05, then 06, 08, 09 and 10 in any order, 12; 07 is dropped into host 24; 11 is planned after daemon 11.
+Worked in this order: 01, 02, plugin 18, 03, 04, 05. Then 06, 08, 09 and 10 in any order, then 12. 07 is dropped into host 24. 11 is planned after daemon 11.
 
 | Plan | Priority | Status | Requires | Blocks |
 | --- | --- | --- | --- | --- |
@@ -376,4 +376,23 @@ Next free number in `vault`: `02`.
 ## Domains without a plan
 
 None. `host`, `claude`, `documentation`, `plugin`, `container`, `pi`, `acp`, `usage`, `policy`, `proxy` and `vault` each have a plan above.
-Ideas: [agents as extensions](../ideas/agents-as-extensions.md), [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md), [a plugin reloads without a restart](../ideas/a-plugin-reloads-without-a-restart.md), [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md), [deliberate duplication](../ideas/deliberate-duplication.md), [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md), [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md), [verify a JWT locally](../ideas/verify-a-jwt-locally.md), [failures have a JSON shape](../ideas/failures-have-a-json-shape.md), [more computer runtimes](../ideas/more-computer-runtimes.md), [plugins, beyond agents](../ideas/plugins.md), [repositories are resources](../ideas/repositories-are-resources.md), [issues follow the repository](../ideas/issues-follow-the-repository.md), [a sqlite store](../ideas/a-sqlite-store.md), [a postgresql store](../ideas/a-postgresql-store.md), [initiators start sessions](../ideas/initiators-start-sessions.md), [agents report their plan](../ideas/agents-report-their-plan.md), [cofold speaks ACP through papo](../ideas/cofold-speaks-acp-through-papo.md).
+Ideas, one file each:
+
+- [agents as extensions](../ideas/agents-as-extensions.md)
+- [an SSH command that attaches to the daemon](../ideas/an-ssh-command-that-attaches-to-the-daemon.md)
+- [a plugin reloads without a restart](../ideas/a-plugin-reloads-without-a-restart.md)
+- [Copilot through the CLI](../ideas/copilot-goes-through-the-cli.md)
+- [deliberate duplication](../ideas/deliberate-duplication.md)
+- [terminal commands approved by rule](../ideas/terminal-commands-approved-by-rule.md)
+- [turn and model-call diagnostics](../ideas/turn-and-model-call-diagnostics.md)
+- [verify a JWT locally](../ideas/verify-a-jwt-locally.md)
+- [failures have a JSON shape](../ideas/failures-have-a-json-shape.md)
+- [more computer runtimes](../ideas/more-computer-runtimes.md)
+- [plugins, beyond agents](../ideas/plugins.md)
+- [repositories are resources](../ideas/repositories-are-resources.md)
+- [issues follow the repository](../ideas/issues-follow-the-repository.md)
+- [a sqlite store](../ideas/a-sqlite-store.md)
+- [a postgresql store](../ideas/a-postgresql-store.md)
+- [initiators start sessions](../ideas/initiators-start-sessions.md)
+- [agents report their plan](../ideas/agents-report-their-plan.md)
+- [cofold speaks ACP through papo](../ideas/cofold-speaks-acp-through-papo.md)

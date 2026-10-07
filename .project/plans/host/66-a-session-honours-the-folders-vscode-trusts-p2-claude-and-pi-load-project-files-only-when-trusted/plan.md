@@ -1,7 +1,7 @@
 ---
 title: Claude and pi load a project's files only when it is trusted
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -17,12 +17,12 @@ refs:
 
 ## Goal
 
-A Claude or pi session in a folder that is not trusted runs none of the project's hooks and loads none of its settings, MCP servers or plugins; in a trusted folder nothing changes.
+A Claude or pi session in a folder that is not trusted runs none of the project's hooks. It loads none of its settings, MCP servers or plugins either. In a trusted folder nothing changes.
 
 ## Reconnaissance
 
 The files read and the patterns to reuse are the `refs` above, each with its note.
-The Claude SDK's `settingSources` (`sdk.d.ts:2141-2151`): unset loads user, project and local; `['user']` drops the project's settings, its hooks and plugins with them, and also its `CLAUDE.md` ("Must include 'project' to load CLAUDE.md files").
+The Claude SDK's `settingSources` (`sdk.d.ts:2141-2151`): unset loads user, project and local. `['user']` drops the project's settings, and its hooks and plugins with them. It drops its `CLAUDE.md` too ("Must include 'project' to load CLAUDE.md files").
 pi's `projectTrusted: false` drops `.pi/settings.json`, `.pi/extensions`, skills, prompts, themes, packages and `.pi/SYSTEM.md`, and keeps `AGENTS.md` and `CLAUDE.md`.
 agent-cofold loads nothing from a project, so it has no task.
 
@@ -38,15 +38,15 @@ agent-cofold loads nothing from a project, so it has no task.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An untrusted Claude session loads no project settings or MCP servers](task-01-an-untrusted-claude-session-loads-no-project-settings.md) | todo | p1 task 03 |
-| [02 - An untrusted pi session does not trust the project](task-02-an-untrusted-pi-session-does-not-trust-the-project.md) | todo | p1 task 03 |
+| [01 - An untrusted Claude session loads no project settings or MCP servers](task-01-an-untrusted-claude-session-loads-no-project-settings.md) | done | p1 task 03 |
+| [02 - An untrusted pi session does not trust the project](task-02-an-untrusted-pi-session-does-not-trust-the-project.md) | done | p1 task 03 |
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01, once p1 task 03 is built.
+- **Done so far:** every task is done, reviewed on 2026-10-06.
+- **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** `projectTrust` stays a pi session key; trust can only narrow it.
+- **Watch out for:** `projectTrust` stays a pi session key; trust can only narrow it. On a host with no people directory the sender's push decides ([the decision](../../../decisions/the-sender-decides-on-a-host-with-no-people.md)), and these backends read whatever answer the host gives them.
 
 ## Final verification checklist
 

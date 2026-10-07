@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { Status, idOf } from './catalog.js';
 import { localPath } from './fileuri.js';
 import type { HostTool, ToolCall } from './types/host.js';
@@ -294,10 +295,17 @@ const modelMeant = (at: ToolCall, asked: string | undefined, tool: string, provi
   return { id: found.id, provider: found.provider };
 };
 
-/** An absolute path or a `file://` URI, as a path; nothing for anything else. */
+/**
+ * An absolute path or a `file://` URI, as a path; nothing for anything else.
+ *
+ * Resolved, because a model writes `..` and the host says back and writes down
+ * one folder under one name: `/repo/../elsewhere` is `/elsewhere`, and a path
+ * that keeps its `..` is compared against a window's trusted folders as the
+ * text it was written as rather than as the folder it names.
+ */
 const pathOf = (value: string): string | undefined => {
-  if (value.startsWith('file://')) return localPath(value).replace(/\/+$/, '') || '/';
-  if (value.startsWith('/')) return value.replace(/\/+$/, '') || '/';
+  if (value.startsWith('file://')) return posix.resolve(localPath(value).replace(/\/+$/, '') || '/');
+  if (value.startsWith('/')) return posix.resolve(value.replace(/\/+$/, '') || '/');
   return undefined;
 };
 

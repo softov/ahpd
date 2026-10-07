@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { idOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
+import type { SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { ownEnvOf, queryOptionsOf } from '../options.js';
@@ -8,6 +9,17 @@ import { agentNameOf } from './customizations.js';
 
 /** What the SDK will accept as a session id of our choosing. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Every settings file the CLI reads, in the order it reads them.
+ *
+ * `user` is the person's own `~/.claude/settings.json`, `project` is the
+ * folder's `.claude/settings.json` with its hooks and its `CLAUDE.md`, and
+ * `local` is the checkout's own `.claude/settings.local.json`. Named rather
+ * than left off because the option is what decides between them: omitting it
+ * loads all three, and there is no other way to say "the person's alone".
+ */
+const ALL_SOURCES: SettingSource[] = ['user', 'project', 'local'];
 
 /** What this area offers the rest of the session. */
 export interface Query {
@@ -131,6 +143,17 @@ export function createQuery(ctx: SessionContext): Query {
         ? { systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: ctx.options.instructions.join('\n\n'), snapshot: true } }
         : {}),
       includePartialMessages: true,
+      /*
+       * Which of the CLI's settings files this session loads.
+       *
+       * A project's settings declare hooks, which are commands this host runs,
+       * and the CLI loads a project's `CLAUDE.md` only when `project` is among
+       * the sources - so a folder nobody vouched for gets `user` alone and
+       * reaches the model with none of it. The person's own file is not a
+       * project's and is kept either way - decision
+       * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+       */
+      settingSources: ctx.options.trusted?.(ctx.options.cwd) === true ? ALL_SOURCES : ['user'],
       /*
        * A subagent's own words, not only its tool calls.
        *

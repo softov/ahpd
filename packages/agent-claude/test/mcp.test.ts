@@ -26,12 +26,26 @@ const project = (servers: Record<string, unknown>): string => {
   return dir;
 };
 
+/** A folder the host vouched for, which is what makes its file one to read. */
+const vouched = (): boolean => true;
+
 describe('the servers a session declares', () => {
   it('reads the project file the CLI reads', () => {
     const dir = project({ gmail: { type: 'http', url: 'https://mcp.example.com/gmail' } });
-    const found = serversFor([dir]);
+    const found = serversFor([dir], vouched);
     expect(Object.keys(found)).toContain('gmail');
     expect(urlOf(found.gmail)).toBe('https://mcp.example.com/gmail');
+  });
+
+  it('reads nothing from a folder the host did not vouch for', () => {
+    const dir = project({ gmail: { type: 'http', url: 'https://mcp.example.com/gmail' } });
+    // Asserted against the home file rather than against its absence: this
+    // host has a `~/.claude.json` of its own, and the point is that the
+    // project's file adds nothing to it. A `.mcp.json` names servers this
+    // host would start as commands.
+    expect(serversFor([dir], () => false)).toEqual(serversFor([]));
+    // And an absent answer is the host having said nothing, which is the same.
+    expect(serversFor([dir])).toEqual(serversFor([]));
   });
 
   it('says nothing about a directory with no file, rather than failing', () => {
@@ -45,10 +59,10 @@ describe('the servers a session declares', () => {
      * this directory adds nothing to it. The CLI reads the same files either
      * way, so a server this misses works exactly as it did before.
      */
-    const home = serversFor([]);
-    expect(serversFor([dir])).toEqual(home);
+    const home = serversFor([], vouched);
+    expect(serversFor([dir], vouched)).toEqual(home);
     writeFileSync(join(dir, '.mcp.json'), 'not json at all');
-    expect(serversFor([dir])).toEqual(home);
+    expect(serversFor([dir], vouched)).toEqual(home);
   });
 
   it('knows which servers can be signed into over the network', () => {
@@ -63,7 +77,7 @@ describe('the servers a session declares', () => {
 
   it('lets a nearer file win, which is the order the CLI resolves them in', () => {
     const dir = project({ shared: { type: 'http', url: 'https://project/one' } });
-    const found = serversFor([dir]);
+    const found = serversFor([dir], vouched);
     expect(urlOf(found.shared)).toBe('https://project/one');
   });
 });

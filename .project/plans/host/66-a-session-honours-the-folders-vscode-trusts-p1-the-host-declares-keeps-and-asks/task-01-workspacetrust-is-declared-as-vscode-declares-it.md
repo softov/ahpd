@@ -1,6 +1,6 @@
 ---
 title: workspaceTrust is declared as VS Code declares it
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:

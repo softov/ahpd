@@ -45,6 +45,15 @@ export interface AcpPreset {
    */
   authenticate?: { methodId: string; fromEnv: string[] };
   /**
+   * Whether this agent asks before it loads a project's own configuration.
+   *
+   * Set for a row whose agent has a trust of its own and puts the question to
+   * whoever is there. Absent, a session of this agent in a folder the host did
+   * not vouch for is refused rather than started: ACP carries no trust field,
+   * so the folder is otherwise the agent's to read.
+   */
+  honoursTrust?: boolean;
+  /**
    * What a machine needs to run it: the part its CLI comes from, the variables
    * that point its configuration at a state directory, and that directory with
    * the host files it is seeded from.

@@ -169,6 +169,34 @@ export function createRoot(ctx: HostContext): Root {
         title: 'Default Shell',
         description: 'Absolute path to the shell host-managed terminals open. The system shell when unset.',
       },
+      /*
+       * Which folders the window starting this session trusts.
+       *
+       * VS Code's own property, `agentHostSchema.ts:864-877`, English strings
+       * out of `localize` - see host/66 p1 task 01, which declares it here
+       * rather than in the file host/45 task 01 gathers VS Code's keys into.
+       * `readOnly` because the value is the window's to push and not a
+       * control for a person to set on the host, and required so a client
+       * that draws it says both halves. It declares the key and nothing else:
+       * what reads it is `PER_CONNECTION` keeping it on the connection that
+       * pushed it (`gate.ts`), `trusted` answering a folder from it
+       * (`trust.ts`) and the move asking a client before it goes somewhere
+       * untrusted.
+       */
+      workspaceTrust: {
+        type: 'object',
+        title: 'Workspace Trust',
+        properties: {
+          enabled: { type: 'boolean', title: 'Enabled' },
+          trustedUris: {
+            type: 'array',
+            title: 'Trusted Folders',
+            items: { type: 'string', title: 'Folder URI' },
+          },
+        },
+        required: ['enabled', 'trustedUris'],
+        readOnly: true,
+      },
       artifactToolsCompactPrompts: {
         type: 'boolean',
         title: 'Compact Artifact Prompts',

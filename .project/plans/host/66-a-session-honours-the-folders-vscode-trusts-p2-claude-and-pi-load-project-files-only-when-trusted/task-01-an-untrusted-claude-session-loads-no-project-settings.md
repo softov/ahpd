@@ -1,6 +1,6 @@
 ---
 title: An untrusted Claude session loads no project settings or MCP servers
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:

@@ -6,6 +6,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { describePlugin, loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
+import { anyone, signIn } from './people.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { PluginSpec } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -68,6 +69,13 @@ const types = (p: ReturnType<typeof peer>, channel: string): string[] =>
 const base = (): HostOptions => ({
   path: '/tmp/plugin-acp',
   agents: [{ ...echo({ path: '/tmp/plugin-acp', pace: 0 }), provider: 'base', displayName: 'Base backend' }],
+  /*
+   * Somebody for the window in these cases to be. A backend is told which
+   * folders are trusted only by a connection that owns the session, and a
+   * connection owns nothing on a host with no people directory - decision
+   * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+   */
+  users: anyone(),
 });
 
 const load = (specs: PluginSpec[], over: Partial<HostOptions> = {}) =>
@@ -83,14 +91,32 @@ const spec = (presets: Record<string, Record<string, unknown>>): PluginSpec => (
   },
 });
 
-const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => await client.handle({
-  method: 'initialize',
-  params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
-}) as { snapshots: { state: { agents: { provider: string }[] } }[] };
+const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => {
+  const ready = await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  }) as { snapshots: { state: { agents: { provider: string }[] } }[] };
+  await signIn(client);
+  return ready;
+};
 
 /** Open one session on a provider and watch both of its channels. */
 async function open(client: ReturnType<ReturnType<typeof createHost>['accept']>, provider: string, name: string) {
   const uri = `ahp-session:/${name}`;
+  /*
+   * The window's own answer about the folders it trusts. A session of a folder
+   * nobody vouched for is refused rather than started - decision
+   * `a-folder-is-untrusted-until-a-client-says-otherwise` - and this case
+   * names no folder at all, so it is a window with workspace trust turned off:
+   * `enabled: false` is VS Code's "there is no untrusted folder here".
+   */
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: 'ahp-root://',
+      action: { type: 'root/configChanged', config: { workspaceTrust: { enabled: false, trustedUris: [] } } },
+    },
+  });
   await client.handle({ method: 'createSession', params: { channel: uri, provider } });
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { defaultChat: string } };

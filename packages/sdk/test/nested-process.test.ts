@@ -150,7 +150,13 @@ const outer = async (agent: Agent) => {
   });
   const notes: { method: string; params: Bag }[] = [];
   const peer: Peer = {
-    send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    send: () => {},
+    // A window that trusts whatever the host asks it about, which is what
+    // makes a `session/workingDirectorySet` restart the inner host at all:
+    // a folder is untrusted until a client says otherwise, and the window
+    // here is the client. Nothing else in these cases asks it anything.
+    request: async () => ({ trusted: true }),
+    answered: () => {}, close: () => {},
     notify: (method: string, params: unknown) => { notes.push({ method, params: params as Bag }); },
   };
   const client = host.accept(peer);

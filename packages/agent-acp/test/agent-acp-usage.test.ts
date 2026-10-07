@@ -48,6 +48,10 @@ function talking(...flags: string[]): { session: Session; actions: Bag[] } {
     // The host always resolves this, and its own answer when the deployment
     // said nothing is ten minutes.
     clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+    // This case is not about trust, and an absent answer is untrusted -
+    // decision `a-folder-is-untrusted-until-a-client-says-otherwise` - so the
+    // folder is one the host vouched for.
+    trusted: () => true,
   };
   const session = agent.create(opening);
   started.push(session);

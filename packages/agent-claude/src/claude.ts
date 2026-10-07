@@ -574,8 +574,14 @@ export function claude(options: ClaudeOptions): Agent {
        * `mcpServers` in `~/.claude.json` - handed to the SDK so they are
        * *its* servers. That is what makes a token a client signed in with
        * applicable: `setMcpServers` re-declares only what the SDK was given.
+       *
+       * A folder the host did not vouch for contributes none of its own: its
+       * `.mcp.json` names servers this host would run as commands.
        */
-      mcpServers: serversFor([workingDirectory(start.workingDirectory), ...(start.additional ?? [])]),
+      mcpServers: serversFor([workingDirectory(start.workingDirectory), ...(start.additional ?? [])], start.trusted),
+      // The same answer again, for what the query loads from the folder's own
+      // settings - the two halves of one decision, read where each is used.
+      ...(start.trusted === undefined ? {} : { trusted: start.trusted }),
       // Each one checked the way the first is: a directory this host does not
       // serve is not one an agent may be pointed at, however it arrived.
       ...(start.additional && start.additional.length > 0

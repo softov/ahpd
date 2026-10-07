@@ -6,12 +6,13 @@ import { afterEach, expect, it } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../../sdk/src/catalog.js';
-import { idOf } from '@ahpd/sdk';
+import { idOf, uriOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { gitChanges } from '../../sdk/src/changes.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
 import { acpAgent } from '../src/index.js';
+import { anyone, signIn } from './people.js';
 import type { ChangesetFile, ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -76,6 +77,9 @@ async function talking(options: { changes?: ChangesetSource } = {}) {
     agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
     // The composer's `!` prefix is the host's shell, so the host has to hold one.
     terminals: shellTerminals(),
+    // And somebody for this window to be, without whom its session has no owner
+    // and so no folder it can be told is trusted.
+    users: anyone(),
     ...(options.changes === undefined ? {} : { changes: options.changes }),
   });
   const p = peer();
@@ -84,8 +88,19 @@ async function talking(options: { changes?: ChangesetSource } = {}) {
     method: 'initialize',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
+  await signIn(client);
   const uri = 'ahp-session:/one';
   const chatUri = 'ahp-chat:/one';
+  // The window says which folders it trusts, and a session of a folder nobody
+  // vouched for is refused rather than started - decision
+  // `a-folder-is-untrusted-until-a-client-says-otherwise`.
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: 'ahp-root://',
+      action: { type: 'root/configChanged', config: { workspaceTrust: { enabled: true, trustedUris: [uriOf(path)] } } },
+    },
+  });
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'acp', workingDirectories: [`file://${path}`] },

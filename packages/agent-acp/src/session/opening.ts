@@ -288,6 +288,21 @@ export function createOpening(ctx: SessionContext): Opening {
     if (ctx.opening !== undefined) return ctx.opening;
     ctx.loading = true;
     const pending = (async () => {
+      /*
+       * A folder the host did not vouch for, and an agent that loads the
+       * folder's own hooks and settings unchecked - decision
+       * `a-folder-is-untrusted-until-a-client-says-otherwise`.
+       *
+       * ACP carries no trust field and this host reads none of a project's
+       * files for an ACP agent, so what a folder holds reaches the agent
+       * whatever this bridge does with it. Not starting the agent there is the
+       * one thing left, unless the preset says its agent asks before it loads
+       * the folder's own configuration - and an absent `Start.trusted` is the
+       * host having said nothing, which is the same answer as untrusted.
+       */
+      if (options.honoursTrust !== true && start.trusted?.(where) !== true) {
+        throw new Error(`${provider}: ${where} is not a folder this host trusts, and an ACP agent loads a project's own settings and hooks from the folder it runs in; trust the folder, or set honoursTrust on this preset if its agent asks before it loads them`);
+      }
       const moved = await placed();
       const connection = connectAcp({
         command: moved?.command ?? options.command,

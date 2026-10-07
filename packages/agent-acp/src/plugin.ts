@@ -68,6 +68,7 @@ export const optionsSchema = {
             description: 'The sign-in to send after the handshake, as the methodId of a method the server lists in authMethods. A value naming one it does not offer fails the turn that opened.',
           },
           hostTools: { type: 'boolean', description: "Whether this agent's sessions are offered the host's own tools, over the plugin-wide setting." },
+          honoursTrust: { type: 'boolean', description: "Whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field." },
           // Typed by `machineOf` rather than here, so a wrongly written block
           // costs its preset and not this load. A variable's value is read
           // where the machine is made, so a `$secret` reaches this plugin as
@@ -88,7 +89,7 @@ export const optionsSchema = {
 };
 
 /** The keys that belong to a preset rather than to the load, and are refused above one. */
-const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'machine'] as const;
+const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'honoursTrust', 'machine'] as const;
 
 /** A preset as an object, however it was written. */
 const bagOf = (value: unknown): Record<string, unknown> =>
@@ -280,6 +281,7 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
   const description = said.description;
   const model = said.model;
   const hostTools = typeof said.hostTools === 'boolean' ? said.hostTools : (typeof shared === 'boolean' ? shared : undefined);
+  const honoursTrust = typeof said.honoursTrust === 'boolean' ? said.honoursTrust : taken?.honoursTrust;
   return {
     command: command as string,
     provider: id,
@@ -295,6 +297,7 @@ const presetOf = async (host: PluginHost, id: string, said: Record<string, unkno
     ...(model === undefined ? {} : { model: model as string }),
     ...(authenticate === undefined ? {} : { authenticate: authenticate as NonNullable<AcpOptions['authenticate']> }),
     ...(hostTools === undefined ? {} : { hostTools }),
+    ...(honoursTrust === undefined ? {} : { honoursTrust }),
     ...(machine === undefined ? {} : { machine }),
     ...(inMachine === undefined ? {} : { authenticateInMachine: inMachine }),
   };

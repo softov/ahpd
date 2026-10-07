@@ -9,6 +9,7 @@ import type { Session } from '../types/session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { ToolsEndpoint } from '../toolserver.js';
 import type { Held } from './state.js';
+import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 
 /**
@@ -38,7 +39,7 @@ export interface Tooling {
   /** The chat a tool means in a session: the one with that id, or the default. */
   chatMeant(held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined;
   /** A move a session's agent asked for, waiting for its turn to end. */
-  moving: Map<string, { chat: string; directory: string; isolation: boolean }>;
+  moving: Map<string, Move>;
   /** Give a chat a title, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
@@ -60,7 +61,7 @@ export interface Tooling {
 
 export function createTooling(ctx: HostContext): Tooling {
   const {
-    options, sessions, byChat, first, kept, terminals, learned, rootConfig,
+    options, sessions, byChat, first, kept, terminals, learned, rootConfig, sentBy,
     activeClientsOf, leadOf, heldAs, ownerOf, allRows, setArtifacts, forWhom,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
     isolated, settle, openSession, backendsOwn, removeSession, spawn,
@@ -239,15 +240,23 @@ export function createTooling(ctx: HostContext): Tooling {
     return provider === undefined ? {} : { provider };
   };
 
+  /**
+   * The turn running in one chat, or nothing where it is between turns.
+   *
+   * Read off the chat rather than remembered, because a turn begins and ends
+   * without this host being consulted: the backend is what holds the state.
+   */
+  const activeTurnOf = (chatUri: string): string | undefined => {
+    const chat = byChat.get(chatUri)?.chat;
+    const active = chat === undefined ? undefined : (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+    return typeof active?.id === 'string' ? active.id : undefined;
+  };
+
   const toolContext = (uri: string, chatUri: string, provider?: string): ToolCall => ({
     session: uri,
     chat: chatUri,
     ...providerOf(uri, provider),
-    turn: () => {
-      const chat = byChat.get(chatUri)?.chat;
-      const active = chat === undefined ? undefined : (chat.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-      return typeof active?.id === 'string' ? active.id : undefined;
-    },
+    turn: () => activeTurnOf(chatUri),
     sessions: () => allRows(),
     chats: (session) => {
       const held = sessions.get(heldAs(session));
@@ -336,7 +345,22 @@ export function createTooling(ctx: HostContext): Tooling {
       await removeSession(heldAs(session), by?.principal ?? by?.owner);
     },
     setWorkspace: (directory, isolation) => {
-      moving.set(uri, { chat: chatUri, directory: localPath(directory), isolation });
+      /*
+       * The connection that asked, kept beside the move.
+       *
+       * The move is made after this turn ends, when the turn's own record of
+       * who sent it is gone - so the window is written down here, where the
+       * turn is still running, and it is that window the host asks about the
+       * folder when the move is made.
+       */
+      const turn = activeTurnOf(chatUri);
+      const sender = turn === undefined ? undefined : sentBy.get(turn);
+      moving.set(uri, {
+        chat: chatUri,
+        directory: localPath(directory),
+        isolation,
+        ...(sender === undefined ? {} : { sender }),
+      });
     },
     artifacts: () => [...(kept.artifacts(idOf(uri)) ?? [])],
     setArtifacts: (list) => { setArtifacts(uri, list); },

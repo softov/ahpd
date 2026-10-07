@@ -1,6 +1,6 @@
 ---
 title: A session asks the client before it moves into a folder
-status: todo
+status: done
 depends: [task-02-workspacetrust-is-kept-per-connection.md]
 layer: "sdk"
 refs:
@@ -13,9 +13,13 @@ refs:
 
 ## Objective
 
-Before a session moves into a folder (the agent's `setWorkspace`) or a client adds one (`session/workingDirectorySet`), and the folder is outside the asking connection's `trustedUris`, the host sends that connection `vscode/requestWorkspaceTrust` `{ workspace }`; for an isolated move it asks for the repository and then for the worktree with `trustedParent` set to the repository.
-It goes ahead only on `{ trusted: true }`; anything else, an error or a disconnect refuses it with `Workspace trust was not granted for <folder>`.
-No request is sent when root config's `globalAutoApproveEnabled` is true or the session's `autoApprove` is `autoApprove`.
+Before a session moves into a folder, the host asks the connection that asked for the move.
+The same happens when a client adds a folder (`session/workingDirectorySet`).
+The host sends `vscode/requestWorkspaceTrust` `{ workspace }` when the folder is outside that connection's `trustedUris`.
+The move goes ahead only on `{ trusted: true }`, and anything else, an error or a disconnect, refuses it with `Workspace trust was not granted for <folder>`.
+A move that names a repository asks about the repository alone.
+A worktree the host makes there inherits its repository's trust ([the decision](../../../decisions/a-worktree-inherits-its-repositorys-trust.md)).
+The host sends no request when root config's `globalAutoApproveEnabled` is true or the session's `autoApprove` is `autoApprove`.
 
 ## Files
 
@@ -26,12 +30,14 @@ No request is sent when root config's `globalAutoApproveEnabled` is true or the 
 
 ## Steps
 
-1. Failing case first: a client with `trustedUris` `[/a]`; the agent calls `setWorkspace('/b')`; the client answers `{ trusted: false }`. Today the session moves; after, it stays in its folder and the failure is logged.
+1. Failing case first: a client with `trustedUris` `[/a]`; the agent calls `setWorkspace('/b')`; the client answers `{ trusted: false }`. Expect the session to stay where it was and the host to log the failure; today it moves.
 2. The same client answers `{ trusted: true }`: the session moves.
-3. A client that does not serve the method (answers `-32601`): refused.
+3. A client that does not serve the method (answers `-32601`): the host refuses the move.
 4. `globalAutoApproveEnabled: true` in root config: no request, the move happens.
-5. An isolated move asks twice, the second with `trustedParent`.
-6. `session/workingDirectorySet` of `/b`, client says no: the action is refused and the folder is not added.
+5. An isolated move asks about the repository once, and nothing about the worktree.
+6. `session/workingDirectorySet` of `/b`, client says no: the host refuses the action and adds no folder.
+7. A yes once given keeps the folder trusted for the backend the move restarts.
+8. A folder written as `<trusted>/../../etc`: the host asks about the folder it names, not the text.
 
 ## Validation
 

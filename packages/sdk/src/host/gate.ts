@@ -310,8 +310,14 @@ export const computerNeeds = (action: Record<string, unknown>): Grant | undefine
  * Kept in one shared record they are the same thing on a one-person daemon and
  * not on any other: whoever connected last decided everybody's shell. So these
  * live on the `Connection`, and a connection reads its own back.
+ *
+ * `workspaceTrust` is the person's for the same reason and a sharper one: it is
+ * a window's answer about the folders that window has opened, and kept in the
+ * shared record the last window to connect decided what every session on the
+ * host loads from its project - decision
+ * `a-folder-is-untrusted-until-a-client-says-otherwise`.
  */
-export const PER_CONNECTION = new Set(['defaultShell']);
+export const PER_CONNECTION = new Set(['defaultShell', 'workspaceTrust']);
 
 /**
  * Whether this connection is somebody who may read the daemon's own settings.
