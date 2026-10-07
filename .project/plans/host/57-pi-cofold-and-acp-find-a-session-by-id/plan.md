@@ -1,7 +1,7 @@
 ---
 title: pi, cofold and ACP find a session by id, and the listing throttle goes
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-04
 revalidated: 2026-10-04
@@ -77,12 +77,15 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | What | Source | Task |
 | --- | --- | --- |
-| pi's `find` opens the one file `findById` names and builds the row in ahpd, as `replayed` does; a test holds it equal to `list`'s row | Softov, 2026-10-04, asked "Open the one file `findById` names, or call pi's own list for that folder and pick the id?": open the one file | 01 |
+| pi's `find` reads the one file `findById` names and builds the row in ahpd, as pi's own listing does; a test holds it equal to `list`'s row | Softov, 2026-10-04, asked "Open the one file `findById` names, or call pi's own list for that folder and pick the id?": open the one file | 01 |
+| That read is of the file's lines, never `SessionManager.open`, and a header that is not the id asked for answers nothing: an open creates a session for a file that is not there, empties one it cannot make sense of and migrates an older one, so a lookup would write to the session it was asked about | Softov, 2026-10-06, review of the built plan: "find must not write: build the row from the header and entries read without SessionManager.open's migration/creation ..., and return nothing when the header id is not the requested id" | 01 |
 | `LISTING_FRESH` stays until pi, cofold and ACP have a `find`, and then it goes | Softov, 2026-10-04, asked "pi, cofold and ACP have no `find` yet; what do we do with them?": keep the throttle for now and plan `find` for them; once every agent has a `find`, the throttle goes | 04 |
 | pi's `find` asks pi's own store for the one session, per served directory, as `replayed` does | Softov's brief for this plan, 2026-10-04 | 01 |
 | cofold's `find` reads the one record with `store.sessions.get` and maps it as `list` maps a row | Softov's brief for this plan, 2026-10-04 | 02 |
 | ACP's `find` lists that one server with its own `catalogueOf` and picks the id, because ACP 1.6.0 has no call that describes one session: `session/list` filters by `cwd` and `cursor` only, and `session/load` replays the conversation and answers no row | Softov's brief for this plan, 2026-10-04; npm://@agentclientprotocol/sdk@1.6.0 | 03 |
-| A session this process is watching is answered from its watched record first, in pi and ACP, without reading anything | (defaulted: `catalogue` and `catalogueOf` already let the watched record win over what is on disk) | 01, 03 |
+| A session this process is watching is answered from its watched record first, in pi, without reading anything | (defaulted: `catalogue` already lets the watched record win over what is on disk) | 01 |
+| ACP's `find` answers the row `catalogueOf` answers and nothing else: the server's row when the server lists, the watched record only when it cannot list | Softov, 2026-10-06, review of the built plan: "ACP find answers listedOf(watched) first but list answers listedFrom(info) for a server that can list, so the next refresh emits a sessionSummaryChanged for an unchanged session" | 03 |
+| One read answers every find that asks during it and every find that asks within two seconds of its answer, a failed start included | Softov, 2026-10-06, review of the built plan: "Share one in-flight listing between concurrent finds and reuse its result for the same 2 s window the old LISTING_FRESH throttle used; after a failed start, do not respawn for that window either" | 03 |
 | A row `find` answers equals the row `list` answers for the same session | (defaulted: otherwise the next refresh sends a `root/sessionSummaryChanged` for a row that did not change) | 01, 02, 03 |
 | A third-party agent without `find` gets one refresh of the held catalogue per missing id, with no throttle beyond the refresh's single flight | Softov's brief for this plan, 2026-10-04 | 04 |
 | That refresh is one that started after the caller asked: a caller joins a refresh that started after it asked, and waits out one that started before | (defaulted: a refresh that started before the ask may have read the disk before the session was written, and joining it would answer the same way it always did) | 04 |
@@ -101,30 +104,32 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi finds a session by id](task-01-pi-finds-a-session-by-id.md) | todo | - |
-| [02 - cofold finds a session by id](task-02-cofold-finds-a-session-by-id.md) | todo | - |
-| [03 - ACP finds a session by listing its own server](task-03-acp-finds-a-session-by-listing-its-own-server.md) | todo | - |
-| [04 - The listing throttle goes](task-04-the-listing-throttle-goes.md) | todo | 01, 02, 03 |
+| [01 - pi finds a session by id](task-01-pi-finds-a-session-by-id.md) | done | - |
+| [02 - cofold finds a session by id](task-02-cofold-finds-a-session-by-id.md) | done | - |
+| [03 - ACP finds a session by listing its own server](task-03-acp-finds-a-session-by-listing-its-own-server.md) | done | - |
+| [04 - The listing throttle goes](task-04-the-listing-throttle-goes.md) | done | 01, 02, 03 |
 
 ## Risks and tradeoffs
 
-- ACP's `find` costs a full `session/list` of that one server, paged to the end, so an ACP server with many sessions is still a listing per missing id; it is one server rather than every agent, and nothing cheaper exists in ACP 1.6.0.
+- ACP's `find` costs a full `session/list` of that one server, paged to the end, so an ACP server with many sessions is still a listing per window: concurrent finds share one read and its answer serves the finds that follow for two seconds, but a client opening ids steadily still lists that server every two seconds. It is one server rather than every agent, and nothing cheaper exists in ACP 1.6.0.
 - pi's row is built by ahpd from the session file, because `buildSessionInfo` is not exported; a pi release that changes how `list` derives a title or a time makes `find` and `list` disagree, and task 01's equality test is what catches it.
 - A third-party agent without `find` now pays one listing per missing id when the ids come one after another, where the throttle used to bound that to one in two seconds; ids asked at once still share one.
 - `users-gate.test.ts` is split by host 55, which is planned; if it lands first the two tests task 04 changes are in `users-gate-sessions.test.ts`.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-pi-finds-a-session-by-id.md](task-01-pi-finds-a-session-by-id.md); tasks 01, 02 and 03 are independent and can run in any order.
+- **Done so far:** all four tasks done, reviewed 2026-10-06; the three review findings are fixed and in [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** `find` is optional on `Agent` and stays optional, because a third-party backend may not have one; ACP's `delete` is a getter read off the handshake, and `find` is not, because every ACP server can be listed or answered from the watched records; the throttle's two tests change meaning rather than disappear, so the `find`-less fallback stays covered.
+- **Watch out for:** `find` is optional on `Agent` and stays optional, because a third-party backend may not have one; the echo example keeps no `find`, so the `find`-less fallback stays covered; ACP's `find` costs one listing of that one server per two-second window, which is the cheapest thing ACP 1.6.0 has; the plan named a `started` counter and `passes` already was it, so `relist` compares against `passes`; pi's `find` must stay on the read-only path, since `SessionManager.open` writes.
 
 ## Final verification checklist
 
-- [ ] pi, cofold and ACP each have a `find` whose row equals their `list` row for the same session.
-- [ ] `LISTING_FRESH` and `pastAt` are gone from `packages/sdk/src`.
-- [ ] A host whose agents all have `find` lists nothing when a client opens an id nobody has.
-- [ ] A session written to disk between two subscribes, or while a listing runs, is found on a backend without `find`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] pi, cofold and ACP each have a `find` whose row equals their `list` row for the same session.
+- [x] `LISTING_FRESH` and `pastAt` are gone from `packages/sdk/src`.
+- [x] A host whose agents all have `find` lists nothing when a client opens an id nobody has.
+- [x] A session written to disk between two subscribes, or while a listing runs, is found on a backend without `find`.
+- [x] `npx tsc -b`, `pnpm boundary`, and `npx vitest run packages/sdk packages/agent-pi packages/agent-cofold packages/agent-acp` pass.
+- [x] `plans/index.md` updated.
+
+The gates were run as `npx tsc -b`, `pnpm boundary`, `node tools/schema.mjs && npx vitest run packages/sdk` and `npx vitest run packages/agent-pi packages/agent-cofold packages/agent-acp`, and the numbers are in [implemented.md](implemented.md).

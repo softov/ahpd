@@ -7,18 +7,6 @@ import type { WireTurn } from '../types/wire.js';
 import type { HostContext } from './context.js';
 import type { Turn } from '@microsoft/agent-host-protocol';
 
-/**
- * How long a listing of the catalogue answers `past` for, in milliseconds.
- *
- * A subscribe to a session this host is not running reads the catalogue to
- * find its row, and whoever subscribes decides how often that is: an id that
- * names nothing is answered from the last listing rather than a new one.
- * An id missing from a listing `past` did not start itself is listed for
- * once more, at most once in this long, since a backend can write a session
- * to disk after the listing it was not in.
- */
-const LISTING_FRESH = 2_000;
-
 /** What a session that already happened offers the rest of the host. */
 export interface History {
   history: Map<string, Bag[]>;
@@ -140,7 +128,14 @@ export function createHistory(ctx: HostContext): History {
   let rows: Summary[] = [];
   /** The listing in flight, so a second ask joins it rather than starting one. */
   let refreshing: Promise<Summary[]> | undefined;
-  /** How many listings have been started, which is what a delete is dated by. */
+  /**
+   * How many listings have been started.
+   *
+   * What a delete is dated by, and what tells a caller whether the pass running
+   * now began before it asked: the number only moves when a pass begins, so one
+   * above the count a caller read is a pass that read the store after that
+   * caller's question was asked.
+   */
   let passes = 0;
   /**
    * The sessions deleted here, against the pass each delete happened in.
@@ -152,8 +147,6 @@ export function createHistory(ctx: HostContext): History {
    * store knowing about it.
    */
   const droppedIn = new Map<string, number>();
-  /** When `past` last listed for itself, and so did not read the held rows. */
-  let pastAt = -Infinity;
   /**
    * List the backends again, and tell every client what moved.
    *
@@ -232,14 +225,21 @@ export function createHistory(ctx: HostContext): History {
   /**
    * A listing of its own, for an id the held rows do not have.
    *
-   * It waits for a listing already running rather than joining it, because
-   * that one started before this caller knew it wanted the row: a session
-   * written to disk while a pass was in flight is exactly the case this is
-   * here for, and joining that pass would answer the same way it always does.
+   * `asked` is the pass count its caller read before it asked anybody anything.
+   * A pass running now that is numbered above it began after that question, and
+   * so read the store knowing the session might be there - it is joined, and
+   * whoever else is asking is answered by the same listing. A pass numbered at
+   * or below it began before the caller knew it wanted the row: a session
+   * written to disk while a pass was in flight is exactly the case this is here
+   * for, and joining that pass would answer the same way it always does. So it
+   * is waited out and followed by a pass of this caller's own.
    */
-  const relist = async (): Promise<Summary[]> => {
+  const relist = async (asked: number): Promise<Summary[]> => {
     const running = refreshing;
-    if (running !== undefined) await running.catch(() => {});
+    if (running !== undefined) {
+      if (passes > asked) return await running;
+      await running.catch(() => {});
+    }
     return await refresh();
   };
   /**
@@ -266,14 +266,19 @@ export function createHistory(ctx: HostContext): History {
     return undefined;
   };
   /**
-   * Whether any backend here cannot be asked about one session.
+   * Whether any backend here lists without being able to answer about one session.
    *
-   * What decides whether a missing id costs a listing: a host whose every
-   * backend answers by id is told the id is nobody's, and one that cannot is
-   * listed for once, since that is all such a backend has.
+   * What decides whether a missing id costs a listing. A backend with `find` is
+   * asked about the id instead, and one with neither `list` nor `find` has its
+   * own sessions nowhere the host could find them - a listing would turn up
+   * nothing, having nothing to list with.
    */
-  const someCannotSay = (): boolean => [...ctx.agents.values()].some((agent) => agent.find === undefined);
+  const someCannotSay = (): boolean =>
+    [...ctx.agents.values()].some((agent) => agent.list !== undefined && agent.find === undefined);
   const past = async (id: string): Promise<Bag[] | undefined> => {
+    // Read before anything is asked of anybody, so a listing this open goes on
+    // to start cannot be mistaken for one that was already out.
+    const askedPass = passes;
     const cached = history.get(id);
     if (cached)
       return cached;
@@ -332,19 +337,18 @@ export function createHistory(ctx: HostContext): History {
           row = found;
         }
       }
-      if (!row && someCannotSay() && Date.now() - pastAt >= LISTING_FRESH) {
+      if (!row && someCannotSay()) {
         /*
          * One more listing for an id the held rows do not have.
          *
          * Only for a backend that cannot be asked about one session, which is
          * the store this worked before it could be: a listing is all it has.
-         * At most once in `LISTING_FRESH`, since whoever is opening sessions
-         * nobody has - a client with a stale list, or a link to a session that
-         * was deleted - would otherwise cost a pass over the machine's
-         * transcripts each.
+         * One per missing id, shared with whoever else is asking while it runs -
+         * `relist` is what decides which pass answers - and nothing else bounds
+         * how often that is, because a client opening sessions nobody has is
+         * asking the only question such a backend can be asked.
          */
-        pastAt = Date.now();
-        row = (await relist()).find((item) => idFor(item.resource) === id);
+        row = (await relist(askedPass)).find((item) => idFor(item.resource) === id);
       }
       const owner = owners.get(nameOf(id));
       if (!row || !owner?.transcript)

@@ -18,7 +18,7 @@
 import type { Agent, Bag, Listed, Offered } from '@ahpd/sdk';
 import { runtimeModels } from './backend.js';
 import type { RuntimeModels } from './backend.js';
-import { catalogue, forgetSession, stateFile, watchedSession } from './catalog.js';
+import { catalogue, findSession, forgetSession, stateFile, watchedSession } from './catalog.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import { piMachine } from './machine.js';
@@ -134,6 +134,13 @@ export function piAgent(
     directories: () => [...paths],
 
     list: (): Promise<Listed[]> => catalogue(options, provider, paths),
+
+    /*
+     * One session's row, read from its own file rather than by listing the
+     * folder it is in: what a client opening a row the host does not hold
+     * costs, which `list` pays by reading every transcript in the directory.
+     */
+    find: (id): Promise<Listed | undefined> => findSession(options, provider, id, paths),
 
     /*
      * What this process watched of the session, or else the session rebuilt

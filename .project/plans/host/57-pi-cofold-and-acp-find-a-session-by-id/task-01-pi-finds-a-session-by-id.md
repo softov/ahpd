@@ -1,6 +1,6 @@
 ---
 title: pi finds a session by id
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:
@@ -41,3 +41,9 @@ pi's agent answers `find(id)` with the row `list` would have answered for that s
 - `pnpm exec tsc --noEmit`, `pnpm test packages/agent-pi`.
 
 ## Resume
+
+- **Done:** implemented 2026-10-06, uncommitted. `watchedRow` in `packages/agent-pi/src/catalog.ts` is the mapping `catalogue` and `find` share, `rowOfFile` builds a row from the one file `findById` names as pi 0.87.1's unexported `buildSessionInfo` does, `findSession` answers the watched record first and otherwise walks the served directories, and `find` sits beside `list` in `packages/agent-pi/src/agent.ts`. `packages/agent-pi/test/agent-pi-find.test.ts` is 5 cases.
+- **Gates:** `pnpm exec tsc --noEmit` passes; `pnpm exec vitest run packages/agent-pi` passes, 12 files, 168 tests.
+- **Next action:** [task-02-cofold-finds-a-session-by-id.md](task-02-cofold-finds-a-session-by-id.md).
+- **Open questions:** none.
+- **Watch out for:** `sessionOnDisk` moved from `agent-pi-disk.test.ts` to `fake-pi.ts`, with an optional `name`, because this suite is the second caller and the helper file is where the suites' shared helpers live; `agent-pi-disk.test.ts` imports it and still passes. `buildSessionInfo` is not exported, so `rowOfFile` derives the title and the two times itself - it reads what a listing reads, and the equality case is what holds the two together. A header with no usable timestamp answers `undefined` where pi's listing would fall back to the file's mtime, which is not read here; pi's own writer never makes such a file.

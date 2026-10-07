@@ -13,7 +13,7 @@
  */
 
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
-import { catalogueOf, deletes, forgetSession, loadedSession, stateFile } from './catalog.js';
+import { catalogueOf, deletes, findListed, forgetSession, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
@@ -123,6 +123,17 @@ export function acpAgent(options: AcpOptions): Agent {
      * process-wide and outlives any one session.
      */
     list: (): Promise<Listed[]> => catalogueOf(options, provider),
+
+    /*
+     * One session's row, by id: this process's own record for a session it
+     * watched, and otherwise one listing of this server, which is the only call
+     * ACP has that describes a session at all.
+     *
+     * A plain property rather than a getter, unlike `delete`: it does not depend
+     * on the handshake, because a server that cannot list still has the watched
+     * records to answer from.
+     */
+    find: (id: string): Promise<Listed | undefined> => findListed(options, provider, id),
 
     /*
      * What this process watched of a session, or what the server replays of one

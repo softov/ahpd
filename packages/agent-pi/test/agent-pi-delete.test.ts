@@ -29,6 +29,12 @@ vi.mock('@earendil-works/pi-coding-agent', () => ({
     open: () => ({}),
     create: () => ({}),
   },
+  // pi's own per-line parse, which `loadPi` takes from the module whether or
+  // not a suite reads a session file through it.
+  parseSessionEntries: (content: string) => content
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .flatMap((line) => { try { return [JSON.parse(line)]; } catch { return []; } }),
   SettingsManager: { create: () => ({}) },
   createAgentSessionServices: async () => ({}),
   createAgentSessionFromServices: async () => ({ session: {} }),

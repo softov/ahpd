@@ -176,6 +176,49 @@ export const driveCall = (
   ) as Promise<Bag | undefined>;
 };
 
+/**
+ * A pi session file, written by pi's own `SessionManager`: a model and a level
+ * set first, pi's leading system message, a turn that thinks, answers and runs
+ * a tool, and a second turn that fails.
+ *
+ * `name` adds the `session_info` entry pi keeps a title a person chose in, for
+ * a suite that needs a session pi itself calls something.
+ */
+export async function sessionOnDisk(sessionDir: string, name?: string) {
+  const { SessionManager } = await loadPi();
+  const store = SessionManager.create(root, sessionDir);
+  store.appendModelChange('anthropic', 'claude-opus-5');
+  store.appendThinkingLevelChange('medium');
+  store.appendMessage({ role: 'system', content: '', sections: { preamble: 'You are pi.' }, timestamp: Date.now() } as never);
+  if (name !== undefined) store.appendSessionInfo(name);
+  const first = store.appendMessage({ role: 'user', content: [{ type: 'text', text: 'read a.ts' }], timestamp: Date.now() });
+  store.appendMessage(answer([
+    { type: 'thinking', thinking: 'I should read it.' },
+    { type: 'text', text: 'Reading it.' },
+    { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } },
+  ], 'toolUse'));
+  store.appendMessage({
+    role: 'toolResult',
+    toolCallId: 'call-1',
+    toolName: 'read',
+    content: [{ type: 'text', text: 'export {};' }],
+    isError: false,
+    timestamp: Date.now(),
+  } as never);
+  const firstEnd = store.appendMessage(answer([{ type: 'text', text: ' It is empty.' }], 'stop'));
+  const second = store.appendMessage({ role: 'user', content: 'again', timestamp: Date.now() });
+  const secondEnd = store.appendMessage(answer([], 'error', {
+    errorMessage: '429 rate limited',
+    usage: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  }));
+  // The file itself, for a suite that has to look at the disk rather than at
+  // what a listing made of it.
+  return { id: store.getSessionId(), file: String(store.getSessionFile()), first, firstEnd, second, secondEnd };
+}
+
 /** What pi stores for one assistant message, with the fields a test varies. */
 export const answer = (content: Bag[], stopReason: string, extra: Bag = {}): never => ({
   role: 'assistant',

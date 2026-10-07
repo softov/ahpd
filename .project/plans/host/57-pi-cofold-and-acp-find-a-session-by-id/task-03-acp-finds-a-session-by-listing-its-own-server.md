@@ -1,6 +1,6 @@
 ---
 title: ACP finds a session by listing its own server
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -40,3 +40,9 @@ ACP's agent answers `find(id)` from a session it is watching without asking the 
 - `pnpm exec tsc --noEmit`, `pnpm test packages/agent-acp`.
 
 ## Resume
+
+- **Done:** implemented 2026-10-06, uncommitted. `findListed(options, provider, id)` in `packages/agent-acp/src/catalog.ts` answers `listedOf(watchedSession(provider, id))` when this process has a record, and otherwise reuses `catalogueOf` whole and picks the id; its comment says why it lists (ACP 1.6.0's `session/list` filters by `cwd` and `cursor` only, and `session/load` replays the conversation and answers no row). `find` sits beside `list` in `packages/agent-acp/src/agent.ts` as a plain property, not a getter, because it does not depend on the handshake. `agent-acp-catalog.test.ts` gains five cases and imports `watchSession`.
+- **Gates:** `npx tsc -b` passes; `npx vitest run packages/agent-acp` passes, 13 files, 179 tests. The five new cases were seen failing first (63 of 68 passed, the five new ones failed with `find` undefined).
+- **Next action:** [task-04-the-listing-throttle-goes.md](task-04-the-listing-throttle-goes.md).
+- **Open questions:** none.
+- **Watch out for:** `agent-acp-machine.test.ts > reaches a disposable machine` runs at about 5.0 s against vitest's 5 s default, so a whole-package run under load can time it out; it passes alone and on a second run, and it is untouched by this task. The missing-command case in this file leaves a watched record under the provider `acp-missing-find`, as `agent-acp-failure.test.ts` already does with `acp-missing-list`.

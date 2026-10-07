@@ -7,7 +7,7 @@ import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
-import { acpAgent } from '../src/index.js';
+import { acpAgent, watchSession } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { toolsReachable } from '../src/session/opening.js';
 import type { AcpOptions, AcpTurn } from '../src/types.js';
@@ -43,15 +43,21 @@ const scratch = (): string => {
   return path;
 };
 
-/** The backend under test, with its own request log. */
-function backend(flags: string[] = []): { agent: Agent; log: string } {
+/**
+ * The backend under test, with its own request log.
+ *
+ * The provider is named for the case that needs one of its own: the sessions
+ * this process watched are held by provider, and a case that watches a session
+ * would otherwise be watched by every later case on the same name.
+ */
+function backend(flags: string[] = [], provider = 'acp'): { agent: Agent; log: string } {
   const log = join(scratch(), 'requests.jsonl');
   return {
     agent: acpAgent({
       command: process.execPath,
       args: [FIXTURE, ...flags],
       env: { ACP_LOG: log },
-      provider: 'acp',
+      provider,
     }),
     log,
   };
@@ -564,6 +570,116 @@ it('lists a second time on the connection the first one left open', async () => 
   const pids = new Set(requests(log).map((one) => one.pid));
   expect(pids.size).toBe(1);
   expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
+});
+
+it('finds a listed session by listing its own server, and loads nothing', async () => {
+  const { agent, log } = backend();
+  const rows = await agent.list?.();
+  const found = await agent.find?.('listed-1');
+
+  // The row a client opening the row would be sent has to be the row it was
+  // listed, or the next refresh answers a `root/sessionSummaryChanged` for a
+  // session that did not change.
+  expect(found).toEqual(rows?.[0]);
+  expect(found?.title).toBe('One');
+  expect(requests(log).some((one) => one.method === 'session/list')).toBe(true);
+  // ACP has no call that describes one session: a load replays the whole
+  // conversation and answers modes and config, so a find that loaded would cost
+  // the conversation to answer a title.
+  expect(requests(log).some((one) => one.method === 'session/load')).toBe(false);
+});
+
+it('answers nothing for an id the server does not list', async () => {
+  const { agent, log } = backend();
+  expect(await agent.find?.('a-session-nobody-has')).toBeUndefined();
+  expect(requests(log).some((one) => one.method === 'session/list')).toBe(true);
+});
+
+it('answers a session this process watched the way its listing answers it', async () => {
+  const { agent } = backend([], 'acp-watched');
+  // A session this process opened, watched, and a client retitled: the server
+  // still lists it under the row it always had, and `list` answers that row. A
+  // `find` that answered the watched record instead would be a row every client
+  // is told changed by the next refresh, for a session that did not.
+  watchSession({ provider: 'acp-watched', id: 'listed-1', cwd: '/tmp/one', additional: [], title: 'a title a client set' });
+  const rows = await agent.list?.();
+
+  const found = await agent.find?.('listed-1');
+  expect(found).toEqual(rows?.[0]);
+  expect(found?.title).toBe('One');
+});
+
+it('finds a session the server put on a later page', async () => {
+  const { agent, log } = backend(['--pages']);
+  // The second page is only reached by asking for the cursor the first named,
+  // so a find that read one page would report nothing for a session the
+  // listing itself reports.
+  expect((await agent.find?.('listed-2'))?.id).toBe('listed-2');
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(2);
+});
+
+it('lists once for every find asking at the same time', async () => {
+  const { agent, log } = backend();
+  const ids = ['nobody-1', 'nobody-2', 'nobody-3', 'nobody-4', 'nobody-5'];
+
+  // A client whose catalogue is stale asks about a run of ids at once, and
+  // every one of them is a listing of this server unless they share one.
+  const answers = await Promise.all(ids.map(async (id) => await agent.find?.(id)));
+  expect(answers).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(1);
+});
+
+it('answers a find of a missing id from the listing it read a moment ago', async () => {
+  const { agent, log } = backend();
+  expect(await agent.find?.('nobody-1')).toBeUndefined();
+  expect(await agent.find?.('nobody-2')).toBeUndefined();
+
+  // One id after another is the shape an opening client has, and each of them
+  // is the whole catalogue of that server paged to the end.
+  expect(requests(log).filter((one) => one.method === 'session/list')).toHaveLength(1);
+});
+
+it('answers nothing for a session the server dropped since the listing it read', async () => {
+  const { agent } = backend();
+  expect((await agent.find?.('listed-1'))?.id).toBe('listed-1');
+  await agent.delete?.('listed-1', '/tmp/one');
+
+  // The rows a find read are a moment old, and a delete is the one change they
+  // cannot have: holding them over it would answer the session the host has
+  // just been told is gone, and the host would offer it again.
+  expect(await agent.find?.('listed-1')).toBeUndefined();
+});
+
+it('spawns a command that cannot start once for the ids of one window', async () => {
+  const starts = join(scratch(), 'starts.txt');
+  const agent = acpAgent({
+    command: process.execPath,
+    args: ['-e', `require('node:fs').appendFileSync(${JSON.stringify(starts)}, 'start\\n')`],
+    provider: 'acp-dead',
+  });
+
+  // A server that does not start leaves nothing to read, and a find that
+  // respawned it for every missing id would be a subprocess per subscribe to a
+  // session nobody has - the exact cost this whole path exists to remove.
+  expect(await agent.find?.('nobody-1')).toBeUndefined();
+  expect(await agent.find?.('nobody-2')).toBeUndefined();
+  expect(readFileSync(starts, 'utf8').trim().split('\n')).toHaveLength(1);
+});
+
+it('answers the watched record for a command that does not start, and nothing else', async () => {
+  watchSession({ provider: 'acp-missing-find', id: 'kept', cwd: '/tmp', additional: [], title: 'Kept' });
+  const agent = acpAgent({ command: 'ahpd-no-such-acp-server', provider: 'acp-missing-find' });
+
+  // A catalogue read must answer and must never take the daemon down over a
+  // subprocess that did not start, which is true of a find as much as a list.
+  expect(await agent.find?.('kept')).toEqual({
+    id: 'kept',
+    title: 'Kept',
+    createdAt: expect.any(String),
+    modifiedAt: expect.any(String),
+    workingDirectories: ['file:///tmp'],
+  });
+  expect(await agent.find?.('nobody')).toBeUndefined();
 });
 
 it('reads back the turn this process watched and nothing for one it did not', async () => {

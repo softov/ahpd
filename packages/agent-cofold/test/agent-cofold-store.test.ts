@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { textOf } from '@cofold/agents';
 import { createFakeModel, createMemoryStore } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
@@ -12,6 +12,27 @@ import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
+
+/**
+ * Every store made in this file, in the order they were made.
+ *
+ * `cofoldAgent` builds its own store from its options, so a case that wants to
+ * count what `find` reads has to hold the object the backend actually reads -
+ * and that is the store `createFileStore` answered for it.
+ */
+const made = vi.hoisted(() => [] as Store[]);
+
+vi.mock('@cofold/store-file', async (original) => {
+  const actual = await original<typeof import('@cofold/store-file')>();
+  return {
+    ...actual,
+    createFileStore: (options: { root: string }) => {
+      const store = actual.createFileStore(options);
+      made.push(store);
+      return store;
+    },
+  };
+});
 
 /*
  * The catalogue, the transcript and a resume, over a file store.
@@ -146,6 +167,69 @@ it('lists a session that was created and torn down, with its workspace and title
   // The timestamps are the store's, so a row says when the conversation moved.
   expect(Date.parse(String(listed?.[0]?.createdAt))).not.toBeNaN();
   expect(Date.parse(String(listed?.[0]?.modifiedAt))).not.toBeNaN();
+});
+
+it('answers a session on disk with the row the listing answers, title and workspace included', async () => {
+  const { root, sweep } = place();
+  const model = createFakeModel({ script: [{ text: 'hi there' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep);
+  one.session.begin('t1', 'remember the number 41');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  const listed = (await agent.list?.())?.find((row) => row.id === 'one');
+  const found = await agent.find?.('one');
+  // The one row, so a row found by id is the row a listing would have offered
+  // and the next refresh has nothing to say about it.
+  expect(listed).toBeDefined();
+  expect(found).toEqual(listed);
+  expect(found).toMatchObject({
+    id: 'one',
+    title: 'remember the number 41',
+    workingDirectories: [uriOf(sweep)],
+  } satisfies Partial<Listed>);
+});
+
+it('finds a session written after the last listing, and nothing for one the store does not have', async () => {
+  const { root, sweep } = place();
+  // One step per turn: the first conversation, then the one after the listing.
+  const model = createFakeModel({ script: [{ text: 'hi' }, { text: 'said later' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const one = open(agent, 'one', sweep);
+  one.session.begin('t1', 'the first one');
+  await until(() => ended(one.view));
+  one.session.close();
+  expect((await agent.list?.())?.map((row) => row.id)).toEqual(['one']);
+
+  // A conversation that happened after that listing: `find` reads the store
+  // when it is asked, so the row is there although no listing has seen it.
+  const two = open(agent, 'late', sweep);
+  two.session.begin('t2', 'said later');
+  await until(() => ended(two.view));
+  two.session.close();
+
+  expect((await agent.find?.('late'))?.title).toBe('said later');
+  expect(await agent.find?.('nobody')).toBeUndefined();
+});
+
+it('reads one record and never lists the store', async () => {
+  const { root, sweep } = place();
+  const before = made.length;
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+  const agent = backend(root, model, allowAll());
+  const store = made[before] as Store;
+  const one = open(agent, 'one', sweep);
+  one.session.begin('t1', 'hello');
+  await until(() => ended(one.view));
+  one.session.close();
+
+  const listing = vi.spyOn(store.sessions, 'list');
+  let found;
+  try { found = await agent.find?.('one'); }
+  finally { listing.mockRestore(); }
+  expect(found?.id).toBe('one');
+  expect(listing).not.toHaveBeenCalled();
 });
 
 it('reports the folder a session works in as a URI a host reads back as that folder', () => {

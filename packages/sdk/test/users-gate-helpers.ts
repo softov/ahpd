@@ -138,19 +138,35 @@ export const onDisk = (id: string) => {
 /**
  * A `claude` backend whose catalogue lists `rows`, one row `disk` to begin
  * with, each with no turns, and counts how often it is asked.
+ *
+ * `holdNextList` makes the next listing wait for the release it hands back, so
+ * a test can write a session to disk while a listing is out. The rows are read
+ * when the listing is *asked*, not when it answers, which is what a real pass
+ * over the disk does: a listing that was already out when the session was
+ * written does not have it.
  */
 export const listingOne = () => {
   const counted = { lists: 0 };
   const rows = [onDisk('disk')];
+  /** The listings a test asked to be held, in the order they were asked for. */
+  const holds: Promise<void>[] = [];
+  const holdNextList = (): (() => void) => {
+    let release!: () => void;
+    holds.push(new Promise<void>((resolve) => { release = resolve; }));
+    return () => { release(); };
+  };
   const agent = {
     ...echo({ path: root, pace: 0 }),
     provider: 'claude',
     displayName: 'Claude',
     list: async () => {
       counted.lists += 1;
-      return [...rows];
+      const answer = [...rows];
+      const held = holds.shift();
+      if (held !== undefined) await held;
+      return answer;
     },
     transcript: async () => [],
   };
-  return { agent, counted, rows };
+  return { agent, counted, rows, holdNextList };
 };

@@ -12,9 +12,11 @@
  * that produced it was closed.
  */
 
+import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
+import type { FileEntry } from '@earendil-works/pi-coding-agent';
 import { uriOf } from '@ahpd/sdk';
-import type { Listed } from '@ahpd/sdk';
+import type { Bag, Listed } from '@ahpd/sdk';
 import { loadedPi, loadPi } from './pi.js';
 import type { PiOptions, WatchedSession } from './types.js';
 
@@ -47,6 +49,22 @@ export function forget(provider?: string): void {
 export function forgotten(provider: string, id: string): void {
   watched.get(provider)?.delete(id);
 }
+
+/**
+ * One session this process watched, as a row.
+ *
+ * What this process is running wins over what is on disk: it has the title a
+ * client just set and a modification time the file has not been given yet. The
+ * one mapping, so a row a listing answers and a row `find` answers for the same
+ * watched session are the same row.
+ */
+const watchedRow = (one: WatchedSession): Listed => ({
+  id: one.id,
+  title: one.title,
+  createdAt: one.createdAt,
+  modifiedAt: one.modifiedAt,
+  workingDirectories: [uriOf(one.directory)],
+});
 
 /**
  * Where pi keeps this session's file.
@@ -177,17 +195,132 @@ export async function catalogue(
 
   // What this process is running wins over what is on disk: it has the title
   // a client just set and a modification time the file has not been given yet.
-  for (const one of watched.get(provider)?.values() ?? []) {
-    rows.set(one.id, {
-      id: one.id,
-      title: one.title,
-      createdAt: one.createdAt,
-      modifiedAt: one.modifiedAt,
-      workingDirectories: [uriOf(one.directory)],
-    });
-  }
+  for (const one of watched.get(provider)?.values() ?? [])
+    rows.set(one.id, watchedRow(one));
 
   return [...rows.values()].sort((a, b) => Date.parse(a.modifiedAt) - Date.parse(b.modifiedAt));
+}
+
+/** The words of a message's content, which pi keeps as a string or as parts. */
+function wordsOf(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((one): one is { type: 'text'; text: string } =>
+      typeof one === 'object' && one !== null && (one as Bag).type === 'text' && typeof (one as Bag).text === 'string')
+    .map((one) => one.text)
+    // Joined with a space, as pi joins them when it builds the same row.
+    .join(' ');
+}
+
+/**
+ * One session's row, read from the entries of the file pi keeps it in.
+ *
+ * pi derives a listing's title and times in `buildSessionInfo`, which it does
+ * not export, so the same entries are walked here and the same fields derived
+ * the same way. `list` and `find` answering different rows for one session is a
+ * client sent a `root/sessionSummaryChanged` for a row that did not change,
+ * which is why the two are held equal by a test rather than described.
+ *
+ * The entries are what `parseSessionEntries` made of the file's lines, which is
+ * the parse pi's own listing streams a file through. Reading them here rather
+ * than through `SessionManager.open` is the point: an open creates a session
+ * for a file that is not there, empties one it cannot make sense of and
+ * migrates an older one, so it writes to a session to answer a question about
+ * it. Nothing on this path writes.
+ *
+ * The header is what says whose session a file holds, so a file whose header is
+ * not the id asked for answers nothing - a lookup that matched a moment ago and
+ * a file that changed under it is a read that found nothing rather than one
+ * that found somebody else's row.
+ *
+ * A file with no header, or with a header no date can be made of, is a file pi
+ * itself never wrote: pi's listing falls back to the file's own modification
+ * time there, which is not read here, so the row is nothing.
+ */
+function rowOfFile(entries: readonly FileEntry[], directory: string, id: string): Listed | undefined {
+  const header = entries[0];
+  if (header === undefined || header.type !== 'session' || header.id !== id) return undefined;
+  const created = new Date(header.timestamp);
+  const headerTime = created.getTime();
+  if (!Number.isFinite(headerTime)) return undefined;
+
+  let name: string | undefined;
+  let words = '';
+  let lastActivity: number | undefined;
+  for (const entry of entries) {
+    // The latest `session_info` wins, a clear included, as pi reads it.
+    if (entry.type === 'session_info') { name = entry.name?.trim() || undefined; continue; }
+    if (entry.type !== 'message') continue;
+    const message = entry.message as unknown as Bag;
+    if (typeof message.role !== 'string' || !('content' in message)) continue;
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    const at = typeof message.timestamp === 'number' ? message.timestamp : Date.parse(entry.timestamp);
+    if (Number.isFinite(at)) lastActivity = Math.max(lastActivity ?? 0, at);
+    if (words === '' && message.role === 'user') {
+      const text = wordsOf(message.content);
+      if (text !== '') words = text;
+    }
+  }
+
+  const cwd = typeof header.cwd === 'string' ? header.cwd : '';
+  return {
+    id: header.id,
+    // `(no messages)` is what pi titles a session nobody said anything in, and
+    // the title is what pi itself would have called this row.
+    title: name ?? firstLine(words === '' ? '(no messages)' : words),
+    createdAt: created.toISOString(),
+    modifiedAt: (lastActivity !== undefined && lastActivity > 0 ? new Date(lastActivity) : created).toISOString(),
+    workingDirectories: [uriOf(cwd === '' ? directory : cwd)],
+  };
+}
+
+/**
+ * One session's own row, read without listing the project folder it is in.
+ *
+ * What a client opening a row the host does not hold costs without this: a link
+ * from another machine, a session written to disk after the last listing -
+ * `list` reads every transcript in the directory for one id. The file is the
+ * one pi's own `findById` names, and `SessionManager.list` is never called.
+ *
+ * A session this process is watching is answered from its record, which is the
+ * row a listing would have answered for it and needs no file read at all.
+ *
+ * Nothing is written: the file is read as it lies, so a lookup that named a
+ * file since removed, emptied or migrated leaves it exactly as it was, and a
+ * file that turns out not to hold this id answers nothing.
+ */
+export async function findSession(
+  options: PiOptions,
+  provider: string,
+  id: string,
+  directories: readonly string[],
+): Promise<Listed | undefined> {
+  const watching = watchedSession(provider, id);
+  if (watching !== undefined) return watchedRow(watching);
+  const { SessionManager, parseSessionEntries } = await loadPi();
+  for (const directory of directories) {
+    let file: string | undefined;
+    // A directory pi has never been run in has no session store, which is the
+    // same nothing as one that does not have this session. With no
+    // `sessionDir`, pi's lookup makes its default folder for the directory, as
+    // `list` does; the session file itself is never written.
+    try { file = SessionManager.findById(directory, id, options.sessionDir); }
+    catch { continue; }
+    if (file === undefined) continue;
+    let content: string;
+    // A file gone since the lookup is a failed read rather than an empty
+    // session, as `replayed` answers it - and reading it is only a read, where
+    // pi's own open would put a file back for the id it was named. Another
+    // directory's store may still hold it.
+    try { content = readFileSync(file, 'utf8'); }
+    catch { continue; }
+    // A file that holds somebody else's session is not this directory's answer,
+    // so the remaining directories are still worth a look.
+    const row = rowOfFile(parseSessionEntries(content), directory, id);
+    if (row !== undefined) return row;
+  }
+  return undefined;
 }
 
 /** The first line of a message, as a title for a conversation nobody named. */

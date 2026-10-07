@@ -7,46 +7,9 @@ import { piAgent } from '../src/agent.js';
 import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';
 import { resumeOrCreate } from '../src/backend.js';
-import { answer, driveCall, fakePi, opened, root, settled, streamed } from './fake-pi.js';
+import { answer, driveCall, fakePi, opened, root, sessionOnDisk, settled, streamed } from './fake-pi.js';
 
 // A session from disk -------------------------------------------------------
-
-/**
- * A pi session file, written by pi's own `SessionManager`: a model and a level
- * set first, pi's leading system message, a turn that thinks, answers and runs
- * a tool, and a second turn that fails.
- */
-async function sessionOnDisk(sessionDir: string) {
-  const { SessionManager } = await loadPi();
-  const store = SessionManager.create(root, sessionDir);
-  store.appendModelChange('anthropic', 'claude-opus-5');
-  store.appendThinkingLevelChange('medium');
-  store.appendMessage({ role: 'system', content: '', sections: { preamble: 'You are pi.' }, timestamp: Date.now() } as never);
-  const first = store.appendMessage({ role: 'user', content: [{ type: 'text', text: 'read a.ts' }], timestamp: Date.now() });
-  store.appendMessage(answer([
-    { type: 'thinking', thinking: 'I should read it.' },
-    { type: 'text', text: 'Reading it.' },
-    { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } },
-  ], 'toolUse'));
-  store.appendMessage({
-    role: 'toolResult',
-    toolCallId: 'call-1',
-    toolName: 'read',
-    content: [{ type: 'text', text: 'export {};' }],
-    isError: false,
-    timestamp: Date.now(),
-  } as never);
-  const firstEnd = store.appendMessage(answer([{ type: 'text', text: ' It is empty.' }], 'stop'));
-  const second = store.appendMessage({ role: 'user', content: 'again', timestamp: Date.now() });
-  const secondEnd = store.appendMessage(answer([], 'error', {
-    errorMessage: '429 rate limited',
-    usage: {
-      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-    },
-  }));
-  return { id: store.getSessionId(), first, firstEnd, second, secondEnd };
-}
 
 it('rebuilds a session it never watched from pi file, with the parts a live turn has', async () => {
   const sessionDir = join(root, 'pi');

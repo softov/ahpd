@@ -1,4 +1,4 @@
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { ROOT } from '../src/host.js';
 import { uriOf } from '../src/resources.js';
 import { memorySessions } from '../src/sessions.js';
@@ -146,6 +146,11 @@ it('asks a session\'s grants for a row a backend keeps on disk, under its name o
   ]);
 });
 
+/** Let whatever the host started get as far as the disk. */
+const settle = async (times = 20): Promise<void> => {
+  for (let i = 0; i < times; i++) await new Promise((resolve) => { setTimeout(resolve, 1); });
+};
+
 it('finds a session a backend wrote to disk after the last listing', async () => {
   const { agent, rows } = listingOne();
   const made = host({ users: directory({ r: ['session:read'] }), agents: [agent] });
@@ -153,6 +158,51 @@ it('finds a session a backend wrote to disk after the last listing', async () =>
   await call(member.client, 'listSessions', { channel: ROOT });
   rows.push(onDisk('late'));
   expect(await call(member.client, 'subscribe', { channel: 'claude:/late' })).toMatchObject({ result: { snapshot: { resource: 'claude:/late' } } });
+});
+
+it('finds a session written between two subscribes, however close together', async () => {
+  const { agent, rows } = listingOne();
+  const made = host({ users: directory({ r: ['session:read'] }), agents: [agent] });
+  const member = await withRole(made, 'r');
+
+  // The first subscribe is for an id nobody has, and answering it is what
+  // tells the host it has to list. A session written after that listing is
+  // then opened at once - inside the two seconds the throttle used to answer
+  // a second subscribe from, and which is the whole of what it cost.
+  expect(await call(member.client, 'subscribe', { channel: 'claude:/nobody' })).toMatchObject({ code: -32001 });
+  rows.push(onDisk('late'));
+  expect(await call(member.client, 'subscribe', { channel: 'claude:/late' }))
+    .toMatchObject({ result: { snapshot: { resource: 'claude:/late' } } });
+});
+
+it('finds a session written while a listing was already out', async () => {
+  const { agent, counted, rows, holdNextList } = listingOne();
+  const made = host({ users: directory({ r: ['session:read'] }), agents: [agent] });
+  const member = await withRole(made, 'r');
+  await call(member.client, 'listSessions', { channel: ROOT });
+  await settle();
+  const before = counted.lists;
+
+  /*
+   * A pass over the disk that is still out, held where it read.
+   *
+   * It answers without `late2`, because that is what any listing already in
+   * flight does - the session was written after it read. A subscribe that
+   * arrives now must not be answered from it: joining a pass that began before
+   * the ask is joining one that never saw the session.
+   */
+  const release = holdNextList();
+  const nobody = call(member.client, 'subscribe', { channel: 'claude:/nobody' });
+  await settle();
+  expect(counted.lists).toBe(before + 1);
+
+  rows.push(onDisk('late2'));
+  const late = call(member.client, 'subscribe', { channel: 'claude:/late2' });
+  await settle();
+  release();
+
+  expect(await late).toMatchObject({ result: { snapshot: { resource: 'claude:/late2' } } });
+  expect(await nobody).toMatchObject({ code: -32001 });
 });
 
 it('reads a channel it cannot place as a session\'s, and a file as a file', async () => {
@@ -192,21 +242,20 @@ it('still asks a session\'s grants for a session that was disposed', async () =>
   expect(guest.refused()).toEqual(['claude:/gone: g may not session:mark here']);
 });
 
-it('reads the catalogue once for a run of subscribes to sessions nobody has', async () => {
+it('shares one listing among subscribes to sessions nobody has, asked at once', async () => {
   const { agent, counted } = listingOne();
   const made = host({ users: directory({ r: ['session:read'] }), agents: [agent] });
   const member = await withRole(made, 'r');
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  await settle();
   const before = counted.lists;
-  vi.useFakeTimers({ toFake: ['Date'] });
-  try {
-    // Long enough after the host's own first listing that it is not fresh.
-    vi.setSystemTime(Date.now() + 60_000);
-    for (let i = 0; i < 5; i++) {
-      expect(await call(member.client, 'subscribe', { channel: `claude:/nobody-${i}` })).toMatchObject({ code: -32001 });
-    }
-  }
-  finally { vi.useRealTimers(); }
+
+  // Five ids nobody has, in one breath: whoever is opening sessions nobody has
+  // costs one pass over the machine's transcripts and not one each. There is no
+  // window to step past any more, so nothing here moves the clock.
+  const answers = await Promise.all([0, 1, 2, 3, 4].map((i) =>
+    call(member.client, 'subscribe', { channel: `claude:/nobody-${i}` })));
+  expect(answers).toHaveLength(5);
+  for (const one of answers) expect(one).toMatchObject({ code: -32001 });
   expect(counted.lists - before).toBe(1);
 });
 

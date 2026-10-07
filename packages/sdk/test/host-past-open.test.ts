@@ -152,6 +152,25 @@ describe('opening a past session', () => {
     expect(counted.lists).toBe(passes + 1);
   });
 
+  it('lists nothing when an id nobody has is opened again and again, with every backend answering by id', async () => {
+    const counted = counting();
+    const here: Store = { listed: [row('one', 'One')], known: () => undefined };
+    const { client } = await watching([backend('claude', here, counted)]);
+    await list(client);
+    await settle(4);
+    const passes = counted.lists;
+
+    for (let i = 0; i < 5; i++) {
+      await expect(client.handle({ method: 'subscribe', params: { channel: `claude:/never-${i}` } }))
+        .rejects.toMatchObject({ code: -32001 });
+    }
+    // Every backend here can be asked about one session, so a listing is a pass
+    // over the machine for nothing - and there is now no window that keeps the
+    // fifth one from paying for it as the first did.
+    expect(counted.lists).toBe(passes);
+    expect(counted.asked).toHaveLength(5);
+  });
+
   it('answers as today for an id nobody has', async () => {
     const counted = counting();
     const here: Store = { listed: [row('one', 'One')], known: () => undefined };

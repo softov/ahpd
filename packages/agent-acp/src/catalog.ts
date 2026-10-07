@@ -75,6 +75,37 @@ interface Listing {
   idle?: NodeJS.Timeout;
 }
 
+/**
+ * How long the rows a `find` read answer the finds that come after it.
+ *
+ * ACP 1.6.0 cannot be asked about one session, so every `find` of an id this
+ * server does not have is the whole of that server's catalogue, paged to the
+ * end. A client opening a run of sessions - a stale list, a link to each of
+ * several conversations - asks for one id after another, and each of those is
+ * that listing again unless the rows it read are kept a moment.
+ *
+ * Two seconds, which is what the host's own listing throttle allowed before
+ * this path could answer by id: long enough for the asks of one opening screen
+ * and short enough that a session the server has just been told about is not
+ * refused for long. A command that fails to start is kept the same way and for
+ * the same window, because a server that did not start does not start on the
+ * next missing id either, and respawning it once per id is a subprocess per
+ * subscribe to a session nobody has.
+ */
+const FIND_FRESH = 2_000;
+
+/** The rows a find is reading, and the ones it read last. */
+interface Finds {
+  /** The listing in flight, so a find asking now joins it rather than starting one. */
+  running: Promise<Listed[]> | undefined;
+  /** When the rows landed, which is what the window above is dated by. */
+  at: number;
+  rows: Listed[];
+}
+
+/** The rows the last find of a provider read, by the options that read them. */
+const finds = new WeakMap<AcpOptions, Finds>();
+
 /** One row for a session this process watched, in the contract's spelling. */
 const listedOf = (session: WatchedSession): Listed => ({
   id: session.id,
@@ -220,6 +251,13 @@ export async function forgetSession(options: AcpOptions, provider: string, id: s
     if ((error as { code?: unknown }).code !== NOT_FOUND) throw error;
   }
   finally {
+    /*
+     * The rows a find read are a moment old, and a delete is the one change
+     * they cannot have: kept over it, a find right after a delete would answer
+     * the session the server has just dropped, and the host would offer it
+     * again. They go, so the next find lists the server again.
+     */
+    finds.delete(options);
     watched.delete(keyOf(provider, id));
     placeOf.delete(keyOf(provider, id));
     idleClose(options, held);
@@ -373,6 +411,58 @@ export async function catalogueOf(options: AcpOptions, provider: string): Promis
   finally {
     idleClose(options, held);
   }
+}
+
+/**
+ * The rows a find reads, shared with the finds asking at the same time.
+ *
+ * A find is the same listing `catalogueOf` does, and the only thing this adds
+ * is that the asks of one client are not one listing each: a find asking while
+ * one is out joins it, and a find asking inside `FIND_FRESH` of the last answer
+ * is answered from it. `catalogueOf` never rejects - a server that cannot be
+ * reached answers with the watched records - so a failure is kept the same way
+ * its rows would be, and the command behind it is not spawned again for that
+ * window.
+ */
+const rowsForFind = (options: AcpOptions, provider: string): Promise<Listed[]> => {
+  const known = finds.get(options);
+  if (known !== undefined) {
+    if (known.running !== undefined) return known.running;
+    if (Date.now() - known.at < FIND_FRESH) return Promise.resolve(known.rows);
+  }
+  const held: Finds = { running: undefined, at: 0, rows: [] };
+  const running = catalogueOf(options, provider).then((rows) => {
+    held.rows = rows;
+    held.at = Date.now();
+    return rows;
+  });
+  held.running = running;
+  finds.set(options, held);
+  const settle = (): void => { if (held.running === running) held.running = undefined; };
+  void running.then(settle, settle);
+  return running;
+};
+
+/**
+ * One session's row, asked for by id.
+ *
+ * ACP 1.6.0 has no call that describes one session: `session/list` filters by
+ * `cwd` and `cursor` and by nothing else, and `session/load` replays the whole
+ * conversation to answer modes and config rather than a title, a time or a
+ * folder. Listing is therefore the only way to a row, and it is one server's
+ * listing rather than every agent the host has, which is what a missing id
+ * costs here.
+ *
+ * The row is the row `catalogueOf` answers, and nothing else, because that is
+ * the row `list` answers: a find that preferred the record of a session this
+ * process is watching would answer a title or a time the listing does not have,
+ * and the host would tell every client that row changed for a session that did
+ * not. A session the server cannot list, or a server that does not list at all,
+ * is answered from the watched records by `catalogueOf` itself, so that case
+ * needs nothing here either.
+ */
+export async function findListed(options: AcpOptions, provider: string, id: string): Promise<Listed | undefined> {
+  return (await rowsForFind(options, provider)).find((row) => row.id === id);
 }
 
 /**

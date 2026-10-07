@@ -1,6 +1,6 @@
 ---
 title: The listing throttle goes
-status: todo
+status: done
 depends: [task-01-pi-finds-a-session-by-id.md, task-02-cofold-finds-a-session-by-id.md, task-03-acp-finds-a-session-by-listing-its-own-server.md]
 layer: "sdk, docs"
 refs:
@@ -58,3 +58,9 @@ How this stays safe for a session written to disk after the last listing:
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`.
 
 ## Resume
+
+- **Done:** implemented 2026-10-06, uncommitted. `LISTING_FRESH` and `pastAt` are gone from `packages/sdk/src/host/history.ts`, and with them the `Date.now()` condition in `past`. `relist(asked)` joins a running refresh numbered above the `asked` its caller read (`passes`, read at the top of `past` as `askedPass`) and otherwise waits it out and starts one of its own. `someCannotSay` now counts an agent with `list` and no `find`. The `find(id)` row and a short paragraph are in `docs/AGENT.md`. `users-gate-sessions.test.ts` has the rewritten sharing test and two new find tests, `listingOne` gained `holdNextList`, and `host-past-open.test.ts` gained the five-opens guard.
+- **Gates:** `npx tsc -b` passes; `pnpm boundary` passes (8 packages, none undeclared); `node tools/schema.mjs && npx vitest run packages/sdk` passes, 106 files, 1502 tests; `npx vitest run packages/agent-pi packages/agent-cofold packages/agent-acp` passes, 40 files, 537 tests. `rg -n "LISTING_FRESH|pastAt" packages` finds nothing. The two new `finds a session ...` tests were seen failing first, both with `-32001` from the throttle.
+- **Next action:** none; the plan is built and waits for review.
+- **Open questions:** none.
+- **Watch out for:** the task names a new `started` counter; `passes` already is exactly that (bumped once per refresh, and `pastAt` sat beside it), so no second counter was added and `passes` is what `relist` compares against. `agent-acp-machine.test.ts > reaches a disposable machine` runs at about 5.0 s against vitest's 5 s default and times out under a full parallel run; it passes alone and on a second run of the same three-package command, and nothing in this plan touches it. The `shares one listing` test passes before and after the change: what it shows after it is the refresh's single flight standing where the window stood. The five-opens guard in `host-past-open.test.ts` likewise passes before the change, since it pins the narrowed `someCannotSay` (an agent that has `list` *and* `find` is not one that cannot say).

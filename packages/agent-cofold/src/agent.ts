@@ -14,7 +14,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createMemoryStore, textOf } from '@cofold/agents';
-import type { ModelAdapter, ModelInfo, ModelProvider, Policy, ReasoningEffort, Store } from '@cofold/agents';
+import type { ModelAdapter, ModelInfo, ModelProvider, Policy, ReasoningEffort, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
 import { uriOf } from '@ahpd/sdk';
@@ -639,6 +639,32 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     },
   };
 
+  /**
+   * One store record as a catalogue row.
+   *
+   * `list` maps every record through this and `find` maps the one record it
+   * read through it, so the two cannot answer different rows for the same
+   * session: a row that comes back changed is a client sent a
+   * `root/sessionSummaryChanged` for a session that did not move. The store
+   * keeps no title of its own, so the first thing the person said is the
+   * honest one, and a session that has said nothing is titled by its id.
+   *
+   * The messages are read per record, because the store has no call that
+   * answers the first user message alone - which is why `find` reads one
+   * record's messages rather than the store.
+   */
+  const recordRow = async (record: SessionRecord): Promise<Listed> => {
+    const messages = await store.sessions.listMessages({ sessionId: record.sessionId });
+    const first = messages.find((one) => one.role === 'user' && one.source === 'input');
+    return {
+      id: record.sessionId,
+      title: first === undefined ? record.sessionId : titleOf(textOf(first), record.sessionId),
+      createdAt: record.createdAt,
+      modifiedAt: record.updatedAt,
+      workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],
+    };
+  };
+
   return {
     provider,
     displayName,
@@ -753,18 +779,24 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     list: async (): Promise<Listed[]> => {
       const records = await store.sessions.list({});
       const listed: Listed[] = [];
-      for (const record of records) {
-        const messages = await store.sessions.listMessages({ sessionId: record.sessionId });
-        const first = messages.find((one) => one.role === 'user' && one.source === 'input');
-        listed.push({
-          id: record.sessionId,
-          title: first === undefined ? record.sessionId : titleOf(textOf(first), record.sessionId),
-          createdAt: record.createdAt,
-          modifiedAt: record.updatedAt,
-          workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],
-        });
-      }
+      for (const record of records) listed.push(await recordRow(record));
       return listed;
+    },
+    /*
+     * One session's own row, read from its one record rather than by listing
+     * the store.
+     *
+     * What a client opening a row the host does not hold costs without this: a
+     * link from another machine, a session written to disk after the last
+     * listing - `list` reads every record in the store and every record's
+     * messages for one id. `undefined` is a real answer, the same one
+     * `transcript` gives: the store does not have this session. A store error
+     * is raised, since a store that would not answer is not a session that is
+     * absent - and the host reads a throwing `find` as nothing to say.
+     */
+    find: async (id): Promise<Listed | undefined> => {
+      const record = await store.sessions.get({ sessionId: id });
+      return record === undefined ? undefined : await recordRow(record);
     },
     /*
      * The store's own delete: a session with its messages, runs, events,

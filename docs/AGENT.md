@@ -82,6 +82,7 @@ const host = createHost({ path, agents: [shout()] });
 | `probe()` | What you offer, asked once at startup | optional |
 | `directories()` | The directories you will work in | optional |
 | `list()` | Sessions somebody can browse | optional |
+| `find(id)` | One of those, on its own, for an id the host has not got | optional |
 | `transcript(id)` | One of those, as turns - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
 | `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
@@ -99,6 +100,14 @@ controls on the new-session screen than in the session.
 and the commands behind a slash are what a composer draws itself from, so
 answering late means offering them only once the conversation has started -
 which is exactly too late.
+
+**`find(id)` is how a row the host is not holding is opened.** A link from
+another machine, or a session written to disk after the last listing, is asked
+by id rather than by listing everything again - the row it gives back has to be
+the row `list` gives for the same session, or a client is sent a summary that
+did not change. Leave it out and one id the catalogue does not have costs a
+pass over every session you can list, so a backend that can list should say how
+to find one.
 
 **`transcript(id)` is what makes a catalogue row openable.** It is a read with
 nothing started; `create` is called with `resume` only when somebody actually

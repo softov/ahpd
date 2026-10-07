@@ -14,6 +14,13 @@ import type * as PiAi from '@earendil-works/pi-ai';
 /** The runtime values this package takes from pi. */
 export interface Pi {
   SessionManager: typeof PiCodingAgent.SessionManager;
+  /**
+   * The reader pi parses a session file's lines with, which is what `list`
+   * streams a file through. Taken so a caller can read a session file as it
+   * lies, without `SessionManager.open` - which creates, empties and migrates
+   * files rather than only reading them.
+   */
+  parseSessionEntries: typeof PiCodingAgent.parseSessionEntries;
   SettingsManager: typeof PiCodingAgent.SettingsManager;
   ModelRuntime: typeof PiCodingAgent.ModelRuntime;
   createAgentSessionServices: typeof PiCodingAgent.createAgentSessionServices;
@@ -45,6 +52,7 @@ export function loadPi(): Promise<Pi> {
     ]);
     const pi: Pi = {
       SessionManager: coding.SessionManager,
+      parseSessionEntries: coding.parseSessionEntries,
       SettingsManager: coding.SettingsManager,
       ModelRuntime: coding.ModelRuntime,
       createAgentSessionServices: coding.createAgentSessionServices,
