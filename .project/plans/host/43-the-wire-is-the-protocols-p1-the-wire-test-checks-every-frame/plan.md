@@ -57,6 +57,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | `moveChat` is in `CommandMap` and not served; it needs no `DEPARTURES` entry, which lists what ahpd sends or serves outside the maps | (defaulted: a method nobody calls is not traffic, and its absence is `UPSTREAM.md`'s backlog, not a departure) | 03 |
 | The strict schema is rebuilt when the installed package changes by host/44 p1 task 03, not here | the request, 2026-10-03: "the stale-schema guard is host/44 p1's (do not duplicate)" | - |
 | Every `_meta` key is either `ahpd.`-prefixed or one of the reference's own keys at the place the reference reads it; today's unprefixed ones are a pending list p4 empties | Softov, 2026-10-03, "Rename all + clients" | 04 |
+| The protocol's test cases from tag `v1.0.0` run against the package's reducers and through ahpd's host; `null` and an absent key compare equal | Softov, 2026-10-07, chose host/43 next on the proposal "adding upstream's reducer test cases", as two reviewed AHP projects do | 05 |
 
 ## Proposed architecture
 
@@ -72,6 +73,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [02 - The checker routes requests, results and notifications by the protocol's maps](task-02-the-checker-routes-by-the-protocols-maps.md) | todo | 01 |
 | [03 - The wire test records what the host sends, over a host with people, automations and root config](task-03-the-wire-test-records-a-whole-host.md) | todo | 02 |
 | [04 - The wire test names every _meta key ahpd writes](task-04-the-wire-test-names-every-meta-key.md) | todo | 03 |
+| [05 - The protocol's own test cases run against ahpd, from the tag ahpd pins](task-05-the-upstream-test-cases-run.md) | todo | - |
 
 ## Risks and tradeoffs
 
