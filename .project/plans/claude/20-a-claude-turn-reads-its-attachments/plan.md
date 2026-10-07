@@ -1,7 +1,7 @@
 ---
 title: A Claude turn reads its message's attachments, queued and steered ones included
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -19,8 +19,8 @@ refs:
   - "[code://packages/agent-claude/src/session/turns.ts#L373](../../../../packages/agent-claude/src/session/turns.ts#L373) - `begin`, which drops the SDK's fifth argument"
   - "[code://packages/agent-claude/src/session/turns.ts#L433](../../../../packages/agent-claude/src/session/turns.ts#L433) - `steer`, which pushes text only"
   - "[code://packages/agent-acp/src/session/turn.ts#L284-L322](../../../../packages/agent-acp/src/session/turn.ts#L284-L322) - `blocksFor`, the sibling backend's mapping of attachments to content blocks, the pattern to mirror"
-  - "[code://packages/agent-acp/src/session/queue.ts#L192](../../../../packages/agent-acp/src/session/queue.ts#L192) - \"A queued message carries no attachments: `Session.queue` takes none.\""
-  - "[code://packages/sdk/src/types/session.ts#L380](../../../../packages/sdk/src/types/session.ts#L380) - `begin(..., attachments?)`, already carrying them; `queue` and `steer` get them in host 68"
+  - "[code://packages/agent-acp/src/session/queue.ts#L187-L196](../../../../packages/agent-acp/src/session/queue.ts#L187-L196) - the sibling backend's `startNext`, which hands the turn its text alone and drops a queued message's attachments"
+  - "[code://packages/sdk/src/types/session.ts#L384](../../../../packages/sdk/src/types/session.ts#L384) - `begin(..., attachments?)`, already carrying them; `queue` and `steer` take them from host 68"
   - npm://@anthropic-ai/claude-agent-sdk@* - a user message's `content` takes text and image (base64 source) blocks
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/claude/claudePromptResolver.ts - VS Code's Claude resolver: text first, references as one block
 ---
@@ -51,7 +51,7 @@ chat/turnStarted or pendingMessageSet -> host 68 writes the bytes to disk -> Ses
 ### Gaps
 
 - `Not found: attachment handling in packages/agent-claude/src - searched "attachments"`.
-- `Session.queue` and `Session.steer` cannot carry attachments; host 68 task 02 adds them.
+- `Session.queue` and `Session.steer` take attachments since host 68, so this plan only has to keep a queued message's and push a steering message's.
 
 ## Decisions locked in
 
@@ -79,8 +79,8 @@ chat/turnStarted or pendingMessageSet -> host 68 writes the bytes to disk -> Ses
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A begun turn sends its attachments to the CLI](task-01-a-begun-turn-sends-its-attachments.md) | todo | - |
-| [02 - A queued or steering message keeps its attachments](task-02-a-queued-or-steering-message-keeps-them.md) | todo | 01, host 68 task 02 |
+| [01 - A begun turn sends its attachments to the CLI](task-01-a-begun-turn-sends-its-attachments.md) | done | - |
+| [02 - A queued or steering message keeps its attachments](task-02-a-queued-or-steering-message-keeps-them.md) | done | 01, host 68 task 02 |
 
 ## Risks and tradeoffs
 
@@ -89,15 +89,15 @@ chat/turnStarted or pendingMessageSet -> host 68 writes the bytes to disk -> Ses
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** host 68, then [task-01-a-begun-turn-sends-its-attachments.md](task-01-a-begun-turn-sends-its-attachments.md).
+- **Done so far:** both tasks are done. See [implemented.md](implemented.md) and [deferred.md](deferred.md).
+- **Next action:** none. Reviewed and closed on 2026-10-07.
 - **Open questions:** none.
 - **Watch out for:** the side-chat `carried` prefix is text and must stay the first block when blocks are sent.
 
 ## Final verification checklist
 
-- [ ] A test drives a Claude session with a fake CLI and checks the pushed `content` for a picked file, a small and a large image, small and large pasted text, a PDF and an unknown type.
-- [ ] A queued message with an image starts its turn with the image block.
-- [ ] A message with no attachments is pushed as the same string as before.
-- [ ] `pnpm` gates green.
-- [ ] `plans/index.md` updated.
+- [x] A test drives a Claude session with a fake CLI and checks the pushed `content` for a picked file, a small and a large image, small and large pasted text, a PDF and an unknown type.
+- [x] A queued message with an image starts its turn with the image block.
+- [x] A message with no attachments is pushed as the same string as before.
+- [x] `pnpm` gates green.
+- [x] `plans/index.md` updated.

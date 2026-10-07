@@ -40,6 +40,14 @@ export const sdk = {
   mcp: [] as Record<string, unknown>[],
   skills: [] as Record<string, unknown>[],
   said: [] as string[],
+  /**
+   * What each prompt carried when it was not plain text, in order.
+   *
+   * A message with attachments goes to the CLI as content blocks rather than
+   * a string, and `said` holds the strings alone - so a case about a message
+   * with a picture reads it here.
+   */
+  blocks: [] as unknown[][],
   modelsSet: [] as (string | undefined)[],
   modesSet: [] as string[],
   effortsSet: [] as (string | null | undefined)[],
@@ -142,7 +150,9 @@ export const fake = {
     if (options.canUseTool) sdk.canUseTool = options.canUseTool as typeof sdk.canUseTool;
     void (async () => {
       for await (const frame of prompt) {
-        sdk.said.push((frame as { message?: { content?: string } }).message?.content ?? '');
+        const content = (frame as { message?: { content?: unknown } }).message?.content;
+        if (typeof content === 'string') sdk.said.push(content);
+        else if (Array.isArray(content)) sdk.blocks.push(content);
       }
     })();
     return {
@@ -191,6 +201,7 @@ export function resetSdk(): void {
   sdk.mcp.length = 0;
   sdk.skills.length = 0;
   sdk.said.length = 0;
+  sdk.blocks.length = 0;
   sdk.modelsSet.length = 0;
   sdk.modesSet.length = 0;
   sdk.effortsSet.length = 0;

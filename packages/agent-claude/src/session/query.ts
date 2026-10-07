@@ -1,7 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { idOf } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import type { SettingSource } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage, SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { ownEnvOf, queryOptionsOf } from '../options.js';
@@ -23,8 +23,13 @@ const ALL_SOURCES: SettingSource[] = ['user', 'project', 'local'];
 
 /** What this area offers the rest of the session. */
 export interface Query {
-  /** Messages waiting to go out on the CLI's input stream. */
-  waiting: { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null }[];
+  /**
+   * Messages waiting to go out on the CLI's input stream.
+   *
+   * The SDK's own shape, because a message with attachments goes as content
+   * blocks rather than as the string one without carries.
+   */
+  waiting: SDKUserMessage[];
   /** A query for this session, on the agent named. */
   startQuery: (agent: string | undefined, first: boolean) => ReturnType<typeof query>;
   /** The backend's id for the *last* thing in each turn, by this host's turn id. */
@@ -66,7 +71,7 @@ export function createQuery(ctx: SessionContext): Query {
 
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session a session rather than a series of them.
-  const waiting: { type: 'user'; message: { role: 'user'; content: string }; parent_tool_use_id: null }[] = [];
+  const waiting: SDKUserMessage[] = [];
 
   async function* input(): AsyncGenerator<(typeof waiting)[number]> {
     for (;;) {

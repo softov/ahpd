@@ -1,5 +1,6 @@
 import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
-import type { Bag, Chosen, MessageFrom, OnWire, Ran, WireTurn } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, OnWire, Ran, WireTurn } from '@ahpd/sdk';
+import { blocksFor } from './attachments.js';
 import { bag, list, str } from './common.js';
 import { EFFORTS } from './config.js';
 import type { SessionContext } from './context.js';
@@ -11,11 +12,11 @@ export interface Turns {
   /** Start the head of the queue, once there is nothing running. */
   startNext: () => void;
   methods: {
-    begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom) => void;
+    begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => void;
     setTitle: (title: string) => void;
     ran: (turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>, queuedAs?: string) => void;
-    steer: (id: string, text: string) => boolean;
-    queue: (id: string, text: string, model?: Chosen, from?: MessageFrom) => void;
+    steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
+    queue: (id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[]) => void;
     setDraft: (draft: Bag | undefined) => void;
     unqueue: (id: string) => void;
     reorder: (order: string[]) => void;
@@ -50,6 +51,22 @@ export function createTurns(ctx: SessionContext): Turns {
   let carried = ctx.options.context;
 
   /**
+   * A message onto the CLI's own input stream, as what it is.
+   *
+   * Where a turn beginning, a message steering one, and a message taken off the
+   * queue all reach the CLI: the wake and the touch happen in one place, and a
+   * message's attachments become the blocks the CLI takes whichever way it
+   * arrived. A message with none is the string it always was.
+   */
+  const push = async (text: string, attachments?: MessageAttachment[]): Promise<void> => {
+    const content = await blocksFor(text, attachments);
+    ctx.waiting.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null });
+    ctx.wake?.();
+    ctx.wake = undefined;
+    ctx.touch();
+  };
+
+  /**
    * A turn that never reaches the CLI, recorded as one that started and failed.
    *
    * The ordinary lifecycle compressed. Both events rather than the error alone,
@@ -57,7 +74,14 @@ export function createTurns(ctx: SessionContext): Turns {
    * has to clear its waiting row, and a client that is only told about the
    * failure keeps showing a message it already sent.
    */
-  const refuseTurn = (turnId: string, text: string, why: string, queuedMessageId?: string, from?: MessageFrom): void => {
+  const refuseTurn = (
+    turnId: string,
+    text: string,
+    why: string,
+    queuedMessageId?: string,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+  ): void => {
     const turn = {
       id: turnId,
       startedAt: new Date().toISOString(),
@@ -65,6 +89,9 @@ export function createTurns(ctx: SessionContext): Turns {
         text,
         origin: from?.origin ?? { kind: 'user' },
         ...(from?._meta ? { _meta: from._meta } : {}),
+        // Kept, though nothing was sent: the turn is in the transcript, and a
+        // client reading it back shows the picture the person pasted.
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       },
       responseParts: [],
       state: 'error',
@@ -85,7 +112,14 @@ export function createTurns(ctx: SessionContext): Turns {
     ctx.touch();
   };
 
-  const beginTurn = async (turnId: string, text: string, model?: Chosen, queuedMessageId?: string, from?: MessageFrom): Promise<void> => {
+  const beginTurn = async (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    queuedMessageId?: string,
+    from?: MessageFrom,
+    attachments?: MessageAttachment[],
+  ): Promise<void> => {
     /*
      * A session whose CLI has exited answers at once, and says why.
      *
@@ -96,7 +130,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * says the CLI never started.
      */
     if (ctx.gone !== undefined) {
-      refuseTurn(turnId, text, ctx.gone, queuedMessageId, from);
+      refuseTurn(turnId, text, ctx.gone, queuedMessageId, from, attachments);
       return;
     }
     /*
@@ -110,7 +144,7 @@ export function createTurns(ctx: SessionContext): Turns {
     const refused = ctx.switchAgent(from?.agent?.uri);
     ctx.beginning = undefined;
     if (refused !== undefined) {
-      refuseTurn(turnId, text, refused, queuedMessageId, from);
+      refuseTurn(turnId, text, refused, queuedMessageId, from, attachments);
       ctx.startNext();
       return;
     }
@@ -128,7 +162,7 @@ export function createTurns(ctx: SessionContext): Turns {
       const refused = await ctx.take(model.id);
       ctx.beginning = undefined;
       if (refused !== undefined) {
-        refuseTurn(turnId, text, refused, queuedMessageId, from);
+        refuseTurn(turnId, text, refused, queuedMessageId, from, attachments);
         /*
          * The queue keeps going, which it does for any other turn that ends.
          *
@@ -162,6 +196,7 @@ export function createTurns(ctx: SessionContext): Turns {
         text,
         origin: from?.origin ?? { kind: 'user' },
         ...(from?._meta ? { _meta: from._meta } : {}),
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
         ...(ctx.chosen ? { model: { id: ctx.chosen, ...(model?.config ? { config: model.config } : {}) } } : {}),
       },
       responseParts: [],
@@ -193,10 +228,7 @@ export function createTurns(ctx: SessionContext): Turns {
      */
     const sent = carried === undefined ? text : `${carried}\n\n${text}`;
     carried = undefined;
-    ctx.waiting.push({ type: 'user', message: { role: 'user', content: sent }, parent_tool_use_id: null });
-    ctx.wake?.();
-    ctx.wake = undefined;
-    ctx.touch();
+    await push(sent, attachments);
   };
 
   /**
@@ -242,7 +274,10 @@ export function createTurns(ctx: SessionContext): Turns {
     if (message._meta !== undefined) from._meta = bag(message._meta);
     const picked = bag(message.agent);
     if (typeof picked.uri === 'string') from.agent = { uri: str(picked.uri) as string };
-    void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from);
+    // What the message was holding while it waited, which is what it is still.
+    const kept = message.attachments;
+    const attachments = Array.isArray(kept) ? kept as MessageAttachment[] : undefined;
+    void beginTurn(crypto.randomUUID(), str(message.text) ?? '', model, str(next.id), from, attachments);
   };
 
   /**
@@ -370,7 +405,7 @@ export function createTurns(ctx: SessionContext): Turns {
      * naming a model the CLI will not take fails with its reason instead of
      * being labelled with it and answered by another one.
      */
-    begin: (turnId, text, model, from) => { void beginTurn(turnId, text, model, undefined, from); },
+    begin: (turnId, text, model, from, attachments) => { void beginTurn(turnId, text, model, undefined, from, attachments); },
     setTitle: (said) => { if (said !== '') ctx.title = said; },
 
     /**
@@ -421,19 +456,20 @@ export function createTurns(ctx: SessionContext): Turns {
      * the removal when it consumes one, so both go out and the state field
      * stays empty - which is the honest description of what happened.
      */
-    steer: (id, text) => {
+    steer: (id, text, attachments) => {
       if (!ctx.active) return false;
-      const message = { text, origin: { kind: 'user' } };
+      const message = {
+        text,
+        origin: { kind: 'user' },
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      };
       // Held in the state as well as announced, and taken out again where the
       // CLI reads it rather than here: a client that only read the state saw
       // nothing waiting, because the announcement and its removal used to
       // happen in one tick.
       ctx.steering = { id, message };
       ctx.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
-      ctx.waiting.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
-      ctx.wake?.();
-      ctx.wake = undefined;
-      ctx.touch();
+      void push(text, attachments);
       return true;
     },
 
@@ -445,13 +481,16 @@ export function createTurns(ctx: SessionContext): Turns {
      * immediately started, which is a queue entry a client sees appear and
      * leave rather than one that was never there.
      */
-    queue: (id, text, model, from) => {
+    queue: (id, text, model, from, attachments) => {
       const entry: Bag = {
         id,
         message: {
           text,
           origin: from?.origin ?? { kind: 'user' },
           ...(from?._meta ? { _meta: from._meta } : {}),
+          // Held with the message, and echoed in the action below: a client
+          // draws the chip from here while the message waits its turn.
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
           ...(model ? { model: { id: model.id, ...(model.config ? { config: model.config } : {}) } } : {}),
           // The agent, kept with the message rather than applied now: this
           // message waits for the turn in front of it, and the CLI it runs on is

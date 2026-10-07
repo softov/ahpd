@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { checker } from '../../../tools/wire.mjs';
+import { fileSessions } from '../src/sessions.js';
 import {
   resetSdk, actions, emit, sdk, settle, running,
 } from './support/host.js';
+import type { Bag } from '../src/types/common.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -491,4 +496,105 @@ describe('what a chat says about itself', () => {
       .toBeGreaterThan(said.indexOf('chat/pendingMessageSet'));
   });
 
+});
+
+describe('a message that carries attachments', () => {
+  /** A PNG's first bytes. Nothing here decodes it, so a header is a picture. */
+  const PNG = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489', 'hex');
+
+  const made: string[] = [];
+  afterEach(() => {
+    for (const dir of made) rmSync(dir, { recursive: true, force: true });
+    made.length = 0;
+  });
+
+  /**
+   * A session whose messages' files the host writes to a real folder.
+   *
+   * The store answers `attachmentsDir`, which is the one thing that makes the
+   * bytes a file rather than something the message carries - so the path a
+   * pasted picture takes through the host is the path a real one takes.
+   */
+  const withFiles = async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-input-attach-'));
+    made.push(dir);
+    return running({ sessions: fileSessions({ dir }) });
+  };
+
+  /** Wait for what the host writes and the CLI reads, which is off a promise. */
+  const until = async (ready: () => boolean, tries = 200): Promise<void> => {
+    for (let i = 0; i < tries && !ready(); i++) await settle(1);
+  };
+
+  const png = (label = 'pasted.png'): Bag => ({
+    type: 'embeddedResource', label, contentType: 'image/png', data: PNG.toString('base64'),
+  });
+
+  const txt = (label = 'note.txt'): Bag => ({
+    type: 'embeddedResource', label, contentType: 'text/plain', data: Buffer.from('one\ntwo\n').toString('base64'),
+  });
+
+  type Live = Awaited<ReturnType<typeof running>>;
+
+  /*
+   * Every dispatch is awaited, because the host writes an attachment's bytes
+   * to a file before it applies the action that carries it - and a message
+   * applied late is not the message this case is about.
+   */
+  const send = (client: Live['client'], channel: string, action: Bag) => client.handle({
+    method: 'dispatchAction',
+    params: { channel, action },
+  });
+
+  const image = () => ({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG.toString('base64') } });
+
+  it('sends a turn with a pasted image to the CLI as an image block', async () => {
+    const { client, chatUri } = await withFiles();
+    await send(client, chatUri, {
+      type: 'chat/turnStarted', turnId: 't1', message: { text: 'what is this', attachments: [png()] },
+    });
+    await until(() => sdk.blocks.length > 0);
+
+    const blocks = sdk.blocks.at(-1) as Bag[];
+    expect(blocks[0]).toEqual({ type: 'text', text: 'what is this' });
+    expect(blocks[1]).toEqual(image());
+    // An image and not a string: the bytes went to a file the host wrote, and
+    // the model is sent the picture rather than the path to it.
+    expect(sdk.said).toEqual([]);
+  });
+
+  it('starts a queued message with its image when the running turn ends', async () => {
+    const { client, chatUri } = await withFiles();
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+    await until(() => sdk.said.length > 0);
+
+    await send(client, chatUri, {
+      type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'second', attachments: [png()] },
+    });
+    await settle();
+    // Waiting behind the turn, so nothing of it has reached the CLI.
+    expect(sdk.blocks).toEqual([]);
+
+    await emit({ type: 'result', subtype: 'success', duration_ms: 5 });
+    await until(() => sdk.blocks.length > 0);
+
+    const blocks = sdk.blocks.at(-1) as Bag[];
+    expect(blocks[0]).toEqual({ type: 'text', text: 'second' });
+    expect(blocks[1]).toEqual(image());
+  });
+
+  it('sends a steering message\'s pasted text into the turn that is running', async () => {
+    const { client, chatUri } = await withFiles();
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } });
+    await until(() => sdk.said.length > 0);
+
+    await send(client, chatUri, {
+      type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually', attachments: [txt()] },
+    });
+    await until(() => sdk.blocks.length > 0);
+
+    const blocks = sdk.blocks.at(-1) as Bag[];
+    expect(blocks[0]).toEqual({ type: 'text', text: 'actually' });
+    expect((blocks[1] as Bag).text).toBe('note.txt (lines 1-2):\n```\none\ntwo\n```');
+  });
 });
