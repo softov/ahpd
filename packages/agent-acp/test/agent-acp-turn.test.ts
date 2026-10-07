@@ -270,7 +270,10 @@ it('opens a part per run of one kind, in the order the server wrote them', async
     expect(said.findIndex((one) => one.type === 'chat/responsePart' && (one.part as Part).id === action.partId))
       .toBeLessThan(said.indexOf(action));
   }
-  expect(said.filter((one) => one.partId === kept[2]?.id).map((one) => one.content)).toEqual(['second ', 'thought']);
+  // The host gathers a part's text for a moment before it sends it, so what
+  // arrives for this part is its words in the order the server wrote them -
+  // which is what the run of one kind is.
+  expect(said.filter((one) => one.partId === kept[2]?.id).map((one) => one.content).join('')).toBe('second thought');
 });
 
 it('opens no part for a message that is only whitespace, and keeps the whitespace an answer starts with', async () => {

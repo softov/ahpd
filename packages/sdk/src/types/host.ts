@@ -354,6 +354,17 @@ export interface HostOptions {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a streamed delta waits for the next one before it is sent, in
+   * milliseconds.
+   *
+   * A turn sends one delta per token and every one of them is an envelope: a
+   * sequence number, a broadcast and a copy kept for a client that comes
+   * back. Within this window the deltas naming one part are merged into one
+   * action, which is the same text in fewer envelopes. Unset is 75; zero
+   * sends every delta as it arrives.
+   */
+  deltaWindowMs?: number;
+  /**
    * The daemon's own settings, as the keys root config carries beside the host's.
    *
    * The host has no business in a daemon's `config.json`: it does not read it,

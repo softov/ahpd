@@ -172,6 +172,15 @@ export interface Config {
    * are slow rather than gone.
    */
   clientToolTimeoutMs?: number;
+  /**
+   * How long a streamed delta waits for the next one before it is sent.
+   *
+   * Milliseconds, a whole number from 0 to 1000. Within the window the deltas
+   * naming one part are merged into one action, which is the same text a
+   * client ends up with in fewer envelopes. Unset is 75; zero sends every
+   * delta as it arrives.
+   */
+  deltaWindowMs?: number;
   /** A file every frame is appended to, both directions, as JSON lines. */
   wire?: string;
   /**

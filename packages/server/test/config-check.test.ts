@@ -73,6 +73,11 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ http: { port: 70000 } })).toBe(`${config}: http.port must be an integer between 0 and 65535`);
   });
 
+  it('refuses a delta window longer than a second, and one that is not a whole number', () => {
+    expect(refusal({ deltaWindowMs: 1001 })).toBe(`${config}: deltaWindowMs must be an integer between 0 and 1000`);
+    expect(refusal({ deltaWindowMs: 7.5 })).toBe(`${config}: deltaWindowMs must be an integer between 0 and 1000`);
+  });
+
   it('refuses an http that is neither a switch nor an object', () => {
     expect(refusal({ http: 'on' })).toContain(`${config}: http must be`);
   });
@@ -96,6 +101,14 @@ describe('a wrong value on a known key', () => {
     expect(folded({ usage: { timezone: 'Asia/Tokyo' } }).usageTimezone).toBe('Asia/Tokyo');
     expect(folded({ usage: {} }).usageTimezone).toBeUndefined();
     expect(folded({}).usageTimezone).toBeUndefined();
+  });
+
+  it('reads the delta window onto the options, and leaves it absent when the file names none', () => {
+    expect(folded({ deltaWindowMs: 0 }).deltaWindowMs).toBe(0);
+    expect(folded({ deltaWindowMs: 75 }).deltaWindowMs).toBe(75);
+    // Absent rather than defaulted here, because the host's own 75 milliseconds
+    // is the same answer and one place should hold it.
+    expect(folded({}).deltaWindowMs).toBeUndefined();
   });
 
   it('refuses http.host without http.port', () => {

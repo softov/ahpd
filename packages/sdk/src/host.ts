@@ -46,6 +46,7 @@ import {
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
+import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
 import type { Claimed, Held, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
 import { GREETINGS, UNGATED, PER_CONNECTION, seesConfig, DECLARED, REVERSE } from './host/gate.js';
@@ -552,8 +553,7 @@ export function createHost(options: HostOptions): Host {
    * client knows it missed nothing - so the counter has to advance with state,
    * never with messages.
    */
-  const dispatch = (channel: string, given: Record<string, unknown>, origin = applying): void => {
-    const action = ctx.withWorkerUri(channel, given);
+  const emit = (channel: string, action: Record<string, unknown>, origin: Origin | undefined): void => {
     ctx.serverSeq += 1;
     const envelope = { channel, action, serverSeq: ctx.serverSeq, origin };
     // Kept whether or not anyone was listening: a client that dropped is by
@@ -574,6 +574,28 @@ export function createHost(options: HostOptions): Host {
     replayable.push({ ...envelope, action: structuredClone(action) });
     if (replayable.length > REPLAY) replayable.shift();
     broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
+  };
+  /**
+   * The window a streamed delta waits in, which `dispatch` sends through.
+   *
+   * One merge for the whole host, over every channel, so that a backend needs
+   * to know nothing about it: what a chat draws is the text it was sent, and
+   * the text is the same in one envelope as in fifty. A delta held here has no
+   * sequence number yet, which is why everything that answers a client with
+   * state - a snapshot, a replay, a disposal - goes through `flush` first.
+   */
+  const deltas = merger({ windowMs: options.deltaWindowMs ?? DELTA_WINDOW_MS, send: emit });
+  /**
+   * One state action on its way out.
+   *
+   * The three kinds that stream text are gathered for `deltaWindowMs`; every
+   * other action flushes them and goes out itself, so nothing a client reads
+   * against the text is sent ahead of it.
+   */
+  const dispatch = (channel: string, given: Record<string, unknown>, origin = applying): void => {
+    const action = ctx.withWorkerUri(channel, given);
+    if (deltas.push(channel, action, origin)) return;
+    emit(channel, action, origin);
   };
   /**
    * A client's action, refused in that client's hearing.
@@ -713,6 +735,7 @@ export function createHost(options: HostOptions): Host {
     watches, marksOf, resumedSessions, activeClientsOf, drafts,
     restartNeeded: false,
     dispatch,
+    flushDeltas: deltas.flush,
   } as HostContext;
   Object.assign(ctx, createTelemetry(ctx));
   Object.assign(ctx, createAuth(ctx));
@@ -833,6 +856,11 @@ export function createHost(options: HostOptions): Host {
     connections: () => connections.size,
     close: () => {
       closing ??= (async () => {
+        // The window closes with the host: what it holds goes out now, and the
+        // last actions the sessions below emit go out as they are dispatched.
+        // A delta still waiting on the timer would otherwise be broadcast by a
+        // timer that outlives the host it belongs to.
+        deltas.stop();
         ctx.closed = true;
         /** One step of the close, logged rather than thrown, so a failed one does not skip the rest. */
         const step = async (what: string, run: () => unknown): Promise<void> => {

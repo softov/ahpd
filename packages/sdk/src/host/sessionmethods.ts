@@ -34,7 +34,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const { connection } = conn;
   const {
     about, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat, charged, chatOf,
-    chatSummary, claimable, claims, dir, dispatch, drafts, first, forWhom, heldAs, isolating,
+    chatSummary, claimable, claims, dir, dispatch, drafts, first, flushDeltas, forWhom, heldAs, isolating,
     isolated, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle, snapshotOf,
@@ -111,6 +111,17 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     subscribe: async (params) => {
       const channel = String(params.channel ?? '');
+      /*
+       * Text still in the window goes out before the snapshot is read.
+       *
+       * A snapshot of a chat is built from the parts the backend is writing
+       * into, so it already carries the words a held delta would say. Sent
+       * after it, that delta writes them a second time - and the sequence
+       * number is exactly what says so: flushed first, the delta is at or
+       * below the number the snapshot is taken at, and no client is replayed
+       * a word it was handed.
+       */
+      flushDeltas();
       // What it means here, and what it was called there. The snapshot is
       // taken of the channel and returned under the name the client used -
       // a client that asked about one URI and was answered about another

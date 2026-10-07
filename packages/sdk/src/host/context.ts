@@ -200,6 +200,15 @@ export interface HostContext extends Routing, Relay, Changesets, Facts, Telemetr
    */
   dispatch: (channel: string, given: Record<string, unknown>, origin?: Origin | undefined) => void;
   /**
+   * Send every streamed delta still held in the window, oldest first.
+   *
+   * A held delta has no sequence number yet, so anything answering a client
+   * with state looks at a chat the deltas have not reached: a snapshot read
+   * first carries the text and is then handed the delta that wrote it, and a
+   * client that comes back is replayed a delta it has already applied.
+   */
+  flushDeltas: () => void;
+  /**
    * Answer one client's dispatch with the reason it was not applied.
    *
    * Sent to that client alone: nobody else applied it optimistically, so

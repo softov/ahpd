@@ -9,6 +9,17 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 
 beforeEach(resetSdk);
 
+/*
+ * Wait for the window a streamed delta is gathered in to close.
+ *
+ * The host holds the text for a moment before it sends it, so a test that
+ * reads the wire the instant a frame was read is reading a channel the delta
+ * has not reached yet.
+ */
+const pastWindow = async (): Promise<void> => {
+  await new Promise((r) => { setTimeout(r, 150); });
+};
+
 describe('driving a turn', () => {
   it('announces the session, and answers for it once it exists', async () => {
     const { client, peer: p, uri, chatUri } = await running();
@@ -50,6 +61,7 @@ describe('driving a turn', () => {
       { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
       { type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hey' } } },
     );
+    await pastWindow();
 
     const types = actions(p, chatUri).map((e) => e.action.type);
     // The protocol is explicit: responsePart creates the target, delta
@@ -81,14 +93,17 @@ describe('driving a turn', () => {
         event: { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: ':"/tmp/a"}' } },
       },
     );
+    await pastWindow();
 
     const said = actions(p, chatUri);
     const types = said.map((e) => e.action.type);
     // The row exists before the arguments do, which is the whole point of a
     // `streaming` status: a client draws the tool's name straight away.
     expect(types.indexOf('chat/toolCallStart')).toBeLessThan(types.indexOf('chat/toolCallDelta'));
-    expect(said.filter((e) => e.action.type === 'chat/toolCallDelta').map((e) => e.action.content))
-      .toEqual(['{"file_path"', ':"/tmp/a"}']);
+    // One row's arguments, as the text they add up to - the host gathers the
+    // json of one call into an action of its own.
+    expect(said.filter((e) => e.action.type === 'chat/toolCallDelta').map((e) => e.action.content).join(''))
+      .toBe('{"file_path":"/tmp/a"}');
     const mid = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
       snapshot: { state: { activeTurn: { responseParts: { toolCall?: { status: string; partialInput?: string } }[] } } };
     }).snapshot.state.activeTurn.responseParts.find((one) => one.toolCall !== undefined)?.toolCall;

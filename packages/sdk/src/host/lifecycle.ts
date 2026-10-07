@@ -118,7 +118,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, origins,
     drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside,
-    dispatch, broadcast, log, fire, leadOf,
+    dispatch, broadcast, flushDeltas, log, fire, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, placedIn, followOf,
     isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
@@ -423,6 +423,14 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (!held && !owner)
       throw new RpcError(-32001, `No agent for session ${uri}`);
     const agent = held?.agent ?? (owner as Agent);
+    /*
+     * The turn's last words before the session that said them goes.
+     *
+     * A chat closing does not end a stream: what is held would be sent after
+     * the teardown below, against a chat every client has already been told is
+     * gone.
+     */
+    flushDeltas();
     /*
      * Read before either is let go of, and before the row's directory goes
      * with it: `dirOf` answers out of `sessions` or `wheres`, and this is the

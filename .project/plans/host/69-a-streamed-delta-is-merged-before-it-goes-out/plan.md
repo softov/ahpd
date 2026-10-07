@@ -1,7 +1,7 @@
 ---
 title: Streamed deltas are merged for a short window in the host's dispatch, for every backend
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -23,7 +23,7 @@ refs:
 
 ## Goal
 
-A streaming turn sends one merged `chat/delta`, `chat/reasoning` or `chat/toolCallDelta` per part per window instead of one per token, for acp, claude, pi, cofold and subagent chats alike, with no change in what a client ends up with.
+A streaming turn sends one merged `chat/delta`, `chat/reasoning` or `chat/toolCallDelta` per part per window instead of one per token. It does so for acp, claude, pi, cofold and subagent chats alike, with no change in what a client ends up with.
 The window is `deltaWindowMs`, 75 by default; 0 sends every delta as today.
 
 ## Reconnaissance
@@ -67,8 +67,8 @@ backend emit -> spawn.ts emit -> dispatch(channel, action)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - dispatch merges deltas within the window](task-01-dispatch-merges-deltas.md) | todo | - |
-| [02 - The daemon config sets the window](task-02-the-daemon-config-sets-the-window.md) | todo | 01 |
+| [01 - dispatch merges deltas within the window](task-01-dispatch-merges-deltas.md) | done | - |
+| [02 - The daemon config sets the window](task-02-the-daemon-config-sets-the-window.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -77,16 +77,20 @@ backend emit -> spawn.ts emit -> dispatch(channel, action)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-dispatch-merges-deltas.md](task-01-dispatch-merges-deltas.md).
+- **Done so far:** both tasks. See [implemented.md](implemented.md).
+  A review found two defects, both fixed. A snapshot whose state was read after an `await` could carry held text and then be handed the delta that wrote it. `value` in `packages/sdk/src/host/snapshots.ts` now flushes and numbers the snapshot after the flush. A delta pushed after `close` began was sent by a timer that outlived the host. The merger has `stop()`, and `close` calls it. Each has a case that fails without the fix.
+- **Next action:** none. Reviewed, gates green, merged.
 - **Open questions:** none.
-- **Watch out for:** `ctx.telemetered`, `ctx.asking` and `ctx.links.observe` run on the merged action, once.
+- **Watch out for:** three cases outside the sdk read a delta off the wire the instant a frame was read. They now wait for the window, or compare the text their chunks add up to.
+  Wherever state is read across an `await` and answered with a number, the window has to be emptied in that same tick. Flush, then read `ctx.serverSeq`. A flush before the read is not enough.
 
 ## Final verification checklist
 
-- [ ] A host test streams 500 one-character deltas and a client receives the same final text in far fewer envelopes.
-- [ ] A `chat/turnComplete` emitted right after a delta reaches the client after that delta's text.
-- [ ] A client that subscribes mid-stream ends with the text once, not twice.
-- [ ] `deltaWindowMs: 0` sends every delta as before.
-- [ ] `pnpm` gates green.
-- [ ] `plans/index.md` updated.
+- [x] A host test streams 500 one-character deltas and a client receives the same final text in far fewer envelopes.
+- [x] A `chat/turnComplete` emitted right after a delta reaches the client after that delta's text.
+- [x] A client that subscribes mid-stream ends with the text once, not twice.
+- [x] `deltaWindowMs: 0` sends every delta as before.
+- [x] A chat snapshot read across an `await` holds the text once, with no delta replayed above its `fromSeq`.
+- [x] A delta pushed while the host is closing is sent on that tick, and none follows the close.
+- [x] `pnpm` gates green.
+- [x] `plans/index.md` updated.

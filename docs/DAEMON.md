@@ -523,6 +523,12 @@ authorizes, and a record's own `trustToken` overrides it.
 container on this host is the operator's decision and not a plugin's: the
 computer plugin contributes its lifecycle either way, and the reference host's
 own tools declare nothing so this key does not touch them.
+`deltaWindowMs` (or `--delta-window-ms`) is how long the host gathers the
+streamed text of one part before it sends it, in milliseconds: within that
+window a turn's deltas are merged into one action, so a client draws the same
+text from fewer envelopes. The default is 75, and 0 sends every delta as it
+arrives. A wrong value is `...: deltaWindowMs must be an integer between 0 and
+1000`.
 `http` (or `http: { "port": N }`) serves the commands over HTTP under `/api`; it
 has no flag, because it is a property of a deployment rather than of one run.
 See [An HTTP API](#an-http-api-for-the-commands-the-terminal-runs).

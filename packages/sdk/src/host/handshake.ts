@@ -22,7 +22,7 @@ export interface Handshake {
 export function createHandshake(ctx: HostContext, conn: ConnectionContext): Handshake {
   const { connection } = conn;
   const {
-    advertised, advertisedGrants, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting, dir, fire,
+    advertised, advertisedGrants, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting, dir, fire, flushDeltas,
     holders, known, leaves, loginId, log, LOGS, METRICS, metaMoved, metadataFor, meantBy,
     options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, spellingOf, TRACES,
@@ -174,6 +174,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       const wanted = Array.isArray(params.initialSubscriptions)
         ? params.initialSubscriptions.filter((uri) => typeof uri === 'string')
         : [];
+      /*
+       * Text still in the window goes out before the first snapshot is read,
+       * for the reason `subscribe` gives: the parts these snapshots are built
+       * from already carry it, and the delta that wrote it would write it
+       * again.
+       */
+      flushDeltas();
       const snapshots = [];
       for (const channel of wanted) {
         // A handshake that fails because one requested channel is gone is
@@ -348,6 +355,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         : [];
       const since = typeof params.lastSeenServerSeq === 'number' ? params.lastSeenServerSeq : 0;
 
+      /*
+       * Text still in the window goes out first, as it does for `subscribe`.
+       *
+       * This client was watching before it dropped, so what is flushed here
+       * is replayed to it below rather than read out of a snapshot - and a
+       * delta replayed after the snapshot that already holds its words is the
+       * same word twice.
+       */
+      flushDeltas();
       const missing: string[] = [];
       /** Each channel resumed, by the name this host dispatches under, with the name the client used. */
       const resumed = new Map<string, string>();

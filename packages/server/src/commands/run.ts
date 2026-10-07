@@ -585,6 +585,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     ...(options.clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs: options.clientToolTimeoutMs }),
     /*
+     * How long the host gathers a streamed delta before it sends it.
+     *
+     * Left off rather than defaulted here, for the reason above: the host's
+     * own 75 milliseconds is the same answer and one place should hold it.
+     */
+    ...(options.deltaWindowMs === undefined ? {} : { deltaWindowMs: options.deltaWindowMs }),
+    /*
      * The daemon's own settings, as the keys root config carries.
      *
      * Handed over rather than left in `config.json`, so a client holding

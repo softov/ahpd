@@ -63,6 +63,8 @@ export interface Options {
   advancedTools: boolean;
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
+  /** How long a streamed delta waits in the host before it is sent, absent when the deployment said nothing. */
+  deltaWindowMs?: number;
   /** Where automations are kept, and whether a clock fires them. */
   automations: 'file' | 'memory';
   /** Where the read and archived bits and a session's settings go. */
@@ -410,6 +412,13 @@ export const serverFields = {
     type: 'integer',
     minimum: 0,
     description: 'How long a call a client runs may wait. Default ten minutes; 0 waits for ever.',
+    cli: { value: 'MS' },
+  },
+  deltaWindowMs: {
+    type: 'integer',
+    minimum: 0,
+    maximum: 1000,
+    description: 'How long a streamed delta waits for the next one before it is sent. Default 75; 0 sends every delta as it arrives.',
     cli: { value: 'MS' },
   },
   automations: {
@@ -867,6 +876,7 @@ const noCwd = input['noCwd'] === true;
   const issuer = given('issuer');
   const wire = given('wire');
   const clientToolTimeoutMs = given('clientToolTimeoutMs');
+  const deltaWindowMs = given('deltaWindowMs');
   const usageZone = given('usage')?.timezone;
   const http = httpOf(file.http, source('http'));
   const proxy = proxyConfiguration(given('proxy'));
@@ -888,6 +898,7 @@ const noCwd = input['noCwd'] === true;
     trustToken: given('trustToken') ?? false,
     advancedTools: given('advancedTools') ?? false,
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
+    ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     automations: given('automations') ?? 'file',
     sessions: given('sessions') ?? 'file',
     usagePer: given('usage')?.per ?? 'turn',

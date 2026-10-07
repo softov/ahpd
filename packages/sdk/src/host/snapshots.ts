@@ -49,9 +49,23 @@ export function createSnapshots(ctx: HostContext): Snapshots {
    * `structuredClone` rather than a JSON round-trip, because a key that is
    * present and undefined is not the same as an absent one here - `usage` is
    * required and means "not measured" - and JSON cannot tell those apart.
+   *
+   * The window is emptied here, in the same tick as the read, and `fromSeq` is
+   * read after it.
+   *
+   * An assembly that awaited - a transcript, a backend's worker list - can
+   * have had a delta arrive while it was out, and that delta is held. It is
+   * already in the state above, because a backend writes a delta's text into
+   * the part before it emits the action - so it has to sit at or below
+   * `fromSeq` or it is replayed on top of the words it wrote. Flushed and
+   * numbered here, it does.
    */
-  const value = (snapshot: Record<string, unknown>): Record<string, unknown> =>
-    structuredClone(snapshot);
+  const value = (snapshot: Record<string, unknown>): Record<string, unknown> => {
+    ctx.flushDeltas();
+    return structuredClone('fromSeq' in snapshot
+      ? { ...snapshot, fromSeq: ctx.serverSeq }
+      : snapshot);
+  };
 
   const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}, connection?: Connection): Promise<Record<string, unknown>> => {
     if (isRootChannel(channel)) {
