@@ -1,7 +1,7 @@
 ---
 title: A plugin file takes the nearest manifest only when it is a plugin's
 domain: plugin
-status: active
+status: built
 priority: low
 created: 2026-09-30
 revalidated: 2026-09-30
@@ -49,14 +49,14 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** task 01 implemented on main (5221af7), awaiting review.
-- **Next action:** Softov's review; the close-out (`implemented.md`, `status: built`) waits on it.
+- **Done so far:** built 2026-10-07; see [implemented.md](implemented.md). Task 01 done on main (5221af7), reviewed 2026-10-06.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the load and the listing must agree; both call `nearestManifest`.
 
 ## Final verification checklist
 
-- [ ] `plugin-throws/index.ts` logs its own name, not `@ahpd/server`.
-- [ ] The dev config's `./packages/agent-claude/src/index.ts` still loads as `@ahpd/agent-claude`.
+- [x] `plugin-throws/index.ts` logs its own name, not `@ahpd/server`, in `plugin-load.test.ts`.
+- [x] The dev config's `./packages/agent-claude/src/index.ts` still lists as `@ahpd/agent-claude`, in `plugin-list.test.ts`.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

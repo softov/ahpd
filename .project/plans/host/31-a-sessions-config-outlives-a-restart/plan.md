@@ -1,7 +1,7 @@
 ---
 title: A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-10-04
@@ -71,15 +71,15 @@ restart -> resume -> spawn(kept.config(id) ?? {})                     (defaults:
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 implemented: the store keeps a session's config from creation and every accepted change, as JSON values, except a peer chat's chat-scoped key, a change answered after the session was disposed, and config for a channel that names no session, and a resume or a browsed row drops a declared value the schema refuses, logged once, and keeps undeclared keys.
-- **Next action:** review.
+- **Done so far:** built 2026-10-07; see [implemented.md](implemented.md). Tasks 01 and 02 are done, reviewed 2026-10-06. The store keeps a session's config from creation and every accepted change, as JSON values. A resume or a browsed row drops a declared value the schema refuses, logs it once, and keeps undeclared keys.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `sessions: 'memory'` forgets by design; test with `fileSessions`.
 - **Watch out for:** a `preset` key stored by a Claude session before claude/15 is no longer declared by the schema, so it is kept and handed back like any undeclared key, and the backend ignores it.
 
 ## Final verification checklist
 
-- [ ] A Claude session created with `thinking: disabled` keeps it after a daemon restart.
-- [ ] A stored `permissionMode` of `nope` resumes as `default`.
+- [x] A Claude session created with `thinking: disabled` keeps it after a daemon restart, in `host-sessionconfig.test.ts`.
+- [x] A stored `permissionMode` of `nope` resumes as `default`, in `host-sessionconfig.test.ts`.
 - [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

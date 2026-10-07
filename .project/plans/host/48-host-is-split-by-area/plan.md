@@ -1,7 +1,7 @@
 ---
 title: host.ts is split into one file per area, and the URI routing and the grant tables are files of their own
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -120,17 +120,17 @@ Estimated at 1,500 to 2,000 lines.
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The grant tables and the URI names are files of their own](../48-host-is-split-by-area-p1-the-grant-and-uri-tables/plan.md) | done | plugin/29 |
-| [p2 - The URI routing, the client relay and the connection gate are files of their own](../48-host-is-split-by-area-p2-routing/plan.md) | done | p1 |
-| [p3 - Changesets and git and GitHub facts are files of their own, and the repository ports live in repo/](../48-host-is-split-by-area-p3-changesets-and-facts/plan.md) | done | p2 |
-| [p4 - Telemetry, sign-in requirements, owners and machines are files of their own](../48-host-is-split-by-area-p4-telemetry-owners-and-machines/plan.md) | done | p2 |
-| [p5 - Session config and root config are files of their own](../48-host-is-split-by-area-p5-session-and-root-config/plan.md) | done | p4 |
-| [p6 - The catalogue, past sessions and snapshots are files of their own](../48-host-is-split-by-area-p6-catalogue-and-transcripts/plan.md) | done | p3, p5 |
-| [p7 - Starting, restarting and removing a session are files of their own](../48-host-is-split-by-area-p7-session-lifecycle/plan.md) | done | p6 |
-| [p8 - Session tools, terminals and automations are files of their own](../48-host-is-split-by-area-p8-tools-terminals-and-automations/plan.md) | done | p7 |
-| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | done | p8 |
-| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | done | p9 |
-| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | done | p10 |
+| [p1 - The grant tables and the URI names are files of their own](../48-host-is-split-by-area-p1-the-grant-and-uri-tables/plan.md) | built | plugin/29 |
+| [p2 - The URI routing, the client relay and the connection gate are files of their own](../48-host-is-split-by-area-p2-routing/plan.md) | built | p1 |
+| [p3 - Changesets and git and GitHub facts are files of their own, and the repository ports live in repo/](../48-host-is-split-by-area-p3-changesets-and-facts/plan.md) | built | p2 |
+| [p4 - Telemetry, sign-in requirements, owners and machines are files of their own](../48-host-is-split-by-area-p4-telemetry-owners-and-machines/plan.md) | built | p2 |
+| [p5 - Session config and root config are files of their own](../48-host-is-split-by-area-p5-session-and-root-config/plan.md) | built | p4 |
+| [p6 - The catalogue, past sessions and snapshots are files of their own](../48-host-is-split-by-area-p6-catalogue-and-transcripts/plan.md) | built | p3, p5 |
+| [p7 - Starting, restarting and removing a session are files of their own](../48-host-is-split-by-area-p7-session-lifecycle/plan.md) | built | p6 |
+| [p8 - Session tools, terminals and automations are files of their own](../48-host-is-split-by-area-p8-tools-terminals-and-automations/plan.md) | built | p7 |
+| [p9 - The method table is split by family](../48-host-is-split-by-area-p9-the-method-table/plan.md) | built | p8 |
+| [p10 - Action dispatch is split by family](../48-host-is-split-by-area-p10-action-dispatch/plan.md) | built | p9 |
+| [p11 - Open plans cite the new files](../48-host-is-split-by-area-p11-open-plans-cite-the-new-files/plan.md) | built | p10 |
 
 ## Risks and tradeoffs
 
@@ -143,9 +143,9 @@ Estimated at 1,500 to 2,000 lines.
 
 ## Resume state
 
-- **Done so far:** p1 to p11 built and merged (p1 to p4 in `c78dbeb`, p5 to p8 in `f1b3bd1`, p9 to p11 in `ca6adcb`); `host.ts` is 1,141 lines, from 11,658, with `packages/sdk/src/host/` holding 30 files.
+- **Done so far:** built 2026-10-07; see [implemented.md](implemented.md). p1 to p4 landed in `c78dbeb`, p5 to p8 in `f1b3bd1`, and p9 to p11 in `ca6adcb`. `host.ts` is 1,141 lines, from 11,658, and `packages/sdk/src/host/` holds 30 files.
 - **p3's dead copies are gone.** The reviewer removed `git.ts`, `github.ts` and `worktrees.ts` from `packages/sdk/src/` when p1-p4 landed; only `packages/sdk/src/repo/` holds them now.
-- **Next action:** Softov's review of p9 to p11, which moves them to `done`; this plan is then built.
+- **Next action:** none. The plan is built; see [implemented.md](implemented.md).
 - **Requires:** plugin/29, which is in the tree (commit `804a549`).
 - **Blocks:** host/43, host/44 p2, host/44 p3, host/45, host/46 and host/47, which all edit `host.ts` and run after this plan, against the new files.
 - **Open questions:** none.
@@ -153,8 +153,8 @@ Estimated at 1,500 to 2,000 lines.
 
 ## Final verification checklist
 
-- [x] p1 to p11 built. p1 to p8 in `f1b3bd1`; p9, p10 and p11 in this worktree, uncommitted.
+- [x] p1 to p11 built. p1 to p4 in `c78dbeb`, p5 to p8 in `f1b3bd1`, p9 to p11 in `ca6adcb`.
 - [x] `wc -l packages/sdk/src/host.ts` is under 2,000. It is 1,141.
 - [x] `rg -n "from '\.\./src/host\.js'|from '\.\./\.\./sdk/src/host\.js'" packages` still resolves every import, and `packages/sdk/src/index.ts` is unchanged apart from p3's three re-export lines.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated - left alone on purpose, because the instructions for this run say not to edit it.
+- [x] `plans/index.md` updated.
