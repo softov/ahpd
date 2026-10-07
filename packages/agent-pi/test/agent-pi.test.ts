@@ -371,6 +371,9 @@ it('steers the running turn rather than queueing behind it', async () => {
   session.begin('t1', 'hello');
   await settled();
   expect(session.steer?.('t1', 'actually, stop')).toBe(true);
+  // The message is built before it is steered, which reads its attachments
+  // off disk, so the steer reaches pi a turn of the event loop later.
+  await settled();
   expect(pi.asked.find((one) => one.kind === 'steer')?.text).toBe('actually, stop');
 });
 

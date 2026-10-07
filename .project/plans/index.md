@@ -302,7 +302,7 @@ Worked in this order: 01, 02, 09, 10, then 03, 04, host 19, 05, 06, 07.
 | [12 - A tool call says what it runs on, on pi, cofold and Claude live](pi/12-a-tool-call-says-what-it-runs-on/plan.md) | medium | built 2026-09-28 ([implemented.md](pi/12-a-tool-call-says-what-it-runs-on/implemented.md)) | - | - |
 | [13 - A model pi cannot find fails the turn that asked for it](pi/13-a-model-pi-cannot-find-fails-the-turn/plan.md) | high | built 2026-10-02 ([implemented.md](pi/13-a-model-pi-cannot-find-fails-the-turn/implemented.md)) | - | - |
 | [14 - agent-pi.test.ts is split into one test file per area](pi/14-pi-test-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](pi/14-pi-test-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
-| [15 - A pi turn reads its message's attachments, queued and steered ones included](pi/15-a-pi-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
+| [15 - A pi turn reads its message's attachments, queued and steered ones included](pi/15-a-pi-turn-reads-its-attachments/plan.md) | medium | built 2026-10-07 ([implemented.md](pi/15-a-pi-turn-reads-its-attachments/implemented.md)) | host 68 | - |
 
 Next free number in `pi`: `16`.
 

@@ -91,19 +91,22 @@ export function fakePi() {
   let settle = true;
   let leaf = 'entry-1';
   let moves = true;
+  /** Whether the model the session is on takes an image, as pi's `input` says. */
+  let takes = true;
   const backend: PiBackend = {
     id: 'pi-session-1',
     file: '/tmp/pi/pi-session-1.jsonl',
     subscribe: (one) => { listener = one; return () => { listener = undefined; }; },
-    prompt: async (text) => {
-      asked.push({ kind: 'prompt', text });
+    prompt: async (text, images) => {
+      asked.push({ kind: 'prompt', text, images: images ?? [] });
       if (settle) listener?.({ type: 'agent_settled' });
     },
-    steer: async (text) => { asked.push({ kind: 'steer', text }); },
+    steer: async (text, images) => { asked.push({ kind: 'steer', text, images: images ?? [] }); },
     abort: async () => { asked.push({ kind: 'abort' }); listener?.({ type: 'agent_settled' }); },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),
     chosen: () => ({ id: 'anthropic/claude-opus-5', config: { [THINKING_KEY]: 'off' } }),
+    takesImages: () => takes,
     /*
      * pi's own runtime is what resolves a pick, so a model it does not list is
      * refused rather than taken. That is the whole of what a turn cannot do.
@@ -125,6 +128,8 @@ export function fakePi() {
     hold: () => { settle = false; },
     setLeaf: (next: string) => { leaf = next; },
     refuseRewind: () => { moves = false; },
+    /** The session's model takes no image, so a picture goes by its path. */
+    noImages: () => { takes = false; },
     open: (async (options: BackendOptions) => { opens.push(options); return backend; }) as OpenPi,
   };
 }

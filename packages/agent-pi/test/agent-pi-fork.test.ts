@@ -53,6 +53,7 @@ function fakePi() {
     leaf: () => 'entry-1',
     levels: () => ['off'],
     chosen: () => undefined,
+    takesImages: () => false,
     choose: async () => true,
     rename: () => {},
     rewind: async () => true,

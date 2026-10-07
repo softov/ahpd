@@ -23,6 +23,7 @@ import type {
   ToolCallEventResult,
   ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
+import type { ImageContent } from '@earendil-works/pi-ai';
 import type { PiModel } from './models.js';
 import { idOf, modelFor, THINKING_KEY } from './models.js';
 import { loadPi } from './pi.js';
@@ -37,9 +38,9 @@ export interface PiBackend {
   /** Every event pi raises, until the returned function is called. */
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   /** Run a turn. The promise spans the whole run. */
-  prompt(text: string): Promise<void>;
+  prompt(text: string, images?: ImageContent[]): Promise<void>;
   /** Put a message into the turn that is already running. */
-  steer(text: string): Promise<void>;
+  steer(text: string, images?: ImageContent[]): Promise<void>;
   /** Stop the running turn. */
   abort(): Promise<void>;
   /** The models this session could run on. */
@@ -50,6 +51,14 @@ export interface PiBackend {
   levels(model: PiModel): string[];
   /** What a new message would run on right now. */
   chosen(): { id: string; config: Record<string, unknown> } | undefined;
+  /**
+   * Whether the model the session is on takes an image.
+   *
+   * pi takes one text and a list of images, so a picture the model will not
+   * accept is a failed turn rather than a degraded one. The session asks this
+   * before it decides whether a picture goes as bytes or by path.
+   */
+  takesImages(): boolean;
   /**
    * Run the next turn on this model, and at this thinking level.
    *
@@ -265,8 +274,11 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
     id: session.sessionId,
     file: session.sessionManager.getSessionFile(),
     subscribe: (listener) => session.subscribe(listener),
-    prompt: (text) => session.prompt(text, { source: INPUT_SOURCE }),
-    steer: (text) => session.steer(text, undefined, { source: INPUT_SOURCE }),
+    prompt: (text, images) => session.prompt(text, {
+      source: INPUT_SOURCE,
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
+    }),
+    steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }),
     abort: () => session.abort(),
     models,
     leaf: () => session.sessionManager.getLeafId() ?? undefined,
@@ -285,6 +297,12 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
         ? undefined
         : { id: idOf(model), config: { [THINKING_KEY]: session.thinkingLevel } };
     },
+    /*
+     * Read off the model the session is on, which is the one the next turn
+     * runs on. A session with no model yet answers false, and the picture is
+     * named by its path rather than risking a turn the provider refuses.
+     */
+    takesImages: () => (session.model as PiModel | undefined)?.input?.includes('image') === true,
     choose: async (id, config) => {
       const available = await models();
       const current = session.model as PiModel | undefined;

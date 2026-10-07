@@ -25,6 +25,13 @@ export interface PiModel {
   contextWindow?: number;
   /** How many tokens the model may answer with, when pi knows. */
   maxTokens?: number;
+  /**
+   * What the model takes beyond text, as pi lists it.
+   *
+   * A model that does not list `image` is sent a picture's path rather than
+   * its bytes, because a provider that refuses one fails the whole turn.
+   */
+  input?: ('text' | 'image')[];
 }
 
 /** The key the thinking level rides under in a `ModelSelection.config`. */

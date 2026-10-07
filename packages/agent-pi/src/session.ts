@@ -25,10 +25,12 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, callTimes, createClientCalls, idFor, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
-import type { Bag, BoundTool, Chosen, MessageFrom, Ran, Session, Start, ToolEffects } from '@ahpd/sdk';
+import { Status, callTimes, createClientCalls, idFor, partsOf, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
+import type {
+  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Ran, Session, Start, ToolEffects,
+} from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
-import type { AssistantMessage } from '@earendil-works/pi-ai';
+import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
@@ -67,6 +69,40 @@ const UNTITLED = 'pi session';
 const titleFrom = (text: string): string => {
   const line = text.split('\n').map((one) => one.trim()).find((one) => one !== '') ?? '';
   return line === '' ? UNTITLED : line.slice(0, 80);
+};
+
+/**
+ * A message, as pi's `prompt` and `steer` take it: one text, and its images.
+ *
+ * `partsOf` decides which attachment is an image, which is an inlined text and
+ * which is named by its path, within the limits every backend shares. pi takes
+ * a single text, so the parts that are text - what was said, an inlined
+ * attachment, the reference block - are joined with a blank line, in the order
+ * the client attached them.
+ *
+ * `takesImages` is the model the turn runs on, so a picture goes as bytes only
+ * where pi's model takes one. Everywhere else the helper names it by path.
+ */
+const promptFor = async (
+  text: string,
+  attachments: MessageAttachment[] | undefined,
+  takesImages: boolean,
+): Promise<{ text: string; images: ImageContent[] }> => {
+  if (attachments === undefined || attachments.length === 0) return { text, images: [] };
+  const parts = await partsOf(text, attachments, { images: takesImages });
+  const said: string[] = [];
+  const images: ImageContent[] = [];
+  for (const part of parts) {
+    if (part.type === 'image') images.push({ type: 'image', data: part.data, mimeType: part.mimeType });
+    else said.push(part.text);
+  }
+  return { text: said.join('\n\n'), images };
+};
+
+/** The attachments a message a client sent carries, where it carries any. */
+const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
+  const kept = bag(message).attachments;
+  return Array.isArray(kept) ? kept as MessageAttachment[] : undefined;
 };
 
 /**
@@ -828,7 +864,14 @@ export function piSession(
   };
 
   /** Start a turn, once there is nothing else running. */
-  const begin = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
+  const begin = (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    queuedMessageId?: string,
+    attachments?: MessageAttachment[],
+  ): void => {
     failed = undefined;
     cancelled = false;
     answered = undefined;
@@ -844,6 +887,9 @@ export function piSession(
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : { origin: { kind: 'user' } }),
       ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+      // Kept on the turn's own message, so a client reopening the chat reads
+      // the picture beside the words the turn was accepted with.
+      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       ...(ran !== undefined
         ? { model: { id: ran, ...(model?.config !== undefined ? { config: model.config } : {}) } }
         : {}),
@@ -901,7 +947,8 @@ export function piSession(
             throw new Error(`pi has no model ${model.id}`);
           }
         }
-        await backend.prompt(text);
+        const asked = await promptFor(text, attachments, backend.takesImages());
+        await backend.prompt(asked.text, asked.images);
         /*
          * `prompt` settling is not the turn ending: pi raises `agent_settled`
          * for that, and the two are not the same moment when it retries. So
@@ -928,7 +975,14 @@ export function piSession(
       runCommand(id, String(command.text), command.run as (toolCallId: string) => Promise<Ran>);
       return;
     }
-    begin(id, String(bag(next.message).text ?? ''), next.model as Chosen | undefined, undefined, id);
+    begin(
+      id,
+      String(bag(next.message).text ?? ''),
+      next.model as Chosen | undefined,
+      undefined,
+      id,
+      attachmentsOf(next.message),
+    );
   };
 
   /**
@@ -1057,15 +1111,19 @@ export function piSession(
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from) => {
+    begin: (turnId, text, model, from, attachments) => {
       if (active !== undefined) {
-        const message: Bag = { text, origin: from?.origin ?? { kind: 'user' } };
+        const message: Bag = {
+          text,
+          origin: from?.origin ?? { kind: 'user' },
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+        };
         queued.push({ id: turnId, message, ...(model !== undefined ? { model } : {}) });
         emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id: turnId, message });
         touch();
         return;
       }
-      begin(turnId, text, model, from);
+      begin(turnId, text, model, from, undefined, attachments);
     },
 
     ran: (turnId, command, run, queuedAs) => {
@@ -1091,19 +1149,24 @@ export function piSession(
      * queued message dressed as one. False when there is nothing to steer,
      * which the host turns into a refusal rather than an ordinary message.
      */
-    steer: (id, text) => {
+    steer: (id, text, attachments) => {
       void id;
-      if (active === undefined || live === undefined) return false;
-      void live.steer(text).catch((error: unknown) => {
-        emit('chat', {
-          type: 'chat/error',
-          turnId: String(bag(active).id ?? ''),
-          part: {
-            kind: 'error',
-            error: { errorType: 'turnFailed', message: error instanceof Error ? error.message : String(error) },
-          },
+      const backend = live;
+      if (active === undefined || backend === undefined) return false;
+      // Built the way the turn's own prompt is, so a picture pasted into a
+      // correction reaches pi as one when the model takes it.
+      void promptFor(text, attachments, backend.takesImages())
+        .then((asked) => backend.steer(asked.text, asked.images))
+        .catch((error: unknown) => {
+          emit('chat', {
+            type: 'chat/error',
+            turnId: String(bag(active).id ?? ''),
+            part: {
+              kind: 'error',
+              error: { errorType: 'turnFailed', message: error instanceof Error ? error.message : String(error) },
+            },
+          });
         });
-      });
       touch();
       return true;
     },
@@ -1122,8 +1185,14 @@ export function piSession(
       void live?.abort().catch(() => { finish('cancelled'); });
     },
 
-    queue: (id, text, model, from) => {
-      const message: Bag = { text, origin: from?.origin ?? { kind: 'user' } };
+    queue: (id, text, model, from, attachments) => {
+      const message: Bag = {
+        text,
+        origin: from?.origin ?? { kind: 'user' },
+        // Held with the message, so a picture pasted into one that waits is
+        // still a picture when its turn comes.
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      };
       const at = queued.findIndex((held) => String(held.id) === id);
       const entry: Bag = { id, message, ...(model !== undefined ? { model } : {}) };
       if (at >= 0) queued[at] = entry; else queued.push(entry);
