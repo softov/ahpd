@@ -1,6 +1,6 @@
 ---
 title: Config, modes and models are one file
-status: implemented
+status: done
 depends: [task-01-the-shared-state-is-one-context.md]
 layer: "agent-acp"
 refs:

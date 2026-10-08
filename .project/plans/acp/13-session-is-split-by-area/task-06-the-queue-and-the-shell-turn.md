@@ -1,6 +1,6 @@
 ---
 title: The queue and the shell turn are one file
-status: implemented
+status: done
 depends: [task-05-a-prompted-turn.md]
 layer: "agent-acp"
 refs:

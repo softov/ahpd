@@ -10,7 +10,7 @@ refs:
 
 ## What was built
 
-- `session/context.ts` - one `SessionContext`, built once in `createSession`; a `let` more than one area reads is a field on it.
+- `session/context.ts` - one `SessionContext`, built once in `acpSession`; a `let` more than one area reads is a field on it.
 - `session/common.ts`, `config.ts` (config and models), `handlers.ts` (what the server sends), `opening.ts`, `turn.ts` (a prompted turn) and `queue.ts` (the queue and the shell turn), none over 452 lines.
 
 ## Verified
@@ -20,7 +20,9 @@ refs:
 
 ## Departures from the plan
 
-- None.
+- The funnel is inside the `ctx` literal, and the literal is cast `as unknown as SessionContext` (tasks 01 and 02).
+- `setConfig` and `ran` are typed `NonNullable` (task 06).
+- `begin` is `ctx.begin` itself, not a five-argument wrapper. The `Session` type still stops a sixth argument.
 
 ## Left for later
 

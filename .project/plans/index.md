@@ -24,7 +24,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
-| [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; task 03 done; tasks 02, 06, 08, 09, 10, 11 implemented, 01 and 04 todo for `--force`, 05 and 07 dropped | - | - |
+| [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; task 03 done; 02, 06, 08-11 reviewed 2026-10-07; 12 todo (plugin root), 01 and 04 todo for `--force`; 05 and 07 dropped | - | - |
 
 | [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | built 2026-10-02 ([implemented.md](daemon/10-a-first-run-sets-the-daemon-up/implemented.md)) | daemon 09 | - |
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | built 2026-10-02 ([implemented.md](daemon/11-root-config-carries-the-daemon-and-its-plugins/implemented.md)) | - | - |
@@ -326,7 +326,7 @@ Worked in this order: 01, 02, plugin 18, 03, 04, 05. Then 06, 08, 09 and 10 in a
 | [10 - A prompt carries what the agent accepts, and only what it accepts](acp/10-a-prompt-carries-what-the-agent-accepts/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/10-a-prompt-carries-what-the-agent-accepts/implemented.md)) | - | - |
 | [11 - The agent gets the host's MCP servers](acp/11-the-agent-gets-mcp-servers/plan.md) | medium | built 2026-10-02 ([implemented.md](acp/11-the-agent-gets-mcp-servers/implemented.md)) | daemon 11 | - |
 | [12 - The bridge is on the current SDK entry, and lists sessions properly](acp/12-the-bridge-is-on-the-current-sdk/plan.md) | low | built 2026-10-02 ([implemented.md](acp/12-the-bridge-is-on-the-current-sdk/implemented.md)) | acp 01 | - |
-| [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](acp/13-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | host 52 | - |
+| [13 - session.ts is split into one file per area](acp/13-session-is-split-by-area/plan.md) | high | built 2026-10-07 ([implemented.md](acp/13-session-is-split-by-area/implemented.md)) | host 52 | - |
 | [14 - An ACP prompt reads a referenced file only within the limits, and a queued message keeps its attachments](acp/14-a-referenced-file-is-read-within-the-limits/plan.md) | high | built 2026-10-07 ([implemented.md](acp/14-a-referenced-file-is-read-within-the-limits/implemented.md)) | host 68 | - |
 
 Next free number in `acp`: `15`.
@@ -342,8 +342,10 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [03 - A machine records who created it and writes the time it was up, charged to its owner](usage/03-a-machine-writes-its-up-time/plan.md) | high | built 2026-10-02 ([implemented.md](usage/03-a-machine-writes-its-up-time/implemented.md)) | usage 01, host 34 | - |
 | [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
 | [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
+| [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | planned 2026-10-07 | usage 05 | usage 07 |
+| [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | planned 2026-10-07 | usage 06 | - |
 
-Next free number in `usage`: `06`.
+Next free number in `usage`: `08`.
 
 ## policy
 

@@ -1,6 +1,6 @@
 ---
 title: What the server sends the session is one file
-status: implemented
+status: done
 depends: [task-02-config-and-models.md]
 layer: "agent-acp"
 refs:

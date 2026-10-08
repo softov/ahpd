@@ -1,6 +1,6 @@
 ---
 title: Spawning, signing in and opening are one file
-status: implemented
+status: done
 depends: [task-03-what-the-server-sends.md]
 layer: "agent-acp"
 refs:

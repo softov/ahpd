@@ -1,6 +1,6 @@
 ---
 title: The session's shared state is one context
-status: implemented
+status: done
 depends: []
 layer: "agent-acp"
 refs:

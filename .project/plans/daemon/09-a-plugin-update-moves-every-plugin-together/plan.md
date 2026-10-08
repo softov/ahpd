@@ -62,6 +62,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | `all` beside names is refused, saying the two forms | Softov, 2026-09-29, asked "The builder made `ahpd plugin update all <name>` (all beside names) a refusal. Keep it?": "Keep the refusal" | 01 |
 | `update all` keeps one npm call, and a failure fails the whole update with the `NpmFailure` line, which tells the person to rerun with `--force` to update only the plugins that can be updated; `--force` installs each package in its own npm call, so the others move and the failing one is named | Softov, 2026-10-04, asked "`update all` makes one npm call, so one package npm cannot install fails every move in it. Keep one call, or retry each package on its own?": keep one call, and the failure points at `--force`, which installs each package on its own | 01, 04 |
 | `ahpd plugin install` with no name says the name is needed, fixed in `@cofold/terminal` for every command | Softov, 2026-09-29, asked "How should ahpd upgrade plugins, so a 0.7 to 0.8 upgrade works?", chosen option: "`plugin install` stays as it is, apart from the two message fixes" | 03 |
+| The review's defects are fixed as a task in this plan | Softov, 2026-10-07, asked "How should the review's fixes be handled?" and answered "Fix tasks in each plan" | 12 |
 
 ## Proposed architecture
 
@@ -84,6 +85,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | [09 - Our plugins take any @ahpd/sdk from 0.8 on](task-09-a-plugin-names-its-oldest-sdk.md) | implemented | 08 |
 | [10 - Install refuses a package that is not a plugin](task-10-install-refuses-a-package-that-is-not-a-plugin.md) | implemented | 08 |
 | [11 - Update answers what moved](task-11-update-answers-what-moved.md) | implemented | 10 |
+| [12 - Update and remove use the plugin root, and an sdk move asks for a restart](task-12-update-and-remove-use-the-plugin-root.md) | todo | 11 |
 
 ## Risks and tradeoffs
 
@@ -92,7 +94,8 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 ## Resume state
 
 - **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`. Task 03 implemented 2026-10-06, in daemon 16 task 01's cofold bump.
-- **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, then [task-04-docs.md](task-04-docs.md) says it.
+- **Reviewed 2026-10-07:** 02, 06, 08, 09, 10 and 11 pass as code. The review found that update and remove ignore `AHPD_PLUGIN_ROOT`, which install reads since container/05 p3. Task 12 fixes it.
+- **Next action:** [task-12-update-and-remove-use-the-plugin-root.md](task-12-update-and-remove-use-the-plugin-root.md). Then [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, and [task-04-docs.md](task-04-docs.md) says it.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 
 ## Final verification checklist

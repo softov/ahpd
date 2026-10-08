@@ -1,6 +1,6 @@
 ---
 title: A prompted turn is one file
-status: implemented
+status: done
 depends: [task-04-opening.md]
 layer: "agent-acp"
 refs:
