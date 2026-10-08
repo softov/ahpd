@@ -17,18 +17,18 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** 17 commits on main ahead of `origin/main`.
-- **Building:** [host/73](../plans/host/73-a-role-editor-offers-trust-and-proxy/plan.md), session `a261d92b`, with the fix turn that makes the gate ask for the operation.
-- **Building:** [usage/06](../plans/usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md), session `41e55763`. After its merge, Softov restarts his daemon so ahpapp shows the cost split.
+- **Unpushed:** 22 commits on main ahead of `origin/main`.
+- **Restart owed:** Softov restarts his daemon to wire in host/73 (`c276b2c`) and usage/06 (`2b5a656`), so ahpapp shows the cost split.
+- **Waiting on Softov:** usage/06 task 03, the Anthropic-dialect and DeepSeek captures, which need his keys and the network.
+- **Building:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 01 and 03, session `3ad09367`.
 - **Uncommitted, kept by Softov's choice:** `scripts/completions.mjs`.
 
 ## Next, buildable now
 
-1. [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 01 and 03: the bot record and `PluginHost.startSession`.
-2. [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) task 12: the plugin root.
-3. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
-4. [usage/07](../plans/usage/07-an-agents-reported-cost-is-the-providers/plan.md), after usage/06.
-5. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
+1. [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) task 12: the plugin root.
+2. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
+3. [usage/07](../plans/usage/07-an-agents-reported-cost-is-the-providers/plan.md).
+4. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
 [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.
