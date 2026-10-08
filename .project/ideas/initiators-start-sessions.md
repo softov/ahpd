@@ -28,6 +28,28 @@ So an initiator is a mapping from an outside conversation (a URL, an issue, a th
 - [plugin/33](../plans/plugin/33-a-phone-hears-a-session-needs-a-person/plan.md), a phone hears when a session needs a person: the same "needs a person" event a chat initiator turns into buttons.
 - Issue sources follow the repository: [issues follow the repository](issues-follow-the-repository.md) for GitHub and GitLab, and the same mapping for Linear and Jira, which are not tied to a forge.
 
+## A trigger menu built from connectors
+
+Softov, 2026-10-07: an automation's triggers are "more like based on connecttors also."
+An "Add trigger" menu starts with a schedule.
+The schedule has presets: every hour, every day, weekdays, every week, every month, an interval, and an advanced cron.
+After it come Slack message, Git event, Teams message, Linear issue, Sentry alert, PagerDuty incident and Webhook.
+
+ahpd has most of the plumbing for this menu:
+
+- The protocol lists each trigger type a host fires, as an `AutomationTriggerDefinition` with its title, events and `configSchema`.
+  A client draws the menu and the form from what the host sends.
+- A plugin registers a type with `registerTriggerType` and reports an event with `fireTrigger` ([`code://packages/sdk/src/types/plugin.ts#L420-L434`](../../packages/sdk/src/types/plugin.ts#L420-L434)). Every enabled automation on that event starts a run.
+- ahpapp has schedule presets and a cron field. Weekdays, monthly and an interval are more presets on the same cron field.
+
+What is missing:
+
+- No plugin registers a trigger type, so the menu has only the schedule and session events. A webhook on a plugin route is the first one; a Git event is the same from GitHub and GitLab webhooks.
+- The run does not see the event. `fireTrigger`'s `data` is kept on the run's origin and nothing reads it. A routine that answers a Slack message needs the message in its instruction.
+  A placeholder in the template or a block added to the prompt can carry it.
+- Slack, Teams, Linear, Sentry and PagerDuty each need a connected account first. Activepieces pieces ship triggers beside their actions, so [connectors-come-from-activepieces-pieces.md](connectors-come-from-activepieces-pieces.md) could supply these trigger types from one plugin.
+- Not checked: whether the ahpapp automation form draws the host's event types today.
+
 ## A public port, later
 
 plugin/21 puts routes on the daemon's listener, which a tunnel already carries.
