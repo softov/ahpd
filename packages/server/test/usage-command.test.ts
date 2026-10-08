@@ -138,20 +138,25 @@ const get = (path: string, bearer: string | undefined, directory?: Users): Promi
 const pools = (value: Output): string[] => (value.data as { pool: string }[]).map((one) => one.pool);
 
 /** What a sum of the records adds up to, in the four measures a total reports. */
-const sumOf = (records: { kind: string; cost?: { amount?: number }; model?: { input?: number; output?: number }; seconds?: number }[]): Record<string, number> => {
+const sumOf = (records: { kind: string; cost?: { amount?: number; from?: string }; providerCost?: { amount?: number }; model?: { input?: number; output?: number }; seconds?: number }[]): Record<string, number> => {
   let usd = 0;
+  let providerUsd = 0;
   let tokens = 0;
   let calls = 0;
   let hours = 0;
   for (const one of records) {
     if (one.kind === 'computer') { hours += (one.seconds ?? 0) / 3600; continue; }
     usd += one.cost?.amount ?? 0;
+    // A record written before there were two costs keeps the provider's own
+    // figure in `cost` when the harness reported it.
+    providerUsd += one.providerCost?.amount ?? (one.cost?.from === 'harness' ? one.cost.amount ?? 0 : 0);
     tokens += (one.model?.input ?? 0) + (one.model?.output ?? 0);
     calls += 1;
   }
   // A measure nothing was charged in is left out, the way a total leaves it out.
   return {
     ...(usd === 0 ? {} : { usd }),
+    ...(providerUsd === 0 ? {} : { providerUsd }),
     ...(tokens === 0 ? {} : { tokens }),
     ...(calls === 0 ? {} : { calls }),
     ...(hours === 0 ? {} : { hours }),
@@ -213,11 +218,13 @@ describe('usage at the terminal', () => {
     // machine in hours, as the store reports them.
     expect(body).toEqual({
       pool: 'user:ana',
-      day: { usd: 0.75, calls: 1 },
-      week: { usd: 0.75, calls: 1 },
-      month: { usd: 1, calls: 2, hours: 1 },
+      day: { usd: 0.75, providerUsd: 0.75, calls: 1 },
+      week: { usd: 0.75, providerUsd: 0.75, calls: 1 },
+      month: { usd: 1, providerUsd: 1, calls: 2, hours: 1 },
     });
-    expect(said.plain).toBe('user:ana\n  today       usd 0.75 calls 1\n  this week   usd 0.75 calls 1\n  this month  usd 1 calls 2 hours 1\n');
+    // A cost the harness reported is the provider's figure too, so both are in
+    // what a person reads.
+    expect(said.plain).toBe('user:ana\n  today       usd 0.75 providerUsd 0.75 calls 1\n  this week   usd 0.75 providerUsd 0.75 calls 1\n  this month  usd 1 providerUsd 1 calls 2 hours 1\n');
 
     // A pool a measure was never charged in leaves it out rather than saying zero.
     await store.record(modelUse('2026-10-07T10:00:00.000Z', ['team:backend'], 3));

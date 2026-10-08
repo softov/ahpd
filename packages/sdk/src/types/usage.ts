@@ -26,6 +26,10 @@ export interface Cost {
   currency: string;
   /** `harness` when the agent or provider reported it, `price` when worked out from a price list. */
   from: 'harness' | 'price';
+  /** What the tokens sent cost, in `currency`, when the amount was reported in two parts. */
+  input?: number;
+  /** What the tokens received cost, in `currency`, when the amount was reported in two parts. */
+  output?: number;
 }
 
 /** The fields every record has. */
@@ -50,8 +54,10 @@ export interface UsageBase {
   agent?: string;
   /** The computer it ran on, as the `computers` port names it. */
   computer?: string;
-  /** What it cost, when that is known. */
+  /** What its pools are charged, when that is known. */
   cost?: Cost;
+  /** What the provider or the harness reported it cost, when it reported one. */
+  providerCost?: Cost;
   /** The pools it is charged to. A record naming none is charged nowhere. */
   pools: string[];
 }
@@ -91,11 +97,18 @@ export type UsageEntry = ModelUse | ComputerTime;
  * What a pool has been charged over a period.
  *
  * A measure nothing was charged in is absent. `tokens` is `input` and `output`
- * and `cache` added together. `usd` adds only costs in US dollars.
+ * and `cache` added together. `usd` adds only costs in US dollars, and
+ * `providerUsd` is what the providers reported beside it.
  */
 export interface UsageTotal {
-  /** Cost in US dollars. */
+  /** Cost in US dollars, which is what the pools are charged. */
   usd?: number;
+  /** What the providers reported, in US dollars, beside the charge. */
+  providerUsd?: number;
+  /** What the tokens sent cost, in US dollars, over the records that split their cost. */
+  inputUsd?: number;
+  /** What the tokens received cost, in US dollars, over the records that split their cost. */
+  outputUsd?: number;
   /** Tokens, cache included. */
   tokens?: number;
   /** Prompt tokens. */

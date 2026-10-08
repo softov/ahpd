@@ -9,6 +9,7 @@
  * dialect, and the listener asks this file rather than knowing either API.
  */
 
+import type { Cost } from '@ahpd/sdk';
 import type { Dialect } from './providers.js';
 
 /** The path a caller posts to, by the dialect it is read as. */
@@ -119,6 +120,8 @@ export interface UsageReader {
   read(chunk: Uint8Array): void;
   /** What was read so far. */
   tokens(): Tokens;
+  /** The cost the answer reported, when it reported one. */
+  cost(): Cost | undefined;
 }
 
 /** How much of a JSON answer is held to read its usage; past it, the tokens are not known. */
@@ -185,6 +188,31 @@ const usageIn = (dialect: Dialect, value: unknown): Record<string, unknown> | un
   return isObject(value['usage']) ? value['usage'] : undefined;
 };
 
+/**
+ * The cost one `usage` object reports, when it reports one.
+ *
+ * OpenRouter sends it in both dialects: `cost` is the amount, and
+ * `cost_details.upstream_inference_prompt_cost` and
+ * `upstream_inference_completions_cost` are what was sent and what came back.
+ * A non-number or a negative amount is not a cost, and a cost of zero is: a
+ * model OpenRouter serves free really did cost nothing. The figure is in US
+ * dollars, which is the one currency `UsageTotal` sums.
+ */
+const costIn = (usage: Record<string, unknown>): Cost | undefined => {
+  const amount = count(usage['cost']);
+  if (amount === undefined) return undefined;
+  const details = usage['cost_details'];
+  const input = isObject(details) ? count(details['upstream_inference_prompt_cost']) : undefined;
+  const output = isObject(details) ? count(details['upstream_inference_completions_cost']) : undefined;
+  return {
+    amount,
+    currency: 'usd',
+    from: 'harness',
+    ...(input === undefined ? {} : { input }),
+    ...(output === undefined ? {} : { output }),
+  };
+};
+
 /** A `JSON.parse` that answers nothing rather than throwing. */
 const parsed = (text: string): unknown => {
   try { return JSON.parse(text) as unknown; }
@@ -202,16 +230,31 @@ const parsed = (text: string): unknown => {
 export const usageReader = (dialect: Dialect, contentType: string | null): UsageReader => {
   const merge = dialect === 'openai-chat' ? openaiUsage : anthropicUsage;
   const found: Tokens = {};
+  let cost: Cost | undefined;
   const decoder = new TextDecoder();
   const type = (contentType ?? '').toLowerCase();
+
+  /** What one parsed event or answer carries: its usage, read into the tokens and the cost. */
+  const absorb = (value: unknown): void => {
+    const usage = usageIn(dialect, value);
+    if (usage === undefined) return;
+    merge(found, usage);
+    // A partial report that keeps its cost keeps the earlier one; the last
+    // report to carry one is the answer's whole figure.
+    const reported = costIn(usage);
+    if (reported !== undefined) cost = reported;
+  };
 
   if (type.includes('text/event-stream')) {
     let line = '';
     let overlong = false;
     const take = (text: string): void => {
       if (!text.startsWith('data:')) return;
-      const usage = usageIn(dialect, parsed(text.slice(5).trim()));
-      if (usage !== undefined) merge(found, usage);
+      absorb(parsed(text.slice(5).trim()));
+    };
+    /** The line still arriving, which no newline has ended yet. */
+    const flush = (): void => {
+      if (!overlong && line !== '') { take(line.replace(/\r$/u, '')); line = ''; }
     };
     return {
       read: (chunk) => {
@@ -227,10 +270,8 @@ export const usageReader = (dialect: Dialect, contentType: string | null): Usage
         line += text.slice(start);
         if (line.length > LINE_HELD) { line = ''; overlong = true; }
       },
-      tokens: () => {
-        if (!overlong && line !== '') { take(line.replace(/\r$/u, '')); line = ''; }
-        return found;
-      },
+      tokens: () => { flush(); return found; },
+      cost: () => { flush(); return cost; },
     };
   }
 
@@ -238,25 +279,25 @@ export const usageReader = (dialect: Dialect, contentType: string | null): Usage
     let held = '';
     let over = false;
     let done = false;
+    /** The whole answer, read once when it has ended. */
+    const settle = (): void => {
+      if (over || done) return;
+      done = true;
+      absorb(parsed(held));
+      held = '';
+    };
     return {
       read: (chunk) => {
         if (over) return;
         held += decoder.decode(chunk, { stream: true });
         if (held.length > JSON_HELD) { held = ''; over = true; }
       },
-      tokens: () => {
-        if (!over && !done) {
-          done = true;
-          const usage = usageIn(dialect, parsed(held));
-          held = '';
-          if (usage !== undefined) merge(found, usage);
-        }
-        return found;
-      },
+      tokens: () => { settle(); return found; },
+      cost: () => { settle(); return cost; },
     };
   }
 
-  return { read: () => undefined, tokens: () => found };
+  return { read: () => undefined, tokens: () => found, cost: () => cost };
 };
 
 /** The `<maker>` of a `<maker>/<name>`. */

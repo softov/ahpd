@@ -133,9 +133,9 @@ it('reads a pool as its day, week and month, and each is what total says over th
   // The day's total is the record of today, the week's is Monday's, and the
   // month's is all three - with the computer's hour in hours and the two model
   // calls in calls, as the store reports them.
-  expect(read.day).toEqual({ usd: 0.75, calls: 1 });
-  expect(read.week).toEqual({ usd: 0.75, calls: 1 });
-  expect(read.month).toEqual({ usd: 1, calls: 2, hours: 1 });
+  expect(read.day).toEqual({ usd: 0.75, providerUsd: 0.75, calls: 1 });
+  expect(read.week).toEqual({ usd: 0.75, providerUsd: 0.75, calls: 1 });
+  expect(read.month).toEqual({ usd: 1, providerUsd: 1, calls: 2, hours: 1 });
 });
 
 /*
@@ -177,12 +177,12 @@ it('cuts the week on the Monday of the configured zone, not the system\'s', asyn
 
   const inUtc = usageProvider({ usage, timezone: 'UTC' });
   const inTokyo = usageProvider({ usage, timezone: 'Asia/Tokyo' });
-  expect((await json('usage://user%3Aana', undefined, inUtc)).week).toEqual({ usd: 2, calls: 1 });
-  expect((await json('usage://user%3Aana', undefined, inTokyo)).week).toEqual({ usd: 3, calls: 2 });
+  expect((await json('usage://user%3Aana', undefined, inUtc)).week).toEqual({ usd: 2, providerUsd: 2, calls: 1 });
+  expect((await json('usage://user%3Aana', undefined, inTokyo)).week).toEqual({ usd: 3, providerUsd: 3, calls: 2 });
 
   // The store behind both is the same one, and still says what it always says:
   // the zone is a boundary the provider cuts, not a filter on the records.
-  expect(await usage.total('user:ana', '2026-10-01T00:00:00.000Z', NOW)).toEqual({ usd: 3, calls: 2 });
+  expect(await usage.total('user:ana', '2026-10-01T00:00:00.000Z', NOW)).toEqual({ usd: 3, providerUsd: 3, calls: 2 });
 
   // And naming no zone at all is the system's own, whatever that is.
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -215,7 +215,7 @@ it('reads a pool name holding colons as one encoded segment', async () => {
 
   const read = await json('usage://project%3Abackend%3Asearch', undefined, provider);
   expect(read.pool).toBe('project:backend:search');
-  expect(read.month).toEqual({ usd: 0.25, calls: 1 });
+  expect(read.month).toEqual({ usd: 0.25, providerUsd: 0.25, calls: 1 });
   // The same pool as the listing spells it, and the listing is what a client
   // browses before it builds the URI.
   expect((await provider.list('usage://', person('ana', [], ['backend:search']))).map((one) => one.name))

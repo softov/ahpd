@@ -1,6 +1,6 @@
 ---
 title: A record and a total carry both costs and their split
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -45,4 +45,10 @@ A total has `providerUsd`, `inputUsd` and `outputUsd` beside `usd`.
 - `pnpm build`, `pnpm typecheck` and `npx vitest run packages/sdk` pass.
 
 ## Resume
+
+The cases the validation names are in `packages/sdk/test/usage.test.ts`. A record with `cost {amount: 3, input: 1, output: 2}` and `providerCost {amount: 2}` gives `usd: 3`, `providerUsd: 2`, `inputUsd: 1` and `outputUsd: 2`. A record whose `cost` carries `from: "harness"` and no `providerCost` gives `usd: 1` and `providerUsd: 1`. One whose `cost` carries `from: "price"` gives `usd: 1` and no `providerUsd`. A record with no cost carries neither. A fifth case proves that only the records which split their cost add to `inputUsd` and `outputUsd`.
+
+`Cost` carries `input` and `output`, the amounts for what was sent and what was received. `UsageBase` carries `providerCost` beside `cost`, and the comment on `cost` says it is what the pools are charged. `UsageTotal` carries `providerUsd`, `inputUsd` and `outputUsd` beside `usd`. `Measured`, `none`, `measured`, `charge` and the range total carry the three amounts, and a zero is left out as every other measure is. `node tools/schema.mjs` reports 508 definitions from 506 exported types, and the generated schema is unchanged.
+
+Found: three other tests read a total whose cost came `from: "harness"`. `packages/sdk/test/usage-scheme.test.ts` and `packages/server/test/usage-command.test.ts` gained `providerUsd` in their expectations, because such a cost is the provider's figure too.
 

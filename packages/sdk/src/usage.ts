@@ -14,7 +14,7 @@ import { RpcError } from './rpc.js';
 import { poolsFor } from './scopes.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription } from './types/resources.js';
 import type { Principal } from './types/users.js';
-import type { Usage, UsageEntry, UsageTotal } from './types/usage.js';
+import type { Cost, Usage, UsageEntry, UsageTotal } from './types/usage.js';
 
 /** An hour, which is what computer time is reported in. */
 const HOUR_S = 3_600;
@@ -22,6 +22,9 @@ const HOUR_S = 3_600;
 /** What one record costs, in the measures the port reports. */
 interface Measured {
   usd: number;
+  providerUsd: number;
+  inputUsd: number;
+  outputUsd: number;
   tokens: number;
   input: number;
   output: number;
@@ -30,11 +33,17 @@ interface Measured {
   hours: number;
 }
 
-const none = (): Measured => ({ usd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: 0 });
+const none = (): Measured => ({
+  usd: 0, providerUsd: 0, inputUsd: 0, outputUsd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: 0,
+});
 
 /** A number the record meant, or zero: a count nothing was told is not a count. */
 const counted = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+/** Whether a cost is denominated in the dollars a total sums. */
+const inUsd = (cost: Cost | undefined): boolean =>
+  cost !== undefined && typeof cost.currency === 'string' && cost.currency.toLowerCase() === 'usd';
 
 /** One instant of a day, which is what the totals are kept per. */
 const DAY = /^\d{4}-\d{2}-\d{2}/u;
@@ -127,10 +136,19 @@ export function fileUsage(options: FileUsageOptions): Usage {
       const input = counted(entry.model.input);
       const output = counted(entry.model.output);
       const cache = counted(entry.model.cache?.read) + counted(entry.model.cache?.write);
+      const cost = entry.cost;
+      /*
+       * A record written before there were two costs has only `cost`. One the
+       * harness reported was the provider's own figure, so it is that too; one
+       * worked out from a price list was this host's charge alone.
+       */
+      const provider = entry.providerCost ?? (cost?.from === 'harness' ? cost : undefined);
       return {
-        usd: typeof entry.cost?.currency === 'string' && entry.cost.currency.toLowerCase() === 'usd'
-          ? counted(entry.cost.amount)
-          : 0,
+        usd: inUsd(cost) ? counted(cost?.amount) : 0,
+        providerUsd: inUsd(provider) ? counted(provider?.amount) : 0,
+        // Only the records that split their cost have a side to add.
+        inputUsd: inUsd(cost) ? counted(cost?.input) : 0,
+        outputUsd: inUsd(cost) ? counted(cost?.output) : 0,
         tokens: input + output + cache,
         input,
         output,
@@ -140,7 +158,10 @@ export function fileUsage(options: FileUsageOptions): Usage {
       };
     }
     const span = counted(entry.seconds) / HOUR_S;
-    return { usd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: span > 0 ? span : 0 };
+    return {
+      usd: 0, providerUsd: 0, inputUsd: 0, outputUsd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0,
+      hours: span > 0 ? span : 0,
+    };
   };
 
   /** The pools one record is charged to, and nothing it does not name with a string. */
@@ -155,6 +176,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
       const days = held.get(pool) ?? new Map<string, Measured>();
       const charged = days.get(day) ?? none();
       charged.usd += what.usd;
+      charged.providerUsd += what.providerUsd;
+      charged.inputUsd += what.inputUsd;
+      charged.outputUsd += what.outputUsd;
       charged.tokens += what.tokens;
       charged.input += what.input;
       charged.output += what.output;
@@ -272,6 +296,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
         for (const [day, charged] of days) {
           if (day < first || day > last) continue;
           sum.usd += charged.usd;
+          sum.providerUsd += charged.providerUsd;
+          sum.inputUsd += charged.inputUsd;
+          sum.outputUsd += charged.outputUsd;
           sum.tokens += charged.tokens;
           sum.input += charged.input;
           sum.output += charged.output;
@@ -283,6 +310,9 @@ export function fileUsage(options: FileUsageOptions): Usage {
       // A measure nothing was charged in is absent rather than zero.
       const out: UsageTotal = {};
       if (sum.usd !== 0) out.usd = sum.usd;
+      if (sum.providerUsd !== 0) out.providerUsd = sum.providerUsd;
+      if (sum.inputUsd !== 0) out.inputUsd = sum.inputUsd;
+      if (sum.outputUsd !== 0) out.outputUsd = sum.outputUsd;
       if (sum.tokens !== 0) out.tokens = sum.tokens;
       if (sum.input !== 0) out.input = sum.input;
       if (sum.output !== 0) out.output = sum.output;

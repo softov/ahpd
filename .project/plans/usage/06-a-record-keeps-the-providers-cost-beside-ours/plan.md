@@ -93,8 +93,8 @@ provider answer -> usageReader (tokens, and now cost) -> record: cost from price
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A record and a total carry both costs and their split](task-01-a-record-and-a-total-carry-both-costs.md) | todo | - |
-| [02 - The proxy reads the provider's cost and never prices a missing side as 0](task-02-the-proxy-reads-the-providers-cost.md) | todo | 01 |
+| [01 - A record and a total carry both costs and their split](task-01-a-record-and-a-total-carry-both-costs.md) | implemented | - |
+| [02 - The proxy reads the provider's cost and never prices a missing side as 0](task-02-the-proxy-reads-the-providers-cost.md) | implemented | 01 |
 | [03 - Anthropic-dialect and DeepSeek answers are checked from captured replies](task-03-anthropic-and-deepseek-answers-are-checked.md) | todo | 02 |
 
 ## Risks and tradeoffs
@@ -106,15 +106,15 @@ provider answer -> usageReader (tokens, and now cost) -> record: cost from price
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-record-and-a-total-carry-both-costs.md](task-01-a-record-and-a-total-carry-both-costs.md).
+- **Done so far:** 2026-10-07 - task 01, where `Cost` carries `input` and `output`, `UsageBase` carries `providerCost`, and a total carries `providerUsd`, `inputUsd` and `outputUsd`. 2026-10-07 - task 02, where the proxy reads a provider's cost in both dialects and never prices a missing side as 0.
+- **Next action:** [task-03-anthropic-and-deepseek-answers-are-checked.md](task-03-anthropic-and-deepseek-answers-are-checked.md). Its step 1 is the captures, which Softov runs. Task 03 waits on him.
 - **Open questions:** none.
-- **Watch out for:** `0` and absent are different everywhere in this plan. `?? 0` on a price or a cost is the defect being fixed.
+- **Watch out for:** `0` and absent are different everywhere in this plan. `?? 0` on a price or a cost is the defect being fixed. The full suite flakes on a loaded box: the machine tests in `packages/computer/test/` time out at 5 s, and each file passes on its own.
 
 ## Final verification checklist
 
-- [ ] A test for each row of the rule: provider only, price only, both, neither.
-- [ ] A test: a price with no `input` and a call with input tokens gives no `cost`.
-- [ ] `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
-- [ ] `docs/PROXY.md` says what a record's two costs are.
-- [ ] `plans/index.md` updated.
+- [x] A test for each row of the rule: provider only, price only, both, neither.
+- [x] A test: a price with no `input` and a call with input tokens gives no `cost`.
+- [x] `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
+- [x] `docs/PROXY.md` says what a record's two costs are.
+- [x] `plans/index.md` updated.

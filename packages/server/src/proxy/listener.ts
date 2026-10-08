@@ -19,7 +19,7 @@
  */
 
 import type { RequestHandler } from '@cofold/remote';
-import { decide, type ModelUse, type Owner, type Policies, type Scope, type Usage, type Users } from '@ahpd/sdk';
+import { decide, type Cost, type ModelUse, type Owner, type Policies, type Scope, type Usage, type Users } from '@ahpd/sdk';
 import { foreign, guarded, isUnder, json, originRefusal, PROXY_PREFIX, type ApiOrigins } from '../http.js';
 import { callerName, callerOf, type ProxyCaller, type SessionCaller } from './caller.js';
 import {
@@ -222,19 +222,27 @@ const poolsOf = (owner: Owner | undefined, scope: Scope | undefined): string[] =
 ];
 
 /**
- * What a call cost by the entry's price, in dollars per million tokens.
+ * What a call costs by the entry's price, in dollars per million tokens.
  *
  * Cache reads and writes are charged at the input price until there are cache
- * prices, so the figure is never under what the call could have cost. Nothing
- * when the entry has no price or no tokens were read.
+ * prices, so the figure is never under what the call could have cost. The
+ * amount is split into what was sent and what came back.
+ *
+ * Nothing when the entry has no price or no tokens were read, and nothing when
+ * a side has tokens and the price does not name it: a side priced at nothing is
+ * free, a side with no price at all is not priced.
  */
-const costOf = (entry: ModelEntry, tokens: Tokens): number | undefined => {
+const costOf = (entry: ModelEntry, tokens: Tokens): Cost | undefined => {
   const price = entry.price;
   if (price === undefined) return undefined;
-  const prompt = (tokens.input ?? 0) + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0);
   const read = tokens.input !== undefined || tokens.output !== undefined || tokens.cache !== undefined;
   if (!read) return undefined;
-  return (prompt * (price.input ?? 0) + (tokens.output ?? 0) * (price.output ?? 0)) / 1_000_000;
+  const prompt = (tokens.input ?? 0) + (tokens.cache?.read ?? 0) + (tokens.cache?.write ?? 0);
+  const answer = tokens.output ?? 0;
+  if ((prompt > 0 && price.input === undefined) || (answer > 0 && price.output === undefined)) return undefined;
+  const input = (prompt * (price.input ?? 0)) / 1_000_000;
+  const output = (answer * (price.output ?? 0)) / 1_000_000;
+  return { amount: input + output, currency: 'usd', from: 'price', input, output };
 };
 
 /** How much of a provider's refusal is read for the log: enough for its sentence, not its whole body. */
@@ -527,8 +535,8 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
         continue;
       }
       if (response.status >= 400 || left.length > 0) said(`${candidate.provider} answered ${String(response.status)}`);
-      return streamed(request, dialect, response, controller, (tokens) => {
-        record(options, charged, { at, name, candidate, tokens });
+      return streamed(request, dialect, response, controller, (tokens, providerCost) => {
+        record(options, charged, { at, name, candidate, tokens, ...(providerCost === undefined ? {} : { providerCost }) });
       }, (why) => { say(`proxy: ${who} ${name}: ${candidate.provider} ${why}`); });
     }
     // Unreachable: a route answers at least one candidate.
@@ -551,7 +559,7 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     dialect: Dialect,
     response: Response,
     controller: AbortController,
-    done: (tokens: Tokens) => void,
+    done: (tokens: Tokens, providerCost: Cost | undefined) => void,
     cut: (why: string) => void,
   ): Response => {
     const usage = usageReader(dialect, response.headers.get('content-type'));
@@ -561,7 +569,7 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
       if (finished) return;
       finished = true;
       request.signal.removeEventListener('abort', hangUp);
-      done(usage.tokens());
+      done(usage.tokens(), usage.cost());
     };
     const upstream = response.body;
     if (upstream === null) {
@@ -651,6 +659,8 @@ interface Answered {
   candidate: Candidate;
   /** What its answer reported. */
   tokens: Tokens;
+  /** The cost its answer reported, when the provider gave one. */
+  providerCost?: Cost;
 }
 
 /**
@@ -663,7 +673,10 @@ const record = (options: ProxyOptions, charged: Charged, call: Answered): void =
   if (!charged.recorded) return;
   const store = options.usage?.();
   if (store === undefined) return;
-  const usd = costOf(call.candidate.entry, call.tokens);
+  const provider = call.providerCost;
+  // The entry's price is what the pools are charged, so it wins; a call no
+  // price names is charged what the provider said it cost.
+  const cost = costOf(call.candidate.entry, call.tokens) ?? provider;
   const session = charged.session;
   const entry: ModelUse = {
     at: call.at,
@@ -677,7 +690,8 @@ const record = (options: ProxyOptions, charged: Charged, call: Answered): void =
       ...(session.turn === undefined ? {} : { turn: session.turn }),
     }),
     model: { name: call.name, provider: call.candidate.provider, ...call.tokens },
-    ...(usd === undefined ? {} : { cost: { amount: usd, currency: 'usd', from: 'price' as const } }),
+    ...(cost === undefined ? {} : { cost }),
+    ...(provider === undefined ? {} : { providerCost: provider }),
     pools: poolsOf(charged.owner, charged.scope),
   };
   void Promise.resolve()

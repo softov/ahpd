@@ -64,6 +64,9 @@ const softov = (remote: string, local: string): ProxySetting => ({
     ],
     'openai/gpt-5.5': [{ provider: 'openrouter', id: 'openai/gpt-5.5', price: { input: 5, output: 30 } }],
     'local/default': [{ provider: 'local', id: 'local-model' }],
+    // A price with one side only, and a price of nothing at all.
+    'local/output-only': [{ provider: 'local', id: 'local-model', price: { output: 2 } }],
+    'local/free': [{ provider: 'local', id: 'local-model', price: { input: 0, output: 0 } }],
   },
 });
 
@@ -75,10 +78,25 @@ const COMPLETION = {
   usage: { prompt_tokens: 1200, completion_tokens: 300, prompt_tokens_details: { cached_tokens: 200 } },
 };
 
+/** The usage OpenRouter reports: a cost, and the two sides it is made of. */
+const REPORTED_USAGE = {
+  prompt_tokens: 1200,
+  completion_tokens: 300,
+  prompt_tokens_details: { cached_tokens: 200 },
+  cost: 0.000204,
+  cost_details: { upstream_inference_prompt_cost: 0.000104, upstream_inference_completions_cost: 0.0001 },
+};
+
+/** The same answer, reporting a cost. */
+const REPORTED = { ...COMPLETION, usage: REPORTED_USAGE };
+
+/** What a record keeps of that report: the amount, and the split it came in. */
+const REPORTED_COST = { amount: 0.000204, currency: 'usd', from: 'harness', input: 0.000104, output: 0.0001 };
+
 /** Two fakes answering a chat completion, and the proxy over them with Softov's table. */
-const setup = async (options: ServeOptions = {}) => {
-  const remote = await fakeProvider(answerJson(200, COMPLETION));
-  const local = await fakeProvider(answerJson(200, COMPLETION));
+const setup = async (options: ServeOptions = {}, answer: unknown = COMPLETION) => {
+  const remote = await fakeProvider(answerJson(200, answer));
+  const local = await fakeProvider(answerJson(200, answer));
   fakes.push(remote, local);
   const usage = memoryUsage();
   const served = await serveProxy({ users: who.users, env: KEYS, proxy: softov(remote.endpoint, local.endpoint), usage: () => usage, ...options });
@@ -150,10 +168,14 @@ describe('the call is recorded', () => {
       model: { name: 'openai/gpt-5.5', provider: 'openrouter', input: 1000, output: 300, cache: { read: 200 } },
       pools: ['user:ana', 'team:backend', 'project:backend:billing'],
     });
-    // (1000 + 200) * $5 + 300 * $30, per million.
+    // (1000 + 200) * $5 + 300 * $30, per million, split into what was sent and
+    // what came back. The provider reported no cost of its own.
     expect(entry?.cost?.currency).toBe('usd');
     expect(entry?.cost?.from).toBe('price');
     expect(entry?.cost?.amount).toBeCloseTo((1200 * 5 + 300 * 30) / 1_000_000, 12);
+    expect(entry?.cost?.input).toBeCloseTo((1200 * 5) / 1_000_000, 12);
+    expect(entry?.cost?.output).toBeCloseTo((300 * 30) / 1_000_000, 12);
+    expect(entry?.providerCost).toBeUndefined();
     expect(Date.parse(entry?.at ?? '')).not.toBeNaN();
     expect(entry?.session).toBeUndefined();
     expect(JSON.stringify(entry)).not.toContain(MARKER);
@@ -193,6 +215,7 @@ describe('the call is recorded', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]?.model).toEqual({ name: 'openai/gpt-5.5', provider: 'openrouter' });
     expect(entries[0]?.cost).toBeUndefined();
+    expect(entries[0]?.providerCost).toBeUndefined();
     // Nothing was injected to ask for it.
     expect(JSON.parse(remote.received[0]?.body ?? '')).toEqual({ model: 'openai/gpt-5.5', stream: true });
   });
@@ -214,6 +237,63 @@ describe('the call is recorded', () => {
     const entries = await settled(usage, 1);
     expect(entries).toHaveLength(1);
     expect(entries[0]?.model).toMatchObject({ input: 12, output: 1 });
+  });
+
+  it('keeps the provider\'s own cost as both costs when the entry has no price', async () => {
+    const { served, usage } = await setup({}, REPORTED);
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'local/default' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    // Nothing prices the call, so what its pools are charged is what the
+    // provider says it cost.
+    expect(entry?.cost).toEqual(REPORTED_COST);
+    expect(entry?.providerCost).toEqual(REPORTED_COST);
+  });
+
+  it('charges the entry\'s price and keeps the provider\'s figure beside it', async () => {
+    const { served, usage } = await setup({}, REPORTED);
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'openai/gpt-5.5' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    expect(entry?.cost).toMatchObject({ from: 'price', currency: 'usd' });
+    expect(entry?.cost?.amount).toBeCloseTo((1200 * 5 + 300 * 30) / 1_000_000, 12);
+    expect(entry?.providerCost).toEqual(REPORTED_COST);
+  });
+
+  it('charges nothing for a side the price does not name when that side has tokens', async () => {
+    const { served, usage } = await setup();
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'local/output-only' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    // The call sent tokens and the price says nothing about them, so the cost
+    // is not known - which is not the same as costing nothing.
+    expect(entry?.model.input).toBe(1000);
+    expect(entry?.cost).toBeUndefined();
+    expect(entry?.providerCost).toBeUndefined();
+  });
+
+  it('charges a price of zero as zero, which is a free call and not an absent cost', async () => {
+    const { served, usage } = await setup();
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'local/free' } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    expect(entry?.cost).toEqual({ amount: 0, currency: 'usd', from: 'price', input: 0, output: 0 });
+  });
+
+  it('reads the provider\'s cost from the last chunk of a streamed answer', async () => {
+    const remote = await fakeProvider((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' });
+      response.write('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n');
+      // OpenRouter reports the cost in the usage of the chunk that ends the
+      // answer, not in the first one.
+      response.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 1200, completion_tokens: 300, cost: 0.000204, cost_details: { upstream_inference_prompt_cost: 0.000104, upstream_inference_completions_cost: 0.0001 } } })}\n\n`);
+      response.end('data: [DONE]\n\n');
+    });
+    fakes.push(remote);
+    const usage = memoryUsage();
+    const served = await serveProxy({ users: who.users, env: KEYS, proxy: softov(remote.endpoint, remote.endpoint), usage: () => usage });
+    open.push(served);
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: { model: 'local/default', stream: true } })).status).toBe(200);
+    const [entry] = await settled(usage, 1);
+    expect(entry?.model).toEqual({ name: 'local/default', provider: 'local', input: 1200, output: 300 });
+    expect(entry?.providerCost).toEqual(REPORTED_COST);
+    expect(entry?.cost).toEqual(REPORTED_COST);
   });
 
   it('charges root to root:<host>', async () => {

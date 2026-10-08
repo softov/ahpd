@@ -62,6 +62,9 @@ it('charges a pool what one model call cost, in every measure it carries', async
 
   expect(await usage.total('team:backend', month.from, month.until)).toEqual({
     usd: 0.25,
+    // A cost the harness reported is the provider's own figure, so a record
+    // written before there were two costs counts as both.
+    providerUsd: 0.25,
     // The cache is tokens the provider billed, so it counts in `tokens` and is
     // summed beside the prompt and the answer.
     tokens: 132,
@@ -73,6 +76,85 @@ it('charges a pool what one model call cost, in every measure it carries', async
   // Nobody else was charged, and a pool nothing names is an empty answer
   // rather than a refusal.
   expect(await usage.total('user:maria', month.from, month.until)).toEqual({});
+});
+
+/*
+ * The two costs a record carries, and the split of each.
+ *
+ * `cost` is what the pools are charged and `providerCost` is what the provider
+ * reported. A total says both, and the charged cost also splits into what was
+ * sent and what was received.
+ */
+
+it('charges both costs and the split of what it charges', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10, output: 4 }, {
+    cost: { amount: 3, currency: 'usd', from: 'price', input: 1, output: 2 },
+    providerCost: { amount: 2, currency: 'usd', from: 'harness' },
+  }));
+
+  expect(await usage.total('p', month.from, month.until)).toEqual({
+    usd: 3,
+    providerUsd: 2,
+    inputUsd: 1,
+    outputUsd: 2,
+    tokens: 14,
+    input: 10,
+    output: 4,
+    calls: 1,
+  });
+});
+
+it('counts a cost the harness reported, written before there were two, as the provider\'s', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }, {
+    cost: { amount: 1, currency: 'usd', from: 'harness' },
+  }));
+
+  expect(await usage.total('p', month.from, month.until)).toEqual({ usd: 1, providerUsd: 1, tokens: 10, input: 10, calls: 1 });
+});
+
+it('does not count an old cost worked out from a price as the provider\'s', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }, {
+    cost: { amount: 1, currency: 'usd', from: 'price' },
+  }));
+
+  const total = await usage.total('p', month.from, month.until);
+  expect(total).toEqual({ usd: 1, tokens: 10, input: 10, calls: 1 });
+  expect(total.providerUsd).toBeUndefined();
+});
+
+it('answers no cost of either kind for a record that carries none', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }));
+
+  const total = await usage.total('p', month.from, month.until);
+  expect(total.usd).toBeUndefined();
+  expect(total.providerUsd).toBeUndefined();
+  expect(total.inputUsd).toBeUndefined();
+  expect(total.outputUsd).toBeUndefined();
+});
+
+it('adds only the records that carry a split to the split amounts', async () => {
+  const usage = fileUsage({ folder });
+  await usage.record(modelUse('2026-10-04T10:00:00.000Z', ['p'], { input: 10 }, {
+    cost: { amount: 3, currency: 'usd', from: 'price', input: 1, output: 2 },
+  }));
+  await usage.record(modelUse('2026-10-04T11:00:00.000Z', ['p'], { input: 10 }, {
+    cost: { amount: 5, currency: 'usd', from: 'price' },
+  }));
+
+  // The record with no split adds to the charge alone, and a measure nothing
+  // was charged in stays absent rather than becoming zero.
+  expect(await usage.total('p', month.from, month.until)).toEqual({
+    usd: 8,
+    inputUsd: 1,
+    outputUsd: 2,
+    tokens: 20,
+    input: 20,
+    calls: 2,
+  });
 });
 
 it('leaves the cache count out of a total when the call was charged none', async () => {
@@ -140,11 +222,11 @@ it('keeps one file per month and kind, and rebuilds the totals from them', async
 
   // A new store over the same folder, which is what a restart is.
   const second = fileUsage({ folder });
-  expect(await second.total('p', month.from, month.until)).toEqual({ usd: 1, tokens: 10, input: 10, calls: 1, hours: 0.5 });
+  expect(await second.total('p', month.from, month.until)).toEqual({ usd: 1, providerUsd: 1, tokens: 10, input: 10, calls: 1, hours: 0.5 });
 
   // A range across the two months sums both files.
   const both = await second.total('p', '2026-10-01T00:00:00.000Z', '2026-11-30T23:59:59.999Z');
-  expect(both).toEqual({ usd: 1, tokens: 50, input: 50, calls: 2, hours: 0.5 });
+  expect(both).toEqual({ usd: 1, providerUsd: 1, tokens: 50, input: 50, calls: 2, hours: 0.5 });
 
   // And what it wrote is one whole record per line.
   const written = readFileSync(join(folder, '2026-10-model.jsonl'), 'utf8').trim().split('\n');

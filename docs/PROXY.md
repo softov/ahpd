@@ -100,7 +100,9 @@ Every refusal is the dialect's own error body, so the tool shows the message. On
 
 ## What is recorded
 
-Each answered call writes one usage record with `source: "proxy"`: the model name, the provider, the tokens the answer reported, the owner (`user:<id>`, or `root:<host>` for the deployment token), the team and project, and the pools those give. With a `price` on the entry, the cost is worked out from it (`from: "price"`), with cache tokens at the input price. A record is written when the stream ends, is cut, or fails. `ahpd usage` shows them.
+Each answered call writes one usage record with `source: "proxy"`: the model name, the provider, the tokens the answer reported, the owner (`user:<id>`, or `root:<host>` for the deployment token), the team and project, and the pools those give. A record is written when the stream ends, is cut, or fails. `ahpd usage` shows them.
+
+A record carries two costs. `providerCost` is what the provider reported, when it reported one: OpenRouter sends `usage.cost` with `cost_details`, which give the amount and what was sent and what came back. `cost` is what the pools are charged. With a `price` on the entry it is worked out from the price (`from: "price"`), with cache tokens at the input price; without one it is the provider's own figure (`from: "harness"`), so a call nobody priced is charged what it cost. A price that names one side and not the other gives no cost at all when the unnamed side has tokens, because an absent price is not a price of zero; a side priced at 0 is free.
 
 ## Session calls
 
