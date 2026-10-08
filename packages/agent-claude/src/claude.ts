@@ -38,6 +38,11 @@ export const claudeExecutablePath = (home: string = homedir()): string => {
  * token nothing will accept.
  */
 const ANTHROPIC = 'https://api.anthropic.com';
+const ACCOUNT_OVERRIDE_ENV = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+  'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY',
+] as const;
 
 /**
  * The API base URL a variant's own `env` names, or nothing.
@@ -396,7 +401,7 @@ export function claude(options: ClaudeOptions): Agent {
     defaults,
     accountIdentity: async (directory) => {
       if (directory !== undefined && !isAbsolute(directory)) return { status: 'unavailable' };
-      if (options.preset !== undefined || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_BASE_URL || process.env.CLAUDE_CODE_OAUTH_TOKEN) return { status: 'unavailable' };
+      if (options.preset !== undefined || ACCOUNT_OVERRIDE_ENV.some((name) => process.env[name])) return { status: 'unavailable' };
       try {
         const { stdout } = await promisify(execFile)(claudeExecutablePath(), ['auth', 'status', '--json'], {
           timeout: 5000, maxBuffer: 4096, cwd: directory ?? homedir(),
