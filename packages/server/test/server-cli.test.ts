@@ -1201,6 +1201,31 @@ describe('plugin', () => {
     }
   }, 30000);
 
+  it('asks for a restart when an update moved only the sdk', async () => {
+    // Every update installs the daemon's own sdk beside the plugins, so a
+    // daemon upgraded before its plugins moves the sdk on a call that moves no
+    // plugin: the loaded plugins are on the old one until the daemon restarts.
+    const dir = join(home, 'ahpd');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { 'some-plugin': '^1.0.0' } }));
+    const there: [string, string][] = [['some-plugin', '1.0.0'], ['@ahpd/sdk', '0.0.1']];
+    for (const [name, version] of there) {
+      mkdirSync(join(dir, 'node_modules', name), { recursive: true });
+      writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+    }
+    // A record of a daemon that is up, which is what at the terminal decides
+    // whether a restart is asked for.
+    writeFileSync(join(dir, 'daemon.json'), JSON.stringify({
+      pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '',
+    }));
+    const said = await cli(['plugin', 'update', 'all', '--json'], { env: { ...fakeNpm(0), FAKE_NPM_LANDS: '@ahpd/sdk 9.9.9' } });
+    expect(said.code).toBe(0);
+    expect(JSON.parse(said.stdout) as unknown).toEqual({
+      plugins: [{ name: '@ahpd/sdk', from: '0.0.1', to: '9.9.9' }],
+      restart: true,
+    });
+    expect(said.stderr).toContain('Restart the daemon to load the change: ahpd restart');
+  }, 20000);
+
   it('install --json writes only JSON', async () => {
     const said = await cli(
       ['plugin', 'install', 'some-plugin', '--no-enable', '--json', '--config-file', config],

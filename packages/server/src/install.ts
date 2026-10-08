@@ -309,9 +309,24 @@ export const setPluginEnabled = (path: string, name: string, enabled: boolean): 
   editEntry(path, name, (entry) => { entry.enabled = enabled; });
 };
 
-/** The configuration directory's `package.json` `dependencies`, name to spec, in the order it lists them. */
-const dependenciesIn = (configDir: string): [string, string][] => {
-  const dependencies = readEntry(join(configDir, 'package.json')).dependencies;
+/**
+ * The directory plugins are installed into: `AHPD_PLUGIN_ROOT` when it is set,
+ * else the configuration directory.
+ *
+ * The launcher of the ahpd part sets the variable, where the configuration
+ * directory is not writable and a plugin installed there would go nowhere a
+ * run would look for it. Everywhere else it is unset and the configuration
+ * directory is the root, which is what the daemon loads a bare name from.
+ * An empty value is a variable nobody set, as `rootsOf` reads it.
+ */
+export const pluginRoot = (configDir: string): string => {
+  const root = process.env.AHPD_PLUGIN_ROOT;
+  return root === undefined || root === '' ? configDir : root;
+};
+
+/** The plugin root's `package.json` `dependencies`, name to spec, in the order it lists them. */
+const dependenciesIn = (root: string): [string, string][] => {
+  const dependencies = readEntry(join(root, 'package.json')).dependencies;
   if (typeof dependencies !== 'object' || dependencies === null || Array.isArray(dependencies)) return [];
   return Object.entries(dependencies as Record<string, unknown>).map(([name, spec]) => [name, String(spec)]);
 };
@@ -325,9 +340,9 @@ const dependenciesIn = (configDir: string): [string, string][] => {
 const fromRegistry = (spec: string): boolean =>
   !/^(?:\.|\/|~|file:|link:|git\+|git:|github:|https?:)/.test(spec);
 
-/** The version of a package installed in the configuration directory, or `undefined` when it has none. */
-const installedVersion = (configDir: string, name: string): string | undefined => {
-  const path = join(configDir, 'node_modules', name, 'package.json');
+/** The version of a package installed in the plugin root, or `undefined` when it has none. */
+const installedVersion = (root: string, name: string): string | undefined => {
+  const path = join(root, 'node_modules', name, 'package.json');
   try {
     const version = readEntry(path).version;
     return typeof version === 'string' ? version : undefined;
@@ -358,7 +373,7 @@ const daemonsSdk = (daemonVersion: string): string[] => ['--legacy-peer-deps', p
 
 /** What `plugin install` was given and where it looks. */
 export interface InstallOptions {
-  /** The configuration directory npm installs into, which is where a bare name is resolved from. */
+  /** The configuration directory, which is the plugin root when `AHPD_PLUGIN_ROOT` is unset. */
   configDir: string;
   /** The configuration file `plugins` is edited in. */
   configFile: string;
@@ -383,19 +398,21 @@ const REGISTRY_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/
  * other at the version or tag written, or `latest`.
  *
  * A registry that does not answer, or has no such version, is npm's to report.
+ * Every name is asked at once, so three names are three requests and not one
+ * request three times over.
  */
 const refuseNonPlugins = async (names: readonly string[], options: InstallOptions): Promise<void> => {
-  for (const name of names) {
+  await Promise.all(names.map(async (name) => {
     const bare = packageOf(name);
-    if (!REGISTRY_NAME.test(bare)) continue;
+    if (!REGISTRY_NAME.test(bare)) return;
     const target = pinned(name, options.version);
     const tag = target === bare ? 'latest' : target.slice(bare.length + 1);
     const manifest = await askRegistry(`${bare.replace('/', '%2f')}/${encodeURIComponent(tag)}`, { fetch: options.fetch });
-    if (manifest === undefined) continue;
+    if (manifest === undefined) return;
     if (typeof manifest !== 'object' || manifest === null || !('ahpd' in manifest)) {
       throw new Error(`${bare} is not an ahpd plugin: its package.json has no "ahpd" field.`);
     }
-  }
+  }));
 };
 
 /**
@@ -425,11 +442,7 @@ export async function installPlugins(names: readonly string[], options: InstallO
   }
   await refuseNonPlugins(names, options);
   const wanted = names.map((name) => pinned(name, options.version));
-  // `AHPD_PLUGIN_ROOT` is set by the launcher of the ahpd part, where the config
-  // dir is not writable and a plugin installed there would go nowhere a run of
-  // the daemon would look for it. Everywhere else it is not set and the config
-  // dir is the root, as it has always been.
-  const root = process.env.AHPD_PLUGIN_ROOT ?? options.configDir;
+  const root = pluginRoot(options.configDir);
   // The config dir is made either way: the packages may go elsewhere, but
   // `--enable` still writes the daemon's own configuration there.
   mkdirSync(options.configDir, { recursive: true });
@@ -452,7 +465,7 @@ export async function installPlugins(names: readonly string[], options: InstallO
 
 /** What `plugin update` was given and where it looks. */
 export interface UpdateOptions {
-  /** The configuration directory whose installed packages are moved. */
+  /** The configuration directory, which is the plugin root when `AHPD_PLUGIN_ROOT` is unset. */
   configDir: string;
   /** The daemon's own version, which every `@ahpd/` package is moved to. */
   version: string;
@@ -470,31 +483,33 @@ export interface Moved {
 }
 
 /**
- * Move the packages installed in the configuration directory, in one npm call:
- * every one for `all`, or only those named, each of which must be installed
- * there.
+ * Move the packages installed in the plugin root, in one npm call: every one
+ * for `all`, or only those named, each of which must be installed there.
  *
  * An `@ahpd/` package goes to the daemon's version, as `pinned` pins it; any
  * other goes to `latest`, and a name that carries a version or a tag is passed
  * as written. A package installed from outside the registry is left as it is.
  * `config.json` is not touched. Says each package whose installed version
  * changed, from the version before npm to the one npm left, or `Nothing to
- * update.` when none did, and answers those packages.
+ * update.` when none did, and answers those packages. The sdk is installed
+ * beside them by every call, so a version of it that changed is answered as
+ * moved too, though it is no plugin to name.
  */
 export async function updatePlugins(names: 'all' | readonly string[], options: UpdateOptions): Promise<Moved[]> {
-  const dependencies = dependenciesIn(options.configDir);
+  const root = pluginRoot(options.configDir);
+  const dependencies = dependenciesIn(root);
   const specs = new Map(dependencies);
   if (names !== 'all') {
     for (const name of names) {
       if (packageOf(name) === SDK) throw new Error(SDK_IS_NOT_A_PLUGIN);
-      if (!specs.has(packageOf(name))) throw new Error(`${packageOf(name)} is not installed in ${options.configDir}.`);
+      if (!specs.has(packageOf(name))) throw new Error(`${packageOf(name)} is not installed in ${root}.`);
     }
   }
   // The sdk is in `dependencies` because ahpd installs it, and moves with every
-  // call below; it is not a plugin to move or to report.
+  // call below; it is not a plugin to move or to name.
   const asked = names === 'all' ? dependencies.map(([name]) => name).filter((name) => name !== SDK) : names;
   if (asked.length === 0) {
-    options.say(`No plugin is installed in ${options.configDir}.`);
+    options.say(`No plugin is installed in ${root}.`);
     return [];
   }
   const moving: string[] = [];
@@ -503,30 +518,39 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
     if (fromRegistry(spec)) moving.push(name);
     else options.say(`${packageOf(name)}: ${spec}, left as installed`);
   }
-  if (moving.length === 0) return [];
+  if (moving.length === 0) {
+    options.say('Nothing to update.');
+    return [];
+  }
   const targets = moving.map((name) => {
     if (name !== packageOf(name)) return name;
     return name.startsWith('@ahpd/') ? pinned(name, options.version) : `${name}@latest`;
   });
-  const from = moving.map((name) => installedVersion(options.configDir, packageOf(name)));
-  const done = await options.run('npm', ['install', '--prefix', options.configDir, ...daemonsSdk(options.version), ...targets]);
+  const from = moving.map((name) => installedVersion(root, packageOf(name)));
+  const sdkFrom = installedVersion(root, SDK);
+  const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...targets]);
   if (done.code !== 0) {
     throw npmFailed(`npm could not update ${moving.map(packageOf).join(', ')}`, done);
   }
   const moved: Moved[] = [];
   moving.forEach((name, at) => {
-    const to = installedVersion(options.configDir, packageOf(name));
+    const to = installedVersion(root, packageOf(name));
     if (to === from[at]) return;
     moved.push({ name: packageOf(name), ...(from[at] === undefined ? {} : { from: from[at] }), ...(to === undefined ? {} : { to }) });
     options.say(`${packageOf(name)}: ${from[at] ?? 'not installed'} to ${to ?? 'not installed'}`);
   });
+  const sdkTo = installedVersion(root, SDK);
+  if (sdkTo !== sdkFrom) {
+    moved.push({ name: SDK, ...(sdkFrom === undefined ? {} : { from: sdkFrom }), ...(sdkTo === undefined ? {} : { to: sdkTo }) });
+    options.say(`${SDK}: ${sdkFrom ?? 'not installed'} to ${sdkTo ?? 'not installed'}`);
+  }
   if (moved.length === 0) options.say('Nothing to update.');
   return moved;
 }
 
 /** What `plugin remove` was given and where it looks. */
 export interface RemoveOptions {
-  /** The configuration directory npm uninstalls from. */
+  /** The configuration directory, which is the plugin root when `AHPD_PLUGIN_ROOT` is unset. */
   configDir: string;
   /** The configuration file `plugins` is edited in. */
   configFile: string;
@@ -547,6 +571,7 @@ export interface RemoveOptions {
  * order a person can act on: the plugin is off, and npm's reason is on screen.
  */
 export async function removePlugins(names: readonly string[], options: RemoveOptions): Promise<void> {
+  const root = pluginRoot(options.configDir);
   const packages = names.map(packageOf);
   const dropped = disableNames(options.configFile, packages);
   options.say(dropped.length === 0
@@ -556,9 +581,9 @@ export async function removePlugins(names: readonly string[], options: RemoveOpt
   // The sdk is the daemon's, installed beside every plugin, and stays.
   const uninstalled = packages.filter((name) => name !== SDK);
   if (uninstalled.length === 0) return;
-  const done = await options.run('npm', ['uninstall', '--prefix', options.configDir, ...uninstalled]);
+  const done = await options.run('npm', ['uninstall', '--prefix', root, ...uninstalled]);
   if (done.code !== 0) {
     throw npmFailed(`npm could not uninstall ${uninstalled.join(', ')}`, done);
   }
-  options.say(`Uninstalled ${uninstalled.join(', ')} from ${options.configDir}.`);
+  options.say(`Uninstalled ${uninstalled.join(', ')} from ${root}.`);
 }

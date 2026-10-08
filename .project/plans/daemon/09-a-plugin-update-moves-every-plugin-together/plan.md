@@ -7,11 +7,11 @@ created: 2026-09-29
 revalidated: 2026-09-29
 requires: []
 refs:
-  - "[code://packages/server/src/commands/plugin.ts#L70-L126](../../../../packages/server/src/commands/plugin.ts#L70-L126) - `plugin install` and `plugin remove`, the shape `update` copies"
-  - "[code://packages/server/src/install.ts#L92-L97](../../../../packages/server/src/install.ts#L92-L97) - `pinned`"
-  - "[code://packages/server/src/install.ts#L233](../../../../packages/server/src/install.ts#L233) - `installPlugins`, and how npm's failure is reported"
+  - "[code://packages/server/src/commands/plugin.ts#L83-L140](../../../../packages/server/src/commands/plugin.ts#L83-L140) - `plugin install` and `plugin remove`, the shape `update` copies"
+  - "[code://packages/server/src/install.ts#L108-L122](../../../../packages/server/src/install.ts#L108-L122) - `pinned`"
+  - "[code://packages/server/src/install.ts#L436-L464](../../../../packages/server/src/install.ts#L436-L464) - `installPlugins`, and how npm's failure is reported"
   - "[code://packages/server/src/install.ts#L80-L93](../../../../packages/server/src/install.ts#L80-L93) - `NpmFailure` and `npmFailed`: `failed` for the terminal, `message` with npm's reason when served"
-  - "[code://packages/server/src/install.ts#L476-L507](../../../../packages/server/src/install.ts#L476-L507) - `updatePlugins`, one npm call for everything it moves"
+  - "[code://packages/server/src/install.ts#L498-L549](../../../../packages/server/src/install.ts#L498-L549) - `updatePlugins`, one npm call for everything it moves"
   - "[code://docs/DAEMON.md#L36-L70](../../../../docs/DAEMON.md#L36-L70) - the plugin commands and the 0.6 upgrade note"
   - "npm://@cofold/terminal@^0.2.0 - `unknown command` for a command missing its required argument; fixed in cofold commands/03"
 ---
@@ -85,7 +85,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | [09 - Our plugins take any @ahpd/sdk from 0.8 on](task-09-a-plugin-names-its-oldest-sdk.md) | implemented | 08 |
 | [10 - Install refuses a package that is not a plugin](task-10-install-refuses-a-package-that-is-not-a-plugin.md) | implemented | 08 |
 | [11 - Update answers what moved](task-11-update-answers-what-moved.md) | implemented | 10 |
-| [12 - Update and remove use the plugin root, and an sdk move asks for a restart](task-12-update-and-remove-use-the-plugin-root.md) | todo | 11 |
+| [12 - Update and remove use the plugin root, and an sdk move asks for a restart](task-12-update-and-remove-use-the-plugin-root.md) | implemented | 11 |
 
 ## Risks and tradeoffs
 
@@ -95,7 +95,8 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 - **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`. Task 03 implemented 2026-10-06, in daemon 16 task 01's cofold bump.
 - **Reviewed 2026-10-07:** 02, 06, 08, 09, 10 and 11 pass as code. The review found that update and remove ignore `AHPD_PLUGIN_ROOT`, which install reads since container/05 p3. Task 12 fixes it.
-- **Next action:** [task-12-update-and-remove-use-the-plugin-root.md](task-12-update-and-remove-use-the-plugin-root.md). Then [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, and [task-04-docs.md](task-04-docs.md) says it.
+- **Done 2026-10-08:** task 12 implemented: one `pluginRoot` for install, update and remove, an sdk move answered in `moved`, and the registry asked in parallel.
+- **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, and [task-04-docs.md](task-04-docs.md) says it.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 
 ## Final verification checklist

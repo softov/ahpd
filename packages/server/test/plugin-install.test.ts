@@ -35,16 +35,21 @@ afterEach(() => {
 /**
  * A runner that records every call and lets a verb fail. `lands` is what an
  * install leaves in `node_modules`, as a package name and its version.
+ *
+ * The packages land where the call's own `--prefix` says, which is what npm
+ * does: a case that moves the root sees them under the root.
  */
 const fake = (answers: Record<string, Ran> = {}, lands: Record<string, string> = {}) => {
   const calls: { program: string; argv: string[] }[] = [];
   const runner: Runner = async (program, argv) => {
     calls.push({ program, argv: [...argv] });
     const answer = answers[argv[0] ?? ''] ?? { code: 0, stdout: '', stderr: '' };
-    if (argv[0] === 'install' && answer.code === 0) {
+    const at = argv.indexOf('--prefix');
+    if (argv[0] === 'install' && answer.code === 0 && at !== -1) {
+      const into = argv[at + 1] as string;
       for (const [name, version] of Object.entries(lands)) {
-        mkdirSync(join(configDir, 'node_modules', name), { recursive: true });
-        writeFileSync(join(configDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+        mkdirSync(join(into, 'node_modules', name), { recursive: true });
+        writeFileSync(join(into, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
       }
     }
     return answer;
@@ -260,14 +265,14 @@ it('streams more from npm than one buffer holds', async () => {
   }
 }, 30000);
 
-/** A configuration directory as npm leaves it: `package.json` and each package's own. */
-const installed = (packages: Record<string, string>): void => {
-  mkdirSync(configDir, { recursive: true });
+/** A plugin root as npm leaves it: `package.json` and each package's own. */
+const installed = (packages: Record<string, string>, dir: string = configDir): void => {
+  mkdirSync(dir, { recursive: true });
   const dependencies = Object.fromEntries(Object.entries(packages).map(([name, version]) => [name, `^${version}`]));
-  writeFileSync(join(configDir, 'package.json'), `${JSON.stringify({ dependencies }, null, 2)}\n`);
+  writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ dependencies }, null, 2)}\n`);
   for (const [name, version] of Object.entries(packages)) {
-    mkdirSync(join(configDir, 'node_modules', name), { recursive: true });
-    writeFileSync(join(configDir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
+    mkdirSync(join(dir, 'node_modules', name), { recursive: true });
+    writeFileSync(join(dir, 'node_modules', name, 'package.json'), JSON.stringify({ name, version }));
   }
 };
 
@@ -339,14 +344,83 @@ it('leaves a package installed from outside the registry as it is, and says so',
   }
 });
 
-it('runs no npm when every package came from outside the registry', async () => {
+it('runs no npm when every package came from outside the registry, and says there was nothing to update', async () => {
   mkdirSync(configDir, { recursive: true });
   writeFileSync(join(configDir, 'package.json'), JSON.stringify({ dependencies: { mine: 'file:../mine' } }));
   said.length = 0;
   const { runner, calls } = fake();
   expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
   expect(calls).toEqual([]);
-  expect(said).toContain('mine: file:../mine, left as installed');
+  expect(said).toEqual(['mine: file:../mine, left as installed', 'Nothing to update.']);
+});
+
+it('reports an sdk the update moved while no plugin did', async () => {
+  // Every update installs the daemon's sdk beside the plugins, so an sdk one
+  // minor behind moves on a call that moves no plugin at all: the daemon has
+  // to be restarted for the plugins to load the new one.
+  installed({ '@ahpd/agent-claude': '0.8.0', '@ahpd/sdk': '0.7.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/sdk': '0.8.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }))
+    .toEqual([{ name: '@ahpd/sdk', from: '0.7.0', to: '0.8.0' }]);
+  expect(calls).toHaveLength(1);
+  expect(said).toEqual(['@ahpd/sdk: 0.7.0 to 0.8.0']);
+});
+
+it('updates from the plugin root when the variable is set', async () => {
+  const pluginRoot = join(root, 'part', 'ahpd', 'plugins');
+  process.env.AHPD_PLUGIN_ROOT = pluginRoot;
+  installed({ '@ahpd/agent-claude': '0.7.0' }, pluginRoot);
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }))
+    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(calls.map((one) => one.argv)).toEqual([
+    ['install', '--prefix', pluginRoot, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
+  ]);
+  expect(said).toEqual(['@ahpd/agent-claude: 0.7.0 to 0.8.0']);
+});
+
+it('names the plugin root, not the configuration directory, when a name is not installed there', async () => {
+  const pluginRoot = join(root, 'part', 'ahpd', 'plugins');
+  process.env.AHPD_PLUGIN_ROOT = pluginRoot;
+  installed({ '@ahpd/agent-claude': '0.8.0' }, pluginRoot);
+  const { runner, calls } = fake();
+  await expect(updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say }))
+    .rejects.toThrow(`left-pad is not installed in ${pluginRoot}`);
+  expect(calls).toEqual([]);
+});
+
+it('removes from the plugin root when the variable is set, and configures the daemon itself', async () => {
+  const pluginRoot = join(root, 'part', 'ahpd', 'plugins');
+  process.env.AHPD_PLUGIN_ROOT = pluginRoot;
+  write({ plugins: ['@ahpd/a'] });
+  const { runner, calls } = fake();
+  await removePlugins(['@ahpd/a'], { configDir, configFile, uninstall: true, run: runner, say });
+  expect(calls.map((one) => one.argv)).toEqual([['uninstall', '--prefix', pluginRoot, '@ahpd/a']]);
+  expect(read().plugins).toEqual([]);
+  expect(said.join('\n')).toContain(pluginRoot);
+});
+
+it('asks the registry about every name at once, before any of them answers', async () => {
+  const asked: string[] = [];
+  let asking = 0;
+  let atOnce = 0;
+  const { runner, calls } = fake();
+  const fetch: Fetch = async (url) => {
+    asked.push(String(url).slice(registry().length + 1));
+    asking += 1;
+    atOnce = Math.max(atOnce, asking);
+    // One turn of the event loop, so a registry asked one name at a time
+    // answers the first before the second is asked and `atOnce` stays one.
+    await new Promise((wait) => setTimeout(wait, 5));
+    asking -= 1;
+    return Response.json({ ahpd: {} });
+  };
+  await installPlugins(['one', 'two', 'three'], { configDir, configFile, version: '0.8.0', enable: false, run: runner, fetch, say });
+  expect(asked).toEqual(['one/latest', 'two/latest', 'three/latest']);
+  expect(atOnce).toBe(3);
+  expect(calls).toHaveLength(1);
 });
 
 it('updates only the packages it is named', async () => {
