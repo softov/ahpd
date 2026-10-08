@@ -29,3 +29,5 @@ A Claude turn through OpenRouter records the input tokens OpenRouter counted, or
 
 ## Resume
 
+2026-10-08. Not started, and its step 1 cannot be done here: the capture is a live `claude-openrouter` turn, and this box has no network egress. The repo holds no capture of one either - the four fixtures under `packages/agent-claude/test/fixtures/` are Anthropic-direct, with an input count on every `message_start`. Step 3 is also the fork the capture is meant to settle: whether the count is in the stream to be read, or nowhere and the input is recorded absent. Softov runs the capture.
+

@@ -94,14 +94,26 @@ const metaOf = (usage: Bag): Bag => {
  * call cost in dollars is worked out from a price list, which is a later plan.
  * The currency is lowercased, because every harness spells US dollars in caps
  * and a total is summed by what its own store reads the currency as.
+ *
+ * A harness that priced what was sent and what was received apart says so
+ * beside the amount, the way `ModelCall` splits the tokens; a part it did not
+ * report, or one that is not a count, is left out rather than sent as 0.
  */
 const costOf = (usage: Bag): Cost | undefined => {
   const cost = metaOf(usage).cost;
   if (typeof cost !== 'object' || cost === null) return undefined;
-  const { amount, currency } = cost as Bag;
+  const { amount, currency, input, output } = cost as Bag;
   const paid = counted(amount);
   if (paid === undefined || typeof currency !== 'string' || currency === '') return undefined;
-  return { amount: paid, currency: currency.toLowerCase(), from: 'harness' };
+  const sent = counted(input);
+  const got = counted(output);
+  return {
+    amount: paid,
+    currency: currency.toLowerCase(),
+    from: 'harness',
+    ...(sent === undefined ? {} : { input: sent }),
+    ...(got === undefined ? {} : { output: got }),
+  };
 };
 
 /** What one report said it used, without the name of the model, which is the turn's. */
@@ -117,6 +129,13 @@ const usedBy = (usage: Bag): Omit<ModelCall, 'name'> => {
       ? {}
       : { cache: { ...(read === undefined ? {} : { read }), ...(write === undefined ? {} : { write }) } }),
   };
+};
+
+/** Whether a report counted any token at all: a turn that used none of it spent nothing. */
+const usedAny = (usage: Bag): boolean => {
+  const used = usedBy(usage);
+  const cache = used.cache ?? {};
+  return (used.input ?? 0) > 0 || (used.output ?? 0) > 0 || (cache.read ?? 0) > 0 || (cache.write ?? 0) > 0;
 };
 
 /** One count as it grew since the report before, and nothing where this one has none. */
@@ -141,10 +160,20 @@ const addition = (now: Bag, before: Bag | undefined): Bag => {
   if (before === undefined) return now;
   const cost = costOf(now);
   const paid = costOf(before);
+  // Both are the harness's running total for the turn, so a round's cost is
+  // what it grew by, and its split grows the same way. A harness that changed
+  // the currency has no round to take off the new amount, since a total in
+  // another currency was never added to this one.
+  const earlier = cost !== undefined && paid?.currency === cost.currency ? paid : undefined;
   const meta: Bag = {
     ...growth('cacheWriteTokens', metaOf(now).cacheWriteTokens, metaOf(before).cacheWriteTokens),
     ...(cost === undefined ? {} : {
-      cost: { ...cost, ...growth('amount', cost.amount, paid?.currency === cost.currency ? paid.amount : undefined) },
+      cost: {
+        ...cost,
+        ...growth('amount', cost.amount, earlier?.amount),
+        ...growth('input', cost.input, earlier?.input),
+        ...growth('output', cost.output, earlier?.output),
+      },
     }),
   };
   return {
@@ -205,7 +234,16 @@ export const meter = (options: MeterOptions): Meter => {
     const computer = options.computer?.();
     const reported = held.reported ?? {};
     const name = typeof reported.model === 'string' ? reported.model : held.model;
+    /*
+     * An agent's harness calls its model itself, so the figure it reports is
+     * what its pools are charged and what the provider reported both - decision
+     * `a-record-keeps-the-providers-cost-beside-the-charged-one`. A cost of 0
+     * on a turn that counted no token is a harness saying it spent nothing,
+     * which is no cost at all: absent and 0 mean different things, and a record
+     * of 0 there would charge a pool for a call that never happened.
+     */
     const cost = costOf(reported);
+    const billed = cost !== undefined && cost.amount === 0 && !usedAny(reported) ? undefined : cost;
     const entry: ModelUse = {
       at: held.at,
       kind: 'model',
@@ -218,7 +256,7 @@ export const meter = (options: MeterOptions): Meter => {
       agent: options.agent,
       ...(computer === undefined ? {} : { computer }),
       model: { ...usedBy(reported), name: name ?? '' },
-      ...(cost === undefined ? {} : { cost }),
+      ...(billed === undefined ? {} : { cost: billed, providerCost: billed }),
       pools: poolsOf(owner, scope),
     };
     void options.usage.record(entry).catch((error: unknown) => {

@@ -209,9 +209,13 @@ export function usageOf(message: AssistantMessage | undefined): Bag | undefined 
  * total as it was. A count no call reported is left out rather than sent as a
  * zero, which is the rule `usageOf` keeps for one call.
  *
- * The cost is pi's own `usage.cost.total`, summed over the calls and priced by
- * pi in dollars. The protocol names no field for what a turn cost, so it rides
- * `_meta` beside the cache write.
+ * The cost is pi's own `usage.cost`, summed over the calls and priced by pi in
+ * dollars. pi prices a call as four parts - the tokens sent as `input`,
+ * `cacheRead` and `cacheWrite`, and the tokens received as `output` - and the
+ * protocol has one field for each side, so what was sent is those three added
+ * together. A part no call sent stays absent rather than being written as a
+ * nought, which would be a price pi never gave. The protocol names no field for
+ * what a turn cost, so it rides `_meta` beside the cache write.
  */
 export function addUsage(total: Bag | undefined, message: AssistantMessage | undefined): Bag | undefined {
   const one = usageOf(message);
@@ -228,10 +232,29 @@ export function addUsage(total: Bag | undefined, message: AssistantMessage | und
   const output = sum(held.outputTokens, one.outputTokens);
   const read = sum(held.cacheReadTokens, one.cacheReadTokens);
   const wrote = sum(was.cacheWriteTokens, now.cacheWriteTokens);
-  const paid = sum(bag(was.cost).amount, message?.usage?.cost?.total);
+  const price = bag(message?.usage?.cost);
+  /** One side of a call, the parts pi priced it in summed; absent if pi gave none of them. */
+  const side = (...keys: string[]): number | undefined => {
+    let part: number | undefined;
+    for (const key of keys) {
+      const priced = typeof price[key] === 'number' ? price[key] as number : undefined;
+      if (priced !== undefined) part = (part ?? 0) + priced;
+    }
+    return part;
+  };
+  const paid = sum(bag(was.cost).amount, price.total);
+  const sent = sum(bag(was.cost).input, side('input', 'cacheRead', 'cacheWrite'));
+  const got = sum(bag(was.cost).output, side('output'));
   const meta: Bag = {
     ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
-    ...(paid !== undefined ? { cost: { amount: paid, currency: 'USD' } } : {}),
+    ...(paid !== undefined ? {
+      cost: {
+        amount: paid,
+        currency: 'USD',
+        ...(sent === undefined ? {} : { input: sent }),
+        ...(got === undefined ? {} : { output: got }),
+      },
+    } : {}),
   };
   return {
     ...(input !== undefined ? { inputTokens: input } : {}),

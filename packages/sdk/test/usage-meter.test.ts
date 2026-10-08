@@ -296,7 +296,9 @@ it('writes one record for a turn that completed, saying what its last report sai
     turn: 't1',
     agent: 'meter',
     model: { name: 'anthropic/opus-5', input: 100, output: 20, cache: { read: 5, write: 7 } },
+    // The harness's own figure, as both what is charged and what was reported.
     cost: { amount: 0.25, currency: 'usd', from: 'harness' },
+    providerCost: { amount: 0.25, currency: 'usd', from: 'harness' },
     pools: ['user:ana', 'team:backend', 'project:backend:ahpd'],
   });
 });
@@ -425,6 +427,77 @@ it('keeps each harness\'s own spelling of the cost', async () => {
     { amount: 4, currency: 'eur', from: 'harness' },
     undefined,
   ]);
+});
+
+it('writes a harness\'s cost as both costs, with the split it reported', async () => {
+  const usage = keeping();
+  const { client } = serving([
+    { reports: [report({ _meta: { cost: { amount: 1, currency: 'USD', input: 0.4, output: 0.6 } } })], end: 'complete' },
+  ], usage, directory());
+  await settle();
+  await open(client);
+  await ask(client);
+  await settle();
+
+  // An agent's harness reports the cost itself, so what its pools are charged
+  // and what the provider reported are the same figure - decision
+  // `a-record-keeps-the-providers-cost-beside-the-charged-one`.
+  expect(usage.entries[0]?.cost).toEqual({ amount: 1, currency: 'usd', from: 'harness', input: 0.4, output: 0.6 });
+  expect(usage.entries[0]?.providerCost).toEqual(usage.entries[0]?.cost);
+});
+
+it('leaves out a cost part that is not a count', async () => {
+  const usage = keeping();
+  const { client } = serving([
+    { reports: [report({ _meta: { cost: { amount: 1, currency: 'USD', input: 'a half', output: 0.6 } } })], end: 'complete' },
+  ], usage, directory());
+  await settle();
+  await open(client);
+  await ask(client);
+  await settle();
+
+  expect(usage.entries[0]?.cost).toEqual({ amount: 1, currency: 'usd', from: 'harness', output: 0.6 });
+});
+
+it('writes no cost for a harness that reported nothing spent on a turn that used nothing', async () => {
+  const usage = keeping();
+  // The 2026-10-07 20:43 `claude-deepseek-build` record: an empty model name,
+  // every token count 0, and a cost of 0. A turn that spent nothing has no
+  // cost, and 0 would read as one that spent nothing rather than as no answer.
+  const { client } = serving([{
+    reports: [report({
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      model: '',
+      _meta: { cacheWriteTokens: 0, cost: { amount: 0, currency: 'USD' } },
+    })],
+    end: 'complete',
+  }], usage, directory());
+  await settle();
+  await open(client);
+  await ask(client);
+  await settle();
+
+  expect(usage.entries).toHaveLength(1);
+  expect(usage.entries[0]?.cost).toBeUndefined();
+  expect(usage.entries[0]?.providerCost).toBeUndefined();
+});
+
+it('keeps a harness cost of 0 on a turn that used tokens', async () => {
+  const usage = keeping();
+  // A model that costs nothing is not a model with no price: the harness
+  // measured a cost of 0, and that is a figure rather than an absence.
+  const { client } = serving([
+    { reports: [report({ _meta: { cost: { amount: 0, currency: 'USD' } } })], end: 'complete' },
+  ], usage, directory());
+  await settle();
+  await open(client);
+  await ask(client);
+  await settle();
+
+  expect(usage.entries[0]?.cost).toEqual({ amount: 0, currency: 'usd', from: 'harness' });
+  expect(usage.entries[0]?.providerCost).toEqual(usage.entries[0]?.cost);
 });
 
 it('does not let a store that cannot keep the record break the turn', async () => {

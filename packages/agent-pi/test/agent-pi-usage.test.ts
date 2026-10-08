@@ -74,13 +74,40 @@ const totals = (sent: { channel: string; action: Bag }[], channel = 'chat'): Bag
   .filter((one) => one.channel === channel && one.action.type === 'chat/usage')
   .map((one) => one.action.usage as Bag);
 
+/** What pi priced one call at: a bare total, or the parts it split that total into. */
+type Price = number | {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total?: number;
+};
+
+/**
+ * One price in pi's own shape.
+ *
+ * pi prices a call as four parts and makes `total` their sum, so a case naming
+ * parts gets that sum unless it names one of its own. A bare number is a call
+ * that reported a total and no split.
+ */
+const priced = (given: Price | undefined): Bag => {
+  if (typeof given === 'number') return { total: given };
+  const parts = {
+    input: given?.input ?? 0,
+    output: given?.output ?? 0,
+    cacheRead: given?.cacheRead ?? 0,
+    cacheWrite: given?.cacheWrite ?? 0,
+  };
+  return { ...parts, total: given?.total ?? parts.input + parts.output + parts.cacheRead + parts.cacheWrite };
+};
+
 /** One assistant message's call, at the counts and price a case names. */
 const call = (counts: {
   input?: number;
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
-  cost?: number;
+  cost?: Price;
   model?: string;
   stopReason?: string;
   errorMessage?: string;
@@ -98,7 +125,7 @@ const call = (counts: {
       cacheRead: counts.cacheRead ?? 0,
       cacheWrite: counts.cacheWrite ?? 0,
       totalTokens: (counts.input ?? 0) + (counts.output ?? 0),
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: counts.cost ?? 0 },
+      cost: priced(counts.cost),
     },
     stopReason: counts.stopReason ?? 'stop',
     ...(counts.errorMessage !== undefined ? { errorMessage: counts.errorMessage } : {}),
@@ -194,6 +221,48 @@ it('sends no usage for a call that failed before the provider answered', async (
     _meta: { cacheWriteTokens: 0, cost: { amount: 0.02, currency: 'USD' } },
   }]);
   expect(sent.some((one) => one.action.type === 'chat/error')).toBe(true);
+});
+
+it('sends the cost split the way pi priced it, the sent side summed into one part', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'read two files');
+  await settled();
+
+  // pi prices the tokens it sent as three of its four parts. The protocol has
+  // one field for what was sent, so input, cacheRead and cacheWrite are added
+  // together, and the received side is pi's output. Two calls of these add to
+  // 3 dollars sent and 4 received against a total of 7.
+  const one: Price = { input: 1, cacheRead: 0.5, output: 2 };
+  pi.raise(call({ input: 100, output: 20, cost: one }));
+  pi.raise(call({ input: 50, output: 30, cost: one }));
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+
+  // The running total after each call, and the turn's own when it ended.
+  expect(totals(sent).map((each) => (each._meta as Bag).cost)).toEqual([
+    { amount: 3.5, currency: 'USD', input: 1.5, output: 2 },
+    { amount: 7, currency: 'USD', input: 3, output: 4 },
+    { amount: 7, currency: 'USD', input: 3, output: 4 },
+  ]);
+});
+
+it('sends a call priced as a bare total with no split invented for it', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+
+  // A total and no parts: there is nothing to say which side of the call cost
+  // what, and a nought written into either would be a figure pi never gave.
+  pi.raise(call({ input: 10, output: 5, cost: 0.5 }));
+  pi.raise({ type: 'agent_settled' });
+  await settled();
+
+  expect(totals(sent).map((each) => (each._meta as Bag).cost)).toEqual([
+    { amount: 0.5, currency: 'USD' },
+    { amount: 0.5, currency: 'USD' },
+  ]);
 });
 
 it('starts the next turn from nothing, rather than on what the last one used', async () => {

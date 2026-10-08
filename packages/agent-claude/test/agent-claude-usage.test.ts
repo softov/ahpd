@@ -256,6 +256,53 @@ it('takes the turn\'s cost from the change in modelUsage, which is cumulative pe
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.75, currency: 'USD' } });
 });
 
+it('sends no cost for a result that found the books where the last one left them', async () => {
+  /*
+   * The 2026-10-07 20:43 `claude-deepseek-build` record: an empty model name,
+   * every token count 0, and a cost of 0. That was a `result` whose
+   * `modelUsage` had not moved, and a turn that spent nothing has no cost
+   * rather than a cost of nothing.
+   */
+  const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.5)]);
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.5, currency: 'USD' } });
+
+  session.begin('t2', 'and again');
+  await settle();
+  // The same figures again: the query is where it was.
+  sdk.push(...fixture('claude-empty-round.jsonl'), result(0.5));
+  await settle();
+  const meta = payload(reports(main).at(-1))?._meta as Bag;
+  expect(meta).toMatchObject({ cacheWriteTokens: empty.wrote });
+  expect(meta.cost).toBeUndefined();
+});
+
+it('sends no cost for a result the CLI came back with zeroed, and bills the total once', async () => {
+  /*
+   * A crash or a startup error comes back with every figure zeroed, and the
+   * turn it ends has no tokens of its own. Read as a measurement the zero is a
+   * negative cost, and the baseline it leaves behind bills the conversation's
+   * whole total again on the result that carries it back.
+   */
+  const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.68)]);
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.68, currency: 'USD' } });
+
+  session.begin('t2', 'and again');
+  await settle();
+  sdk.push({ ...result(0), usage: { input_tokens: 0, output_tokens: 0 } });
+  await settle();
+  // No cost key rather than one holding a nought, which read as a measurement
+  // of the turn would negate what the turn before it spent.
+  expect(payload(reports(main).at(-1))).not.toHaveProperty('_meta.cost');
+
+  // The running total is back on the result behind it, and the turn that spent
+  // the money keeps it: only what grew since it was last billed is charged.
+  session.begin('t3', 'and again');
+  await settle();
+  sdk.push(result(1.36));
+  await settle();
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.68, currency: 'USD' } });
+});
+
 it('sends no cost the CLI could only guess at, and still differences the next one from it', async () => {
   // `costBasis: 'unknown'` is a model the CLI had no price row for, so the
   // figure beside it is the default model's rate and nothing more.

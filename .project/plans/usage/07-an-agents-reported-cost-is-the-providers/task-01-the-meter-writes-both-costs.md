@@ -1,6 +1,6 @@
 ---
 title: The meter writes a harness's cost as both costs, with its split
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -33,4 +33,6 @@ A harness cost of 0 on a record with no token counted is no cost.
 - `npx vitest run packages/sdk` passes.
 
 ## Resume
+
+2026-10-08. The four cases are in `packages/sdk/test/usage-meter.test.ts`, beside the fourteen already there. A harness cost of `{amount: 1, currency: "USD", input: 0.4, output: 0.6}` is written as `cost` and `providerCost`, both the harness's figure with both parts. A part that is not a count is left out. A cost of 0 on a turn that counted no token gives neither cost, and a cost of 0 on a turn that counted tokens is kept as 0. `costOf` reads the split, and the record is built from one value shared by both fields.
 

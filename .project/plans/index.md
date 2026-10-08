@@ -344,7 +344,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
 | [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
 | [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | planned 2026-10-07 | usage 05 | usage 07 |
-| [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | planned 2026-10-07 | usage 06 | - |
+| [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | planned 2026-10-07; tasks 01-03 implemented ([implemented.md](usage/07-an-agents-reported-cost-is-the-providers/implemented.md)); 04 blocked on a live `claude-openrouter` capture | usage 06 | - |
 
 Next free number in `usage`: `08`.
 

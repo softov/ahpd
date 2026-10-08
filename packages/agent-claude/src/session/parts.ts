@@ -166,27 +166,36 @@ export function createParts(ctx: SessionContext): Parts {
    * `costUSD` is then a guess at the default model's rate rather than a price
    * anything can be held to. A guess is left out, and one model's guess
    * suppresses the whole total rather than its own share of it: a partial sum
-   * of a price reads as the price. Nothing at all is sent when no model is
-   * priced, and the running baseline is advanced either way, so the next
-   * `result` differences from where this one left the books.
+   * of a price reads as the price.
+   *
+   * A figure that did not go up is not a spend. A crash or a startup error
+   * comes back with every count zeroed, which read as a measurement is a
+   * negative cost on the turn it ended and leaves a baseline the result behind
+   * it bills the whole conversation's total against. A result that found the
+   * books where the last one left them spent nothing, and a turn that spent
+   * nothing sends no cost rather than a cost of nothing. The baseline moves
+   * only for a model this result spent on, so the next one differences from the
+   * last figure that was really a figure.
    */
   const costOf = (message: Bag): Bag | undefined => {
     const models = bag(message.modelUsage);
     if (Object.keys(models).length === 0) return undefined;
     let amount = 0;
+    let spent = false;
     let guessed = false;
     for (const [model, value] of Object.entries(models)) {
       const entry = bag(value);
       const was = paid.get(model) ?? 0;
       const now = typeof entry.costUSD === 'number' ? entry.costUSD : was;
-      paid.set(model, now);
+      if (now <= was) continue;
       // Cumulative per query, so a model priced by guess once stays in the
       // map; only one this result spent on can make the total a guess.
-      if (now === was) continue;
+      paid.set(model, now);
+      spent = true;
       if (entry.costBasis === 'unknown') guessed = true;
       else amount += now - was;
     }
-    return guessed ? undefined : { amount, currency: 'USD' };
+    return spent && !guessed ? { amount, currency: 'USD' } : undefined;
   };
 
   const status = (): number => (ctx.pending.size > 0 ? Status.InputNeeded
