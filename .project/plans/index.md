@@ -200,8 +200,9 @@ Reference: [00-documentation.md](documentation/00-documentation.md)
 | --- | --- | --- | --- | --- |
 | [01 - The stale prose matches the code again](documentation/01-correct-the-stale-prose/plan.md) | low | built 2026-09-20 ([implemented.md](documentation/01-correct-the-stale-prose/implemented.md)) | - | - |
 | [02 - Captures are taken and read with ahpc, and ahpd keeps no proxy or capture check](documentation/02-captures-are-taken-and-read-with-ahpc/plan.md) | medium | planned 2026-10-04; task 01 todo | host 43 p1; ahpc cli/02 | - |
+| [03 - Each area of the host has one doc](documentation/03-each-area-of-the-host-has-one-doc/plan.md) | medium | planned 2026-10-08 | - | - |
 
-Next free number in `documentation`: `03`.
+Next free number in `documentation`: `04`.
 
 ## plugin
 
@@ -252,6 +253,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | built 2026-10-06 ([implemented.md](plugin/35-cofold-uses-what-cofold-ships/implemented.md)); reviewed and merged 2026-10-06 | plugin 05, plugin 32 p3 | - |
 | [36 - A cofold turn reads its message's attachments, and sends an image only to a model that takes images](plugin/36-a-cofold-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
 | [37 - A bot is a record a person makes, with a session to talk to it in](plugin/37-a-bot-is-a-record-with-a-session/plan.md) | high | planned 2026-10-07 | plugin 09 as the pattern | the bot harness, a bot as a principal, the ahpc and ahpapp bot screens |
+| [38 - A plugin cannot change what the host gave it](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) | high | planned 2026-10-08 | plugin 37 (rebase on it) | plugins out of process |
 
 Next free number in `plugin`: `38`.
 
@@ -343,7 +345,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [03 - A machine records who created it and writes the time it was up, charged to its owner](usage/03-a-machine-writes-its-up-time/plan.md) | high | built 2026-10-02 ([implemented.md](usage/03-a-machine-writes-its-up-time/implemented.md)) | usage 01, host 34 | - |
 | [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
 | [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
-| [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | planned 2026-10-07 | usage 05 | usage 07 |
+| [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | active 2026-10-07; 01-02 done (2b5a656), 03 waits on Softov's captures | usage 05 | usage 07 |
 | [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | active 2026-10-08; 01-03 done ([implemented.md](usage/07-an-agents-reported-cost-is-the-providers/implemented.md)); 05 todo (baseline after `/clear`); 04 blocked on a live `claude-openrouter` capture | usage 06 | - |
 
 Next free number in `usage`: `08`.
