@@ -4,43 +4,43 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-10-06. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
+Current progress and pending items only, as of 2026-10-07. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
 
 ## How builds run now
 
-Builds run as Agent subagents in worktrees under `.claude/worktrees/`, not as daemon sessions (the free build model is gone).
-Each one: build, review the diff and the security paths, rerun the four gates (`pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build`), Softov's answers become plan rows, a fix turn, close-out (`implemented.md`, plan `built`, index row "tasks implemented, awaiting review"), show Softov, and on his approval commit on the branch, rebase on main, fast-forward main, remove the worktree.
+Builds run as daemon sessions on the `claude-deepseek-build` preset through ahpc, at most 2-3 at a time, so Softov can watch them.
+Each session has `isolation=worktree`, and its worktree is under `/github/ahpd.worktrees/build-agents-<id>`.
+The builder sets tasks `implemented`, never `done`.
+The review reads the diff against the plan, probes the security and data-loss paths, and reruns the four gates (`pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build`).
+On Softov's approval: commit in the worktree, rebase on main, rerun the gates, fast-forward main, remove the worktree and the branch, and keep the session.
 Never push; Softov pushes.
 
 ## In flight
 
-- **Merged 2026-10-06, unpushed:** `f76e948` (plans) and container/05 p7 (`b677360`).
-- **Restart owed:** Softov restarts his daemon to wire in container/05 p6 (`7cd7117`), the acp model fix (`08f046b`) and p7 (`b677360`); p7 brings the profile setting `gitGuard`, default `bind`.
-- **Known limit after p7:** ahpd's own `git worktree add` and changes-view commit run the repository's hooks on the host; under `gitGuard: "open"` an agent could have written them.
+- **Unpushed:** 17 commits on main ahead of `origin/main`.
+- **Building:** [host/73](../plans/host/73-a-role-editor-offers-trust-and-proxy/plan.md), session `a261d92b`, with the fix turn that makes the gate ask for the operation.
+- **Building:** [usage/06](../plans/usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md), session `41e55763`. After its merge, Softov restarts his daemon so ahpapp shows the cost split.
+- **Uncommitted, kept by Softov's choice:** `scripts/completions.mjs`.
 
-## Queue
+## Next, buildable now
 
-1. [container/04](../plans/container/04-a-cofold-session-in-a-computer/plan.md) tasks 07-17; task 17 now follows [the host records which plugin registered each agent](../decisions/the-host-records-which-plugin-registered-each-agent.md).
-2. [container/05 p5](../plans/container/05-an-agent-in-a-machine-p5-agents-run-from-their-parts/plan.md), whole.
-3. daemon/09 with daemon/13, host/57 and plugin/18, then plugin/20, then plugin/33.
+1. [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 01 and 03: the bot record and `PluginHost.startSession`.
+2. [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) task 12: the plugin root.
+3. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
+4. [usage/07](../plans/usage/07-an-agents-reported-cost-is-the-providers/plan.md), after usage/06.
+5. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
 
-Planned 2026-10-05 and 2026-10-06, no open questions, not yet placed in that order:
-- [host/58](../plans/host/58-private-files-refused-cursors-and-decoded-file-uris/plan.md) (bugs, high), then [host/59](../plans/host/59-one-record-store-provider-and-shared-value-helpers/plan.md), [host/60](../plans/host/60-one-json-file-reader-and-writer-and-a-session-is-one-row/plan.md), [host/61](../plans/host/61-agents-share-their-session-kit-presets-and-input-checks/plan.md): code reduction.
-- [host/62](../plans/host/62-every-backend-calls-a-clients-tool/plan.md) p1-p4: every backend calls a client's tool.
-- [daemon/15](../plans/daemon/15-a-verb-declares-only-its-own-flags/plan.md): a verb declares only its own flags.
-- In cofold: [commands/04](../../../cofold/.project/plans/commands/04-an-action-declares-what-it-does-to-what/plan.md) (effect and resource on an action); ahpd declares them on its commands in a later plan, after that cofold release.
+Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
+[plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.
 
 ## Waiting on Softov
 
 - host/56 task 05: his measurement with the probes in `/github/ahpapp/.scratch/org/`.
 - host/30 task 05: his VS Code test by hand.
-- The VS Code test host (`code agent host`, 127.0.0.1:37600) may still be running from 2026-10-05; stop it when he is done.
-- Flaky tests: `computer-devcontainer.test.ts` "offers the session folder's dev container" under full load, `ENOTEMPTY` in afterEach cleanup, and once a `computer-needs.test.ts` vault restart case; a problem file or a fix plan was offered, no answer yet.
-- Fork PR workflows run without approval for returning contributors (`first_time_contributors`); he may change it.
+- Flaky tests: `computer-devcontainer.test.ts` under full load, `ENOTEMPTY` in afterEach cleanup, and once a `computer-needs.test.ts` vault restart case. A problem file or a fix plan was offered, with no answer yet.
 
 ## Carried from 2026-10-03, not rechecked since
 
-- Must ship in 0.8.1: four gate holes (a session driven by a `file:read` guest through `file:///<id>`; a terminal under a foreign scheme driven with `file:read`; automations created by a `file:read` guest; a changeset operation run with `file:write` alone), and daemon/09 on the registry.
 - Checks nobody has made: VS Code's `computer` picker chip; ahpapp against the published packages; 0.6 session state read by 0.8; an MCP tool call on each agent; host/24, 25, 27, claude/05, 06, 07, pi/12 in a client; daemon/11 in ahpapp.
 - After the release: the `docs/` prose pass; README and manifest mismatches in computer, tunnel-devtunnel, agent-acp, agent-pi and agent-cofold.
 
