@@ -1,6 +1,6 @@
 ---
 title: A plugin keeps the sdk npm installs, and nothing depends on it being the daemon's
-status: implemented
+status: done
 depends: []
 layer: "server, sdk, computer"
 refs:

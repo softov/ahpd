@@ -24,7 +24,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [07 - A daemon with no backend names the command that installs one, and an upgrade from 0.6 is told why](daemon/07-an-upgrade-without-a-backend-is-told-the-command/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/07-an-upgrade-without-a-backend-is-told-the-command/implemented.md)) | daemon 03 | - |
 | [08 - The configuration is read through cofold and checked against one schema](daemon/08-the-config-file-is-checked-in-one-place/plan.md) | high | built 2026-09-28 ([implemented.md](daemon/08-the-config-file-is-checked-in-one-place/implemented.md)) | cofold commands/02 | plugin 26 |
 
-| [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; task 03 done; 02, 06, 08-11 reviewed 2026-10-07; 12 implemented (plugin root) 2026-10-08, 01 and 04 todo for `--force`; 05 and 07 dropped | - | - |
+| [09 - A plugin update moves all or the named plugins](daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) | high | active 2026-09-29; 02, 03, 06, 08-12 done (12 merged 2026-10-08); 01 and 04 todo for `--force`; 05 and 07 dropped | - | - |
 
 | [10 - `ahpd configure` sets the daemon up, and a first start at a terminal offers it](daemon/10-a-first-run-sets-the-daemon-up/plan.md) | medium | built 2026-10-02 ([implemented.md](daemon/10-a-first-run-sets-the-daemon-up/implemented.md)) | daemon 09 | - |
 | [11 - Root config carries the daemon's settings and each plugin's options, and a client edits them](daemon/11-root-config-carries-the-daemon-and-its-plugins/plan.md) | high | built 2026-10-02 ([implemented.md](daemon/11-root-config-carries-the-daemon-and-its-plugins/implemented.md)) | - | - |
@@ -344,7 +344,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [04 - A client reads what a pool spent, and the records behind it, through a usage scheme](usage/04-usage-is-read-through-a-scheme/plan.md) | high | built 2026-10-02 ([implemented.md](usage/04-usage-is-read-through-a-scheme/implemented.md)) | usage 02, usage 03, host 36 | ahpapp usage/01, policy |
 | [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
 | [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | planned 2026-10-07 | usage 05 | usage 07 |
-| [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | planned 2026-10-07; tasks 01-03 implemented ([implemented.md](usage/07-an-agents-reported-cost-is-the-providers/implemented.md)); 04 blocked on a live `claude-openrouter` capture | usage 06 | - |
+| [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | active 2026-10-08; 01-03 done ([implemented.md](usage/07-an-agents-reported-cost-is-the-providers/implemented.md)); 05 todo (baseline after `/clear`); 04 blocked on a live `claude-openrouter` capture | usage 06 | - |
 
 Next free number in `usage`: `08`.
 

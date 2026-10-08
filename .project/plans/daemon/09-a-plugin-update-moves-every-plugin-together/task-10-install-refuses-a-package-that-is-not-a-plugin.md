@@ -1,6 +1,6 @@
 ---
 title: Install refuses a registry package that is not an ahpd plugin, and update says the versions it installed
-status: implemented
+status: done
 depends: [task-08-the-daemon-pins-the-sdk.md]
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Update answers what moved, with each version before and after
-status: implemented
+status: done
 depends: [task-10-install-refuses-a-package-that-is-not-a-plugin.md]
 layer: "server"
 refs:

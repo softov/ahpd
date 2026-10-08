@@ -1,6 +1,6 @@
 ---
 title: pi sends its cost split into sent and received
-status: implemented
+status: done
 depends: [task-01-the-meter-writes-both-costs.md]
 layer: "agent-pi"
 refs:

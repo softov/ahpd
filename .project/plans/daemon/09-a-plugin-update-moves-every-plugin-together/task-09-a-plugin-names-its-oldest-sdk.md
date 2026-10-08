@@ -1,6 +1,6 @@
 ---
 title: Our plugins take any @ahpd/sdk from 0.8 on
-status: implemented
+status: done
 depends: [task-08-the-daemon-pins-the-sdk.md]
 layer: "plugins"
 refs:

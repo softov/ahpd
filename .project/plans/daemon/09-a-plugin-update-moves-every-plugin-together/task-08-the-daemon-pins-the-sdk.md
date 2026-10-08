@@ -1,6 +1,6 @@
 ---
 title: Install and update put the daemon's @ahpd/sdk beside the plugins and check no peers
-status: implemented
+status: done
 depends: [task-06-the-plugin-keeps-npms-sdk.md]
 layer: "server"
 refs:

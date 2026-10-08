@@ -75,17 +75,17 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - `ahpd plugin update`](task-01-plugin-update.md) | todo | - |
-| [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | implemented | - |
+| [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | done | - |
 | [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | done | cofold commands/03 released |
 | [04 - Docs](task-04-docs.md) | todo | 01, 02, 06, 08 |
 | [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
-| [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | implemented | - |
+| [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | done | - |
 | [07 - Updating named plugins is refused while another is behind](task-07-update-one-refuses-a-plugin-behind.md) | dropped | 06 |
-| [08 - Install and update put the daemon's sdk beside the plugins](task-08-the-daemon-pins-the-sdk.md) | implemented | 06 |
-| [09 - Our plugins take any @ahpd/sdk from 0.8 on](task-09-a-plugin-names-its-oldest-sdk.md) | implemented | 08 |
-| [10 - Install refuses a package that is not a plugin](task-10-install-refuses-a-package-that-is-not-a-plugin.md) | implemented | 08 |
-| [11 - Update answers what moved](task-11-update-answers-what-moved.md) | implemented | 10 |
-| [12 - Update and remove use the plugin root, and an sdk move asks for a restart](task-12-update-and-remove-use-the-plugin-root.md) | implemented | 11 |
+| [08 - Install and update put the daemon's sdk beside the plugins](task-08-the-daemon-pins-the-sdk.md) | done | 06 |
+| [09 - Our plugins take any @ahpd/sdk from 0.8 on](task-09-a-plugin-names-its-oldest-sdk.md) | done | 08 |
+| [10 - Install refuses a package that is not a plugin](task-10-install-refuses-a-package-that-is-not-a-plugin.md) | done | 08 |
+| [11 - Update answers what moved](task-11-update-answers-what-moved.md) | done | 10 |
+| [12 - Update and remove use the plugin root, and an sdk move asks for a restart](task-12-update-and-remove-use-the-plugin-root.md) | done | 11 |
 
 ## Risks and tradeoffs
 
@@ -96,6 +96,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 - **Done so far:** on main (21a4488, 5221af7): tasks 01, 02, 04, 06, 08, 09, 10 and 11 implemented 2026-09-29; tasks 05 and 07 dropped and undone; tasks 01 and 04 reopened 2026-10-04 for `--force`. Task 03 implemented 2026-10-06, in daemon 16 task 01's cofold bump.
 - **Reviewed 2026-10-07:** 02, 06, 08, 09, 10 and 11 pass as code. The review found that update and remove ignore `AHPD_PLUGIN_ROOT`, which install reads since container/05 p3. Task 12 fixes it.
 - **Done 2026-10-08:** task 12 implemented: one `pluginRoot` for install, update and remove, an sdk move answered in `moved`, and the registry asked in parallel.
+- **Reviewed and merged 2026-10-08:** task 12 (e5134da); tasks 02, 06 and 08-12 done.
 - **Next action:** [task-01-plugin-update.md](task-01-plugin-update.md) adds `--force`, and [task-04-docs.md](task-04-docs.md) says it.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it.
 

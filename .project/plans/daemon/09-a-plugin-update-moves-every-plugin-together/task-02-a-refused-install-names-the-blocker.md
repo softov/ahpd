@@ -1,6 +1,6 @@
 ---
 title: A failed npm call says what failed once, and keeps npm's reason when served
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

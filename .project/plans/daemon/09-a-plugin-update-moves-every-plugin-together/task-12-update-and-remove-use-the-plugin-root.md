@@ -1,6 +1,6 @@
 ---
 title: Update and remove use the plugin root, and an sdk move asks for a restart
-status: implemented
+status: done
 depends: [task-11-update-answers-what-moved.md]
 layer: "server"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The meter writes a harness's cost as both costs, with its split
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

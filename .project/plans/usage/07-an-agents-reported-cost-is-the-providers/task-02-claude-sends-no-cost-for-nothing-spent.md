@@ -1,6 +1,6 @@
 ---
 title: Claude sends no cost for a result that spent nothing
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

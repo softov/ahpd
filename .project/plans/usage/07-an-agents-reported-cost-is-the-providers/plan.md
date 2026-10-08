@@ -1,7 +1,7 @@
 ---
 title: An agent's reported cost is kept as the provider's, and a record says nothing it was not told
 domain: usage
-status: planned
+status: active
 priority: high
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -72,10 +72,11 @@ harness usage -> agent mapping (_meta.cost) -> meter costOf -> ModelUse { cost, 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The meter writes a harness's cost as both costs, with its split](task-01-the-meter-writes-both-costs.md) | implemented | - |
-| [02 - Claude sends no cost for a result that spent nothing](task-02-claude-sends-no-cost-for-nothing-spent.md) | implemented | - |
-| [03 - pi sends its cost split into sent and received](task-03-pi-sends-its-cost-split.md) | implemented | 01 |
+| [01 - The meter writes a harness's cost as both costs, with its split](task-01-the-meter-writes-both-costs.md) | done | - |
+| [02 - Claude sends no cost for a result that spent nothing](task-02-claude-sends-no-cost-for-nothing-spent.md) | done | - |
+| [03 - pi sends its cost split into sent and received](task-03-pi-sends-its-cost-split.md) | done | 01 |
 | [04 - A turn's tokens are what the provider counted](task-04-a-turns-tokens-are-what-was-counted.md) | todo | - |
+| [05 - A reset conversation starts the cost baseline again](task-05-a-reset-conversation-starts-the-cost-baseline-again.md) | todo | 02 |
 
 ## Risks and tradeoffs
 
@@ -85,7 +86,8 @@ harness usage -> agent mapping (_meta.cost) -> meter costOf -> ModelUse { cost, 
 ## Resume state
 
 - **Done so far:** 2026-10-08 - task 01, where the meter reads a harness cost's `input` and `output` beside its amount and writes the whole of it as both `cost` and `providerCost`, and drops a cost of 0 on a turn that counted no token. 2026-10-08 - task 02, where a `result` whose `modelUsage` did not move sends no cost, and Claude's `costUSD` baseline moves only for a model the result spent on. 2026-10-08 - task 03, where pi sums its four priced parts and sends the sent and received sides beside the total.
-- **Next action:** [task-04-a-turns-tokens-are-what-was-counted.md](task-04-a-turns-tokens-are-what-was-counted.md). Its step 1 is a capture of a live `claude-openrouter` turn, which Softov runs: this box has no network egress, and the repo holds no capture of one. Task 04 waits on him.
+- **Reviewed and merged 2026-10-08:** tasks 01-03 (6f26875). The review found that after `/clear` the baseline stays above the reset total; task 05 fixes it.
+- **Next action:** [task-05-a-reset-conversation-starts-the-cost-baseline-again.md](task-05-a-reset-conversation-starts-the-cost-baseline-again.md), buildable now. Then [task-04-a-turns-tokens-are-what-was-counted.md](task-04-a-turns-tokens-are-what-was-counted.md). Its step 1 is a capture of a live `claude-openrouter` turn, which Softov runs: this box has no network egress, and the repo holds no capture of one. Task 04 waits on him.
 - **Open questions:** none.
 - **Watch out for:** a record written as `0` by a harness and a record with the field absent mean different things. Keep both kinds in the tests.
 
