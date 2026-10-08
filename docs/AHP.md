@@ -173,7 +173,7 @@ which is a different complaint from an action nobody has served.
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
 | `root/activeSessionsChanged` | host | ✅ | A count, not a list. Moves when a session is created or disposed. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
-| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:write` ([USERS.md](USERS.md#trusted-folders)). |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:push` ([USERS.md](USERS.md#trusted-folders)). |
 
 ### `session/*` — 28 of 28
 

@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { memoryPolicies, type Users } from '@ahpd/sdk';
+import { memoryPolicies, type Grant, type Users } from '@ahpd/sdk';
 import {
   answerJson, fakeProvider, isAnthropicError, isOpenAiError, MARKER, memoryUsage, people, ROOT_TOKEN, send, serveProxy,
   type People, type Served, type ServeOptions,
@@ -47,6 +47,13 @@ const okProvider = async () => {
   const fake = await fakeProvider(answerJson(200, { id: 'x', object: 'chat.completion', choices: [] }));
   fakes.push(fake);
   return fake;
+};
+
+/** A person of a role of its own holding `grants`, in the team this host names, and a token for them. */
+const personOf = async (id: string, grants: Grant[]): Promise<string> => {
+  await who.users.addRole(id, grants);
+  await who.users.add(id, [id], { memberships: ['backend'], primary: 'backend' });
+  return who.users.mint(id);
 };
 
 /** A table whose one name, `fake/model`, is served by `endpoint` in both dialects with no key. */
@@ -183,20 +190,32 @@ describe('a caller is a person, root or a session, and may call', () => {
     expect((await send(served.port, CHAT, { headers: { 'x-api-key': ROOT_TOKEN }, body: CALL })).status).toBe(200);
   });
 
-  it('refuses a person without proxy:write with 403 naming the grant', async () => {
+  it('refuses a person without proxy:call with 403 naming the grant', async () => {
     const fake = await okProvider();
     const served = await proxy({ proxy: table(fake.endpoint) });
     const fay = await send(served.port, CHAT, { headers: { authorization: `Bearer ${who.fay}` }, body: CALL });
     expect(fay.status).toBe(403);
     expect(isOpenAiError(fay.json)).toBe(true);
-    expect(fay.json).toMatchObject({ error: { type: 'permission_error', message: 'fay may not proxy:write here' } });
+    expect(fay.json).toMatchObject({ error: { type: 'permission_error', message: 'fay may not proxy:call here' } });
     const gus = await send(served.port, MESSAGES, { headers: { 'x-api-key': who.gus }, body: CALL });
     expect(gus.status).toBe(403);
     expect(isAnthropicError(gus.json)).toBe(true);
-    expect(gus.json).toMatchObject({ error: { message: 'gus may not proxy:write here' } });
+    expect(gus.json).toMatchObject({ error: { message: 'gus may not proxy:call here' } });
     expect(fake.received).toEqual([]);
-    // The built-in admin holds it through `*:*`.
+    // The built-in member holds the call through the write group, and admin
+    // through `*:*`.
+    expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.ana }, body: CALL })).status).toBe(200);
     expect((await send(served.port, CHAT, { headers: { 'x-api-key': who.dee }, body: CALL })).status).toBe(200);
+  });
+
+  it('calls for a role holding only proxy:call, and refuses a list to it', async () => {
+    const fake = await okProvider();
+    const served = await proxy({ proxy: table(fake.endpoint) });
+    const caller = await personOf('cal', ['proxy:call']);
+    expect((await send(served.port, CHAT, { headers: { authorization: `Bearer ${caller}` }, body: CALL })).status).toBe(200);
+    const listed = await send(served.port, '/v1/models', { headers: { 'x-api-key': caller } });
+    expect(listed.status).toBe(403);
+    expect(listed.json).toMatchObject({ error: { message: 'cal may not proxy:models here' } });
   });
 
   it('refuses a person in no team on a host that names teams, as a session is refused', async () => {
@@ -319,7 +338,7 @@ describe('GET /v1/models lists the names a caller may use', () => {
     expect((root.json as { data: { id: string }[] }).data.map((one) => one.id)).toContain('openai/gpt-5.5');
   });
 
-  it('needs proxy:read, and refuses no credential with 401 in OpenAI\'s body', async () => {
+  it('needs proxy:models, and refuses no credential with 401 in OpenAI\'s body', async () => {
     const served = await proxy({ proxy: SOFTOV, env: ALL_KEYS });
     const none = await send(served.port, '/v1/models');
     expect(none.status).toBe(401);
@@ -327,10 +346,21 @@ describe('GET /v1/models lists the names a caller may use', () => {
     const fay = await send(served.port, '/v1/models', { headers: { 'x-api-key': who.fay, 'anthropic-version': '2023-06-01' } });
     expect(fay.status).toBe(403);
     expect(isAnthropicError(fay.json)).toBe(true);
-    expect(fay.json).toMatchObject({ error: { message: 'fay may not proxy:read here' } });
+    expect(fay.json).toMatchObject({ error: { message: 'fay may not proxy:models here' } });
     const post = await send(served.port, '/v1/models', { headers: asRoot, body: {} });
     expect(post.status).toBe(405);
     expect(post.headers['allow']).toBe('GET');
+  });
+
+  it('lists for a role holding only proxy:models, and refuses a call to it', async () => {
+    const served = await proxy({ proxy: SOFTOV, env: ALL_KEYS });
+    const lister = await personOf('lis', ['proxy:models']);
+    const listed = await send(served.port, '/v1/models', { headers: { 'x-api-key': lister } });
+    expect(listed.status).toBe(200);
+    expect((listed.json as { data: { id: string }[] }).data.length).toBeGreaterThan(0);
+    const called = await send(served.port, CHAT, { headers: { 'x-api-key': lister }, body: CALL });
+    expect(called.status).toBe(403);
+    expect(called.json).toMatchObject({ error: { message: 'lis may not proxy:call here' } });
   });
 });
 

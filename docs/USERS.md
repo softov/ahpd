@@ -368,13 +368,13 @@ group every time - decision
 
 The host advertises every subject a grant may name in `_meta['ahpd.grants']` on
 the handshake and on the root state, so a client reads the operations from the
-wire rather than from this page. That map holds the eight the host decides and,
+wire rather than from this page. That map holds the ten the host decides and,
 beside them, every scheme this host serves - `user`, `team`, `project`, `role`,
 `policy`, `usage` and any plugin's - each under its own name, with the
 operations its provider implements and the groups those fall into. A client
 drawing a role editor reads that one key and has every subject there is.
 
-The subjects the host decides are these eight:
+The subjects the host decides are these ten:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
@@ -386,10 +386,18 @@ The subjects the host decides are these eight:
 | `config` | `settings` | `change` | This host's settings |
 | `diagnostics` | `logs`, `network`, `fetch` | - | Logs and network details for troubleshooting |
 | `container` | - | `connect`, `disconnect`, `relay` | Connecting to dev containers |
+| `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
+| `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](#trusted-folders)) |
+
+`proxy` and `trust` have no scheme of their own: a client never reads a
+`proxy://` or a `trust://` URI, so nothing asks for a resource operation on
+either. The gate behind them is on two other surfaces - the root config, where
+a push asks for `trust:push`, and the proxy's `/v1`, where a call asks for
+`proxy:call` and a model list asks for `proxy:models`. The gate asks the
+operation, and each subject's group in the table above covers it.
 
 The rest are the people schemes and any plugin's, which share the `file`
-operations under their own name, and `trust`, which is one grant and no
-scheme:
+operations under their own name:
 
 | Subject | What they cover |
 | --- | --- |
@@ -399,8 +407,6 @@ scheme:
 | `role` | The roles this install defines. `user list` asks for `role:list` as well, because its answer prints what each person's roles resolve to; there is no `role` command of its own yet |
 | `usage` | What each pool has been charged, and the records charged to it, read through the `usage:` scheme. There is no write half: records are written by the meters that charge them |
 | `policy` | The rows saying who may use which agent, model and computer, read through the `policy:` scheme. Read lists and reads; write makes, edits and takes away a row. Whether any of it binds is the daemon's `policies.check` switch, not this grant |
-| `proxy` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:write` calls a model, which spends this host's provider keys; `proxy:read` lists the model names with `GET /v1/models` |
-| `trust` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. `trust:write` is the whole of it, and a window answers for every folder at once ([Trusted folders](#trusted-folders)) |
 | a plugin's scheme | That provider's resources, exactly as before |
 
 `*` stands in either position: `*:read` is every subject's read, `session:*` is
@@ -423,7 +429,7 @@ member of. Every other pool is refused until a role names the grant.
 | Role | Has |
 | --- | --- |
 | `admin` | `*:*` |
-| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write` |
+| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `trust:write` |
 | `guest` | `session:read`, `automation:read` |
 
 `guest` is the default for `ahpd user add` with no `--role`, and it is the one
@@ -588,9 +594,9 @@ session or a chat needs `session:write`, a terminal needs `terminal:write`, an
 automation needs `automation:write`, and anything else needs `file:read`.
 `ahp-root://` is read with the action: `root/configChanged` that only sets your
 own keys (`defaultShell`) needs a sign-in and no grant, and one that pushes
-`workspaceTrust` needs `trust:write`. Any other key, or a replacement of the
-whole config, needs `config:write`, which only `admin` has among the built-in
-roles.
+`workspaceTrust` needs `trust:push`, which the `trust:write` group covers. Any
+other key, or a replacement of the whole config, needs `config:write`, which
+only `admin` has among the built-in roles.
 
 That half is not optional. Root state names every open terminal's URI, and
 `terminal/input` writes to a shell, so a dispatch nobody checked is a command
@@ -627,7 +633,7 @@ A window tells this host which folders it trusts in the root config, under `work
 
 The value has two fields. `enabled: false` means the window has workspace trust switched off, so every folder it opens is trusted. Otherwise `trustedUris` lists the folders it trusts, and a folder is trusted when it is one of them or sits under one.
 
-Pushing the key needs `trust:write`, and the built-in `member` role holds it. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](PLUGINS.md).
+Pushing the key needs `trust:push`, which the `trust:write` group covers and the built-in `member` role holds. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](PLUGINS.md).
 
 The key is kept on the connection that pushed it, like `defaultShell` beside it. Two windows on one daemon each answer for their own sessions. Each answer covers every folder at once, which is why the grant is one.
 

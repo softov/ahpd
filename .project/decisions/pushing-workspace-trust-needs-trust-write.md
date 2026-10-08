@@ -3,7 +3,7 @@ title: Pushing workspaceTrust needs trust:write, and the member role has it
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/gate.ts#L269-L276](../../packages/sdk/src/host/gate.ts#L269-L276) - `dispatchNeeds`, where a key in `PER_CONNECTION` needs no grant today"
+  - "[code://packages/sdk/src/host/gate.ts#L271-L280](../../packages/sdk/src/host/gate.ts#L271-L280) - `dispatchNeeds`, which is what a `workspaceTrust` push is held to"
   - "[code://packages/sdk/src/users.ts#L30](../../packages/sdk/src/users.ts#L30) - the built-in member role"
 ---
 

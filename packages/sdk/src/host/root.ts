@@ -306,10 +306,10 @@ export function createRoot(ctx: HostContext): Root {
    * Every subject a grant may name, and the operations each one has.
    *
    * Read off `OPERATIONS`, so what the host advertises and what the gate asks
-   * for cannot be two lists that drift. Eight subjects are the ones the gate
-   * itself asks for, and every scheme this host serves is beside them under its
-   * own name, so a client drawing a role editor reads one map rather than a
-   * table and a key it has to join itself. Always present, with or without a
+   * for cannot be two lists that drift. Ten subjects are the ones this host
+   * decides, and every scheme it serves is beside them under its own name, so a
+   * client drawing a role editor reads one map rather than a table and a key it
+   * has to join itself. Always present, with or without a
    * directory: it says what a role *could* hold, not what anybody holds, and a
    * host with no `users` still has a `role:` scheme to write a role into.
    *

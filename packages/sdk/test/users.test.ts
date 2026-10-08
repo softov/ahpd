@@ -88,6 +88,13 @@ it('gives admin every area, member the two it works in, and guest only what it m
   expect(member?.can('proxy:read')).toBe(true);
   expect(guest?.can('proxy:write')).toBe(false);
   expect(guest?.can('proxy:read')).toBe(false);
+  // The gate asks each act, and the two groups above are what cover them, as
+  // `trust:write` covers the trust push.
+  expect(member?.can('proxy:call')).toBe(true);
+  expect(member?.can('proxy:models')).toBe(true);
+  expect(member?.can('trust:push')).toBe(true);
+  expect(guest?.can('proxy:call')).toBe(false);
+  expect(guest?.can('trust:push')).toBe(false);
 
   // The point of the verb: guest may look at the sessions and the automations
   // and may do nothing about either.

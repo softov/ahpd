@@ -102,6 +102,9 @@ it('classifies a dispatch by its action, with the channel beside it', async () =
   expect(await needs(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:change');
   // The root is read with its action: a person's own keys need only a sign-in.
   expect(await needs(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBeUndefined();
+  // The one per-connection key the gate asks a grant for: the trust key asks
+  // for the push, which the write group covers.
+  expect(await needs(ROOT, { type: 'root/configChanged', config: { workspaceTrust: { enabled: true, trustedUris: [] } } })).toBe('trust:push');
   // A file, a watch and any other `ahp-` channel are the host's own names, and
   // watching one is the grant an action no family claims is held to.
   for (const channel of ['file:///x', 'ahp-resource-watch:/x', 'ahp-sessionx:/x']) {
@@ -252,9 +255,9 @@ it('lets anybody signed in set their own shell, and only config:write change the
  * `workspaceTrust` lives on the connection beside `defaultShell`, and a key in
  * `PER_CONNECTION` used to need no grant at all - so any connection that had
  * signed in decided what its sessions load from a folder, project settings and
- * hooks included. The trust key alone needs `trust:write`; a shell preference
- * is still the person's with nothing asked for it - decision
- * `pushing-workspace-trust-needs-trust-write`.
+ * hooks included. The trust key alone needs `trust:push`, and the `trust:write`
+ * group covers it; a shell preference is still the person's with nothing asked
+ * for it - decision `pushing-workspace-trust-needs-trust-write`.
  */
 
 /** The refusals a connection was told, which is how a notification is refused. */
@@ -269,16 +272,46 @@ const signedUp = async (...roles: string[]): Promise<{ users: Users; secret: str
   return { users, secret: await users.mint('ana') };
 };
 
-it('refuses a workspaceTrust push from a role without trust:write', async () => {
+it('refuses a workspaceTrust push from a role holding no trust grant', async () => {
   const made = host({ users: directory({ m: ['file:read', 'session:read', 'terminal:read'] }) });
   const seen = watching();
   const client = made.accept(seen);
   await hello(client, 'm'); await signIn(client, 'm');
 
   await configChanged(client, { workspaceTrust: { enabled: true, trustedUris: [`file://${root}`] } });
-  expect(refusalsOf(seen)).toEqual(['m may not trust:write here']);
+  expect(refusalsOf(seen)).toEqual(['m may not trust:push here']);
   // And nothing was kept: a refused push is a refusal, not a stored value.
   expect(await values(client)).not.toHaveProperty('workspaceTrust');
+});
+
+it('accepts a workspaceTrust push from a role holding only trust:push', async () => {
+  // A role of this install's own, so the operation the gate asks for is the
+  // whole of what the connection holds.
+  const users = fileUsers({ path: join(root, 'users.json') });
+  await users.addRole('pushers', ['trust:push']);
+  await users.add('ana', ['pushers']);
+  const secret = await users.mint('ana');
+  const made = host({ users });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'ana'); await signIn(client, secret);
+
+  const trust = { enabled: true, trustedUris: [`file://${root}`] };
+  await configChanged(client, { workspaceTrust: trust });
+  expect(refusalsOf(seen)).toEqual([]);
+  expect(await values(client)).toMatchObject({ workspaceTrust: trust });
+});
+
+it('refuses a workspaceTrust push from a role holding only trust:get', async () => {
+  const made = host({ users: directory({ m: ['trust:get'] }) });
+  const seen = watching();
+  const client = made.accept(seen);
+  await hello(client, 'm'); await signIn(client, 'm');
+
+  // The subject is right and the act is not: what the gate asks for is the
+  // push, and a grant that names another act of `trust` is not it.
+  await configChanged(client, { workspaceTrust: { enabled: true, trustedUris: [`file://${root}`] } });
+  expect(refusalsOf(seen)).toEqual(['m may not trust:push here']);
 });
 
 it('accepts a workspaceTrust push from a member', async () => {
@@ -315,7 +348,7 @@ it('keeps the trust a connection had when a push is refused', async () => {
   // on the next push - which is refused, and leaves what the connection had.
   await users.add('ana', ['files']);
   await configChanged(client, { workspaceTrust: { enabled: false, trustedUris: [] } });
-  expect(refusalsOf(seen)).toEqual(['ana may not trust:write here']);
+  expect(refusalsOf(seen)).toEqual(['ana may not trust:push here']);
   expect(await values(client)).toMatchObject({ workspaceTrust: pushed });
 });
 

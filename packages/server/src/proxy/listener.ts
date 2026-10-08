@@ -459,7 +459,7 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     const refuse = (refusal: Refusal, headers?: Record<string, string>): Response => refusalBody(dialect, refusal, headers);
     if (request.method !== 'POST') return refuse({ status: 405, message: `${new URL(request.url).pathname} takes POST` }, { allow: 'POST' });
 
-    const called = await callerOf(request, options, 'proxy:write');
+    const called = await callerOf(request, options, 'proxy:call');
     if ('refusal' in called) return refuse(called.refusal);
     const caller = called.caller;
 
@@ -611,7 +611,7 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
   const models = async (request: Request): Promise<Response> => {
     const dialect = dialectOfHeaders(request.headers);
     if (request.method !== 'GET') return refusalBody(dialect, { status: 405, message: `${MODELS_PATH} takes GET` }, { allow: 'GET' });
-    const called = await callerOf(request, options, 'proxy:read');
+    const called = await callerOf(request, options, 'proxy:models');
     if ('refusal' in called) return refusalBody(dialect, called.refusal);
     const proxy = options.proxy();
     const charged = chargedAs(called.caller, options, proxy);

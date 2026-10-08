@@ -254,9 +254,9 @@ export const channelRead = (channel: string, kind: ChannelKind): Grant => {
  * `root/configChanged` that only sets `PER_CONNECTION` keys changes nothing
  * anybody else reads, so it needs a sign-in and no grant (`undefined`) - except
  * `workspaceTrust`, which is one window's answer about the folders every
- * session of that window loads from, so pushing it needs `trust:write`. Any
- * other key, and a `replace`, changes the host for everybody and needs
- * `config:write`.
+ * session of that window loads from, so pushing it needs `trust:push`, which
+ * the `trust:write` group covers. Any other key, and a `replace`, changes the
+ * host for everybody and needs `config:write`.
  *
  * The other is `file:watch` for a channel that is neither a session's nor a
  * terminal's - a `file:` URI, a resource watch, one another client relays. An
@@ -274,7 +274,7 @@ export const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Recor
     const config = typeof action.config === 'object' && action.config !== null ? action.config : {};
     const keys = Object.keys(config);
     if (!keys.every((key) => PER_CONNECTION.has(key))) return 'config:change';
-    return keys.includes('workspaceTrust') ? 'trust:write' : undefined;
+    return keys.includes('workspaceTrust') ? 'trust:push' : undefined;
   }
   return kind === 'other' && !channel.startsWith('ahp-automation') ? 'file:watch' : undefined;
 };

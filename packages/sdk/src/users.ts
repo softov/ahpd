@@ -56,8 +56,8 @@ export const SUBJECTS = [
   // (read), which spends the host's provider keys.
   'proxy',
   // Pushing a window's answer about a folder to this host, which decides what
-  // that window's sessions load from the project. The one grant is
-  // `trust:write`, and the push it names is refused without it - decision
+  // that window's sessions load from the project. The gate asks for
+  // `trust:push`, and the write group covers it - decision
   // `pushing-workspace-trust-needs-trust-write`.
   'trust',
 ] as const;
@@ -169,6 +169,22 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
     description: 'Connecting to dev containers.',
     operations: ['connect', 'disconnect', 'relay'],
     groups: { read: [], write: ['connect', 'disconnect', 'relay'] },
+  },
+  // The two subjects the gate asks about through no method: a `workspaceTrust`
+  // push on the root config, and a model call or a model list on the proxy's
+  // `/v1`. Neither has a scheme of its own, so a client drawing a role editor
+  // reads them here or not at all.
+  trust: {
+    title: 'Workspace trust',
+    description: 'A window\'s answer about the folders its sessions load project files from.',
+    operations: ['push'],
+    groups: { read: [], write: ['push'] },
+  },
+  proxy: {
+    title: 'Model proxy',
+    description: 'Calling a model through this host\'s proxy, and listing the names it serves.',
+    operations: ['models', 'call'],
+    groups: { read: ['models'], write: ['call'] },
   },
 };
 
