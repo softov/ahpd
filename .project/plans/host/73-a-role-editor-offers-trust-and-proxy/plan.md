@@ -1,7 +1,7 @@
 ---
 title: A role editor offers trust and proxy, the two subjects the gate asks for and does not advertise
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -65,7 +65,7 @@ OPERATIONS -> advertisedGrants -> handshake and root state `ahpd.grants` -> clie
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - trust and proxy are in the operations table](task-01-trust-and-proxy-are-in-the-operations-table.md) | implemented | - |
+| [01 - trust and proxy are in the operations table](task-01-trust-and-proxy-are-in-the-operations-table.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -75,7 +75,7 @@ OPERATIONS -> advertisedGrants -> handshake and root state `ahpd.grants` -> clie
 ## Resume state
 
 - **Done so far:** task 01 implemented 2026-10-07. `OPERATIONS` holds `trust` and `proxy`, the advertisement carries them, the page documents them, and every gate passes. A review then found that the gate still asked for the groups, so a role holding only `trust:push` could not push. Softov answered the fork, and the gate asks the operation now.
-- **Next action:** none. Every task is implemented; the plan is ready to close.
+- **Next action:** none. Reviewed and merged 2026-10-08; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** the comment at `root.ts` now says "Ten subjects". `docs/USERS.md` was not in the task's *Files* and had to move, and task 01's *Resume* explains why. The *Resume* also records the review fix and the two further pages that moved with it.
 

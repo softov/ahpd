@@ -1,6 +1,6 @@
 ---
 title: trust and proxy are in the operations table
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

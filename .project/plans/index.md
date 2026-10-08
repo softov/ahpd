@@ -156,7 +156,7 @@ Reference: [00-host.md](host/00-host.md)
 | [70 - What the 0.10.0 release review found is fixed](host/70-what-the-release-review-found-is-fixed/plan.md) | high | built 2026-10-07 ([implemented.md](host/70-what-the-release-review-found-is-fixed/implemented.md)); reviewed and merged | - | release 0.10.0 |
 | [71 - An automation wakes on what a session does](host/71-an-automation-wakes-on-what-a-session-does/plan.md) | medium | built 2026-10-07 ([implemented.md](host/71-an-automation-wakes-on-what-a-session-does/implemented.md), [deferred.md](host/71-an-automation-wakes-on-what-a-session-does/deferred.md), [diagrams](host/71-an-automation-wakes-on-what-a-session-does/diagrams.md)) | - | the bot study, step 3 |
 | [72 - A plugin is told when the host closes, and the computer plugin stops its work there](host/72-a-plugin-is-told-when-the-host-closes/plan.md) | high | built 2026-10-07 ([implemented.md](host/72-a-plugin-is-told-when-the-host-closes/implemented.md)); reviewed and merged | - | release 0.10.0 |
-| [73 - A role editor offers trust and proxy, the two subjects the gate asks for and does not advertise](host/73-a-role-editor-offers-trust-and-proxy/plan.md) | medium | planned 2026-10-07; task 01 implemented | - | - |
+| [73 - A role editor offers trust and proxy, the two subjects the gate asks for and does not advertise](host/73-a-role-editor-offers-trust-and-proxy/plan.md) | medium | built 2026-10-08 | - | - |
 | [74 - The sdk's tools live in one folder](host/74-the-sdks-tools-live-in-one-folder/plan.md) | medium | planned 2026-10-07 | - | - |
 
 Next free number in `host`: `74`.
