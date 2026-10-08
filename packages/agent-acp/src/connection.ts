@@ -208,6 +208,12 @@ export function connectAcp(options: AcpConnectionOptions): AcpConnection {
      */
     handlers.update(context.params.sessionId, context.params.update);
   });
+  if (options.authStatus !== undefined) {
+    app.onNotification('_auth/status_update', (params: unknown) => params, (context) => {
+      const value = context.params;
+      if (typeof value === 'object' && value !== null && 'authStatus' in value) options.authStatus?.(value.authStatus);
+    });
+  }
   /*
    * A person's answer, or the protocol's refusal.
    */

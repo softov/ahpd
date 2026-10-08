@@ -5,6 +5,8 @@ import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf } from './catalog.js';
 import { offeredModels, ownModels, type ModelEntry, type OfferedModel } from './models.js';
 import { realpathSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { machineAsked, refuseComputer } from '@ahpd/sdk';
@@ -392,6 +394,23 @@ export function claude(options: ClaudeOptions): Agent {
     description: `The Claude Agent SDK, on ${dirs.join(', ')}`,
     schema,
     defaults,
+    accountIdentity: async (directory) => {
+      if (directory !== undefined && !isAbsolute(directory)) return { status: 'unavailable' };
+      if (options.preset !== undefined || process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_BASE_URL || process.env.CLAUDE_CODE_OAUTH_TOKEN) return { status: 'unavailable' };
+      try {
+        const { stdout } = await promisify(execFile)(claudeExecutablePath(), ['auth', 'status', '--json'], {
+          timeout: 5000, maxBuffer: 4096, cwd: directory ?? homedir(),
+        });
+        const state: unknown = JSON.parse(stdout);
+        if (typeof state !== 'object' || state === null) return { status: 'unavailable' };
+        const account = state as Record<string, unknown>;
+        const email = account.email;
+        if (account.loggedIn !== true || typeof email !== 'string' || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) || email.length > 254) return { status: 'unavailable' };
+        return { status: 'verified', name: email };
+      } catch {
+        return { status: 'unavailable' };
+      }
+    },
 
     /*
      * What a machine needs for this CLI to run in it.

@@ -1039,6 +1039,9 @@ const onLine = (line) => {
         },
         authMethods: process.argv.includes('--signin') || process.argv.includes('--signin-fails') ? [{ id: 'api-key', name: 'API key' }] : [],
       });
+      if (process.argv.includes('--auth-account')) write({ jsonrpc: '2.0', method: '_auth/status_update', params: { authStatus: { kind: 'account', account: { email: 'codex@example.com' }, label: 'ChatGPT' } } });
+      if (process.argv.includes('--auth-key')) write({ jsonrpc: '2.0', method: '_auth/status_update', params: { authStatus: { kind: 'api_key', label: 'API key' } } });
+      if (process.argv.includes('--auth-project')) write({ jsonrpc: '2.0', method: '_auth/status_update', params: { authStatus: { kind: 'account', account: { email: `${process.cwd().split('/').at(-1)}@example.com` }, label: 'ChatGPT' } } });
       return;
 
     case 'authenticate':

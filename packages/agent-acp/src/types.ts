@@ -214,6 +214,7 @@ export interface AcpConnectionOptions {
   env?: Record<string, string>;
   cwd?: string;
   handlers: AcpHandlers;
+  authStatus?: (status: unknown) => void;
 }
 
 /** One open ACP connection over a server's stdio. */

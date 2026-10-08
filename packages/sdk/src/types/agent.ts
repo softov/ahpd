@@ -504,6 +504,8 @@ export interface Agent {
    */
   probe?(): Promise<Offered>;
 
+  accountIdentity?(directory?: string): Promise<{ status: 'verified'; name: string } | { status: 'unavailable' }>;
+
   /**
    * The directories this backend will work in.
    *

@@ -15,6 +15,8 @@
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
 import { catalogueOf, deletes, findListed, forgetSession, loadedSession, stateFile } from './catalog.js';
 import { acpSession } from './session.js';
+import { connectAcp } from './connection.js';
+import { isAbsolute } from 'node:path';
 import { turnsOf } from './transcript.js';
 import type { AcpMachine, AcpOptions } from './types.js';
 
@@ -104,6 +106,36 @@ export function acpAgent(options: AcpOptions): Agent {
     ...(options.description !== undefined ? { description: options.description } : {}),
     schema,
     defaults,
+    accountIdentity: async (directory) => {
+      if (provider !== 'codex' || options.command.split('/').at(-1) !== 'codex-acp' || options.authenticate !== undefined || options.authenticateInMachine !== undefined || directory === undefined || !isAbsolute(directory)) return { status: 'unavailable' };
+      let heard: (status: unknown) => void = () => {};
+      const status = new Promise<unknown>((resolve) => { heard = resolve; });
+      const connection = connectAcp({
+        command: options.command,
+        ...(options.args === undefined ? {} : { args: options.args }),
+        ...(options.env === undefined ? {} : { env: options.env }),
+        cwd: directory,
+        handlers: { update: () => {} },
+        authStatus: heard,
+      });
+      try {
+        const result = await Promise.race([
+          connection.initialize().then(() => status),
+          connection.ended.then(() => undefined),
+          new Promise<undefined>((resolve) => { setTimeout(() => resolve(undefined), 5000).unref(); }),
+        ]);
+        if (typeof result !== 'object' || result === null) return { status: 'unavailable' };
+        const state = result as Record<string, unknown>;
+        const account = state.account;
+        const email = typeof account === 'object' && account !== null ? (account as Record<string, unknown>).email : undefined;
+        if (state.kind !== 'account' || typeof email !== 'string' || !/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(email) || email.length > 254) return { status: 'unavailable' };
+        return { status: 'verified', name: email };
+      } catch {
+        return { status: 'unavailable' };
+      } finally {
+        await connection.close();
+      }
+    },
 
     /**
      * What the server offers before a session exists.

@@ -12,7 +12,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
-import type { HostOptions, RequestHandler, Route, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, HostOptions, RequestHandler, ResourceProvider, Route, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
   createHost,
   fileResources,
@@ -57,6 +57,36 @@ import { manifest, version } from '../version.js';
 import { conflict, optionsFrom, secret, flagFields, stop } from './options.js';
 import { FORCED_SIGNAL, RESTART_SIGNAL, answerRestartSignal, checkedRestart, lifecycle, successorTakes } from './restart.js';
 import type { Options } from './options.js';
+
+export function accountProvider(agents: Agent[]): ResourceProvider {
+  const available = { status: 'unavailable' } as const;
+  const named = (uri: string): { agent: Agent; directory?: string } | undefined => {
+    let url: URL;
+    try { url = new URL(uri); } catch { return undefined; }
+    if (url.protocol !== 'ahpd-account:' || url.pathname !== '' || url.hash !== '' || !/^[a-z][a-z0-9-]*$/.test(url.hostname)) return undefined;
+    if ([...url.searchParams.keys()].some((key) => key !== 'cwd') || url.searchParams.getAll('cwd').length > 1) return undefined;
+    const agent = agents.find((one) => one.provider === url.hostname);
+    if (agent === undefined) return undefined;
+    const directory = url.searchParams.get('cwd');
+    return { agent, ...(directory === null ? {} : { directory }) };
+  };
+  return {
+    authorize: async (uri) => named(uri) !== undefined,
+    read: async (uri) => {
+      const target = named(uri);
+      let identity: { status: 'verified'; name: string } | { status: 'unavailable' } = available;
+      try {
+        if (target?.agent.accountIdentity !== undefined) {
+          const claimed = await target.agent.accountIdentity(target.directory);
+          if (claimed.status === 'verified' && typeof claimed.name === 'string' && claimed.name.length <= 254 && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(claimed.name)) identity = { status: 'verified', name: claimed.name };
+        }
+      } catch {
+        identity = available;
+      }
+      return { data: JSON.stringify(identity), encoding: 'utf-8', contentType: 'application/json' };
+    },
+  };
+}
 
 /**
  * The names the API answers to.
@@ -786,6 +816,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     stamp(`No backend is loaded, so this host could serve nothing. Run ${install} to install Claude Code and add it to "plugins" in ${options.configFile ?? configPath()}, or run npm i in ${configDir()} and add the package to "plugins" yourself.`);
     process.exit(1);
   }
+
+  folded.resourceProviders = { ...folded.resourceProviders, 'ahpd-account': accountProvider(folded.agents) };
 
   const host = createHost(folded);
   turning = () => host.turning();
