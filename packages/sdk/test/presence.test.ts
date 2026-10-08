@@ -20,7 +20,19 @@ function peer(): Peer & { notes: { method: string; params: unknown }[] } {
   return { notes, send: () => {}, notify: (method, params) => notes.push({ method, params }), request: async () => ({}), answered: () => {}, close: () => {} };
 }
 
-const host = () => createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
+const host = () => publishingHost(true);
+const unsupportedHost = () => createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })] });
+const tool = { name: 'openFile', inputSchema: { type: 'object', properties: {} } };
+const publishingHost = (accepted: boolean) => {
+  const base = echo({ path: DIR, pace: 0 });
+  return createHost({
+    path: DIR,
+    agents: [{
+      ...base,
+      create: (start) => ({ ...base.create(start), setTools: async () => accepted }),
+    }],
+  });
+};
 
 /** A connected client, named, watching nothing yet. */
 async function joins(held: ReturnType<typeof host>, clientId: string) {
@@ -35,6 +47,10 @@ const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .map((n) => n.params as { channel: string; action: Record<string, unknown> })
   .filter((n) => n.channel === channel)
   .map((n) => n.action);
+const envelopes = (p: ReturnType<typeof peer>, channel: string) => p.notes
+  .filter((n) => n.method === 'action')
+  .map((n) => n.params as { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number }; serverSeq: number; rejectionReason?: string })
+  .filter((n) => n.channel === channel && n.action.type === 'session/activeClientSet');
 
 const clientsIn = async (client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> }, uri: string) => {
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -48,6 +64,101 @@ const settle = async (times = 6): Promise<void> => {
 };
 
 const URI = 'ahp-session:/shared';
+
+it('confirms changed and identical announcements without advancing sequence on the identical receipt', async () => {
+  const held = publishingHost(true);
+  const { client, peer: p } = await joins(held, 'one');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+  const announce = (clientSeq: number) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { tools: [tool] } } },
+  });
+  await announce(7);
+  await settle();
+  const first = envelopes(p, URI);
+  expect(first).toHaveLength(1);
+  expect(first[0]?.origin).toEqual({ clientId: 'one', clientSeq: 7 });
+  expect(first[0]?.rejectionReason).toBeUndefined();
+  await announce(8);
+  await settle();
+  const received = envelopes(p, URI);
+  expect(received).toHaveLength(2);
+  expect(received[1]?.origin).toEqual({ clientId: 'one', clientSeq: 8 });
+  expect(received[1]?.rejectionReason).toBeUndefined();
+  expect(received[1]?.serverSeq).toBe(first[0]?.serverSeq);
+});
+
+it('rejects an identical announcement when initial presence was never published to the backend', async () => {
+  const held = unsupportedHost();
+  const { client, peer: p } = await joins(held, 'one');
+  await client.handle({
+    method: 'createSession',
+    params: { channel: URI, provider: 'echo', activeClient: { tools: [tool] } },
+  });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq: 9, action: { type: 'session/activeClientSet', activeClient: { tools: [tool] } } },
+  });
+  await settle();
+  expect(envelopes(p, URI)).toMatchObject([{
+    origin: { clientId: 'one', clientSeq: 9 },
+    rejectionReason: 'The agent could not publish the client tools',
+  }]);
+});
+
+it('rejects and rolls back a changed announcement when setTools fails', async () => {
+  const held = publishingHost(false);
+  const { client, peer: p } = await joins(held, 'one');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq: 10, action: { type: 'session/activeClientSet', activeClient: { tools: [tool] } } },
+  });
+  await settle();
+  expect(envelopes(p, URI)).toMatchObject([{
+    origin: { clientId: 'one', clientSeq: 10 },
+    rejectionReason: 'The agent could not publish the client tools',
+  }]);
+  expect(await clientsIn(client, URI)).toEqual([]);
+});
+
+it('does not announce a client whose connection closed while tool publication was pending', async () => {
+  let finish = (_accepted: boolean): void => {};
+  const pending = new Promise<boolean>((resolve) => { finish = resolve; });
+  let calls = 0;
+  const base = echo({ path: DIR, pace: 0 });
+  const held = createHost({
+    path: DIR,
+    agents: [{
+      ...base,
+      create: (start) => ({
+        ...base.create(start),
+        setTools: async () => {
+          calls++;
+          return calls === 1 ? await pending : true;
+        },
+      }),
+    }],
+  });
+  const a = await joins(held, 'one');
+  const watcher = await joins(held, 'watcher');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await watcher.client.handle({ method: 'subscribe', params: { channel: URI } });
+  a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, clientSeq: 11, action: { type: 'session/activeClientSet', activeClient: { tools: [tool] } } },
+  });
+  await settle();
+  a.client.close();
+  finish(true);
+  await settle();
+  expect(await clientsIn(watcher.client, URI)).toEqual([]);
+  expect(envelopes(watcher.peer, URI)).toEqual([]);
+});
 
 /*
  * A client reconciles what it contributes whenever the session state moves,
@@ -128,6 +239,7 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
       },
     },
   });
+  await settle();
 
   // The other client hears about it, which is not something the two of them
   // could have told each other.
@@ -151,6 +263,7 @@ it('takes the client id from the connection, not from the action', async () => {
       action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [] } },
     },
   });
+  await settle();
   expect(await clientsIn(a.client, URI)).toEqual(['honest']);
 });
 
@@ -165,6 +278,7 @@ it('replaces what a client contributes rather than merging it', async () => {
   });
   await announce([{ name: 'a' }, { name: 'b' }]);
   await announce([{ name: 'a' }]);
+  await settle();
   const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
     snapshot: { state: { activeClients: { tools: unknown[] }[] } };
   };
@@ -230,6 +344,7 @@ it('keeps a client in while another window of theirs is still watching', async (
     method: 'dispatchAction',
     params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { clientId: 'twice', tools: [] } } },
   });
+  await settle();
   expect(await clientsIn(a.client, URI)).toEqual(['twice']);
 
   first.client.close();

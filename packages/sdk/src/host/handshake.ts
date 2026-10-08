@@ -256,6 +256,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
          * worktree five are its dev container flow.
          */
         _meta: {
+          'ahpd.activeClientSetReceipts': true,
           'vscode.removeSessionArtifact': true,
           'vscode.detachedWorktrees': true,
           'vscode.getAgentHostSessionStateFile.chat': true,

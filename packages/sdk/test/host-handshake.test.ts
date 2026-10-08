@@ -10,6 +10,11 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 beforeEach(resetSdk);
 
 describe('the handshake', () => {
+  it('advertises accepted client-tool receipts under ahpd metadata', async () => {
+    const result = await open().handle(hello(['0.9.0'])) as { _meta: Record<string, unknown> };
+    expect(result._meta['ahpd.activeClientSetReceipts']).toBe(true);
+  });
+
   it('answers the highest version offered that it speaks, in whatever order they came', async () => {
     for (const offered of [['1.0.0'], ['0.9.0'], ['0.9.0', '1.0.0'], ['1.0.0', '0.9.0']]) {
       const result = await open().handle(hello(offered)) as { protocolVersion: string };

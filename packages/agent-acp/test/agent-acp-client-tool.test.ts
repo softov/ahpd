@@ -50,7 +50,7 @@ const until = async (check: () => boolean, times = 4000): Promise<void> => {
   }
 };
 
-type Note = { channel: string; action: Record<string, unknown> };
+type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number }; rejectionReason?: string };
 
 const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
   .filter((n) => n.method === 'action')
@@ -203,7 +203,7 @@ const serve = async (servers: ToolsServers): Promise<{
 };
 
 /** A connected client with one ACP session, watching both its channels. */
-async function talking(given: { clientToolTimeoutMs?: number; toolsChanged?: 'notify' | 'list' } = {}) {
+async function talking(given: { clientToolTimeoutMs?: number; toolsChanged?: 'notify' | 'list'; hostTools?: boolean } = {}) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-acp-client-tool-'));
   /*
    * The file the fixture reads between the reports and the requests.
@@ -249,6 +249,7 @@ async function talking(given: { clientToolTimeoutMs?: number; toolsChanged?: 'no
       // These cases are about a client's tools, not the folder, so the agent
       // says it asks about trust on its own and the host does not refuse it.
       honoursTrust: true,
+      ...(given.hostTools === undefined ? {} : { hostTools: given.hostTools }),
       ...(given.toolsChanged === undefined ? {} : { toolsChanged: given.toolsChanged }),
     })],
     resources: fileResources(),
@@ -298,6 +299,7 @@ async function joining(
   chatUri: string,
   id: string,
   tools: unknown[] = [OPEN_FILE],
+  clientSeq?: number,
 ) {
   const p = peer();
   const client = host.accept(p);
@@ -309,7 +311,7 @@ async function joining(
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
+    params: { channel: uri, ...(clientSeq === undefined ? {} : { clientSeq }), action: { type: 'session/activeClientSet', activeClient: { name: id, tools } } },
   });
   return { client, peer: p };
 }
@@ -440,6 +442,25 @@ const notified = async (toolsChanged?: 'notify' | 'list'): Promise<string> => {
   await joining(host, uri, chatUri, 'a');
   return await next();
 };
+
+it('confirms a client tool only after the first ACP session receives its endpoint', async () => {
+  const { host, uri, chatUri, endpoints } = await talking();
+  const a = await joining(host, uri, chatUri, 'a', [OPEN_FILE], 17);
+  await until(() => actions(a.peer, uri).some((one) => one.origin?.clientSeq === 17));
+  const receipt = actions(a.peer, uri).find((one) => one.origin?.clientSeq === 17);
+  expect(receipt?.rejectionReason).toBeUndefined();
+  expect(receipt?.action.type).toBe('session/activeClientSet');
+  const endpoint = await endpointOf(endpoints);
+  expect(await listed(endpoint)).toContain('a__openFile');
+});
+
+it('rejects a client tool when the ACP server cannot receive host tools', async () => {
+  const { host, uri, chatUri } = await talking({ hostTools: false });
+  const a = await joining(host, uri, chatUri, 'a', [OPEN_FILE], 18);
+  await until(() => actions(a.peer, uri).some((one) => one.origin?.clientSeq === 18));
+  const receipt = actions(a.peer, uri).find((one) => one.origin?.clientSeq === 18);
+  expect(receipt?.rejectionReason).toBe('The agent could not publish the client tools');
+});
 
 it("answers the agent's request with what the owning client said", async () => {
   const { host, client, peer: p, uri, chatUri, arrived } = await talking();

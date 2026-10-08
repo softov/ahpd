@@ -274,7 +274,15 @@ export function createClientCalls(ctx: SessionContext): ClientCalls {
    */
   const setTools = async (tools: BoundTool[]): Promise<boolean> => {
     ctx.offering = [...tools];
-    ctx.toolsEndpoint()?.setTools([...tools]);
+    const clientTools = tools.some((tool) => tool.owner !== undefined);
+    if (clientTools && ctx.toolsEndpoint() === undefined) {
+      try { await ctx.open(); }
+      catch { return false; }
+    }
+    const endpoint = ctx.toolsEndpoint();
+    if (clientTools && (!ctx.hostToolsAvailable() || endpoint === undefined)) return false;
+    try { endpoint?.setTools([...tools]); }
+    catch { return false; }
     return true;
   };
 

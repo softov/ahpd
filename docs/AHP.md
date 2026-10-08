@@ -604,12 +604,19 @@ restarts is a rebuilt one.
 ### An action that changes nothing is not a change
 
 `serverSeq` advances with **state** and never with messages, so a dispatch
-saying what this host already held is answered with silence rather than an
-echo. `session/isReadChanged` always did this; `session/activeClientSet` did
-not, and the omission was a loop: a client reconciles what it contributes
-whenever the session state moves, this host's echo *is* the state moving, and
-so the echo was the change that prompted the next announcement. Three hundred
-round trips in a few seconds, a sequence number apiece.
+saying what this host already held does not broadcast a state change.
+`session/isReadChanged` always did this; `session/activeClientSet` did not,
+and the omission was a loop: a client reconciles what it contributes whenever
+the session state moves, this host's echo *is* the state moving, and so the
+echo was the change that prompted the next announcement. Three hundred round
+trips in a few seconds, a sequence number apiece.
+
+`initialize._meta['ahpd.activeClientSetReceipts']` is `true` when this host
+confirms a client tool announcement after its backend accepts the tool list.
+The accepted `session/activeClientSet` action carries the dispatcher's `origin`;
+an identical reannouncement with a positive `clientSeq` gets that receipt only
+on the sending connection, without advancing `serverSeq`. A backend that cannot
+publish the tools rejects the action, also without changing session state.
 
 ### The snapshot and the actions have to agree
 

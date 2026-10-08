@@ -36,6 +36,8 @@ export interface Tooling {
   clientTools(uri: string): BoundTool[];
   /** Tell a session's chats what they may offer, after the clients moved. */
   retool(uri: string): void;
+  publishClientTools(uri: string): Promise<boolean>;
+  queueClientToolUpdate(uri: string, update: () => Promise<void>): Promise<void>;
   /** The chat a tool means in a session: the one with that id, or the default. */
   chatMeant(held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined;
   /** A move a session's agent asked for, waiting for its turn to end. */
@@ -162,16 +164,30 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * Every chat, because the clients are the session's rather than one chat's -
    * somebody with two conversations open in one session contributes the same
-   * tools to both. A backend that cannot take tools at all answers false and
-   * is left alone; there is nothing to report to a client either way, because
-   * what it announced is already on the session state.
+   * tools to both. A backend that cannot take client tools answers false so
+   * an explicit announcement can be rejected before session state changes.
    */
-  const retool = (uri: string): void => {
+  const publishClientTools = async (uri: string): Promise<boolean> => {
     const held = sessions.get(uri);
-    if (!held) return;
-    for (const [chatUri, chat] of held.chats) {
-      void chat.setTools?.(boundTools(uri, chatUri)).catch(() => {});
-    }
+    if (!held) return true;
+    const hasClientTools = clientTools(uri).length > 0;
+    const results = await Promise.all([...held.chats].map(async ([chatUri, chat]) => {
+      if (!chat.setTools) return !hasClientTools;
+      try { return await chat.setTools(boundTools(uri, chatUri)); }
+      catch { return false; }
+    }));
+    return results.every((result) => result);
+  };
+  const retool = (uri: string): void => { void publishClientTools(uri); };
+
+  const clientToolUpdates = new Map<string, Promise<void>>();
+  const queueClientToolUpdate = (uri: string, update: () => Promise<void>): Promise<void> => {
+    const previous = clientToolUpdates.get(uri) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(update);
+    clientToolUpdates.set(uri, next);
+    const done = (): void => { if (clientToolUpdates.get(uri) === next) clientToolUpdates.delete(uri); };
+    void next.then(done, done);
+    return next;
   };
 
   /** The chat a tool means in a session: the one with that id, or the default. */
@@ -459,7 +475,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   return {
     permitted, compactPrompts, strategyOf, shapedDefinition, toolDefinitions,
-    clientTools, retool, chatMeant, renameChat, toolContext, mcpFor,
+    clientTools, retool, publishClientTools, queueClientToolUpdate, chatMeant, renameChat, toolContext, mcpFor,
     toolsServersGone, boundTools, instructions,
     strategies, moving, served,
   };

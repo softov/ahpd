@@ -11,6 +11,7 @@ import type { Bag, HostTool } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
 import { gitChanges } from '../../sdk/src/changes.js';
 import { shellTerminals } from '../../sdk/src/terminals.js';
+import { toolServers } from '../../sdk/src/toolserver.js';
 import { acpAgent } from '../src/index.js';
 import { anyone, signIn } from './people.js';
 import type { ChangesetFile, ChangesetSource } from '../../sdk/src/types/changes.js';
@@ -75,6 +76,7 @@ async function talking(options: { changes?: ChangesetSource; tools?: HostTool[] 
   const host = createHost({
     path,
     agents: [acpAgent({ command: process.execPath, args: [FIXTURE], provider: 'acp' })],
+    toolsServers: toolServers({ origin: () => 'http://127.0.0.1:0', name: 'ahpd', version: 'test' }),
     // The composer's `!` prefix is the host's shell, so the host has to hold one.
     terminals: shellTerminals(),
     // And somebody for this window to be, without whom its session has no owner

@@ -50,7 +50,7 @@ const CLOSE_GRACE_MS = 1000;
  *
  * `options` is the backend's identity and wiring; `start` is what this
  * particular session was told. The server is spawned lazily, on the first
- * turn, so a session somebody opened and never used costs no subprocess.
+ * turn or when a client tool must be published before that turn.
  */
 export function acpSession(options: AcpOptions, start: Start): Session {
   const provider = options.provider ?? 'acp';

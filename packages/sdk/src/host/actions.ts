@@ -42,7 +42,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const {
     changed, channelKind, daemonKey, decided,
     dir, dirOf, dispatch, first, homeOf, kept, log, marks, marksOf, meantBy, names, options,
-    ownerFor, owners, past, permitted, presence, relayed, restart, retool,
+    ownerFor, owners, past, permitted, presence, publishClientTools, queueClientToolUpdate, relayed, restart, retool,
     rootConfig, served, sessionFor, sessions, starting, summaryMoved, terminals, toolDefinitions,
     value, waitingFor,
   } = ctx;
@@ -526,32 +526,38 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         clientId,
         tools: Array.isArray(carried.tools) ? carried.tools : [],
       };
-      const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
-      presence.set(idOf(channel), held);
-      /*
-       * Saying again what this host already held is not a change.
-       *
-       * `serverSeq` advances with *state* and never with messages, and a
-       * client reconciles what it contributes whenever the session state
-       * moves. So an echo of an announcement that changed nothing was
-       * itself the change that prompted the next announcement, and the two
-       * of us ran that loop three hundred times in a few seconds, burning
-       * a sequence number apiece. The guard `isReadChanged` has below is
-       * the same guard, and this is the same reason for it.
-       */
-      if (JSON.stringify(held.get(clientId)) === JSON.stringify(activeClient))
-        return;
-      // Re-announcing is how a client refreshes what it contributes, so
-      // this replaces rather than merges - a tool taken away has to be
-      // able to go.
-      held.set(clientId, activeClient);
-      dispatch(channel, { type, activeClient });
-      // What it says it can run is a change to what the model is offered,
-      // which is the whole point of the field: announced and never read,
-      // `tools` was a list this host published back at the client that
-      // sent it.
-      retool(channel);
-      return;
+      return queueClientToolUpdate(channel, async () => {
+        if (!ctx.connections.has(connection)) return;
+        const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
+        presence.set(idOf(channel), held);
+        if (JSON.stringify(held.get(clientId)) === JSON.stringify(activeClient)) {
+          if (!(await publishClientTools(channel))) {
+            if (ctx.connections.has(connection)) no('The agent could not publish the client tools');
+            return;
+          }
+          if (JSON.stringify(held.get(clientId)) !== JSON.stringify(activeClient)) return;
+          if (ctx.connections.has(connection) && origin.clientSeq > 0) {
+            connection.peer.notify('action', {
+              channel: connection.aliases.get(channel) ?? channel,
+              action: { type, activeClient }, serverSeq: ctx.serverSeq, origin,
+            });
+          }
+          return;
+        }
+        const previous = held.get(clientId);
+        held.set(clientId, activeClient);
+        const published = await publishClientTools(channel);
+        if (held.get(clientId) !== activeClient) return;
+        if (!published) {
+          if (previous === undefined) held.delete(clientId);
+          else held.set(clientId, previous);
+          if (held.size === 0) presence.delete(idOf(channel));
+          await publishClientTools(channel);
+          if (ctx.connections.has(connection)) no('The agent could not publish the client tools');
+          return;
+        }
+        dispatch(channel, { type, activeClient }, origin);
+      });
     }
 
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {

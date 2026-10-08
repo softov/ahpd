@@ -13,14 +13,15 @@ export interface Opening {
   open(): Promise<{ connection: AcpConnection; sessionId: string }>;
   signInFailure(why: unknown): { errorType: string; message: string } | undefined;
   /**
-   * The host's own tools endpoint, once a turn has opened it.
+   * The host's own tools endpoint, once the ACP session has opened it.
    *
-   * Asked rather than kept, because it is opened inside the first `session/new`
-   * and a session that has run no turn has none yet. What asks is the offering
+   * Asked rather than kept, because it is opened inside `session/new` and a
+   * session that has not opened yet has none. What asks is the offering
    * being replaced: a client that arrives or goes moves the list the agent was
    * handed, and the endpoint is the only thing serving it.
    */
   toolsEndpoint(): ToolsEndpoint | undefined;
+  hostToolsAvailable(): boolean;
 }
 
 /**
@@ -185,6 +186,7 @@ export function createOpening(ctx: SessionContext): Opening {
    * be interrupted sets `list`.
    */
   let endpoint: ToolsEndpoint | undefined;
+  let hostToolsAvailable = false;
   let asked = false;
   const toolsServer = (): ToolsEndpoint | undefined => {
     if (!asked) {
@@ -399,6 +401,8 @@ export function createOpening(ctx: SessionContext): Opening {
         moved === undefined ? undefined : machineAsked(start),
         (line) => options.log?.(line),
       );
+      hostToolsAvailable = endpoint !== undefined && servers.some((server) =>
+        server.name === HOST_TOOLS && 'url' in server && server.url === endpoint?.url);
       /*
        * The conversation to continue: the one a resume named, or the one this
        * session already had when its server died. Both go through the same
@@ -471,5 +475,5 @@ export function createOpening(ctx: SessionContext): Opening {
     return pending;
   };
 
-  return { open, signInFailure, toolsEndpoint: () => endpoint };
+  return { open, signInFailure, toolsEndpoint: () => endpoint, hostToolsAvailable: () => hostToolsAvailable };
 }
