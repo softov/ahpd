@@ -318,10 +318,13 @@ const NOT_REPLAYED = [
   '112-toolcall-pending-result-confirmation-sets-input-needed-status',
   '113-session-configchanged-merges-into-config-values',
   '114-session-configchanged-noops-when-config-undefined',
+  '127-root-configchanged-merges-into-config-values',
   '127-toolcallready-with-confirmation-options',
+  '128-root-configchanged-noops-when-config-undefined',
   '128-toolcallconfirmed-approved-with-selectedoption',
   '129-session-configchanged-replace-replaces-all-values',
   '129-toolcallconfirmed-denied-with-selectedoption',
+  '130-root-configchanged-replace-replaces-all-values',
   '130-selectedoption-carries-through-to-completed',
   '131-selectedoption-carries-through-result-confirmation',
   '132-selectedoption-carries-through-result-denied',
@@ -458,10 +461,11 @@ const NOT_REPLAYED = [
  *
  * Each of these is a state this host does not have, and it says which: a
  * method it does not serve yet, a directory nobody trusted here, a config key
- * this backend does not take, a turn or a tool call this session has never
- * had. The reason is the host's own words, and the groups below are the ones
- * it gave, so the field each case names is refused rather than reaching the
- * host's state and coming back different.
+ * this backend does not take, a root config key no schema here declares, a
+ * turn or a tool call this session has never had. The reason is the host's own
+ * words, and the groups below are the ones it gave, so the field each case
+ * names is refused rather than reaching the host's state and coming back
+ * different.
  *
  * A case here that the host starts accepting fails the test, because it would
  * then be in neither this list nor a comparison.
@@ -525,6 +529,10 @@ const HOST_REFUSED = [
   '113-session-configchanged-merges-into-config-values',
   '114-session-configchanged-noops-when-config-undefined',
   '129-session-configchanged-replace-replaces-all-values',
+  // `root config does not declare theme`, the root half of the same refusal
+  '127-root-configchanged-merges-into-config-values',
+  '128-root-configchanged-noops-when-config-undefined',
+  '130-root-configchanged-replace-replaces-all-values',
   // `<id> has no runtime switch`
   '060-session-customizationtoggled-toggles-by-id',
   '061-session-customizationtoggled-is-no-op-for-unknown-id',
@@ -548,11 +556,10 @@ const HOST_REFUSED = [
  *
  * `activeTurn` and `turns` carry this host's own clock and its own turn ids,
  * `status` is what the session's backend is doing rather than what the case
- * says it is, `activeClients` names the connections that are actually here,
- * and the root's `agents` and `config` are the daemon's own. The case's
- * expectation for those fields is a state ahpd never makes, so the difference
- * is asserted rather than passed over: a case that starts agreeing fails the
- * test and has to come off this list.
+ * says it is, and `activeClients` names the connections that are actually
+ * here. The case's expectation for those fields is a state ahpd never makes,
+ * so the difference is asserted rather than passed over: a case that starts
+ * agreeing fails the test and has to come off this list.
  */
 const HOST_OWNS: Record<string, string[]> = {
   '005-session-turnstarted': ['activeTurn'],
@@ -566,9 +573,6 @@ const HOST_OWNS: Record<string, string[]> = {
   '046-append-queued-message-when-id-is-new': ['status'],
   '047-update-queued-message-in-place-when-id-already-exists': ['status'],
   '075-turnstarted-clears-isread': ['activeTurn'],
-  '127-root-configchanged-merges-into-config-values': ['agents', 'config'],
-  '128-root-configchanged-noops-when-config-undefined': ['agents'],
-  '130-root-configchanged-replace-replaces-all-values': ['agents', 'config'],
 };
 
 /** The state the host serves for one channel, read by a connection of its own. */
@@ -681,13 +685,13 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
   }
 
   it('names every case it cannot replay, and no other', () => {
-    expect(NOT_REPLAYED).toHaveLength(205);
-    expect(new Set(NOT_REPLAYED).size).toBe(205);
-    expect(HOST_REFUSED).toHaveLength(59);
+    expect(NOT_REPLAYED).toHaveLength(208);
+    expect(new Set(NOT_REPLAYED).size).toBe(208);
+    expect(HOST_REFUSED).toHaveLength(62);
     // The rest of the refused cases are the ones a client may not send, and
     // each of those is checked against the protocol's own answer per case.
     expect(NOT_REPLAYED.length - HOST_REFUSED.length).toBe(146);
-    expect(Object.keys(HOST_OWNS)).toHaveLength(14);
+    expect(Object.keys(HOST_OWNS)).toHaveLength(11);
     expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 29).toBe(hostCases.length);
   });
 });

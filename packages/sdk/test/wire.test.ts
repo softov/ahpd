@@ -324,7 +324,51 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   const uri = 'ahp-session:/wire';
   const chatUri = 'ahp-chat:/wire';
   await ask('createSession', { channel: uri, provider: 'claude' });
-  await ask('subscribe', { channel: 'ahp-root://' });
+
+  /*
+   * The connect patch a VS Code client sends, as the one action it sends it in.
+   *
+   * The fixture holds the checkpoint's own key list - every key its client
+   * pushes to a remote host, each with a value of the type the schema declares,
+   * upstream's default where it has one - and four keys 1.140 dropped, which a
+   * client older than that still pushes. Nothing in it is copied off anybody's
+   * machine.
+   */
+  const patch = JSON.parse(
+    readFileSync(new URL('./fixtures/vscode-root-config.json', import.meta.url), 'utf8'),
+  ) as Record<string, unknown>;
+  const OLD = ['activeAgentTitleGeneration', 'artifactToolsCompactPrompts', 'deferredTitleGeneration', 'vscode.automationMigration'];
+  const declared = Object.keys(patch).filter((key) => !OLD.includes(key));
+  const before = wire.length;
+  dispatch('ahp-root://', { type: 'root/configChanged', config: patch });
+  await settle();
+
+  /*
+   * The echo, which is every frame of this action the host sent back.
+   *
+   * One action, one echo: the keys this host declares go through, and the four
+   * 1.140 dropped are refused by name, so a client older than this host loses
+   * the keys that no longer exist and nothing else.
+   */
+  const echoed = wire.slice(before)
+    .filter((one) => one.method === 'action' && (one.params as { action?: { type?: string } }).action?.type === 'root/configChanged')
+    .map((one) => (one.params as { action: { config: Record<string, unknown> } }).action.config);
+  expect(echoed).toHaveLength(1);
+  expect(Object.keys(echoed[0] ?? {}).sort()).toEqual([...declared].sort());
+  expect(Object.keys(echoed[0] ?? {}).length).toBe(43);
+
+  const rootState = await ask('subscribe', { channel: 'ahp-root://' }) as {
+    snapshot: { state: { config: { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> } } };
+  };
+  const held = rootState.snapshot.state.config;
+  // Every value this host holds has a property a client can draw it from. A
+  // value with no property is a setting nobody can see and nobody can read
+  // back, which is what this file exists to catch.
+  expect(Object.keys(held.values).filter((key) => !(key in held.schema.properties))).toEqual([]);
+  // The 43 are held, the four the client no longer has are not, and the
+  // daemon's own keys are beside them.
+  expect(declared.filter((key) => !(key in held.values))).toEqual([]);
+  expect(OLD.filter((key) => key in held.values)).toEqual([]);
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
 

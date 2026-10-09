@@ -41,7 +41,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    changed, channelKind, daemonKey, decided,
+    changed, channelKind, daemonKey, decided, declaresConfigKey,
     dir, dirOf, dispatch, first, homeOf, kept, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, past, permitted, presence, relayed, restart, retool,
     rootConfig, served, sessionFor, sessions, starting, summaryMoved, terminals, toolDefinitions,
@@ -249,9 +249,31 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * terminal opened whatever `$SHELL` happened to be.
      */
     if (isRootChannel(channel) && type === 'root/configChanged') {
-      const config = (typeof action.config === 'object' && action.config !== null
+      const pushed = (typeof action.config === 'object' && action.config !== null
         ? action.config
         : {}) as Record<string, unknown>;
+      /*
+       * The keys nobody declares, taken out before anything is applied.
+       *
+       * A value with no property in the schema is one no client can draw a
+       * control for, so keeping it would be reporting a setting that is not
+       * one - the opposite of the reason a declared key this host does not act
+       * on is kept. It is a log line rather than a refusal while any declared
+       * key is left, because a client newer than this host sends its whole
+       * patch at connect and one unknown key must not lose the other forty.
+       *
+       * A key is offered here whether or not this connection is *shown* it:
+       * `seesConfig` decides what a connection reads, not what exists, and the
+       * daemon's keys are the ones that difference is about.
+       */
+      const refused = Object.keys(pushed).filter((key) => !declaresConfigKey(key));
+      if (Object.keys(pushed).length > 0 && refused.length === Object.keys(pushed).length) {
+        // The path a refused daemon write takes: `behind` logs it and answers
+        // the sender with this reason, and nobody else hears it.
+        return Promise.reject(new Error(`root config does not declare ${refused.join(', ')}`));
+      }
+      if (refused.length > 0) log(`root config: refused ${refused.join(', ')}`);
+      const config = Object.fromEntries(Object.entries(pushed).filter(([key]) => declaresConfigKey(key)));
       /**
        * What the daemon's half answers for the keys that were written, put
        * in place of what the client sent.
@@ -317,18 +339,6 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         const echoConfig = { ...config, ...said };
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
-         * The artifact wording is read where the tools are built, so a
-         * running session is told the new set now and handed it again when
-         * its chats are retooled. The definitions move even though the
-         * tools do not: what a client draws is the description.
-         */
-        if (Object.prototype.hasOwnProperty.call(config, 'artifactToolsCompactPrompts')) {
-          for (const uri of sessions.keys()) {
-            dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
-            retool(uri);
-          }
-        }
-        /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client
          * watching the root learns of it only from here.
@@ -349,8 +359,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * They go to the port and nowhere else, and they are answered by
        * reading it rather than out of `rootConfig`, so a value a client
        * holds and a value the file holds are never two opinions. A key the
-       * schema does not name stays where it was - kept, acted on by nothing,
-       * which is what `values` reads back as a setting that did not revert.
+       * schema does not name never gets here: it was refused above, so what
+       * the port is asked to write is a key it declared.
        *
        * Asked first, because it is the only half that can be refused: a
        * write is a file being read and written and a schema being held to,
@@ -382,9 +392,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * `advancedTools` is a key of the host's own option as much as of
          * the daemon's, so the daemon's answer that it took hold is this
          * host's answer too: the tools are rebuilt and every session is
-         * told and retooled now, the way the compact wording is. The answer
-         * that said a restart is needed is the daemon's to give, and this
-         * key is one it applies while it runs.
+         * told and retooled now. The answer that said a restart is needed is
+         * the daemon's to give, and this key is one it applies while it runs.
          */
         const asked = theirs['advancedTools'];
         if (typeof asked === 'boolean' && asked !== ctx.advancedTools) {

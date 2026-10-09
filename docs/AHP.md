@@ -183,7 +183,17 @@ which is a different complaint from an action nobody has served.
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
 | `root/activeSessionsChanged` | host | ✅ | A count, not a list. Moves when a session is created or disposed. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
-| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)). |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)). |
+
+The schema a client draws its controls from holds three kinds of key: the ones VS Code's client pushes, this host's own, and the daemon's.
+`packages/sdk/src/vscoderootconfig.ts` holds the first, one property per key as VS Code's agent host declares it at `7516b04bc94`, out of `common/agentHostSchema.ts`, `common/agentMerge.ts` and `common/automationConfig.ts`.
+Two entries resolve a constant from `src/vs/platform/chat/common/chatSettings.ts` and write the literal it holds, naming the file by URL.
+This host acts on `defaultShell`, on `workspaceTrust` through the connection that pushed it, and on `globalAutoApproveEnabled`; nothing else it declares changes what it does.
+The rest are declared so that a client can draw each one. A value pushed for one reads back as a setting, not as an unknown key.
+The description on such a key describes VS Code's agent host, not this one. `automationsEnabled` reads as a promise, and automations here run whatever it says.
+Three keys VS Code declared before 1.140 are not declared here, because 1.140 dropped them: `artifactToolsCompactPrompts`, `deferredTitleGeneration` and `activeAgentTitleGeneration`.
+The artifact tools carry the long wording and no other, and every session runs under the deferred title strategy, with no key to change either.
+A client older than 1.140 that still pushes one of the three has that key refused by name, and the rest of its push applied.
 
 ### `session/*` — 28 of 28
 

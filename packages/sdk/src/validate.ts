@@ -103,7 +103,6 @@ export const checkAgent = (value: unknown, by: string): void => {
  */
 const TOOL_OPTIONAL: Record<string, Kind> = {
   instruction: 'string',
-  compact: 'object',
   forSession: 'function',
   deferLoading: 'boolean',
 };

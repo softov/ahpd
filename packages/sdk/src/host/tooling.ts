@@ -44,19 +44,15 @@ interface HeldPlugin {
  * What a session's model is offered, and what a host tool sees of this host.
  *
  * The tools this host contributes and the ones its clients provide, shaped per
- * session by the compact wording and the title strategy, the turn a host tool
- * is handed, and the endpoints and MCP servers a backend is started with.
+ * session by the title strategy, the turn a host tool is handed, and the
+ * endpoints and MCP servers a backend is started with.
  */
 export interface Tooling {
   /** The tools a session is offered, with the permission applied once. */
   permitted(tools: readonly HostTool[]): HostTool[];
-  /** Whether the client asked for the compact wording. */
-  compactPrompts(): boolean;
-  /** The title strategy each running session resolved when it opened. */
-  strategies: Map<string, TitleStrategy>;
-  /** The strategy a session's uri resolves to, snapshot or root config. */
+  /** The strategy a session's uri resolves to, which is deferred for every one. */
   strategyOf(uri: string): TitleStrategy;
-  /** One tool's definition for a session, after the compact and strategy shaping. */
+  /** One tool's definition for a session, after the strategy's shaping. */
   shapedDefinition(one: HostTool, uri: string): ToolDefinition | undefined;
   /** The definitions alone for one session, which is the half that goes on the wire. */
   toolDefinitions(uri: string): ToolDefinition[];
@@ -158,33 +154,22 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   ctx.contributed = options.tools ?? [];
   ctx.contributing = permitted(ctx.contributed);
-  /** Whether the client asked for the compact wording. */
-  const compactPrompts = (): boolean => rootConfig.artifactToolsCompactPrompts === true;
   /**
-   * The title strategy each running session resolved when it opened.
+   * The title strategy every session runs under, which is the deferred one.
    *
-   * Snapshotted rather than read from the root config on every call, so a
-   * root change affects sessions opened after it and not one mid-turn. A
-   * session this host is only browsing has no entry and resolves from the
-   * root each time, which is the compatibility path.
+   * No root config key selects another strategy, as in VS Code's agent host.
+   * A session this host is only browsing answers the same, where VS Code
+   * answers `utility` for a session with no persisted strategy.
    */
-  const strategies = new Map<string, TitleStrategy>();
-  const strategyOf = (uri: string): TitleStrategy =>
-    strategies.get(uri) ?? (rootConfig.deferredTitleGeneration === true ? 'deferred' : 'activeAgent');
+  const strategyOf = (_uri: string): TitleStrategy => 'deferred';
   /**
-   * One tool's definition for a session, after the compact and strategy
-   * shaping, or nothing where the session's strategy withholds the tool.
-   *
-   * The compact wording is merged first and the strategy's over it, so a
-   * strategy that changes a description wins.
+   * One tool's definition for a session, after the strategy's shaping, or
+   * nothing where the strategy withholds the tool.
    */
   const shapedDefinition = (one: HostTool, uri: string): ToolDefinition | undefined => {
-    const compacted = compactPrompts() && one.compact?.definition !== undefined
-      ? { ...one.definition, ...one.compact.definition }
-      : one.definition;
     const asked = one.forSession?.({ titleStrategy: strategyOf(uri) });
     if (asked?.offered === false) return undefined;
-    return asked?.definition === undefined ? compacted : { ...compacted, ...asked.definition };
+    return asked?.definition === undefined ? one.definition : { ...one.definition, ...asked.definition };
   };
   /** The definitions alone for one session, which is the half that goes on the wire. */
   const toolDefinitions = (uri: string): ToolDefinition[] => ctx.contributing.flatMap((one) => {
@@ -857,15 +842,14 @@ export function createTooling(ctx: HostContext): Tooling {
   /** What the host's tools want the model told, in the order the tools are offered. */
   const instructions = (uri: string): string[] => ctx.contributing.flatMap((one) => {
     if (one.forSession?.({ titleStrategy: strategyOf(uri) })?.offered === false) return [];
-    const said = compactPrompts() && one.compact?.instruction !== undefined ? one.compact.instruction : one.instruction;
-    return said === undefined ? [] : [said];
+    return one.instruction === undefined ? [] : [one.instruction];
   });
 
   return {
-    permitted, compactPrompts, strategyOf, shapedDefinition, toolDefinitions,
+    permitted, strategyOf, shapedDefinition, toolDefinitions,
     clientTools, clientPluginsOf, toggleClientPlugin, retool, chatMeant, renameChat, toolContext,
     pluginsFor, pluginsMoved, mcpFor,
     toolsServersGone, boundTools, instructions,
-    strategies, moving, served,
+    moving, served,
   };
 }

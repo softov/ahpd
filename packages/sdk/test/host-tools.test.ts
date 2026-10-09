@@ -252,20 +252,8 @@ describe('tools the host contributes', () => {
       expect(actions(p, uri).some((one) => one.action.type === 'session/titleChanged')).toBe(false);
     });
 
-    it('gives a deferred session rename_chat without the automatic argument, and still runs an explicit rename', async () => {
-      const host = createHost({
-        path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools(),
-      });
-      const p = peer();
-      const client = host.accept(p);
-      await client.handle(hello(['0.9.0']));
-      client.handle({
-        method: 'dispatchAction',
-        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { deferredTitleGeneration: true } } },
-      });
-      await settle();
-      const uri = 'ahp-session:/deferred';
-      await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    it('gives a session rename_chat without the automatic argument, deferred, and still runs an explicit rename', async () => {
+      const { client, uri } = await withTools();
       const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
         snapshot: { state: { serverTools?: { name: string; description?: string; inputSchema?: { properties?: Record<string, unknown> } }[] } };
       }).snapshot.state;
@@ -273,6 +261,11 @@ describe('tools the host contributes', () => {
       expect(rename).toBeDefined();
       expect(rename?.inputSchema?.properties).not.toHaveProperty('automatic');
       expect(rename?.description).toContain('Automatic naming is handled by the host');
+      // Deferred is the strategy a session runs under whatever was pushed, and
+      // the hint that says so is the host's own: the backend turns it into the
+      // eager flag a harness reads, and the published definition never carries it.
+      const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: { name: string; _meta?: Record<string, unknown> }[] }>;
+      expect(servers.ahp?.tools.find((one) => one.name === 'rename_chat')?._meta).toEqual({ 'anthropic/alwaysLoad': false });
       // Every other tool is offered, the artifact one included: the strategy
       // shapes rename_chat alone.
       expect(state.serverTools?.map((one) => one.name)).toContain('add_artifact_or_reference');

@@ -221,6 +221,9 @@ describe('the set itself', () => {
   it('shapes rename_chat by the title strategy the session runs under', () => {
     const rename = sessionTools().find((one) => one.definition.name === 'rename_chat');
     expect(rename?.forSession).toBeDefined();
+    // Deferred is the only strategy a session runs under, and the host reaches
+    // the tool through the discovery the artifact instruction points at.
+    expect(rename?.deferLoading).toBe(true);
     // A utility strategy names chats itself, so the tool is not offered.
     expect(rename?.forSession?.({ titleStrategy: 'utility' })).toEqual({ offered: false });
     // An active agent names its own chats with the tool as it stands.

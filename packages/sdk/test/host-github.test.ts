@@ -263,15 +263,15 @@ describe('what a session recorded', () => {
    * by the window's own request, `vscode/removeSessionArtifact`.
    */
   const KEY = 'agentHost/sessionArtifacts';
-  const withTools = async (compact = false) => {
+  const withTools = async (pushed: Record<string, unknown> = {}) => {
     const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), tools: hostTools() });
     const p = peer();
     const client = host.accept(p);
     const said = await client.handle(hello(['0.9.0'])) as { _meta?: Record<string, unknown> };
-    if (compact) {
+    if (Object.keys(pushed).length > 0) {
       client.handle({
         method: 'dispatchAction',
-        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } } },
+        params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: pushed } },
       });
       await settle();
     }
@@ -294,14 +294,13 @@ describe('what a session recorded', () => {
     expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
   });
 
-  it('tells the model the short wording when the client asks for it, and offers every tool the same', async () => {
-    const { client, uri } = await withTools(true);
+  it('gives the long wording whatever a client pushes, and offers every tool the same', async () => {
+    const { client, uri } = await withTools({ telemetryLevel: 'off' });
     const prompt = sessionQueries().at(-1)?.options.systemPrompt as { append: string } | undefined;
-    expect(prompt?.append).toContain('Artifact registration is optional; default to none.');
-    expect(prompt?.append).toContain('List/remove (discover if needed):');
-    expect(prompt?.append).not.toContain('Record notable artifacts and references with');
-    // The tools are all still offered, in the same order: the compact key
-    // selects words, not availability.
+    expect(prompt?.append).toContain('Record notable artifacts and references with `add_artifact_or_reference`');
+    expect(prompt?.append).not.toContain('Artifact registration is optional; default to none.');
+    // Every tool is offered, in the same order: no root key selects words or
+    // availability.
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { serverTools?: { name: string; description?: string }[] } };
     }).snapshot.state;
@@ -312,7 +311,7 @@ describe('what a session recorded', () => {
       'add_artifact_or_reference', 'remove_artifact_or_reference', 'list_artifacts_and_references',
       'ahp_resource', 'ahp_terminals',
     ]);
-    expect(tools.find((one) => one.name === 'add_artifact_or_reference')?.description).toContain('Call `add_artifact_or_reference`');
+    expect(tools.find((one) => one.name === 'add_artifact_or_reference')?.description).toContain('Record one or more artifacts or references so they are surfaced next to the chat input.');
   });
 
   it('publishes them on the session and its row, and says the change as the whole map', async () => {

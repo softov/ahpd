@@ -1124,10 +1124,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       kept.setOwner(idOf(uri), by.owner);
       if (by.principal !== undefined) principals.set(by.owner, by.principal);
     }
-    // Snapshotted before the backend is handed its tools, so this session's
-    // whole life runs under the strategy the root config named at this
-    // moment and a later root change waits for the next session.
-    ctx.strategies.set(uri, ctx.strategyOf(uri));
     try {
       const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional, by?.sender);
       // Named before it is announced, when the maker had a name for it: a

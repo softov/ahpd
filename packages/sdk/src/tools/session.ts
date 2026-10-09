@@ -558,6 +558,13 @@ export const sessionTools = (): HostTool[] => [
         },
       };
     },
+    /*
+     * Deferred, as the reference host's is once it names its own chats: under
+     * the deferred strategy a rename is something a person asks for rather
+     * than something every turn needs, so the tool need not sit in the tool
+     * list the model is offered up front.
+     */
+    deferLoading: true,
     run: async (input, at) => {
       const tool = 'rename_chat';
       const title = titled(input.title, tool);

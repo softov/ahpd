@@ -363,7 +363,7 @@ it('takes nobody else\'s principal out of a replayed root action', async () => {
   await hello(one, 'ana'); await signIn(one, 'ana');
   await one.handle({
     method: 'dispatchAction',
-    params: { channel: ROOT, action: { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } } },
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { telemetryLevel: 'off' } } },
   });
 
   const other = made.accept(peer());

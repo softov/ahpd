@@ -111,19 +111,20 @@ An entry that is neither shape, or that is missing the one its own `type` needs,
 
 ## Root config
 
-Root config is not a file. It is the record a client pushes to `ahp-root://` with `root/configChanged`, kept per host, and read back on every root state. Two kinds of key live in it: the host's own, which this host acts on, and the daemon's, which are the keys of `config.json` a client may edit.
+Root config is not a file. It is the record a client pushes to `ahp-root://` with `root/configChanged`, kept per host, and read back on every root state. Three kinds of key live in it. The host's own are the ones this host acts on. The settings VS Code's agent host declares are declared here in full and read back, though only `globalAutoApproveEnabled` changes what this host does. The daemon's are the keys of `config.json` a client may edit.
 
-The host's own schema is five keys, and it is what a client draws its controls from. A key in the schema is a promise that pushing it changes something.
+The host's own schema is two keys, and it is what a client draws its controls from. A key in the schema is a promise that pushing it changes something.
 
 | Key | Values | Default | What it changes |
 | --- | --- | --- | --- |
 | `defaultShell` | absolute path | the system shell | The shell a host-managed terminal opens |
 | `workspaceTrust` | `{ "enabled": bool, "trustedUris": [uri] }` | none | Which folders the window that pushed it trusts. `readOnly`: the window pushes it, it is not a control |
-| `artifactToolsCompactPrompts` | boolean | `false` | Use the short artifact instruction and tool description. It changes the wording only, never whether a tool is offered |
-| `deferredTitleGeneration` | boolean | `false` | Give a session a deferred title strategy, under which renaming a chat happens only when the user asks |
-| `globalAutoApproveEnabled` | boolean | `false` | Run every tool call without asking, for every session on this host |
 
-`defaultShell` and `workspaceTrust` are **per connection**: they are kept on the connection that pushed them, and a connection reads its own back rather than whatever was pushed last - decision [A host-wide root setting needs config:write, and a person's own needs only a sign-in](../.project/decisions/host-wide-root-settings-need-config-write.md). The rest are one setting for the whole host. The declaration, and the refusal of a key nobody declared, are decision [The root config declares every key VS Code pushes, as the reference declares it, and refuses a key nobody declares](../.project/decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md) and [The root config grows the artifact prompt switch and deferred title generation](../.project/decisions/root-config-grows-two-keys.md).
+Beside them the schema declares every key VS Code's agent host declares at `7516b04bc94`. They come from `packages/sdk/src/vscoderootconfig.ts`, each with the property VS Code gives it: `telemetryLevel`, `globalAutoApproveEnabled`, `showExternalSessions`, `agentMerge.*` and the rest. Only one of those is read here: `globalAutoApproveEnabled`, which `trust.ts` asks before a tool call runs. The rest are declared and nothing more. A client draws its settings pane from the schema, so a key it cannot find is a control it cannot draw.
+
+Three keys VS Code declared before 1.140 are not declared: `artifactToolsCompactPrompts`, `deferredTitleGeneration` and `activeAgentTitleGeneration`. The artifact tools carry one wording, and every session runs under the deferred title strategy.
+
+`defaultShell` and `workspaceTrust` are **per connection**: they are kept on the connection that pushed them, and a connection reads its own back rather than whatever was pushed last - decision [A host-wide root setting needs config:write, and a person's own needs only a sign-in](../.project/decisions/host-wide-root-settings-need-config-write.md). The rest are one setting for the whole host. The declaration is decision [The root config declares every key VS Code pushes, as the reference declares it, and refuses a key nobody declares](../.project/decisions/root-config-declares-what-vscode-pushes-and-refuses-the-rest.md). The refusal of a key nobody declared is decided there too.
 
 The daemon's half is added to the same schema, and `config:read` is what a connection needs to be shown it. It is `paths`, `port`, `host`, `http`, `updateCheck`, `advancedTools`, `wire` and `mcpServers`, and each configured plugin is one more key, `plugins.<name>`, whose value is `{ enabled, options }` - so one plugin is one key and its variants are its own options. Nothing else the file holds is there: `stdio`, `configFile`, `noCwd`, `worktreesRoot`, `clientToolTimeoutMs`, the connection token keys, `trustToken`, `issuer`, `resource`, `users`, `automations` and `sessions` are still edited the way they always were. A plugin's configuration travelling in root config rather than in customizations is decision [A plugin's configuration travels in root config, not in customizations](../.project/decisions/plugin-configuration-travels-in-root-config.md).
 

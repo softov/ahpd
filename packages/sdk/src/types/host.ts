@@ -558,14 +558,6 @@ export interface HostTool {
    */
   instruction?: string;
   /**
-   * The wording a client's root key selects for this tool.
-   *
-   * `definition` is merged over `definition` above and `instruction`
-   * replaces `instruction` above. It is words only: whether the tool is
-   * offered, where it sits in the list and how many there are do not move.
-   */
-  compact?: { definition?: Partial<ToolDefinition>; instruction?: string };
-  /**
    * The shape one session's title strategy asks for.
    *
    * `undefined` leaves the tool as it is, `{ offered: false }` takes it out
@@ -752,7 +744,7 @@ export interface Connection {
    * The preferences this client pushed that are its own, not the host's.
    *
    * `root/configChanged` carries two kinds of key. Some describe the host and
-   * are one setting for everybody, like whether artifact prompts are compact.
+   * are one setting for everybody, like `globalAutoApproveEnabled`.
    * `defaultShell` is not one of those: the host's own note calls these "the
    * preferences a *client* holds about how the host should behave for it", and
    * VS Code pushes the shell out of a per-person setting the moment it

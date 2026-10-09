@@ -1,7 +1,7 @@
 ---
 title: The root config declares every value it holds, as VS Code's agent host declares it
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -87,6 +87,7 @@ That is decision `root-config-shows-daemon-keys-to-config-read-and-never-a-write
 | `artifactToolsCompactPrompts`, `deferredTitleGeneration` and `activeAgentTitleGeneration` are not declared and nothing reads them: the artifact tools keep only the long wording, every session runs under the deferred title strategy with no key to change it, and `rename_chat` is `deferLoading: true`; a push of any of the three from an older client is refused key by key under task 02 | Softov, 2026-10-03, asked "VS Code dropped both keys before the checkpoint: the compact-prompt experiment was removed (git://45dd7fa1f8b, 2026-09-23), and deferred titles became the default with no setting (git://3b2b948b52d, 2026-09-25). What should ahpd do?": "Follow upstream" | 04 |
 | A session resumed or browsed after a restart is `deferred` too, not upstream's `utility` fallback for a session with no persisted strategy | Softov, 2026-10-03, asked "Sessions that existed before the title change: what title mode do they get?": "Deferred, like new ones" | 04 |
 | Conforming each property to `ConfigPropertySchema` is host/43 p3's, which this plan does not repeat; these properties are taken from a host that already declares them as `ConfigPropertySchema` | [host/43 p3](../43-the-wire-is-the-protocols-p3-the-root-config-schema-conforms/plan.md) | 03 |
+| The protocol's own cases 127, 128 and 130, which push the root config value `theme` that no schema here declares, are expected to be refused: `ahp-test-cases.test.ts` names them in `HOST_REFUSED` and drops them from `HOST_OWNS`, and the counts move with them (`NOT_REPLAYED` 205 to 208, `HOST_REFUSED` 59 to 62, `HOST_OWNS` 14 to 11) | Softov, 2026-10-09, asked "host/45: what happens to the 3 protocol tests that send the undeclared root config value theme?": "Expect the refusal" | 02 |
 
 ## Proposed architecture
 
@@ -100,10 +101,10 @@ That is decision `root-config-shows-daemon-keys-to-config-read-and-never-a-write
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The root config declares the keys VS Code pushes](task-01-the-root-config-declares-the-keys-vscode-pushes.md) | todo | - |
-| [02 - A pushed key nobody declares is refused](task-02-a-pushed-key-nobody-declares-is-refused.md) | todo | 01 |
-| [03 - The wire test finds no value without a property](task-03-the-wire-test-finds-no-value-without-a-property.md) | todo | 01, 02, 04, host/43 p1 task 03 |
-| [04 - The compact wording and the title keys go, and deferred titles are the default, as upstream](task-04-the-compact-wording-and-the-title-keys-go-as-upstream.md) | todo | 01, 02 |
+| [01 - The root config declares the keys VS Code pushes](task-01-the-root-config-declares-the-keys-vscode-pushes.md) | done | - |
+| [02 - A pushed key nobody declares is refused](task-02-a-pushed-key-nobody-declares-is-refused.md) | done | 01 |
+| [03 - The wire test finds no value without a property](task-03-the-wire-test-finds-no-value-without-a-property.md) | done | 01, 02, 04, host/43 p1 task 03 |
+| [04 - The compact wording and the title keys go, and deferred titles are the default, as upstream](task-04-the-compact-wording-and-the-title-keys-go-as-upstream.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -113,15 +114,23 @@ That is decision `root-config-shows-daemon-keys-to-config-read-and-never-a-write
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-root-config-declares-the-keys-vscode-pushes.md](task-01-the-root-config-declares-the-keys-vscode-pushes.md).
+- **Done so far:** all four tasks, built on 2026-10-09 and merged; see [implemented.md](implemented.md).
+- `packages/sdk/src/vscoderootconfig.ts` holds `vscodeRootProperties`, the 42 properties of task 01's table. `workspaceTrust` is host/66 p1's, as that table says. Each entry names the upstream symbol and line it came from at `7516b04bc94`. `ROOT_CONFIG_SCHEMA.properties` spreads the module before the host's own two keys.
+- A pushed key no schema declares is refused by name, and the rest of the push applies. That is `root.ts`'s `declaresConfigKey` and the `root/configChanged` handler.
+- `artifactToolsCompactPrompts`, `deferredTitleGeneration` and `activeAgentTitleGeneration` are gone, with the compact wording, `strategies` and the compact re-dispatch. Every session is deferred, and `rename_chat` is `deferLoading: true`.
+- `packages/sdk/test/fixtures/vscode-root-config.json` holds the 43 declared keys and the four a 1.140-era client still sends. `wire.test.ts` dispatches it, and fails on any value in root `config.values` with no property.
+- `docs/AHP.md` and `docs/HOST.md` say what the schema holds and what goes out.
+- **Forced moves and departures to report:** the hand-written `globalAutoApproveEnabled` that host/70 task 05 added is replaced by upstream's property. `conformance.test.ts`'s case that pushed `githubEnterpriseUri` now pushes `telemetryLevel`. `docs/HOST.md`'s Root config section, `gate.ts`'s `PER_CONNECTION` docblock and `types/host.ts`'s `Connection.config` docblock were stale about the two removed keys and were rewritten. No task's Files names those three.
+- **The gate chain passes on 2026-10-09:** `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run --maxWorkers=2 --testTimeout=10000` all pass, 4612 tests in 263 files.
+- **The protocol's three root config cases are refused, as Softov decided.** `127-root-configchanged-merges-into-config-values`, `128-root-configchanged-noops-when-config-undefined` and `130-root-configchanged-replace-replaces-all-values` push `{"theme": "dark"}`, which no schema here declares. `ahp-test-cases.test.ts` names them in `HOST_REFUSED` and drops them from `HOST_OWNS`. The counts move with them: `NOT_REPLAYED` 205 to 208, `HOST_REFUSED` 59 to 62, `HOST_OWNS` 14 to 11. The second table under *Decisions locked in* carries the answer.
+- **Next action:** none. The plan is built.
 - **Open questions:** none.
-- **Watch out for:** the conformance test 'takes a key back' pushes `a` and `b`, which this plan refuses; move it to declared keys rather than declaring test keys. `seenBy` filters the echo per connection; the refusal happens before `dispatch`, so `seenBy` is not changed.
+- **Watch out for:** nothing.
 
 ## Final verification checklist
 
-- [ ] Every key in task 01's table is in root `config.schema.properties` with upstream's title, type and default.
-- [ ] A `root/configChanged` with `{ telemetryLevel: 'off', nonsense: 1 }` echoes `{ telemetryLevel: 'off' }`; one with `{ nonsense: 1 }` is rejected naming `nonsense`.
-- [ ] Root `config.schema.properties` has no `artifactToolsCompactPrompts`, `deferredTitleGeneration` or `activeAgentTitleGeneration`, and a session created with nothing pushed offers `rename_chat` without `automatic`.
-- [ ] `pnpm exec tsc --noEmit` and `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] Every key in task 01's table is in root `config.schema.properties` with upstream's title, type and default.
+- [x] A `root/configChanged` with `{ telemetryLevel: 'off', nonsense: 1 }` echoes `{ telemetryLevel: 'off' }`; one with `{ nonsense: 1 }` is rejected naming `nonsense`.
+- [x] Root `config.schema.properties` has no `artifactToolsCompactPrompts`, `deferredTitleGeneration` or `activeAgentTitleGeneration`, and a session created with nothing pushed offers `rename_chat` without `automatic`.
+- [x] `pnpm exec tsc --noEmit` and `pnpm test` pass.
+- [x] `plans/index.md` updated.

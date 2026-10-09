@@ -431,17 +431,18 @@ it('reduces a changeset, through an operation and a turn', async () => {
  *
  * Its own config schema says so in as many words: `defaultShell` is "normally
  * pushed by the connected VS Code client from
- * `terminal.integrated.agentHostProfile.<os>`", and `githubEnterpriseUri` the
- * same way. This host used to answer all of it with `dispatchAction
- * root/configChanged on unknown ahp-root://` - so the shell somebody chose went
- * nowhere and every terminal opened whatever `$SHELL` happened to be.
+ * `terminal.integrated.agentHostProfile.<os>`", and `telemetryLevel` is one of
+ * the settings it mirrors to a host. This host used to answer all of it with
+ * `dispatchAction root/configChanged on unknown ahp-root://` - so the shell
+ * somebody chose went nowhere and every terminal opened whatever `$SHELL`
+ * happened to be.
  */
 it('keeps what a client pushes on the root channel, and says it back', async () => {
   const { client, peer: p, opened } = await running();
 
   dispatch(client, 'ahp-root://', {
     type: 'root/configChanged',
-    config: { defaultShell: '/usr/bin/fish', githubEnterpriseUri: 'https://ghe.example.com' },
+    config: { defaultShell: '/usr/bin/fish', telemetryLevel: 'off' },
   });
   await settle();
 
@@ -453,10 +454,11 @@ it('keeps what a client pushes on the root channel, and says it back', async () 
   const root = held(p, opened)['ahp-root://'] as { config?: { values: Record<string, unknown> } };
   expect(root.config?.values).toMatchObject({
     defaultShell: '/usr/bin/fish',
-    // Kept although this host acts on none of it: `values` is state a client
-    // reads back, and dropping what is not understood reports a setting that
-    // silently reverted.
-    githubEnterpriseUri: 'https://ghe.example.com',
+    // Kept although this host acts on none of it: the key is declared, and
+    // `values` is state a client reads back. Dropping a declared key reports a
+    // setting that silently reverted, and a key nobody declares is refused
+    // rather than kept.
+    telemetryLevel: 'off',
   });
 
   // And it is in the snapshot a client subscribing later reads.
@@ -465,10 +467,9 @@ it('keeps what a client pushes on the root channel, and says it back', async () 
   };
   expect(again.snapshot.state.config.values.defaultShell).toBe('/usr/bin/fish');
   expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('defaultShell');
-  // The two keys this host acts on besides the shell, declared so a client
-  // draws a control for each.
-  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('artifactToolsCompactPrompts');
-  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('deferredTitleGeneration');
+  // And the key of VS Code's own, declared here so that a client draws a
+  // control for it and reads the value back as a setting.
+  expect(Object.keys(again.snapshot.state.config.schema.properties)).toContain('telemetryLevel');
 });
 
 it('carries a root config on every snapshot, so a client can ever apply one', async () => {
@@ -485,18 +486,20 @@ it('carries a root config on every snapshot, so a client can ever apply one', as
 
 it('takes a key back, and replaces the lot when asked to', async () => {
   const { client, peer: p, opened } = await running();
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/bin/zsh', a: 1 } });
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { defaultShell: '/bin/zsh', telemetryLevel: 'off' } });
   await settle();
   // JSON has no `undefined`, so a client takes a key back with a null.
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { a: null } });
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { telemetryLevel: null } });
   await settle();
-  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { b: 2 }, replace: true });
+  dispatch(client, 'ahp-root://', { type: 'root/configChanged', config: { autoReplyEnabled: true }, replace: true });
   await settle();
 
   const state = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
     snapshot: { state: { config: { values: Record<string, unknown> } } };
   };
-  expect(state.snapshot.state.config.values).toEqual({ b: 2 });
+  // `replace` clears the host's half and the connection's own with it, so the
+  // shell pushed first is gone and what the last action named is all there is.
+  expect(state.snapshot.state.config.values).toEqual({ autoReplyEnabled: true });
   expect(actions(p, 'ahp-root://').filter((one) => one.type === 'root/configChanged')).toHaveLength(3);
 });
 

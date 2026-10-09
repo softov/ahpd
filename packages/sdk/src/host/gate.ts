@@ -305,11 +305,11 @@ export const computerNeeds = (action: Record<string, unknown>): Grant | undefine
 /**
  * The root config keys that are a person's, not the host's.
  *
- * The record a client pushes to `ahp-root://` carries both kinds. Whether
- * artifact prompts are compact changes what every session is told, so it is one
- * setting for the host. `defaultShell` is the person's: the host's own note by
- * `rootConfig` says so, and names VS Code pushing it out of
- * `terminal.integrated.agentHostProfile.<os>` on connect.
+ * The record a client pushes to `ahp-root://` carries both kinds. Almost every
+ * key describes the host and is one setting for everybody, `globalAutoApproveEnabled`
+ * among them, which `trust.ts` asks before a tool call runs. `defaultShell` is
+ * the person's: the host's own note by `rootConfig` says so, and names VS Code
+ * pushing it out of `terminal.integrated.agentHostProfile.<os>` on connect.
  *
  * Kept in one shared record they are the same thing on a one-person daemon and
  * not on any other: whoever connected last decided everybody's shell. So these

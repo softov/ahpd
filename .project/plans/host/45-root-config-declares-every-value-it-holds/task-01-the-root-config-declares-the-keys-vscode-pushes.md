@@ -1,6 +1,6 @@
 ---
 title: The root config declares the keys VS Code pushes
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -71,3 +71,12 @@ Not declared: `byokModelsEnabled`, `runtimePath`, `skillCharBudget` (scope `Loca
 - `pnpm exec vitest run packages/sdk/test/root-config.test.ts packages/sdk/test/conformance.test.ts` passes; `pnpm exec tsc --noEmit` passes.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/db49ec10`; not committed. Both suites above pass, and `npx tsc -p packages/sdk --noEmit` is clean.
+- `vscoderootconfig.ts` holds 42 entries, not 43. `workspaceTrust` is host/66 p1's, which this task's table says. Each entry carries a comment naming the upstream symbol and line at `7516b04bc94`. The two entries whose default is a constant of `src/vs/platform/chat/common/chatSettings.ts` name that file by URL, which is what step 1 asks for.
+- The `agentHostSchema.ts` line numbers written into the comments are the checkpoint's, as this task's table gives them. They were confirmed against the clone's `51ac693b` working tree. That tree differs from the checkpoint by a 22-line block above `disableRepoInfoTelemetry`, and by the 24-line `activeAgentTitleGeneration`/`deferredTitleGeneration`/`titleGeneration` block the checkpoint does not have. Every property between them is at the offset the table's numbers imply.
+- `root.ts`: `ROOT_CONFIG_SCHEMA.properties` spreads `vscodeRootProperties` first, then `defaultShell` and `workspaceTrust`. The hand-written `globalAutoApproveEnabled` that host/70 task 05 added is removed. This task's table gives that key an upstream line, and the plan's decision copies each property from the checkpoint as written. Upstream's property is therefore the one that goes out, and the host's comment about `trust.ts` reading it moved beside the module's entry. This is the move host/66 p1 made for `workspaceTrust`. It makes the parenthetical in the Files line ("the host's own win a clash (there is none today)") true again.
+- The `artifactTools` description keeps upstream's two em dashes. It is a copied literal that says for a client what VS Code's own host says for the same key, not prose written for Softov.
+- `root-config.test.ts`: a new case, "declares every key VS Code pushes, as VS Code declares it", lists all 43 keys. It reads `telemetryLevel`, `agentMerge.mergeMethod`, `showExternalSessions` and the resolved 20-pattern default. It builds its host with `served(false)`, so no daemon port is there and `config.values` is `{}`. The three key-list assertions now read `PUSHED_BY_VSCODE`, `HOST_OWN` and `DAEMON_OWN`, which makes task 04's removal a one-line change there. The `globalAutoApproveEnabled` case expects upstream's property.
+- `docs/AHP.md`: the paragraph under the `root/*` table. The `root/configChanged` row above it still says everything pushed is kept, which task 02 makes untrue and moves.
+- `docs/HOST.md` is not in this task's Files and was stale at this point. Its Root config section said the host's own schema is five keys and listed the two keys task 04 removes. Task 04 corrected it, and says so there.

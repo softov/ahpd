@@ -1,5 +1,6 @@
 import { seesConfig, PER_CONNECTION } from './gate.js';
 import { OPERATIONS, operationsOf } from '../users.js';
+import { vscodeRootProperties } from '../vscoderootconfig.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -50,6 +51,7 @@ export interface Root {
   daemonSchema(): Record<string, unknown>;
   daemonProperties(): Record<string, unknown>;
   daemonKey(key: string): boolean;
+  declaresConfigKey(key: string): boolean;
   advertisedSchemes(): Record<string, unknown> | undefined;
   advertisedGrants(): Record<string, unknown>;
   rootState(mine?: Record<string, unknown>, connection?: Connection): Promise<Bag>;
@@ -146,24 +148,38 @@ export function createRoot(ctx: HostContext): Root {
    * because which shell a host-managed terminal opens is a preference of the
    * person's rather than a fact about the machine.
    *
-   * Everything pushed is kept, and only what is in the schema below is acted
-   * on. Keeping the rest is not indulgence: `values` is state a client reads
-   * back, and a host that dropped what it did not understand would report
-   * settings that silently reverted.
+   * Everything pushed whose key is declared below is kept, and only what the
+   * host's own half of that schema names is acted on. Keeping a declared key
+   * this host does not act on is not indulgence: `values` is state a client
+   * reads back, and a host that dropped a key it merely drew would report a
+   * setting that silently reverted.
+   *
+   * A key nobody declares is a different thing and is refused rather than
+   * kept: a value with no property is one no client can draw or explain, and
+   * the refusal is said in the words of the key, so the next UPSTREAM.md pass
+   * finds what a newer VS Code added.
    */
   const rootConfig: Record<string, unknown> = {};
   /**
-   * The keys this host honours, which is what a client draws a control from.
+   * Every key a client may push, which is what it draws its controls from.
    *
-   * A key here is a promise that pushing it changes something. That is why
-   * the two below have behaviour behind them in `artifactTools` and the
-   * session tools rather than being kept and ignored.
+   * The keys VS Code's agent host declares are spread in first, so a client
+   * draws every one the window pushes and a value it pushed reads back as a
+   * setting. The host's own keys come after, so a clash would resolve to the
+   * host's reading of the same key (there is none).
+   *
+   * Three of them are read by this host: `defaultShell` and `workspaceTrust`
+   * below, which belong to the connection that pushed them, and
+   * `globalAutoApproveEnabled`, which `trust.ts` asks before a tool call runs.
+   * The rest are declared and nothing more, which is what a client needs and
+   * all it gets.
    */
   const ROOT_CONFIG_SCHEMA = {
     // `type` is required of a `ConfigSchema` and is always `object`. Left out,
     // it was a schema a strict reader refuses and a lenient one guesses at.
     type: 'object',
     properties: {
+      ...vscodeRootProperties,
       defaultShell: {
         type: 'string',
         title: 'Default Shell',
@@ -197,34 +213,6 @@ export function createRoot(ctx: HostContext): Root {
         required: ['enabled', 'trustedUris'],
         readOnly: true,
       },
-      artifactToolsCompactPrompts: {
-        type: 'boolean',
-        title: 'Compact Artifact Prompts',
-        description: 'Use the short artifact instruction and tool description. It changes the wording only, never whether a tool is offered.',
-      },
-      deferredTitleGeneration: {
-        type: 'boolean',
-        title: 'Deferred Title Generation',
-        description: 'Give a session a deferred title strategy, under which renaming a chat is only done when the user asks and the automatic argument is dropped.',
-      },
-      /*
-       * Whether a tool call runs without asking anybody.
-       *
-       * VS Code's own key, `agentHostSchema.ts:852`, and the host's rather than
-       * a window's: a push of it is one setting for everybody, unlike
-       * `workspaceTrust` beside it. `trust.ts` reads it where a folder is
-       * entered, and it was read and declared nowhere - so a host that
-       * approved every tool call was one no client could see or turn off.
-       *
-       * The default is what a client draws before anybody pushes one, and it
-       * is the answer the reading of a missing key already gives.
-       */
-      globalAutoApproveEnabled: {
-        type: 'boolean',
-        default: false,
-        title: 'Approve Everything',
-        description: 'Run every tool call without asking, for every session on this host.',
-      },
     },
   };
   /**
@@ -247,6 +235,15 @@ export function createRoot(ctx: HostContext): Root {
   };
   /** Whether a key is the daemon's rather than this host's. */
   const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
+  /**
+   * Whether a pushed key is one this host can describe.
+   *
+   * The host's own properties or the daemon's, whoever is asking: a connection
+   * without `config:read` is shown none of the daemon's keys, but the key
+   * exists and a push of it is a write this host may make, so `seesConfig`
+   * decides what a connection is shown and this decides what is real.
+   */
+  const declaresConfigKey = (key: string): boolean => Object.hasOwn(ROOT_CONFIG_SCHEMA.properties, key) || daemonKey(key);
   /**
    * What this host serves beside `file:`, as one map a client reads.
    *
@@ -409,6 +406,6 @@ export function createRoot(ctx: HostContext): Root {
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, advertisedSchemes, advertisedGrants, rootState,
+    daemonKey, declaresConfigKey, advertisedSchemes, advertisedGrants, rootState,
   };
 }

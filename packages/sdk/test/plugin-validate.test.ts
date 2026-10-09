@@ -122,6 +122,17 @@ describe('pluginHost', () => {
     expect(() => host.registerTool({ definition: { name: 'x' } } as never)).toThrow(/run/);
   });
 
+  it('takes a tool still carrying the compact wording a plugin copied, and reads nothing of it', () => {
+    // `compact` left `HostTool` with the member it fed, and `checkTool` checks
+    // the members its table lists and no others, so an older plugin's copy
+    // registers unchanged.
+    const { host, contribution } = pluginHost('alpha', context());
+    expect(() => host.registerTool({ ...tool('legacy'), compact: { instruction: 'short' } } as never)).not.toThrow();
+    const { options, problems } = foldHostOptions(base(), [contribution]);
+    expect(problems).toEqual([]);
+    expect(options.tools?.map((one) => one.definition.name)).toEqual(['legacy']);
+  });
+
   it('refuses a resources store with no list, and terminals with no create', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerResources({} as never)).toThrow(/list/);

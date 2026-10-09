@@ -98,7 +98,7 @@ it('classifies a dispatch by its action, with the channel beside it', async () =
   }
   expect(await needs('ahp-automations://', { type: 'automation/removed', id: 'x' })).toBe('automation:remove');
   expect(await needs('ahp-automations://', { type: 'automation/createRequested', automation: 'x' })).toBe('automation:create');
-  expect(await needs(ROOT, { type: 'root/configChanged', config: { artifactToolsCompactPrompts: true } })).toBe('config:change');
+  expect(await needs(ROOT, { type: 'root/configChanged', config: { telemetryLevel: 'off' } })).toBe('config:change');
   expect(await needs(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:change');
   // The root is read with its action: a person's own keys need only a sign-in.
   expect(await needs(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBeUndefined();
@@ -162,13 +162,13 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   await hello(first, 'first'); await signIn(first, 'a');
   await hello(second, 'second'); await signIn(second, 'b');
 
-  await configChanged(first, { defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
+  await configChanged(first, { defaultShell: '/bin/sh', telemetryLevel: 'off' });
 
   // Its own, and the host's half with it.
-  expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
+  expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
   // The host's half reached the other connection; the person's did not.
   const theirs = await values(second);
-  expect(theirs).toMatchObject({ artifactToolsCompactPrompts: true });
+  expect(theirs).toMatchObject({ telemetryLevel: 'off' });
   expect(theirs).not.toHaveProperty('defaultShell');
 
   // One echo each, on one serverSeq: whole to the sender, without the shell to
@@ -180,8 +180,8 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   expect(echoes(mine)).toHaveLength(1);
   expect(echoes(other)).toHaveLength(1);
   expect(sent?.params.serverSeq).toBe(told?.params.serverSeq);
-  expect(sent?.params.action?.config).toEqual({ defaultShell: '/bin/sh', artifactToolsCompactPrompts: true });
-  expect(told?.params.action?.config).toEqual({ artifactToolsCompactPrompts: true });
+  expect(sent?.params.action?.config).toEqual({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
+  expect(told?.params.action?.config).toEqual({ telemetryLevel: 'off' });
 
   // A client that comes back and is replayed the action reads it the same way.
   const back = made.accept(peer());
@@ -192,7 +192,7 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   const again = (answer.result ?? answer) as { type: string; actions: { serverSeq: number; action: Bag }[] };
   expect(again.type).toBe('replay');
   const replayed = again.actions.find((one) => one.serverSeq === told?.params.serverSeq);
-  expect(replayed?.action.config).toEqual({ artifactToolsCompactPrompts: true });
+  expect(replayed?.action.config).toEqual({ telemetryLevel: 'off' });
 });
 
 it('keeps the other connection\'s own shell in a config that replaces the rest', async () => {
@@ -223,9 +223,9 @@ it('lets anybody signed in set their own shell, and only config:write change the
   await hello(member, 'member'); await signIn(member, 'm');
   await configChanged(member, { defaultShell: '/bin/sh' });
   expect(refusals(memberSeen)).toEqual([]);
-  await configChanged(member, { artifactToolsCompactPrompts: true });
+  await configChanged(member, { telemetryLevel: 'off' });
   expect(refusals(memberSeen)).toEqual(['m may not config:change here']);
-  expect(await values(member)).not.toHaveProperty('artifactToolsCompactPrompts');
+  expect(await values(member)).not.toHaveProperty('telemetryLevel');
 
   // A guest may not open a shell, but the preference is still theirs to hold.
   const guestSeen = watching();
@@ -237,9 +237,9 @@ it('lets anybody signed in set their own shell, and only config:write change the
   const adminSeen = watching();
   const admin = made.accept(adminSeen);
   await hello(admin, 'admin'); await signIn(admin, 'a');
-  await configChanged(admin, { artifactToolsCompactPrompts: true });
+  await configChanged(admin, { telemetryLevel: 'off' });
   expect(refusals(adminSeen)).toEqual([]);
-  expect(await values(member)).toMatchObject({ artifactToolsCompactPrompts: true });
+  expect(await values(member)).toMatchObject({ telemetryLevel: 'off' });
 
   // Nobody signed in sets nothing, their own shell included.
   const strangerSeen = watching();
@@ -370,7 +370,7 @@ it('accepts every push on a host with no people directory', async () => {
   await hello(client);
 
   await configChanged(client, { workspaceTrust: { enabled: true, trustedUris: [`file://${root}`] } });
-  await configChanged(client, { artifactToolsCompactPrompts: true });
+  await configChanged(client, { telemetryLevel: 'off' });
   expect(refusalsOf(seen)).toEqual([]);
 });
 
