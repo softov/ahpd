@@ -1,6 +1,6 @@
 ---
 title: A Claude session's model and a skill's argument hint are sent as ahpd keys
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

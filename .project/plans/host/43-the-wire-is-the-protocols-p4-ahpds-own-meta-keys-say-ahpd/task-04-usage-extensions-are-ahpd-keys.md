@@ -1,6 +1,6 @@
 ---
 title: Usage extensions are ahpd keys in every backend, and the meter reads them
-status: implemented
+status: done
 depends: []
 layer: "agent-claude, agent-acp, agent-pi, agent-cofold, sdk"
 refs:
