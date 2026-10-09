@@ -4,7 +4,7 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-10-07. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
+Current progress and pending items only, as of 2026-10-08. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
 
 ## How builds run now
 
@@ -17,21 +17,21 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** 22 commits on main ahead of `origin/main`.
-- **Restart owed:** Softov restarts his daemon to wire in host/73 (`c276b2c`) and usage/06 (`2b5a656`), so ahpapp shows the cost split.
-- **Waiting on Softov:** usage/06 task 03, the Anthropic-dialect and DeepSeek captures, which need his keys and the network.
-- **Building:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 01 and 03, session `3ad09367`.
-- **Uncommitted, kept by Softov's choice:** `scripts/completions.mjs`.
+- **Unpushed:** 8 commits on main ahead of `origin/main`.
+- **Restart owed:** Softov restarts his daemon to wire in host/73, usage/06, usage/07 (01-03, 05), daemon/09 task 12 and the new `@ahpd/bot` plugin package.
+- **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
+- **Building:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 02, 04 and 05, session `c7421e55`; [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) tasks 01 and 04 (`--force`), session `666bc42b`.
 
 ## Next, buildable now
 
-1. [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) task 12: the plugin root.
+1. [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md), approved, after plugin/37 merges.
 2. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
-3. [usage/07](../plans/usage/07-an-agents-reported-cost-is-the-providers/plan.md).
-4. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
+3. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
+4. A short plan for revising the package READMEs: how to use the code, its ahpd config and CLI commands, each option explained.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
 [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.
+Doc drift found by documentation/03 and left for a decision: AHP.md marks `automationRun/cancelRequested` supported where `packages/sdk/src/host/actions.ts` refuses it; AHP.md and a comment in `packages/sdk/src/host/terminals.ts` claim a served-directory check `createTerminal` does not make; `TitleStrategy`'s `utility` is never selected.
 
 ## Waiting on Softov
 
