@@ -75,7 +75,7 @@ With nothing written the built-in runs on what this backend has always run on, w
 
 ### Project files, and trust
 
-A session in a folder the host was not told to trust loads none of that folder's own files. Nothing of the project is loaded: no settings, so no hooks, no project `CLAUDE.md`, and no `.mcp.json` beside the project. The person's own files are not a project's and are read either way. Trust is the window's answer, pushed in the root config - see [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/USERS.md#trusted-folders). A session nobody vouched for is untrusted, which is the same answer a host with no window to ask gives.
+A session in a folder the host was not told to trust loads none of that folder's own files. Nothing of the project is loaded: no settings, so no hooks, no project `CLAUDE.md`, and no `.mcp.json` beside the project. The person's own files are not a project's and are read either way. Trust is the window's answer, pushed in the root config - see [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/AUTHENTICATION.md#trusted-folders). A session nobody vouched for is untrusted, which is the same answer a host with no window to ask gives.
 
 ### A second Claude on another endpoint
 

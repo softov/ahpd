@@ -1,6 +1,6 @@
 ---
 title: Sessions and chats have their own docs
-status: todo
+status: implemented
 depends: []
 layer: "docs"
 refs:
@@ -31,3 +31,17 @@ refs:
 - Softov reads the diff before commit.
 
 ## Resume
+
+`docs/SESSIONS.md` is written, 136 lines: what a session is and its terms; the life of one, from `createSession`'s order of work to `disposeSession`; whose it is and what it is charged to; the status bitset and the state a session reports; how `listSessions` pages; the config keys with each option, default and what changes; isolation and worktrees; the commands; the grants; and what to read next. Every claim was read in `packages/sdk/src/host/sessionmethods.ts`, `packages/sdk/src/host/sessionconfig.ts`, `packages/sdk/src/host/lifecycle.ts`, `packages/sdk/src/host/owners.ts`, `packages/sdk/src/host/machines.ts`, `packages/sdk/src/host/gate.ts`, `packages/sdk/src/host/state.ts`, `packages/sdk/src/scopes.ts`, `packages/sdk/src/catalog.ts` and `packages/sdk/src/sessions.ts`.
+
+`docs/CHATS.md` is written, 108 lines: what a chat is and its terms; the first chat and how a chat is named; a chat made out of another (`fork` and `sideChat`); turns, senders, endings, pending messages and drafts; compaction and the rewind; attachments with their limits; subagents as worker chats; the commands; the grants; and what to read next. Read against `packages/sdk/src/host/sessionmethods.ts`, `packages/sdk/src/host/channels.ts`, `packages/sdk/src/host/spawn.ts`, `packages/sdk/src/host/state.ts`, `packages/sdk/src/host/routing.ts`, `packages/sdk/src/attachments.ts`, `packages/sdk/src/host/attachments.ts` and `packages/agent-claude/src/session/query.ts`.
+
+Updated: `docs/AHP.md`'s "Behaviour worth knowing" now opens with one line naming the area doc for each thing it describes, so its rows stay wire rows and a reader who wants what a session *is* is sent to SESSIONS.md. `docs/DAEMON.md`'s `--sessions` row gained a link to SESSIONS.md.
+
+No section moved in this task, so no link pointed at anything that left. The sweep found the same anchors as after task 02, all resolving.
+
+Found, and written as the code does it, not as the old text did:
+
+- A chat's write group and a session's are one: `holds` in `packages/sdk/src/users.ts:281` answers a `chat:` grant from `session:write`, so `member` needs no `chat:` grant of its own. SESSIONS.md's Grants section says so.
+- `InputNeeded` is 24 and carries `InProgress` (8) - `packages/sdk/src/catalog.ts:18` says outright that anything testing activity has to test it first.
+- `listSessions` has no page size unless a client asks for one, and the size this host chooses is the whole catalogue up to 1000 rows, because neither client that connects here reads `nextCursor` - `packages/sdk/src/host/sessionmethods.ts:62`.

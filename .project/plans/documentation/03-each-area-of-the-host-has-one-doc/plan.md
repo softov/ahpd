@@ -1,7 +1,7 @@
 ---
 title: Each area of the host has one doc
 domain: documentation
-status: planned
+status: built
 priority: medium
 created: 2026-10-08
 revalidated: 2026-10-08
@@ -57,12 +57,12 @@ Softov, 2026-10-08: "make a file for each sector ... so we can define things in 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - authentication](task-01-authentication.md) | todo | - |
-| [02 - host and automations](task-02-host-and-automations.md) | todo | - |
-| [03 - sessions and chats](task-03-sessions-and-chats.md) | todo | - |
-| [04 - terminals and tools](task-04-terminals-and-tools.md) | todo | - |
-| [05 - resources and usage](task-05-resources-and-usage.md) | todo | - |
-| [06 - the index](task-06-the-index.md) | todo | 01, 02, 03, 04, 05 |
+| [01 - authentication](task-01-authentication.md) | implemented | - |
+| [02 - host and automations](task-02-host-and-automations.md) | implemented | - |
+| [03 - sessions and chats](task-03-sessions-and-chats.md) | implemented | - |
+| [04 - terminals and tools](task-04-terminals-and-tools.md) | implemented | - |
+| [05 - resources and usage](task-05-resources-and-usage.md) | implemented | - |
+| [06 - the index](task-06-the-index.md) | implemented | 01, 02, 03, 04, 05 |
 
 ## Risks and tradeoffs
 
@@ -71,14 +71,14 @@ Softov, 2026-10-08: "make a file for each sector ... so we can define things in 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-authentication.md](task-01-authentication.md).
+- **Done so far:** every task. The nine new area docs are written - `docs/AUTHENTICATION.md`, `docs/HOST.md`, `docs/AUTOMATIONS.md`, `docs/SESSIONS.md`, `docs/CHATS.md`, `docs/TERMINALS.md`, `docs/TOOLS.md`, `docs/RESOURCES.md` and `docs/USAGE.md` - and `docs/README.md` names all twenty files in `docs/`, the documentation domain reference and the root `README.md` list the same set ([implemented.md](implemented.md) has what was made and what the old docs got wrong). Out of `docs/USERS.md` (683 lines, now 414): the four authentication sections. Out of `docs/DAEMON.md` (1043 lines, now 807): "Who may connect", "Automations" (130 lines), the per-key prose of "Configuration" and "What a client can configure". Each moved section left a stub and a link. USERS.md's two resource sections kept their text and gained one line each pointing at RESOURCES.md; that task moved nothing, so no link had to be repaired. Two stale claims about `authorization_servers` in USERS.md were corrected, and `docs/AHP.md`'s `automationRun/cancelRequested` row contradicts `packages/sdk/src/host/actions.ts:484` (the code refuses it, the row says ✅). In task 04, `packages/sdk/src/host/terminals.ts:249-257` claims a served-directory check `createTerminal` does not make, and `TitleStrategy`'s `utility` is a value this host never selects. Task 05 found no contradiction with the code in its area; its one correction was to this plan's own assumption, since no decision cites `usage.ts` or `resourcemethods.ts` by `code://` and the two this area needs came from the wider sweep over `resources.ts`.
+- **Next action:** none. Softov reads the diff; nothing is committed.
 - **Open questions:** none.
-- **Watch out for:** plugin/38 adds a read-only section to PLUGINS.md; this plan does not move PLUGINS.md text.
+- **Watch out for:** plugin/38 adds a read-only section to PLUGINS.md; this plan does not move PLUGINS.md text. `.project/plans/**` cites USERS.md and DAEMON.md by `#L<n>` anchor in twelve places and every anchor below a removed section has drifted, though none pointed into one.
 
 ## Final verification checklist
 
-- [ ] Every new doc follows the shape above and every claim was read against its code.
-- [ ] `rg -n "DAEMON.md#|USERS.md#" .` resolves.
+- [x] Every new doc follows the shape above and every claim was read against its code.
+- [x] `rg -n "DAEMON.md#|USERS.md#" .` resolves.
 - [ ] Softov has read the diff.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

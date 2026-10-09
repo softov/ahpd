@@ -410,6 +410,8 @@ For the command-by-command compatibility matrix, see [`docs/AHP.md`](docs/AHP.md
 
 # Documentation
 
+Every document under `docs/` is listed in [`docs/README.md`](docs/README.md), one line each.
+
 | Document                                   | Purpose                                                   |
 | ------------------------------------------ | --------------------------------------------------------- |
 | [docs/DAEMON.md](docs/DAEMON.md)           | CLI, configuration, tokens, runtimes (Node/Bun/Deno)      |
@@ -417,7 +419,7 @@ For the command-by-command compatibility matrix, see [`docs/AHP.md`](docs/AHP.md
 | [docs/AGENT.md](docs/AGENT.md)             | Building an `Agent` and `Session` contracts               |
 | [docs/AHP.md](docs/AHP.md)                 | Detailed AHP compatibility                                |
 | [`docs/PLUGINS.md`](docs/PLUGINS.md)       | Plugin system and authoring                               |
-| [docs/COMPUTER.md](docs/COMPUTER.md)       | Disposable computers (Docker and KVM)                     |
+| [docs/COMPUTER.md](docs/COMPUTER.md)       | Disposable computers (Docker)                             |
 | [docs/CONTAINERS.md](docs/CONTAINERS.md)   | Dev containers                                            |
 | [docs/USERS.md](docs/USERS.md)             | Users and authorization                                   |
 | [docs/POLICY.md](docs/POLICY.md)           | Who may use which agent, model and computer                |

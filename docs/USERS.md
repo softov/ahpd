@@ -1,62 +1,14 @@
 # Users and permissions
 
-`ahpd` has one secret by default: the connection token. Everybody who holds it
-is the same caller, and the host has no idea who anybody is.
+`ahpd` has one secret by default: the connection token. Everybody who holds it is the same caller, and the host has no idea who anybody is.
 
-A **user directory** changes that. There are two layers, and they are separate:
+A **user directory** changes that. It is the file naming the people who may use this host, the roles they hold and what their work may be charged to. The door, the tokens, `authenticate`, the issuer and what a client may read before signing in are [AUTHENTICATION.md](AUTHENTICATION.md); this page is the directory itself.
 
-- **The door** decides whether a socket may exist. The deployment's own token
-  opens one and is the host. A person's own token opens one and, by default,
-  says nobody.
-- **Authorization** is the protocol's `authenticate`. A person is nobody until
-  they do it, whichever door let them in.
-
-Nothing here is on unless a file is configured: a daemon with no `users` key
-behaves exactly as it did before this existed.
+Nothing here is on unless a file is configured: a daemon with no `users` key behaves exactly as it did before this existed.
 
 ## The door and the authorization
 
-| | The deployment's token | A person's own token | `authenticate` |
-| --- | --- | --- | --- |
-| Where it is presented | `?tkn=` on the WebSocket URL, or a bearer header | the same, with the secret `ahpd user token` printed | the command, against the resource the host advertises |
-| What it answers | whether a socket may exist at all | that, and nothing else | who is on the other end, for a socket that arrived as nobody |
-| Identity | the host itself, when a directory is configured | nobody, unless the record sets `trustToken` | the person the directory or the issuer resolves the token to |
-| How it is revoked | rotate the token, restart, everybody reconnects | `ahpd user rm`, and the next connection is refused | `ahpd user rm`, and the next command is refused |
-| How many | one, shared | one per person | one per person |
-| Expiry | none | none | `expiresIn`, honoured |
-
-The deployment's token needs no credential. A socket on it is the host: every
-capability, including a scheme no role names, because the key to the door is the
-operator's own. It is the one thing `authenticate` cannot demote or revoke, and
-the one thing never asked to justify itself.
-
-Everything else is a door and nothing more. A person's own token opens the
-socket and the first gated command answers `-32007`, so the client signs in.
-That is the default because a token in a URL can end up in a log and a login
-does not. Two things opt out of it:
-
-```json
-{
-  "trustToken": true,
-  "users": [
-    { "id": "normal", "roles": ["guest"], "token": "sha256:…", "trustToken": true }
-  ]
-}
-```
-
-`trustToken` at the top of the configuration trusts everybody's connection
-token; on a record it decides for that one person and wins over the host. Use it
-for a client that cannot complete a sign-in, such as a phone with only a URL to
-paste. A host that wants the token to be enough everywhere sets it once.
-
-`authenticate` is unchanged and remains the protocol's way in, and it is the
-only way in for a credential an issuer mints rather than this file.
-
-Removing a user **does not close their socket**, but the next command on it is
-refused `-32007`: the directory is read again for every command, so removal and a
-role change both take effect at once, with no reconnection. Rotating the
-deployment's token is what locks somebody out of the door entirely, and that
-token is the host itself.
+What the connection token, a person's own token, `authenticate` and the deployment's token each answer, and how each is revoked, is [AUTHENTICATION.md](AUTHENTICATION.md#the-door).
 
 ## Three shapes
 
@@ -127,14 +79,7 @@ https URL: the operator's when `--resource` names one, and one derived from the
 host and port the daemon listens on otherwise. `resource_documentation` is this
 page.
 
-There is no `authorization_servers`. That field is a list of RFC 8414 issuer
-identifiers, and this host is not an authorization server, so it is left out
-rather than filled with something that is not one. An earlier version put this
-page's URL there, which is worse than saying nothing: a client matches each
-entry against the authentication providers it has, so an entry on `github.com`
-can resolve GitHub's provider and send a person to sign in somewhere that knows
-nothing about this host. The field is optional for exactly this reason. An
-issuer option that would fill it honestly is a later plan.
+There is no `authorization_servers` until an `issuer` is configured. That field is a list of RFC 8414 issuer identifiers, and this host is not an authorization server, so with nothing configured it is left out rather than filled with something that is not one: a client matches each entry against the authentication providers it has, so an entry on `github.com` can resolve GitHub's provider and send a person to sign in somewhere that knows nothing about this host. The field is optional for exactly this reason. Configured, it carries the issuers this host answers for - [AUTHENTICATION.md](AUTHENTICATION.md#an-issuer).
 
 `required` is true because every command but the handshake and `authenticate`
 answers `-32007` until a person is known. The daemon prints the identifier at
@@ -154,202 +99,7 @@ are.
 
 ## An issuer, when a client needs one
 
-A host that is its own issuer mints every secret and prints it for a person to
-paste. A client that only acquires tokens through an OAuth provider cannot do
-anything with a pasted secret, so a deployment can name an authorization server
-instead:
-
-```json
-{ "users": "/home/me/.config/ahpd/users.json", "issuer": "github" }
-```
-
-or `--issuer github`, or `--issuer https://login.example.com` for an OpenID
-Connect issuer. The record then carries it, which is the field plan 07 left
-empty on purpose:
-
-```json
-{
-  "resource": "https://127.0.0.1:9187/",
-  "resource_name": "ahpd users",
-  "authorization_servers": ["https://github.com/login/oauth"],
-  "scopes_supported": ["read:user"],
-  "resource_documentation": "https://github.com/softov/ahpd/blob/main/docs/USERS.md",
-  "required": true
-}
-```
-
-A client resolves a provider for that identifier, obtains a token, and pushes it
-through `authenticate` exactly as the protocol says. This host then asks the
-issuer who the token belongs to, and the answer is matched against a record's
-`id`: a GitHub login, or an OpenID Connect `sub`. The roles still come from the
-file, because the file is the only place that says who may do what.
-
-```json
-{
-  "users": [
-    { "id": "octocat", "roles": ["member"], "token": "" }
-  ]
-}
-```
-
-### An issuer per person
-
-The `issuer` key is the **default**: a record that names one of its own uses
-that instead. So one host can take a GitHub login for one person and a token
-from a company identity provider for another, without a second daemon:
-
-```json
-{
-  "users": [
-    { "id": "octocat", "roles": ["member"], "token": "", "issuer": "github" },
-    { "id": "ana", "roles": ["member"], "token": "", "issuer": "https://idp.example.com" },
-    { "id": "sam", "roles": ["guest"], "token": "" }
-  ]
-}
-```
-
-`sam` names none, so he signs in through whatever the configuration's `issuer`
-is, or through a minted secret when there is none. A record's `issuer` is the
-same name the configuration takes: `github`, or an issuer URL this host may
-reach. A name that is neither is reported on stderr and never verifies, the way
-a grant that is not `<subject>:<verb>` is.
-
-It can be set from the command line instead of by hand:
-
-```sh
-ahpd user add ana --role member --issuer github
-ahpd user add sam --role guest                  # the configuration's default
-```
-
-`--issuer` on a record that already exists moves that person to that provider,
-and leaving it off never moves them to the default: `add` sets the roles, and
-the provider only when the flag names one. A name nothing can resolve is refused
-before anything is written.
-
-### Roles from the issuer
-
-A record may name the claim its roles arrive in:
-
-```json
-{
-  "roles": { "operators": ["file:read", "file:write", "terminal:read", "terminal:write"] },
-  "users": [
-    { "id": "ana", "roles": ["guest"], "token": "", "issuer": "https://idp.example.com", "rolesFrom": "groups" }
-  ]
-}
-```
-
-The claim's values are **role names this file defines** or built-ins, and they
-are added to the roles on the record. The issuer never names a grant: a
-`groups` value of `operators` reaches the grants above because this file wrote
-them, and a value that names no role here is reported on stderr and dropped. An
-issuer that omits the claim contributes nothing, which is not a refusal.
-
-That is the one place the issuer is half an authority, and it is deliberate: an
-administrator of that provider can put somebody into a role this host defines,
-and cannot invent one.
-
-The two halves move on different clocks. The claim is read once, at sign-in,
-because asking again would mean keeping the token. The record's own roles are
-read on every command, so removing a person still lands at once and a change at
-the issuer lands the next time they sign in.
-
-`ahpd user list` prints the claim so the file and the answer can be compared:
-
-```
-ana (guest) session:read automation:read sign-in https://idp.example.com rolesFrom=groups
-```
-
-The advertised record lists every provider any of this answers for, because that
-is the list a client resolves one from:
-
-```json
-{
-  "resource": "https://127.0.0.1:9187/",
-  "authorization_servers": ["https://github.com/login/oauth", "https://idp.example.com"],
-  "scopes_supported": ["read:user", "openid"],
-  "required": true
-}
-```
-
-`scopes_supported` is the union, so a client that asks for all of them asks one
-provider for a scope it does not know. A client picks the provider it has and
-asks for what that one wants; the union is there because the field is flat.
-
-Which provider minted a token is not something the token says, so a token that
-matched no minted secret is offered to the host's default first and then to each
-issuer a record names, in the order the file lists them. The first subject that
-names a record wins. A host with several issuers therefore shows a token to more
-than one of them, which is the cost of the feature rather than an accident.
-
-### The issuer has to be reachable, and what counts as reachable
-
-The host fetches `<issuer>/.well-known/openid-configuration`, reads
-`userinfo_endpoint` from it, and asks that endpoint with
-`Authorization: Bearer <token>`, taking `sub` as the subject. So the issuer must
-publish both, and an identity provider that does not is one this option cannot
-use.
-
-An issuer URL is accepted over **https anywhere**, and over plain **http only on
-loopback** - `127.0.0.1`, `::1` or `localhost`. A local issuer is common and
-nothing leaves the machine there; a remote one over http would put a bearer
-token in clear. A remote issuer with a self-signed certificate needs its CA
-trusted, or `fetch` fails and every token reads as nobody: start the daemon with
-`NODE_EXTRA_CA_CERTS=/path/to/ca.pem`.
-
-### Trying it
-
-Three ways, in the order they take to set up:
-
-- **GitHub**, which needs no issuer to run: `"issuer": "github"`, then a person
-  with the id of their GitHub login, and a token from GitHub with `read:user`.
-  A stock VS Code resolves its own GitHub provider for it.
-- **The dev issuer**, which verifies nothing and answers any token as its own
-  subject: `node scripts/dev-issuer.mjs 9310`, then
-  `--issuer http://127.0.0.1:9310`. `Bearer ana` answers `sub: ana`, so a record
-  with id `ana` can sign in with the token `ana`. `Bearer ana|ops,eng` answers
-  `groups: [ops, eng]` as well, which is a record's `rolesFrom` reading a claim.
-- **A real identity provider** - Keycloak, Authentik, Zitadel, Entra, Auth0 -
-  named by its issuer URL.
-
-Two run at once: the dev issuer is the default, and one record names GitHub
-instead, so a token from either signs in the person whose record says so:
-
-```json
-{
-  "issuer": "http://127.0.0.1:9310",
-  "users": [
-    { "id": "ana", "roles": ["admin"], "token": "" },
-    { "id": "octocat", "roles": ["guest"], "token": "", "issuer": "github" }
-  ]
-}
-```
-
-`ahpd user list` says where each record signs in, so the file and the answer can
-be compared without signing in:
-
-```
-ana (admin) *:* sign-in http://127.0.0.1:9310
-octocat (guest) session:read automation:read sign-in github
-```
-
-An issuer adds a way in and takes nothing away, so configuring one does not
-close the local one. A person is challenged once, at the first command that
-needs a grant, and the deployment's own connection token is the host, so the
-operator is never challenged at all.
-
-Three things worth knowing:
-
-- A secret this host minted is checked first, and the issuer is asked only when
-  nothing matched. A deployment can run both, and a person holding a minted
-  secret never depends on the issuer being reachable.
-- A token the issuer refuses and an issuer that cannot be reached both answer
-  `-32007`. The host does not pretend to know which it was, and a client cannot
-  tell either, so the advice is the same in both cases: sign in again.
-- A record with no minted secret is a protocol credential and not a connection
-  token. The door is decided before the socket exists, and the issuer is not
-  asked there, so such a person pastes nothing and signs in through
-  `authenticate`.
+Naming an authorization server instead of minting secrets - the `issuer` key, a record's issuer of its own, `rolesFrom`, and what counts as reachable - is [AUTHENTICATION.md](AUTHENTICATION.md#an-issuer).
 
 ## Roles
 
@@ -387,7 +137,7 @@ The subjects the host decides are these ten:
 | `diagnostics` | `logs`, `network`, `fetch` | - | Logs and network details for troubleshooting |
 | `container` | - | `connect`, `disconnect`, `relay` | Connecting to dev containers |
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
-| `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](#trusted-folders)) |
+| `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
 
 `proxy` and `trust` have no scheme of their own: a client never reads a
 `proxy://` or a `trust://` URI, so nothing asks for a resource operation on
@@ -491,6 +241,8 @@ sam (member) file:read file:write session:read session:write terminal:read termi
 
 ## People as resources
 
+What a scheme is, and which operation of it each resource method asks for, is [RESOURCES.md](RESOURCES.md). This is what these four schemes carry.
+
 With a directory configured the host serves four schemes of its own over it, the
 same way it serves `computer:`: a client lists, creates, edits and removes
 people, teams, projects and roles through the same resource calls it uses for
@@ -555,6 +307,8 @@ Everything else about that person is read from `user://<id>`, which is the only
 place a record like this is served from.
 
 ## Policies as resources
+
+What a scheme is, and which operation of it each resource method asks for, is [RESOURCES.md](RESOURCES.md). This is what this scheme carries.
 
 A host with a policies store serves one more scheme of its own, the same way it
 serves `computer:`: a client lists, edits and removes policies through the same
@@ -629,34 +383,11 @@ roles are configuration rather than a default.
 
 ## Trusted folders
 
-A window tells this host which folders it trusts in the root config, under `workspaceTrust`. The key is the one VS Code pushes from its own workspace-trust setting. It is read as an editor reads it: nothing pushed means no folder is trusted.
-
-The value has two fields. `enabled: false` means the window has workspace trust switched off, so every folder it opens is trusted. Otherwise `trustedUris` lists the folders it trusts, and a folder is trusted when it is one of them or sits under one.
-
-Pushing the key needs `trust:push`, which the `trust:write` group covers and the built-in `member` role holds. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](PLUGINS.md).
-
-The key is kept on the connection that pushed it, like `defaultShell` beside it. Two windows on one daemon each answer for their own sessions. Each answer covers every folder at once, which is why the grant is one.
-
-When a session moves to a folder the window has not vouched for, the host asks the window itself, with `vscode/requestWorkspaceTrust`. A window that says no, or that does not serve the method, means the move is refused with `Workspace trust was not granted for '<folder>'`. A yes is kept on that connection, so the next move into that folder is not asked again.
-
-A worktree is trusted exactly when the repository it was cut from is, since the window has never opened it.
-
-`globalAutoApproveEnabled` is the neighbouring key and the host's rather than a window's. It is a boolean, off by default, and turning it on runs every tool call in every session on this host without asking. It is not a per-connection key, so pushing it needs `config:write`, which only `admin` holds among the built-in roles.
+Which folders a window vouches for, what a session loads from one it has not, and `globalAutoApproveEnabled` are [AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders).
 
 ## What is readable before signing in
 
-The agent list, a session count, the root config, and every open terminal's URI,
-title and claim - including, when a session opened it, that session's and chat's
-URIs. Knowing a channel is not being able to drive it: a dispatch into any of
-them is refused unless the person signed in and their role covers it.
-The root state is one per host, so it cannot be filtered wholesale without
-giving every connection its own sequence numbers - decision
-[`a-role-refuses-at-the-dispatch-boundary`](../.project/decisions/a-role-refuses-at-the-dispatch-boundary.md)
-says why, and `protectedResources` is the reason it must be readable at all: it
-is what tells a client where to sign in. Two parts are overlaid for the one
-connection reading them, with no second sequence number: the `config` values
-that connection pushed, and the `required` field on the host's own sign-in
-resource when the connection is root or signed in.
+What a connection may read before it signs in, and the two parts overlaid on the root state for the one connection reading them, are [AUTHENTICATION.md](AUTHENTICATION.md#what-is-readable-before-signing-in).
 
 ## Clients
 

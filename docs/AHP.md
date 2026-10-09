@@ -173,7 +173,7 @@ which is a different complaint from an action nobody has served.
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
 | `root/activeSessionsChanged` | host | ✅ | A count, not a list. Moves when a session is created or disposed. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
-| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:push` ([USERS.md](USERS.md#trusted-folders)). |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Whatever it pushes is kept and read back on every root snapshot, whether or not this host understands the key. Two keys are the connection's own and are kept on it rather than on the host: `defaultShell`, and `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)). |
 
 ### `session/*` — 28 of 28
 
@@ -329,6 +329,8 @@ everyone watching, because nobody else applied it optimistically and a client
 that reduced one would apply the very change this host declined to make.
 
 ## Behaviour worth knowing
+
+What these things are, rather than how they behave on the wire: a session is [SESSIONS.md](SESSIONS.md), a chat is [CHATS.md](CHATS.md), a terminal is [TERMINALS.md](TERMINALS.md), a tool is [TOOLS.md](TOOLS.md), a resource is [RESOURCES.md](RESOURCES.md), what it cost is [USAGE.md](USAGE.md), and an automation is [AUTOMATIONS.md](AUTOMATIONS.md).
 
 ### Restarts
 
@@ -838,8 +840,7 @@ replaced, withdrawn, or the connection goes.
 An automation firing at nine in the morning has no connection behind it and runs
 on the daemon's own credentials.
 
-This is not the same as the [connection token](DAEMON.md#who-may-connect),
-which is about who may reach the host at all.
+This is not the same as the [connection token](AUTHENTICATION.md#the-door), which is about who may reach the host at all.
 
 ## Three things in the package that do not hold
 

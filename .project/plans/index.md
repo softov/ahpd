@@ -200,7 +200,7 @@ Reference: [00-documentation.md](documentation/00-documentation.md)
 | --- | --- | --- | --- | --- |
 | [01 - The stale prose matches the code again](documentation/01-correct-the-stale-prose/plan.md) | low | built 2026-09-20 ([implemented.md](documentation/01-correct-the-stale-prose/implemented.md)) | - | - |
 | [02 - Captures are taken and read with ahpc, and ahpd keeps no proxy or capture check](documentation/02-captures-are-taken-and-read-with-ahpc/plan.md) | medium | planned 2026-10-04; task 01 todo | host 43 p1; ahpc cli/02 | - |
-| [03 - Each area of the host has one doc](documentation/03-each-area-of-the-host-has-one-doc/plan.md) | medium | planned 2026-10-08 | - | - |
+| [03 - Each area of the host has one doc](documentation/03-each-area-of-the-host-has-one-doc/plan.md) | medium | built 2026-10-08 ([implemented.md](documentation/03-each-area-of-the-host-has-one-doc/implemented.md)) | - | - |
 
 Next free number in `documentation`: `04`.
 
