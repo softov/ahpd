@@ -209,7 +209,10 @@ export function createServers(ctx: SessionContext): Servers {
       await ctx.handle.applyFlagSettings(flagSettingsOf(ctx.values)).catch(() => {});
     }
     await discover(mcp);
-    ctx.customizations = customizationsOf(init, mcp, skills, wanted, plugins);
+    // The plugins this host handed the CLI, which it reports back by the same
+    // paths and which the session already lists from the host's own side.
+    const handed = new Set((ctx.options.plugins ?? []).map((one) => one.path));
+    ctx.customizations = customizationsOf(init, mcp, skills, wanted, plugins, handed);
     if (ctx.customizations.length > 0) {
       ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
     }

@@ -98,6 +98,17 @@ export { GATE, refusalReason } from './host/gate.js';
 export const HOST_CLOSE_WAIT_MS = 5_000;
 
 /**
+ * How long a client's place in a session is kept after its connection closes.
+ *
+ * A dropped socket is not a client that has finished with a session: what it
+ * announced there - the tools it runs, the plugins it handed over - is in the
+ * session's hands rather than the connection's, and a client that subscribes
+ * again inside this window has never left. Nothing is said about it in the
+ * meantime, and nothing it contributes is taken away.
+ */
+const CLIENT_DISCONNECT_GRACE_MS = 30_000;
+
+/**
  * How long a dispatch waits on a session being started again or on a read
  * of the catalogue, in milliseconds, before it is refused and the
  * connection's later dispatches go on without it.
@@ -615,9 +626,30 @@ export function createHost(options: HostOptions): Host {
    */
   const dispatch = (channel: string, given: Record<string, unknown>, origin = applying): void => {
     const action = ctx.withWorkerUri(channel, given);
+    /*
+     * A session's customizations are two halves, and one action carries both.
+     *
+     * What the backend reports is what the backend loaded; what the session's
+     * clients handed it - the plugins this host copied for them - is the other
+     * half. Laid after rather than merged, because nothing a backend says can
+     * take a client's plugin away: a plugin's `id` is the client's own, so no
+     * id is in both halves and the order is the only thing that could differ.
+     */
+    if (action.type === 'session/customizationsChanged') {
+      const halves = laid(channel, action.customizations);
+      if (halves.length > 0) action.customizations = halves;
+    }
     if (deltas.push(channel, action, origin)) return;
     emit(channel, action, origin);
   };
+  /**
+   * A session's customizations as a client reads them: a backend's, then its
+   * clients', with nothing said about a session that has no client plugins.
+   */
+  const laid = (channel: string, reported: unknown): Bag[] => [
+    ...(Array.isArray(reported) ? reported : []),
+    ...ctx.clientPluginsOf(channel),
+  ];
   /**
    * A client's action, refused in that client's hearing.
    *
@@ -721,6 +753,61 @@ export function createHost(options: HostOptions): Host {
   };
 
   /**
+   * The places a client's closed connection left behind, by session and client.
+   *
+   * Keyed by what a returning connection comes back as rather than by the
+   * connection, because that is the whole of what the wait is about: the client
+   * is one client under one id, and a socket that drops and a socket that
+   * arrives a moment later are the same client to every session it was in.
+   */
+  const graces = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** The key one client's wait in one session is held under. */
+  const waitKey = (uri: string, clientId: string): string => `${uri}\u0000${clientId}`;
+
+  /**
+   * The wait is over, because this client is watching this session.
+   *
+   * Called from every subscription, which is why it takes a channel rather
+   * than a session: what a client subscribes to is a chat as often as the
+   * session itself, and either one means the client is here for both.
+   */
+  const waitingOver = (channel: string, clientId: string): void => {
+    const key = waitKey(heldAs(channel), clientId);
+    const timer = graces.get(key);
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    graces.delete(key);
+  };
+
+  /**
+   * A client's connection has closed: its place in this session is kept.
+   *
+   * Nothing is kept for a client that holds no place there, which is every
+   * session a connection watched without ever announcing itself in it -
+   * `leaves` would take nothing out, so there is nothing to wait for.
+   *
+   * A later close starts the wait again rather than leaving the first one
+   * running: what is being measured is how long this client has been gone, and
+   * a second window closing is a client that is still here until it does.
+   */
+  const waitsOut = (channel: string, clientId: string): void => {
+    const uri = heldAs(channel);
+    if (!presence.get(idOf(uri))?.has(clientId)) return;
+    waitingOver(uri, clientId);
+    graces.set(waitKey(uri, clientId), setTimeout(() => {
+      graces.delete(waitKey(uri, clientId));
+      leaves(uri, clientId);
+    }, CLIENT_DISCONNECT_GRACE_MS));
+  };
+
+  /** Let every wait go, for a host that is closing and will remove nothing later. */
+  const gracesOver = (): void => {
+    for (const timer of graces.values()) clearTimeout(timer);
+    graces.clear();
+  };
+
+  /**
    * One CLI at startup, to learn what the harness offers.
    *
    * Fire and forget: nothing waits for it, and until it answers the models
@@ -779,6 +866,40 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createAutomations(ctx));
   Object.assign(ctx, createHistory(ctx));
   Object.assign(ctx, createSnapshots(ctx));
+  /*
+   * The state a subscriber reads, with the client plugins laid into it.
+   *
+   * The outgoing half of the rule `dispatch` carries: a session is what its
+   * backend reports and what its clients handed it, and a client that
+   * subscribed reads the whole of it. Wrapped here rather than in the
+   * snapshot's own file because the entries are this host's, and this is
+   * where a host has both the snapshot and the tooling that holds them.
+   */
+  const backendSnapshot = ctx.snapshotOf;
+  ctx.snapshotOf = async (
+    channel: string,
+    mine?: Record<string, unknown>,
+    connection?: Connection,
+  ): Promise<Record<string, unknown>> => {
+    /*
+     * Every subscription passes here - the command, and the two handshakes
+     * that subscribe on their way in - so this is where a client that comes
+     * back is seen to have come back. The wait a dropped connection began is
+     * over: the client never left, and nothing is on its way to saying it did.
+     */
+    if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
+    const answer = await backendSnapshot(channel, mine, connection);
+    const handed = ctx.clientPluginsOf(channel);
+    if (handed.length === 0) return answer;
+    const state = answer.state as Bag;
+    return {
+      ...answer,
+      state: {
+        ...state,
+        customizations: [...(Array.isArray(state.customizations) ? state.customizations : []), ...handed],
+      },
+    };
+  };
   const {
     spaceHere, heldAs, nameOf, ownName, sessionOfChat, sessionFor, chatOf, meantBy,
     sessionHolding, channelKind, sessionChannel, homeOf, spelledFor, respell, respelledIn,
@@ -886,6 +1007,14 @@ export function createHost(options: HostOptions): Host {
         // timer that outlives the host it belongs to.
         deltas.stop();
         ctx.closed = true;
+        /*
+         * And no wait outlives the host it was begun in. What a client that
+         * dropped would have been removed by thirty seconds from now is the
+         * closing host's business instead: the sessions below are being taken
+         * down whole, and a timer firing into that would dispatch a removal
+         * for a session nobody is left to hear about.
+         */
+        gracesOver();
         /** One step of the close, logged rather than thrown, so a failed one does not skip the rest. */
         const step = async (what: string, run: () => unknown): Promise<void> => {
           try { await run(); }
@@ -1233,10 +1362,15 @@ export function createHost(options: HostOptions): Host {
           // Before anything else looks: a watch this client owned and never
           // subscribed to has nobody left to subscribe to it.
           for (const channel of [...watches.keys()]) releaseWatch(channel);
-          // Gone without reconnecting, which is the second of the three ways.
-          // Said after the connection is out of the set, so `leaves` does not
-          // find this one still holding the session.
-          for (const channel of was) leaves(channel, connection.clientId || 'anonymous');
+          /*
+           * Gone without reconnecting, which is the second of the three ways -
+           * and the one that waits rather than leaving at once. The connection
+           * is out of the set above before the wait begins, so what the wait
+           * finds at the end of it is every *other* connection this client has
+           * and not this one; a client that subscribes again inside the window
+           * has not gone anywhere, and the wait is called off.
+           */
+          for (const channel of was) waitsOut(channel, connection.clientId || 'anonymous');
           log(`${connection.clientId || 'a client'} went away`);
         },
       };

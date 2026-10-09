@@ -423,8 +423,21 @@ export function createSpawn(ctx: HostContext): Spawn {
      * The MCP servers this session's agent is offered, read when the session
      * starts rather than held, so a daemon that edits the key while it runs
      * changes what the next session is given.
+     *
+     * The session's client plugins are part of them: a plugin's own servers
+     * reach every backend through here, including the ones that cannot load a
+     * plugin at all.
      */
-    const servers = ctx.mcpFor();
+    const servers = ctx.mcpFor(uri);
+    /*
+     * The client plugin copies this chat's agent is handed, and a note of
+     * which they were.
+     *
+     * A backend that loads plugins opens these directories and one that cannot
+     * ignores the field; either way the set is written down here, because a
+     * send is the only thing that can compare it with the session's set now.
+     */
+    const plugins = ctx.pluginsFor(uri, chatUri);
     /*
      * The same tools as an MCP server, for a backend that cannot call them in
      * this process - an ACP agent, which asks its client for them.
@@ -514,6 +527,12 @@ export function createSpawn(ctx: HostContext): Spawn {
        * them, and the answer to either is the same.
        */
       ...(Object.keys(servers).length === 0 ? {} : { mcpServers: servers }),
+      /*
+       * The client plugins, when the session's clients brought any - which is
+       * a directory each, here, because a path on the client's machine is not
+       * one a backend running here could open.
+       */
+      ...(plugins.length === 0 ? {} : { plugins }),
       ...(options.toolsServers === undefined ? {} : { toolsServer }),
       // Resolved here rather than left for the backend to default, so what a
       // call waits is one number the host decided and a deployment set once.

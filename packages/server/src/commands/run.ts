@@ -14,6 +14,7 @@ import { canonicalFromCli, createRegistry, optionTable, optionsOf, tokenize } fr
 import type { Command, Registry } from '@cofold/commands';
 import type { HostOptions, RequestHandler, Route, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
+  clientPluginsIn,
   createHost,
   fileResources,
   fileSessions,
@@ -43,7 +44,7 @@ import {
 import { DETACHED_ENV, forget, running, start as startDaemon, sweepTemps } from '../daemon.js';
 import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
-import { automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
+import { agentPluginsDir, automationsPath, configDir, configPath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { proxyHandler } from '../proxy/listener.js';
@@ -569,6 +570,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * session without a restart.
      */
     get mcpServers() { return mcpServers; },
+    /*
+     * Where a plugin a client announces is copied, so a backend can open it.
+     *
+     * The clients are read through the host rather than handed in, because the
+     * host is what knows which client ids are connected and the port is built
+     * before it exists. The copy itself is the sdk's: this daemon names the
+     * folder under its configuration directory and nothing else.
+     */
+    clientPlugins: clientPluginsIn(agentPluginsDir(), () => host.clients),
     /*
      * Whether a tool that declares it needs advanced permission is offered.
      *

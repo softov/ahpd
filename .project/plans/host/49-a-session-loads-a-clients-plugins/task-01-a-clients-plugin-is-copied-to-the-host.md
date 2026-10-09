@@ -1,6 +1,6 @@
 ---
 title: A client's plugin is copied to the host
-status: todo
+status: done
 depends: []
 layer: "sdk, server"
 refs:
@@ -37,3 +37,9 @@ refs:
 - `pnpm test` passes.
 
 ## Resume
+
+## Outcome
+
+`ClientPlugins` and its two result shapes are in `packages/sdk/src/types/clientplugins.ts`, declaration-only, and `clientPluginsIn(dir, clients)` is in `packages/sdk/src/clientplugins.ts`, exported from `packages/sdk/src/index.ts`. A copy walks `clients.list` and writes each `clients.read` into `<at>.building` beside the name it is moved to; `rmSync` then `renameSync` makes the copy whole or leaves nothing, and a failed copy also removes the per-plugin key directory it was the first to make. `lru.json` holds the order of use oldest-first, and `load()` re-derives each path from the two names rather than trusting a path read from the file. `HostOptions.clientPlugins` sits after `mcpServers` in `packages/sdk/src/types/host.ts`; `agentPluginsDir()` is in `packages/server/src/config.ts` and the port is built over it in `packages/server/src/commands/run.ts`. `packages/sdk/test/clientplugins.test.ts` covers the nine cases in Validation and passes.
+
+Two things the plan left open. `types/index.ts` gained one re-export line for the three new types, a file no task names. And the port is built with `clientPluginsIn(agentPluginsDir(), () => host.clients)` in `run.ts`, a thunk rather than `host.clients`, because the options object is built before `createHost` is called and the port is only ever asked afterwards.

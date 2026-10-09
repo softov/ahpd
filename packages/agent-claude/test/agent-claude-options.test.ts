@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { optionsSchema } from '../src/plugin.js';
@@ -156,4 +156,70 @@ it('gives each variant the same state need at its own directory', async () => {
   // One directory named for both answers equal needs, field by field.
   const shared = await agentsOf({ computerConfigDir: '/ahpd/shared', presets: { router: {} } });
   expect(shared[0]?.machine?.().claudeState).toEqual(shared[1]?.machine?.().claudeState);
+});
+
+/*
+ * What a session's plugins become in the CLI's own options.
+ *
+ * `Start.plugins` names directories this host copied a client's plugins into,
+ * and the CLI loads them when it starts - so the shape it is handed is the
+ * whole of what this backend does with them, and a session without any has to
+ * be told nothing rather than given an empty list.
+ */
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
+  query: ({ options }: { options: Record<string, unknown> }) => {
+    cli.options.push(options);
+    return {
+      async *[Symbol.asyncIterator]() { /* nothing streamed */ },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close: () => {},
+    };
+  },
+}));
+
+const cli = vi.hoisted(() => ({ options: [] as Record<string, unknown>[] }));
+
+const { createSession } = await import('../src/session.js');
+
+/** The `query()` options one session was built with, given these plugins. */
+const queriedWith = (plugins?: { path: string }[]): Record<string, unknown> => {
+  cli.options = [];
+  createSession({
+    uri: 'ahp-session:/plugins',
+    chatUri: 'ahp-chat:/plugins',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-plugins-')),
+    emit: () => {},
+    ...(plugins === undefined ? {} : { plugins }),
+  });
+  const one = cli.options.at(0);
+  if (one === undefined) throw new Error('no query was built');
+  return one;
+};
+
+it('hands the CLI the session\'s plugins as local directories it need not search', () => {
+  expect(queriedWith([{ path: '/copies/one' }, { path: '/copies/two' }])).toMatchObject({
+    plugins: [
+      { type: 'local', path: '/copies/one', skipMcpDiscovery: true },
+      { type: 'local', path: '/copies/two', skipMcpDiscovery: true },
+    ],
+  });
+});
+
+it('passes no plugins to a session that has none', () => {
+  expect(queriedWith()).not.toHaveProperty('plugins');
+  expect(queriedWith([])).not.toHaveProperty('plugins');
 });

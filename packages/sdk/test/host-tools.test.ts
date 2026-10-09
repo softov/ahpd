@@ -1,9 +1,14 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
+import { clientPluginsIn } from '../src/clientplugins.js';
 import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/tools/clientcalls.js';
 import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import type { Agent, BoundTool, McpServer, Start } from '../src/types/agent.js';
+import type { Peer } from '../src/types/rpc.js';
 import type { ClientCalls } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostEvent } from '../src/types/events.js';
@@ -471,8 +476,8 @@ describe('the MCP servers a session is offered', () => {
    * read here is what the host decided rather than what a harness went on to
    * declare with them.
    */
-  const recording = () => {
-    const base = echo({ path: '/home/softov', pace: 0 });
+  const recording = (pace = 0) => {
+    const base = echo({ path: '/home/softov', pace });
     const seen: Start[] = [];
     const agent: Agent = {
       ...base,
@@ -538,6 +543,249 @@ describe('the MCP servers a session is offered', () => {
     held = api;
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/two', provider: 'echo' } });
     expect(seen.map((one) => one.mcpServers)).toEqual([files, api]);
+  });
+
+  /*
+   * A client plugin, from the client that holds one to the backend that runs
+   * on it.
+   *
+   * The plugin is a tree held in memory by a second connection, and the copy
+   * is a real directory - so what these check is the whole path: the client's
+   * files over `resourceList` and `resourceRead`, the copy this host makes, and
+   * what the next spawn is handed.
+   */
+
+  const PLUGIN = 'virtual://plugin/one';
+  /** The plugin's own tree, with a server named `a` - which the host names too. */
+  const PLUGIN_TREE: Record<string, string> = {
+    [`${PLUGIN}/.mcp.json`]: JSON.stringify({
+      mcpServers: { a: { type: 'stdio', command: 'bin/server', args: ['--root', '.'] } },
+    }),
+  };
+
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Settle until something is true, giving it real time to happen. */
+  const until = async (ready: () => boolean, ms = 2000): Promise<void> => {
+    const end = Date.now() + ms;
+    while (!ready() && Date.now() < end) await new Promise((r) => { setTimeout(r, 5); });
+  };
+
+  /**
+   * A client whose plugin is a tree held in memory.
+   *
+   * The two `resource*` methods a copy is made of, answered from a map: that
+   * is the whole of what a client has to do for a plugin of its own to reach a
+   * session here.
+   */
+  const pluginPeer = (tree: Record<string, string>): Peer => {
+    const entriesOf = (uri: string): { name: string; type: string }[] => {
+      const prefix = uri.endsWith('/') ? uri : `${uri}/`;
+      const found: { name: string; type: string }[] = [];
+      for (const path of Object.keys(tree)) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        const slash = rest.indexOf('/');
+        const name = slash === -1 ? rest : rest.slice(0, slash);
+        if (!found.some((one) => one.name === name)) found.push({ name, type: slash === -1 ? 'file' : 'directory' });
+      }
+      return found;
+    };
+    return {
+      ...peer(),
+      request: async (method: string, params: unknown) => {
+        const uri = String((params as { uri?: unknown }).uri ?? '');
+        if (method === 'resourceList') return { entries: entriesOf(uri) };
+        if (method === 'resourceRead') {
+          const data = tree[uri];
+          if (data === undefined) throw new Error(`${uri} is not there`);
+          return { data, encoding: 'utf-8' };
+        }
+        return {};
+      },
+    };
+  };
+
+  /**
+   * A session, a client holding a plugin, and every `Start` the backend took.
+   *
+   * The plugin is announced by a second connection, which is what a client
+   * with plugins of its own is - and the host's own servers are named so that
+   * one of them clashes with the plugin's.
+   */
+  async function withClientPlugin(pace = 0) {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-host-plugins-'));
+    dirs.push(dir);
+    const base = echo({ path: dir, pace });
+    const seen: Start[] = [];
+    const agent: Agent = {
+      ...base,
+      create: (start: Start) => { seen.push(start); return base.create(start); },
+    };
+    let host: ReturnType<typeof createHost>;
+    host = createHost({
+      path: dir,
+      agents: [agent],
+      ...machine(),
+      mcpServers: { a: { type: 'stdio', command: 'host-a' }, b: { type: 'stdio', command: 'host-b' } },
+      clientPlugins: clientPluginsIn(join(dir, 'copies'), () => host.clients),
+    });
+    const uri = 'ahp-session:/served';
+    // The peer itself, because what a client was told is what it was *sent*.
+    const watching = peer();
+    const watch = host.accept(watching);
+    await watch.handle(hello(['0.9.0']));
+    await watch.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    const opened = await watch.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    const chat = opened.snapshot.state.defaultChat;
+    await watch.handle({ method: 'subscribe', params: { channel: chat } });
+
+    const holder = host.accept(pluginPeer(PLUGIN_TREE));
+    await holder.handle(hello(['0.9.0'], { clientId: 'holder' }));
+    await holder.handle({ method: 'subscribe', params: { channel: uri } });
+
+    /** Whether the plugin has been reported on the session, and settled. */
+    const loaded = (): boolean => actions(watching, uri)
+      .filter((one) => one.action.type === 'session/customizationsChanged')
+      .some((one) => ((one.action.customizations as Record<string, unknown>[]) ?? [])
+        .some((one) => one.uri === PLUGIN && (one.load as { kind: string }).kind === 'loaded'));
+    /** How many turns have been watched to their end. */
+    const finished = (): number => actions(watching, chat)
+      .filter((one) => one.action.type === 'chat/turnComplete').length;
+    /** The id the host published the plugin under, which is what a toggle names. */
+    const pluginId = (): string => String(actions(watching, uri)
+      .filter((one) => one.action.type === 'session/customizationUpdated')
+      .map((one) => one.action.customization as Record<string, unknown>)
+      .findLast((one) => one.uri === PLUGIN)?.id ?? '');
+
+    return {
+      dir, seen, loaded, finished,
+      /** A turn, which is the moment a chat is handed the set its session has. */
+      send: (turnId: string, text = 'hi') => watch.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      }),
+      /** The plugin, as the client holding it announces it. */
+      announce: () => holder.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: uri,
+          action: {
+            type: 'session/activeClientSet',
+            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1' }], tools: [] },
+          },
+        },
+      }),
+      /** One client's decision about it, named as the host published it. */
+      toggle: (enabled: boolean) => holder.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: uri,
+          action: {
+            type: 'session/customizationToggled',
+            id: pluginId(),
+            enablement: [{ kind: 'session', enabled }],
+          },
+        },
+      }),
+    };
+  }
+
+  it('hand a session its client plugin\'s copy, over the plugin\'s server', async () => {
+    const held = await withClientPlugin();
+    // The session started before anything was announced, so it was handed the
+    // host's own two servers and no plugin directory at all.
+    expect(held.seen.at(0)?.plugins).toBeUndefined();
+
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    // A send is where the set reaches the chat: it was started without one, so
+    // it is started again with it.
+    expect(held.seen).toHaveLength(2);
+    const last = held.seen.at(-1);
+    const at = last?.plugins?.[0]?.path ?? '';
+    expect(at.startsWith(join(held.dir, 'copies'))).toBe(true);
+    // `a` is the plugin's, which is what a client's server winning a clash
+    // means; `b` is the host's and is untouched. The plugin's command is
+    // written relative to the plugin, so it is resolved against the copy.
+    expect(last?.mcpServers).toEqual({
+      a: { type: 'stdio', command: join(at, 'bin', 'server'), args: ['--root', '.'] },
+      b: { type: 'stdio', command: 'host-b' },
+    });
+  });
+
+  it('start the chat again only when the set of plugins has moved', async () => {
+    const held = await withClientPlugin();
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+    expect(held.seen).toHaveLength(2);
+
+    // The same set, still: a send on an idle chat that already has it is not a
+    // reason to start anything again.
+    await held.send('t2');
+    await settle();
+    expect(held.seen).toHaveLength(2);
+  });
+
+  it('start the chat again without the plugin a client switched off', async () => {
+    const held = await withClientPlugin();
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    await held.toggle(false);
+    await settle();
+    await held.send('t2');
+    await settle();
+
+    // Started again, and back to the host's own two: the plugin's `a` went
+    // with the plugin, and the host's `a` is under that name again.
+    expect(held.seen).toHaveLength(3);
+    expect(held.seen.at(-1)?.plugins).toBeUndefined();
+    expect(held.seen.at(-1)?.mcpServers).toEqual({
+      a: { type: 'stdio', command: 'host-a' },
+      b: { type: 'stdio', command: 'host-b' },
+    });
+  });
+
+  it('leave a running turn alone, and start the chat again at the send after it', async () => {
+    // A paced backend, so there is a turn left running while the set moves
+    // under it.
+    const held = await withClientPlugin(10);
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1', 'one two three four five six seven eight nine ten');
+    await settle();
+    expect(held.seen).toHaveLength(2);
+
+    // Switched off mid-answer: the set has moved, and the chat the turn is
+    // running in is not replaced under it.
+    await held.toggle(false);
+    await settle();
+    expect(held.seen).toHaveLength(2);
+
+    // The turn ran to its end, which a chat started again mid-answer would
+    // have thrown away - the reply is the one it was already writing.
+    await until(() => held.finished() >= 1);
+    expect(held.finished()).toBe(1);
+
+    // And the send that finds the chat idle is the one that hands it the set
+    // the session has now.
+    await held.send('t2');
+    await settle();
+    expect(held.seen).toHaveLength(3);
+    expect(held.seen.at(-1)?.plugins).toBeUndefined();
   });
 });
 

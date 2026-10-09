@@ -137,6 +137,21 @@ export function createQuery(ctx: SessionContext): Query {
        */
       ...(Object.keys(ctx.declared).length > 0 ? { mcpServers: ctx.declared as never } : {}),
       /*
+       * The client plugins this session runs with.
+       *
+       * Directories this host made by copying what a client announced, which
+       * is the only kind of path a CLI running here can open. `skipMcpDiscovery`
+       * because the servers of a plugin are read off the same copies and
+       * declared above: left to itself the CLI would find them a second way
+       * and run each server twice.
+       *
+       * Read at startup, so a set that moved reaches a chat by starting it
+       * again rather than by anything here.
+       */
+      ...(ctx.options.plugins === undefined || ctx.options.plugins.length === 0 ? {} : {
+        plugins: ctx.options.plugins.map((one) => ({ type: 'local' as const, path: one.path, skipMcpDiscovery: true })),
+      }),
+      /*
        * What the host wants said, after the CLI's own prompt.
        *
        * The preset with an `append`, not a prompt of this backend's own: the

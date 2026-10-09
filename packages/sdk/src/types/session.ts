@@ -164,6 +164,14 @@ export interface SessionOptions {
    */
   mcpServers?: Record<string, Bag>;
   /**
+   * Client plugins this session runs with, by the directory each is in.
+   *
+   * A backend that loads plugins opens these directories; one that cannot
+   * ignores the field and still gets their MCP servers through `mcpServers`,
+   * which the host read out of the same copies.
+   */
+  plugins?: { path: string }[];
+  /**
    * Tools the host contributes to this session.
    *
    * Offered to the model as an MCP server that runs in this process, so a

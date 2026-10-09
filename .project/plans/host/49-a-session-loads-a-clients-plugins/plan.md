@@ -1,7 +1,7 @@
 ---
 title: A session loads the plugins a client hands it
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -89,10 +89,10 @@ session/activeClientRemoved -> the client's plugins leave the set -> same restar
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A client's plugin is copied to the host](task-01-a-clients-plugin-is-copied-to-the-host.md) | todo | - |
-| [02 - A session reports the plugins a client hands it](task-02-a-session-reports-a-clients-plugins.md) | todo | 01 |
-| [03 - The agent runs with the session's client plugins](task-03-the-agent-runs-with-the-sessions-client-plugins.md) | todo | 02 |
-| [04 - A disconnected client is kept for 30 seconds](task-04-a-disconnected-client-is-kept-for-30-seconds.md) | todo | - |
+| [01 - A client's plugin is copied to the host](task-01-a-clients-plugin-is-copied-to-the-host.md) | done | - |
+| [02 - A session reports the plugins a client hands it](task-02-a-session-reports-a-clients-plugins.md) | done | 01 |
+| [03 - The agent runs with the session's client plugins](task-03-the-agent-runs-with-the-sessions-client-plugins.md) | done | 02 |
+| [04 - A disconnected client is kept for 30 seconds](task-04-a-disconnected-client-is-kept-for-30-seconds.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -102,15 +102,15 @@ session/activeClientRemoved -> the client's plugins leave the set -> same restar
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-clients-plugin-is-copied-to-the-host.md](task-01-a-clients-plugin-is-copied-to-the-host.md).
+- **Done so far:** all four tasks are built and implemented - the port and its file copy; a session that reports a client's plugins with their `load`, answers a toggle on one itself, and drops them when the client leaves; a chat handed the enabled copies at every spawn, with their `.mcp.json` servers over the host's and a restart at the next send when the set moves; and a client whose connection closes kept, with its tools and plugins, for thirty seconds.
+- **Next action:** none. The plan is built; see [implemented.md](implemented.md). [host/77](../77-a-client-plugin-lists-its-parts/plan.md) lists a plugin's parts and applies `childEnablement`.
 - **Open questions:** none.
 - **Watch out for:** ahpd's own "plugins" are daemon packages; everything here is a client plugin, and names say so.
 
 ## Final verification checklist
 
-- [ ] A fake client announcing a plugin makes the session report it `loading` then `loaded`, and the next turn's `Start` carries its copy and its MCP server.
-- [ ] Removing the client, or toggling the plugin off, takes it out of the next turn's `Start`.
-- [ ] A client that disconnects keeps its tools and plugins for 30 seconds, and one that resubscribes in time causes no removal and no restart.
-- [ ] `pnpm test` passes.
-- [ ] `plans/index.md` updated; acp/11's deferred line points here.
+- [x] A fake client announcing a plugin makes the session report it `loading` then `loaded`, and the next turn's `Start` carries its copy and its MCP server.
+- [x] Removing the client, or toggling the plugin off, takes it out of the next turn's `Start`.
+- [x] A client that disconnects keeps its tools and plugins for 30 seconds, and one that resubscribes in time causes no removal and no restart.
+- [x] `pnpm test` passes.
+- [x] `plans/index.md` updated; acp/11's deferred line points here.

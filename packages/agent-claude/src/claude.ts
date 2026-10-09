@@ -579,6 +579,14 @@ export function claude(options: ClaudeOptions): Agent {
        * `.mcp.json` names servers this host would run as commands.
        */
       mcpServers: serversFor([workingDirectory(start.workingDirectory), ...(start.additional ?? [])], start.trusted),
+      /*
+       * The client plugins, as the directories the host copied them into.
+       *
+       * Handed on unchanged: this backend knows the CLI's plugin directories
+       * and nothing about where a client's plugin came from, which is the
+       * host's business and already done by the time a session is created.
+       */
+      ...(start.plugins && start.plugins.length > 0 ? { plugins: start.plugins } : {}),
       // The same answer again, for what the query loads from the folder's own
       // settings - the two halves of one decision, read where each is used.
       ...(start.trusted === undefined ? {} : { trusted: start.trusted }),

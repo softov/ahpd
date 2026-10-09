@@ -40,6 +40,7 @@ export { gitArgv } from './repo/hardened.js';
 export { gitChanges } from './changes.js';
 export { fileResources } from './resources.js';
 export { localPath, uriOf } from './fileuri.js';
+export { clientPluginsIn } from './clientplugins.js';
 export { shellTerminals } from './terminals.js';
 export { hostTools } from './tools/index.js';
 export { toolServers, TOOLS_PREFIX } from './tools/server.js';

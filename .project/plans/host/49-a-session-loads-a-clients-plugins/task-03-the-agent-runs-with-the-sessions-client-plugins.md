@@ -1,6 +1,6 @@
 ---
 title: The agent runs with the session's client plugins
-status: todo
+status: done
 depends: [task-02-a-session-reports-a-clients-plugins.md]
 layer: "sdk, agent-claude"
 refs:
@@ -42,3 +42,17 @@ A chat is started with `Start.plugins`, the paths of the session's enabled clien
 - `pnpm test` passes.
 
 ## Resume
+
+## Outcome
+
+`Start.plugins?: { path: string }[]` is declared in `packages/sdk/src/types/agent.ts` beside `mcpServers`, and `SessionOptions.plugins` in `packages/sdk/src/types/session.ts`, so the value crosses the host-to-backend seam the way its servers do.
+
+In `packages/sdk/src/host/tooling.ts` the enabled copies are `pluginCopies(uri)` - the plugins of this session that are loaded, on, and have a path - and `serversOf(copy)` reads one copy's `.mcp.json`: a `command` becomes a `stdio` server with a relative command resolved against the copy, a `url` with no type or `http` becomes an `http` server, and anything else in that file contributes nothing. `mcpFor(uri)` is the host's own map with each copy's servers spread over it, later copies last, which is the plugin winning a clash. `pluginsFor(uri, chatUri)` answers the enabled paths and writes down which they were, in `startedWith` by chat URI; `pluginsMoved(uri, chatUri)` compares that note with the set now. `packages/sdk/src/host/spawn.ts` passes `ctx.mcpFor(uri)` and `ctx.pluginsFor(uri, chatUri)`, the latter as `Start.plugins` and only when it is not empty.
+
+`packages/sdk/src/host/chatactions.ts` restarts the chat at `chat/turnStarted` when `pluginsMoved` is true and the session is not `InProgress`, through `restartChat` - which is already the resumed, seeded restart - and then begins the turn on the chat that took the old one's place. All four cases in Validation are in `packages/sdk/test/host-tools.test.ts`, in `the MCP servers a session is offered`, over a plugin whose tree a second connection serves and whose copy is a real directory.
+
+On the backend, `packages/agent-claude/src/claude.ts` carries `start.plugins` into the session, `session/query.ts` hands it to the SDK as `{ type: 'local', path, skipMcpDiscovery: true }`, and `session/customizations.ts` gained an `ours` set so a plugin the CLI reports at a path this host handed over is left out of the customizations the host builds - `session/servers.ts` passes the paths it was given. The two cases in Validation are in `packages/agent-claude/test/agent-claude-options.test.ts`, which gained a fake CLI recording the `query()` options. `.project/plans/acp/11-the-agent-gets-mcp-servers/deferred.md` now names this plan in place of the gap it recorded.
+
+Four things the plan left open or stale. The restart is in `chatactions.ts`, which task 02 names and this one does not: a send is dispatched there, and the guard has to be where the send is. The task's named `packages/agent-claude/src/session.ts` is now a barrel - the query options are in `session/query.ts`, the plugin report in `session/customizations.ts`, and the seam that reads `Start` is `claude.ts` - so the backend half is spread over those four files, all of them this module. `pluginsFor` takes the session and the chat rather than a session alone, because what a set is compared against is one chat's agent. And an entry in a plugin's `.mcp.json` that names a transport this host has no word for - `sse` - is passed over rather than relabelled as `http`, matching how `serversFor` treats a file it cannot use: the CLI reads the same file itself.
+
+One bound worth stating: a message that arrives while a turn is running is begun by the backend on the set the chat already has - `chat/turnStarted` reaches `Session.begin`, and the explicit queue is `chat/pendingMessageSet` - so the restart lands on the next send that finds the chat idle rather than on one that arrives mid-turn. Nothing is cut, which is what the decision asks for, and the turn that was running is left to finish: the test for it reads `chat/turnComplete`, which a chat replaced mid-answer would never have sent. The note is also kept for a chat URI that is never spawned again, one string per chat, which is the same shape `beside` and `moving` already have.

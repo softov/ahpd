@@ -184,6 +184,20 @@ export interface Start {
    */
   mcpServers?: Record<string, McpServer>;
   /**
+   * The client plugins this session runs with, by the directory each was copied to.
+   *
+   * A plugin a client announced lives on the client's machine, and a backend
+   * running here can only open a path that is here - so this is the copy this
+   * host made, and it is what a backend that loads plugins is given. A backend
+   * that cannot load one ignores the field and is still handed its MCP servers
+   * through `mcpServers`, which this host read out of the same copy.
+   *
+   * Left out when the session's clients contribute none and when none of them
+   * has been copied yet, which is the same "asked for nothing" an absent
+   * `mcpServers` is.
+   */
+  plugins?: { path: string }[];
+  /**
    * What the host wants the model told, beside the backend's own prompt.
    *
    * One entry per host tool that carries an instruction. A backend that can

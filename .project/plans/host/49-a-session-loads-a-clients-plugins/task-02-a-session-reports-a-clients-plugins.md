@@ -1,6 +1,6 @@
 ---
 title: A session reports the plugins a client hands it
-status: todo
+status: done
 depends: [task-01-a-clients-plugin-is-copied-to-the-host.md]
 layer: "sdk"
 refs:
@@ -37,3 +37,15 @@ The `customizations` a client announces with `session/activeClientSet` appear in
 - `pnpm test` passes.
 
 ## Resume
+
+## Outcome
+
+Per session and per client id, `packages/sdk/src/host/tooling.ts` holds the announced plugins with their `load`, their copy path and their decisions. `reconcile` reads them from `activeClientsOf`, matches what a client announces against what is held by `(uri, nonce)`, and returns untouched when a signature over the two is unchanged - which is what keeps a re-announcement from dispatching anything. Otherwise it dispatches `loading` per new plugin, copies through `options.clientPlugins` (a port that throws is turned into one error per plugin, never a rejection), dispatches the settled entries, and closes with one `customizationsChanged` carrying `reportedBy(uri)`. A host with no port skips the copy and reports each plugin `{kind: 'error', message: 'this host keeps no client plugins'}`. `reconcilePlugins` chains one reconcile per session onto the last, so a second announcement waits for the first copy.
+
+The host's entries are laid after the backend's in two places in `packages/sdk/src/host.ts`: `dispatch` appends `ctx.clientPluginsOf(channel)` to any outgoing `session/customizationsChanged`, and `ctx.snapshotOf` is wrapped right after `createSnapshots` to append them to the snapshot's `customizations`. `leaves` already calls `retool`, which reconciles, and a client that has left is no longer in `activeClientsOf` - so its plugins leave with it. `session/customizationToggled` is answered in `packages/sdk/src/host/chatactions.ts` by `ctx.toggleClientPlugin` before the backend is asked.
+
+`packages/sdk/test/client-plugins-session.test.ts` covers the six cases in Validation. `docs/AHP.md` gained the `activeClientSet`, `customizationsChanged`, `customizationToggled` and `customizationUpdated` rows' new sentences.
+
+Three things the plan left open. The entry keeps the client's `childEnablement` as announced, but the host publishes no `children` for a client plugin and so nothing to hang a child's decision on: a plugin's children in the protocol are `ChildCustomization`s - skills, prompts, agents - and this host can only see the plugin's `.mcp.json` servers, which are not among them. The decision is therefore carried and not applied; what a plugin's children are here is a fork this plan did not decide, and it wants Softov's word rather than a guess. A toggle is answered with `session/customizationUpdated` rather than a removal, so a plugin switched off stays listed as disabled, leaves the *set* the agent is handed (task 03), and can be switched back. And the implementation lands in `tooling.ts` rather than `actions.ts` or `sessionmethods.ts`: no task may add a top-level field to `HostContext`, so the state and the two methods live in the existing `Tooling` area and `host.ts` reaches them through `ctx`.
+
+Because a toggle the host answers never reaches the backend, the published entry also carries the plugin's own `enablement` alone - a `children` list would have to be `McpServerCustomization` entries, each requiring a full `McpServerState` this host has no way to synthesise.

@@ -410,6 +410,17 @@ export const vaultPath = (): string => join(configDir(), 'vault.json');
 export const sessionsDir = (): string => join(configDir(), 'sessions');
 
 /**
+ * Where the plugins a client hands a session are copied to.
+ *
+ * A folder this host writes and a client never sees: a plugin a client
+ * announces is a URI it serves, and the backend that has to run it opens a
+ * path on this machine. Kept under the configuration directory because it is
+ * the one place this host is known to be able to write, and read again at
+ * startup so a daemon that started over does not copy what it already has.
+ */
+export const agentPluginsDir = (): string => join(configDir(), 'agentPlugins');
+
+/**
  * Where what npm last said about this package is kept.
  *
  * Written by the daemon after it asks the registry, and read by the startup

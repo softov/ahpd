@@ -30,7 +30,7 @@ export type Published = Bag & { resource: string };
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = []): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = [], ours?: Set<string>): Bag[] {
   const out: Bag[] = [];
 
   /*
@@ -78,7 +78,14 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
    */
   const reportedPlugins = list(plugins)
     .map((raw) => bag(raw))
-    .filter((one) => (str(one.name) ?? '') !== '' && (str(one.path) ?? '') !== '');
+    .filter((one) => (str(one.name) ?? '') !== '' && (str(one.path) ?? '') !== '')
+    /*
+     * Less the ones this host handed over itself. The CLI reports a plugin by
+     * the directory it was given, and the session's customizations already
+     * carry the host's own entry for it - so a plugin listed twice would be
+     * one a person is offered two switches for.
+     */
+    .filter((one) => ours?.has(str(one.path) ?? '') !== true);
   const pluginOf = (name: string): Bag | undefined =>
     reportedPlugins.find((plugin) => name.startsWith(`${str(plugin.name) ?? ''}:`));
   /** The SDK's name with the plugin's namespace taken off it. */

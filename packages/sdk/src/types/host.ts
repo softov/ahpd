@@ -15,6 +15,7 @@ import type { PluginStarts, PluginTriggers } from './plugin.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
+import type { ClientPlugins } from './clientplugins.js';
 import type { Usage } from './usage.js';
 import type { Policies } from './policies.js';
 import type { Vault } from './vault.js';
@@ -306,6 +307,20 @@ export interface HostOptions {
    * with an empty list rather than a list nobody configured.
    */
   mcpServers?: Record<string, McpServer>;
+  /**
+   * Where a client's plugins are copied to, so a backend here can open them.
+   *
+   * A client announces the plugins it contributes to a session as URIs it
+   * serves - `virtual://…`, an editor's unsaved buffers, a filesystem provider
+   * - and the backend that has to run them is a process on this machine, which
+   * can open a directory here and no URI there. `clientPluginsIn(dir, clients)`
+   * is the port that copies them and answers where each landed.
+   *
+   * Left out, no plugin a client announces is copied, and each is reported to
+   * its session as the error that it could not be: a host with nowhere to put
+   * one says so rather than quietly offering the session nothing.
+   */
+  clientPlugins?: ClientPlugins;
   /**
    * Where the host serves its own tools as an MCP server, when something is
    * there to serve them on.

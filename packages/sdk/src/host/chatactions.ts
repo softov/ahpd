@@ -32,7 +32,7 @@ export function chatAction(
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, connections,
     contributedDefaults, decided, described, dispatch, drafts, fire, first, keepProvider, kept,
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
-    ownerFor, owners, past, principalFor, propertyOf, putIn, renameChat, restart, restartChat, restarting,
+    ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat, restart, restartChat, restarting,
     rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf, storedConfig,
     summaryMoved, value, waitingFor, wheres,
   } = ctx;
@@ -351,9 +351,27 @@ export function chatAction(
       // Before it is started or queued, so a handler sees it once
       // whether or not the backend is free to run it this moment.
       void fire({ type: 'message', session: session.uri, chat: session.chatUri, turn: turnId, text });
-      const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
+      const owner = sessions.get(session.uri);
+      /*
+       * A set of client plugins that moved since this agent started.
+       *
+       * A backend takes its plugins when its CLI starts and offers no way to
+       * open another after, so a chat handed a different set is one started
+       * again, resumed - the same conversation, with the plugins the session
+       * has now. This is the first moment a chat is between turns, and the
+       * only one where starting it again is safe: a send that arrives during
+       * a turn waits its turn, and the sets are compared again at the next.
+       */
+      let live = session;
+      if (owner !== undefined && (statusOf(session.uri) & Status.InProgress) === 0 && pluginsMoved(session.uri, session.chatUri)) {
+        restartChat(session.uri, session.chatUri, conn.tokensFor(owner.agent.provider), connection);
+        // The chat that was running is closed and this is the one that took its
+        // place, so the turn below goes to the agent listening now.
+        live = owner.chats.get(session.chatUri) ?? session;
+      }
+      const provider = owner?.agent.provider ?? 'This provider';
       beginTurn(
-        beginOrRun(session, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message)),
+        beginOrRun(live, provider, turnId, text, modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message)),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );
       break;
@@ -985,6 +1003,16 @@ export function chatAction(
       const enablement = Array.isArray(action.enablement) ? action.enablement.map((entry) => (
         typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
       )) : [];
+      /*
+       * A plugin a client handed this session is this host's to switch.
+       *
+       * The backend has never heard of it - it is a directory this host copied
+       * for the client, not a customization the backend reported - so asking it
+       * would be asking about something it does not have, and the answer would
+       * be the refusal below with the switch left where the client put it.
+       */
+      if (ctx.toggleClientPlugin(session.uri, id, enablement))
+        break;
       const wanted = enablement.find((entry) => entry.kind === 'session') ?? enablement[0];
       const enabled = wanted?.enabled !== false;
       void session.setCustomizationEnabled(id, enabled).then((took) => {
