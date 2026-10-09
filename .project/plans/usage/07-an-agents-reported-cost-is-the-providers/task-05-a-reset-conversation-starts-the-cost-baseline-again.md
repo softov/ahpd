@@ -1,6 +1,6 @@
 ---
 title: A reset conversation starts Claude's cost baseline again
-status: todo
+status: implemented
 depends: [task-02-claude-sends-no-cost-for-nothing-spent.md]
 layer: "agent-claude"
 refs:
@@ -31,3 +31,5 @@ The turns after it are billed nothing until the total climbs past the old figure
 - `npx vitest run packages/agent-claude` passes.
 
 ## Resume
+
+2026-10-08. One case in `packages/agent-claude/test/agent-claude-usage.test.ts`. A `result` at $1.00, a zeroed `result` behind it that still sends no cost, then a `conversation_reset` and a `result` at $0.20 that sends a cost of $0.20. The twenty cents is well under the one-dollar baseline, so only a baseline taken back to zero reads it as the spend it is; with the clearing removed the case fails, and the nine cases already in the file hold. The `conversation_reset` message is read in `consume()` in `packages/agent-claude/src/session/query.ts`, which calls a `newConversation` added to the parts beside `newTurn`; that clears the `paid` map in `packages/agent-claude/src/session/parts.ts`. A departure from Files: `parts.ts` holds `paid` and so holds the clearing, but the dispatch that reads SDK messages by `type` is in `query.ts`, which is where the message has to be named - `parts.ts` never sees a frame. The zeroed rule of task 02 is untouched: a zeroed `result` with no reset before it still sends no cost, because the baseline only moves for a model a result spent on.

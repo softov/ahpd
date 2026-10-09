@@ -128,6 +128,19 @@ const result = (costUSD: number, costBasis: 'list' | 'managed' | 'unknown' = 'li
   },
 });
 
+/**
+ * The frame the CLI sends when it takes its running total back to zero.
+ *
+ * `/clear`, a plan-mode exit and a fresh session all emit one, and the CLI's
+ * own cost figures start again behind it.
+ */
+const reset = (): Record<string, unknown> => ({
+  type: 'conversation_reset',
+  new_conversation_id: 'conv-reset',
+  uuid: 'reset-1',
+  session_id: 's-usage',
+});
+
 interface Call { input: number; output: number; read: number; wrote: number; started: number }
 
 /**
@@ -301,6 +314,37 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
   sdk.push(result(1.36));
   await settle();
   expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.68, currency: 'USD' } });
+});
+
+it('starts the cost baseline again when the CLI resets the conversation', async () => {
+  /*
+   * `/clear`, a plan-mode exit and a fresh session all send
+   * `conversation_reset`, and the CLI's running total starts again at zero
+   * behind it. The baseline the last result left sits above the figure that
+   * comes next, and a figure that did not go up is read as no spend - so every
+   * turn after a `/clear` was billed nothing until the total climbed back past
+   * where it had been.
+   */
+  const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(1)]);
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 1, currency: 'USD' } });
+
+  session.begin('t2', 'and again');
+  await settle();
+  // A zeroed result with no reset before it is still no spend: the books are
+  // where the last result left them, and the baseline only moves for a model a
+  // result spent on. It is the reset, and nothing else, that takes it to zero.
+  sdk.push({ ...result(0), usage: { input_tokens: 0, output_tokens: 0 } });
+  await settle();
+  expect(payload(reports(main).at(-1))).not.toHaveProperty('_meta.cost');
+
+  session.begin('t3', 'after the clear');
+  await settle();
+  // The reset first, then the turn it belongs to, then the result that prices
+  // it. Twenty cents is well under the one-dollar baseline, so only a baseline
+  // taken back to zero reads it as the spend it is.
+  sdk.push(reset(), ...fixture('claude-empty-round.jsonl'), result(0.2));
+  await settle();
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.2, currency: 'USD' } });
 });
 
 it('sends no cost the CLI could only guess at, and still differences the next one from it', async () => {

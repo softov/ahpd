@@ -27,6 +27,8 @@ export interface Parts {
   sayUsage: () => void;
   /** What one `result` cost, as the change in `modelUsage` since the last. */
   costOf: (message: Bag) => Bag | undefined;
+  /** Forget the cost baseline: the CLI's running total starts again. */
+  newConversation: () => void;
   /** The session's status, read into the snapshot and into `status`. */
   status: () => number;
   /** Say the session is waiting on one request. */
@@ -158,6 +160,18 @@ export function createParts(ctx: SessionContext): Parts {
    * the lead agent's.
    */
   const paid = new Map<string, number>();
+
+  /**
+   * Forget the baseline, because the CLI's own total starts again.
+   *
+   * `/clear`, a plan-mode exit and a fresh session all reset the running total
+   * `modelUsage` is cumulative against, so the figure on the next `result` is
+   * a spend from zero rather than a step from where the books were. A baseline
+   * left where it was sits above the new total, and every turn after the reset
+   * reads as a figure that did not go up - billed as nothing until the total
+   * climbs back past the old one.
+   */
+  const newConversation = (): void => { paid.clear(); };
 
   /**
    * What this `result` cost, as the change in `modelUsage` since the last one.
@@ -332,7 +346,7 @@ export function createParts(ctx: SessionContext): Parts {
 
   return {
     touch, doing, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
-    status, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
+    newConversation, status, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
     stampStart, stampEnd, untimed, addFailure,
   };
 }

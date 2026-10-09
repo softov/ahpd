@@ -473,6 +473,16 @@ export function createQuery(ctx: SessionContext): Query {
           continue;
         }
 
+        /*
+         * The CLI started its running total again.
+         *
+         * `/clear`, a plan-mode exit and a fresh session all send one, and
+         * every `modelUsage` figure behind it starts over from zero. The cost
+         * baseline goes with it: left where it was it sits above the new total
+         * and reads every result after the reset as no spend.
+         */
+        if (type === 'conversation_reset') { ctx.newConversation(); continue; }
+
         if (type === 'stream_event') { ctx.streamed(bag(message.event), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'assistant') { ctx.assistant(bag(message.message), str(message.parent_tool_use_id) ?? ''); continue; }
         if (type === 'user') {
