@@ -1,6 +1,6 @@
 ---
 title: The docs say a plugin installs at the version that fits
-status: todo
+status: implemented
 depends: [task-02-install-asks-for-the-version-that-fits.md, task-03-update-moves-to-the-version-that-fits.md]
 layer: "docs"
 refs:
@@ -30,4 +30,6 @@ They also say that `@ahpd/sdk` itself stays at the daemon's version.
 - `rg -n "daemon's version" docs packages/server/README.md` names only `@ahpd/sdk`.
 
 ## Resume
+
+Built. `docs/DAEMON.md`: install says a bare name goes in at the newest version whose `@ahpd/sdk` peer range admits this daemon and a name with a version or a tag goes to npm as written; update says each package moves to the newest of its own versions whose range admits this daemon, or `latest` when the registry cannot be asked, that a package with no fit stops the update before npm runs, and what `--force` does with it. The `@ahpd/sdk`-at-the-daemon's-version sentences are kept. `packages/server/README.md`: the install paragraph and the upgrade paragraph carry the same rule, and the `plugin update all` line reads `move every installed plugin to the version that fits this daemon`. The validation command leaves one `daemon's version` in `docs/DAEMON.md` - the loader-refusal sentence that names the sdk and the version the range is checked against - and none in the README.
 

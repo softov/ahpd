@@ -1,6 +1,6 @@
 ---
 title: Install asks npm for the version that fits
-status: todo
+status: implemented
 depends: [task-01-the-version-that-fits-is-chosen.md]
 layer: "server"
 refs:
@@ -39,4 +39,8 @@ The manifest check asks the registry at that same version.
 - `npx vitest run packages/server/test/plugin-install.test.ts` passes.
 
 ## Resume
+
+Built. `refuseNonPlugins` returns the names to install: each bare registry name is chosen with `fittingVersion`, all names at once, and becomes `<name>@<version>`, the name as written when it answered `undefined`, and a name that already carries a version or a tag unchanged with no `fittingVersion` call. The manifest check asks the registry at the chosen version, and a refusal from `fittingVersion` ends the install before npm runs. `installPlugins` installs what it returned rather than `pinned` ones; `daemonsSdk` and its `@ahpd/sdk` pin are unchanged.
+
+`packages/server/test/server-configure.test.ts` was outside this task's files and asserted the old pin (`@ahpd/agent-claude@0.8.0` from `pinned`); its fake registry now answers a packument holding `0.8.0` with `@ahpd/sdk: >=0.8`, so it still asserts the exact version configure installs. `configure.ts`'s stale `version` comment now says what the code does.
 

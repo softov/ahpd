@@ -44,12 +44,14 @@ ahpd plugin install @ahpd/agent-claude
 ```
 
 `ahpd plugin install` runs `npm install` in the configuration directory and
-adds the name to `plugins` in `config.json`, so the next run loads it. Before
-npm runs, it refuses a registry package whose `package.json` has no `"ahpd"`
-field. A plugin installed with `npm i -g` is invisible to that resolution.
-`--no-enable` installs without naming it, `--keep` on `remove` drops the name
-without uninstalling the package, and `--config-file` edits another file than
-the default one.
+adds the name to `plugins` in `config.json`, so the next run loads it. A bare
+name is installed at the newest of the package's versions whose `@ahpd/sdk`
+peer range admits this daemon, and a name that carries a version or a tag goes
+to npm as written. Before npm runs, it refuses a registry package whose
+`package.json` has no `"ahpd"` field. A plugin installed with `npm i -g` is
+invisible to that resolution. `--no-enable` installs without naming it,
+`--keep` on `remove` drops the name without uninstalling the package, and
+`--config-file` edits another file than the default one.
 
 Every plugin takes `@ahpd/sdk` as a peer, and states the oldest one it needs,
 such as `>=0.8`. ahpd installs the daemon's own `@ahpd/sdk` beside the plugins
@@ -67,15 +69,23 @@ ahpd restart
 ```
 
 `ahpd plugin update all` runs one `npm install` in the configuration directory
-naming every package installed there from the npm registry: each `@ahpd/*` one
-at the daemon's version, any other at `latest`. `ahpd plugin update <name>...`
-moves only the packages named, each of which must be installed there. One
-installed from a path, a link, git or a URL is left as it is. It says each move,
-or `Nothing to update.` when no version moved, and leaves `config.json` as it
-is. `@ahpd/sdk` is not a plugin, so `install` and `update` refuse it by name.
-One package npm cannot install fails that whole call, and the failure says to
-rerun with `--force`. `--force` gives each package its own `npm install`, so
-the ones npm can install move and the one it cannot is the one named.
+naming every package installed there from the npm registry, each at the newest
+of its own versions whose `@ahpd/sdk` range admits this daemon, and at `latest`
+when the registry cannot be asked. A plugin is released on its own schedule, so
+that range is what it is chosen by and not its version number: one for an older
+minor stays where it is until a version of it asks for this daemon's sdk or a
+newer one. `ahpd plugin update <name>...` moves only the packages named, each
+of which must be installed there, and a name that carries a version or a tag
+goes to npm as written. One installed from a path, a link, git or a URL is left
+as it is. A package with no version that admits this daemon cannot be installed
+at all, so it stops the update before npm runs, naming its newest version's
+range; with `--force` it is said and left while the others move. It says each
+move, or `Nothing to update.` when no version moved, and leaves `config.json`
+as it is. `@ahpd/sdk` is not a plugin, so `install` and `update` refuse it by
+name. One package npm cannot install fails that whole call, and the failure
+says to rerun with `--force`. `--force` gives each package its own `npm
+install`, so the ones npm can install move and the one it cannot is the one
+named.
 
 `ahpd config` prints the directory if it is somewhere else, which it is when
 `XDG_CONFIG_HOME` says so. A path in `plugins` is resolved instead against the

@@ -29,9 +29,9 @@ ahpd plugin install @ahpd/agent-claude
 ahpd --plugin @ahpd/agent-claude --path /work/project
 ```
 
-`ahpd plugin install` runs `npm install` in the configuration directory, where a bare plugin name is resolved from, and adds the name to `plugins` in `config.json` so the next run loads it. A plugin installed with `npm i -g` is not seen.
+`ahpd plugin install` runs `npm install` in the configuration directory, where a bare plugin name is resolved from, and adds the name to `plugins` in `config.json` so the next run loads it. A bare name is installed at the newest of the package's versions whose `@ahpd/sdk` peer range admits this daemon, and a name that carries a version or a tag goes to npm as written. A plugin installed with `npm i -g` is not seen.
 
-To upgrade, run `npm i -g @ahpd/server`, then `ahpd plugin update all` to move every installed plugin to the daemon's version (or `ahpd plugin update <name>...` for only some), then restart the daemon. ahpd installs the daemon's own `@ahpd/sdk` beside the plugins, so one plugin never blocks another, and a plugin whose `@ahpd/sdk` range leaves out the daemon's is refused when the daemon loads it.
+To upgrade, run `npm i -g @ahpd/server`, then `ahpd plugin update all` to move every installed plugin to the newest of its own versions whose `@ahpd/sdk` range admits this daemon (or `ahpd plugin update <name>...` for only some), then restart the daemon. ahpd installs the daemon's own `@ahpd/sdk` beside the plugins, so one plugin never blocks another, and a plugin whose `@ahpd/sdk` range leaves out the daemon's is refused when the daemon loads it.
 
 npm 12 blocks install scripts unless told otherwise, and `node-pty` needs its script on Linux to build the terminal binding. Without it the daemon still runs, but terminals fall back to pipes (`isPty: false`). Add `--allow-scripts=node-pty` to the daemon's global install, or run `npm config set allow-scripts=node-pty --location=user` once.
 
@@ -64,7 +64,7 @@ ahpd project rm <id>        take a project out; refused while a membership names
 ahpd plugin list            what the configuration names, and what a run would load
 ahpd plugin install <name>  install a plugin and name it in the configuration, unless --no-enable
 ahpd plugin remove <name>   drop it from the configuration and uninstall it, unless --keep
-ahpd plugin update all      move every installed plugin to the daemon's version
+ahpd plugin update all      move every installed plugin to the version that fits this daemon
 ahpd plugin update <name>   move only the plugins named
 ahpd plugin config <name>   show a plugin's options
 ahpd plugin config <name> <key> <value>   set one of them

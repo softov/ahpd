@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { installPlugins, isPackageName, pinned, removePlugins, run as realRun, updatePlugins } from '../src/install.js';
+import { fittingVersion, installPlugins, isPackageName, pinned, removePlugins, run as realRun, updatePlugins } from '../src/install.js';
 import type { Ran, Runner } from '../src/install.js';
 import { registry } from '../src/update.js';
 import type { Fetch } from '../src/update.js';
@@ -59,8 +59,18 @@ const fake = (answers: Record<string, Ran> = {}, lands: Record<string, string> =
   return { runner, calls };
 };
 
-/** A registry that answers every version's manifest with an `ahpd` field. */
-const aPlugin: Fetch = async () => Response.json({ ahpd: { entry: './dist/index.js' } });
+/**
+ * A registry that has every name it is asked about, at one version, `0.1.0`,
+ * whose manifest carries an `ahpd` field and declares no `@ahpd/sdk` range, so
+ * every daemon is admitted. A path that names a version or a tag is that
+ * version's manifest; a path that is only a name is the package's metadata.
+ */
+const aPlugin: Fetch = async (url) => {
+  const path = String(url).slice(registry().length + 1);
+  return path.includes('/')
+    ? Response.json({ version: '0.1.0', ahpd: { entry: './dist/index.js' } })
+    : Response.json(packument(['0.1.0']));
+};
 
 /**
  * A registry with the manifests given, by the path after the registry's base:
@@ -80,6 +90,19 @@ const fakeRegistry = (answers: Record<string, object | 404 | Error>) => {
   return { fetch, asked };
 };
 
+/**
+ * A package's abbreviated metadata for `fakeRegistry`: each version written as
+ * `<version>` or `<version> <@ahpd/sdk peer range>`, and `latest` naming the
+ * version the publisher calls current, which is the last one given.
+ */
+const packument = (versions: string[], latest: string = versions.at(-1) as string): object => ({
+  'dist-tags': { latest },
+  versions: Object.fromEntries(versions.map((held) => {
+    const [version, range] = held.split(' ');
+    return [version as string, range === undefined ? {} : { peerDependencies: { '@ahpd/sdk': range } }];
+  })),
+});
+
 const said: string[] = [];
 const say = (line: string): void => { said.push(line); };
 
@@ -89,14 +112,89 @@ const write = (held: unknown): void => {
 };
 const read = (): Record<string, unknown> => JSON.parse(readFileSync(configFile, 'utf8')) as Record<string, unknown>;
 
-it('pins a plugin of this project to the daemon, and passes anything else as written', () => {
-  expect(pinned('@ahpd/agent-claude', '9.9.9')).toBe('@ahpd/agent-claude@9.9.9');
-  // The version or tag the writer chose is theirs, and an unknown version is
-  // left for npm's own `latest` rather than becoming `@unknown`.
-  expect(pinned('@ahpd/agent-claude@1', '9.9.9')).toBe('@ahpd/agent-claude@1');
-  expect(pinned('@ahpd/agent-claude', 'unknown')).toBe('@ahpd/agent-claude');
-  expect(pinned('left-pad@1', '9.9.9')).toBe('left-pad@1');
-  expect(pinned('@other/thing', '9.9.9')).toBe('@other/thing');
+it('pins the sdk to the daemon\'s version, which is the one name ahpd pins', () => {
+  // The daemon owns `@ahpd/sdk` and installs it beside every plugin, whatever
+  // range a plugin declares; a version or tag written on it is the writer's.
+  expect(pinned('@ahpd/sdk', '9.9.9')).toBe('@ahpd/sdk@9.9.9');
+  expect(pinned('@ahpd/sdk@1', '9.9.9')).toBe('@ahpd/sdk@1');
+  // An unknown version is left for npm's own `latest` rather than becoming
+  // `@unknown`.
+  expect(pinned('@ahpd/sdk', 'unknown')).toBe('@ahpd/sdk');
+});
+
+/*
+ * Choosing a plugin's version: what the package declares it works with decides
+ * it, not the version number it carries and not the daemon's own version.
+ */
+it('chooses the version whose sdk range admits this daemon', async () => {
+  const { fetch, asked } = fakeRegistry({ '@ahpd%2fweb': packument(['0.1.0 >=0.9']) });
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.1.0');
+  // One request, for the package's own metadata, at the registry's own path
+  // for a scoped name.
+  expect(asked).toEqual(['@ahpd%2fweb']);
+});
+
+it('asks for the abbreviated packument, not the whole one', async () => {
+  const accepts: string[] = [];
+  const fetch: Fetch = async (_url, init) => {
+    accepts.push((init?.headers as Record<string, string> | undefined)?.accept ?? '');
+    return Response.json(packument(['0.1.0 >=0.9']));
+  };
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.1.0');
+  expect(accepts).toEqual(['application/vnd.npm.install-v1+json']);
+});
+
+it('takes the newest version that admits the daemon, over one published ahead of it', async () => {
+  // The newest version asks for an sdk this daemon is not yet, so the newest
+  // one that does not is the one to install.
+  const { fetch } = fakeRegistry({ '@ahpd%2fweb': packument(['0.2.0 >=0.10', '0.3.0 >=0.11']) });
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.2.0');
+});
+
+it('never chooses a prerelease', async () => {
+  const { fetch } = fakeRegistry({ '@ahpd%2fweb': packument(['0.1.0 >=0.9', '0.2.0-beta.1 >=0.9']) });
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.1.0');
+});
+
+it('never chooses a version above the one the publisher calls latest', async () => {
+  // A publisher who moved `latest` back chose the newest version to install.
+  const { fetch } = fakeRegistry({ '@ahpd%2fweb': packument(['0.1.0 >=0.9', '0.3.0 >=0.9'], '0.1.0') });
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.1.0');
+});
+
+it('chooses a version that declares no sdk range, which the loader loads unchecked', async () => {
+  const { fetch } = fakeRegistry({ 'left-pad': packument(['1.3.0']) });
+  expect(await fittingVersion('left-pad', '0.10.0', { fetch })).toBe('1.3.0');
+});
+
+it('skips a version whose range this daemon cannot read, as the loader would refuse it', async () => {
+  const { fetch } = fakeRegistry({ '@ahpd%2fweb': packument(['0.2.0 ~>0.9', '0.1.0 >=0.9']) });
+  expect(await fittingVersion('@ahpd/web', '0.10.0', { fetch })).toBe('0.1.0');
+});
+
+it('chooses no version when the registry does not answer', async () => {
+  const { fetch, asked } = fakeRegistry({
+    'offline': new TypeError('fetch failed'),
+    'missing': 404,
+    'not-a-packument': { name: 'not-a-packument', 'dist-tags': { latest: '1.0.0' } },
+  });
+  expect(await fittingVersion('offline', '0.10.0', { fetch })).toBeUndefined();
+  expect(await fittingVersion('missing', '0.10.0', { fetch })).toBeUndefined();
+  expect(await fittingVersion('not-a-packument', '0.10.0', { fetch })).toBeUndefined();
+  expect(asked).toEqual(['offline', 'missing', 'not-a-packument']);
+});
+
+it('chooses no version when the daemon\'s own version is unknown, and asks nothing', async () => {
+  // Nothing can be compared against `unknown`, so npm's own `latest` decides.
+  const { fetch, asked } = fakeRegistry({ '@ahpd%2fweb': packument(['0.1.0 >=0.9']) });
+  expect(await fittingVersion('@ahpd/web', 'unknown', { fetch })).toBeUndefined();
+  expect(asked).toEqual([]);
+});
+
+it('refuses a package with no version that admits the daemon, naming the newest range', async () => {
+  const { fetch } = fakeRegistry({ '@ahpd%2fweb': packument(['0.2.0 >=0.11', '0.3.0 >=0.11']) });
+  await expect(fittingVersion('@ahpd/web', '0.10.0', { fetch }))
+    .rejects.toThrow('@ahpd/web has no version that admits @ahpd/sdk 0.10.0: its newest, 0.3.0, needs >=0.11.');
 });
 
 it('recognises the specs it can install and refuses the rest', () => {
@@ -126,7 +224,7 @@ it('installs into the configuration directory and names the packages there', asy
   // optional node-pty, which the daemon gets from its own global install.
   expect(install?.argv).toEqual([
     'install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@9.9.9',
-    '@ahpd/agent-claude@9.9.9', 'left-pad@1',
+    '@ahpd/agent-claude@0.1.0', 'left-pad@1',
   ]);
   // The list holds package names, which is what the loader resolves: a
   // version or tag belongs to the install and would read back as missing.
@@ -145,7 +243,7 @@ it('installs into the plugin root when the variable is set, and still configures
   });
 
   expect(calls.find((one) => one.argv[0] === 'install')?.argv)
-    .toEqual(['install', '--prefix', pluginRoot, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-cofold@0.8.0']);
+    .toEqual(['install', '--prefix', pluginRoot, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-cofold@0.1.0']);
   expect(existsSync(pluginRoot)).toBe(true);
   expect(said.join('\n')).toContain(pluginRoot);
   // The root moves where the packages land and nothing else: the configuration
@@ -278,7 +376,16 @@ const installed = (packages: Record<string, string>, dir: string = configDir): v
   }
 };
 
-it('updates every installed package in one npm call, this project\'s to the daemon and the rest to latest', async () => {
+/**
+ * A registry that holds one version of each package named, written as
+ * `<version> <@ahpd/sdk range>`; a package left out is one it does not have.
+ * That one version is the only one there is, so it is also `latest`.
+ */
+const registryHolding = (packages: Record<string, string>): Fetch => fakeRegistry(Object.fromEntries(
+  Object.entries(packages).map(([name, held]) => [name.replace('/', '%2f'), packument([held])]),
+)).fetch;
+
+it('updates every installed package in one npm call, each to the newest version that fits it', async () => {
   installed({
     '@ahpd/agent-acp': '0.7.0',
     '@ahpd/agent-claude': '0.7.0',
@@ -288,14 +395,25 @@ it('updates every installed package in one npm call, this project\'s to the daem
   });
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-acp': '0.8.0', 'left-pad': '1.3.0' });
-  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say,
+    fetch: registryHolding({
+      '@ahpd/agent-acp': '0.8.0 >=0.8',
+      '@ahpd/agent-claude': '0.8.0 >=0.8',
+      '@ahpd/agent-cofold': '0.8.0 >=0.8',
+      '@ahpd/computer': '0.8.0 >=0.8',
+      // A package outside this project is chosen by the same rule, its range
+      // included, and one that declares none is admitted as it is.
+      'left-pad': '1.3.0',
+    }),
+  });
 
   expect(calls).toEqual([{
     program: 'npm',
     argv: [
       'install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0',
       '@ahpd/agent-acp@0.8.0', '@ahpd/agent-claude@0.8.0', '@ahpd/agent-cofold@0.8.0', '@ahpd/computer@0.8.0',
-      'left-pad@latest',
+      'left-pad@1.3.0',
     ],
   }]);
   // Each move, from the version that was installed to the one npm left, and
@@ -305,20 +423,75 @@ it('updates every installed package in one npm call, this project\'s to the daem
   expect(said.filter((line) => line.startsWith('@ahpd/agent-claude:'))).toEqual([]);
 });
 
+it('moves a plugin published on its own schedule to the version its own range admits', async () => {
+  // The case this rule comes from: `@ahpd/web` is released on its own, at a
+  // version that asks for an sdk the daemon already is.
+  installed({ '@ahpd/web': '0.1.0', 'left-pad': '1.0.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/web': '0.2.0', 'left-pad': '1.3.0' });
+  expect(await updatePlugins('all', {
+    configDir, version: '0.10.0', run: runner, say,
+    fetch: registryHolding({ '@ahpd/web': '0.2.0 >=0.9', 'left-pad': '1.3.0' }),
+  })).toEqual([{ name: '@ahpd/web', from: '0.1.0', to: '0.2.0' }, { name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['left-pad@1.3.0']);
+  expect(calls[0]?.argv).toEqual([
+    'install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.10.0', '@ahpd/web@0.2.0', 'left-pad@1.3.0',
+  ]);
+});
+
+it('stops the update before npm runs when a package has no version that fits', async () => {
+  installed({ '@ahpd/web': '0.1.0', 'left-pad': '1.0.0' });
+  const { runner, calls } = fake();
+  await expect(updatePlugins('all', {
+    configDir, version: '0.10.0', run: runner, say,
+    fetch: registryHolding({ '@ahpd/web': '0.3.0 >=0.11', 'left-pad': '1.3.0' }),
+  })).rejects.toThrow('@ahpd/web has no version that admits @ahpd/sdk 0.10.0: its newest, 0.3.0, needs >=0.11.');
+  expect(calls).toEqual([]);
+});
+
+it('says a package with no version that fits, leaves it, and moves the others with --force', async () => {
+  installed({ '@ahpd/web': '0.1.0', 'left-pad': '1.0.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { 'left-pad': '1.3.0' });
+  expect(await updatePlugins('all', {
+    configDir, version: '0.10.0', run: runner, say, force: true,
+    fetch: registryHolding({ '@ahpd/web': '0.3.0 >=0.11', 'left-pad': '1.3.0' }),
+  })).toEqual([{ name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
+  expect(said).toEqual([
+    '@ahpd/web has no version that admits @ahpd/sdk 0.10.0: its newest, 0.3.0, needs >=0.11.',
+    'left-pad: 1.0.0 to 1.3.0',
+  ]);
+  // Only the package that can move is asked of npm.
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['left-pad@1.3.0']);
+});
+
+it('moves a package to latest when the registry cannot say which version fits', async () => {
+  installed({ 'left-pad': '1.0.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { 'left-pad': '1.3.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({}) }))
+    .toEqual([{ name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['left-pad@latest']);
+});
+
 it('runs no npm when nothing is installed', async () => {
   said.length = 0;
   const { runner, calls } = fake();
-  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  const { fetch, asked } = fakeRegistry({});
+  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, fetch });
   installed({});
-  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, fetch });
   expect(calls).toEqual([]);
+  expect(asked).toEqual([]);
   expect(said).toEqual([`No plugin is installed in ${configDir}.`, `No plugin is installed in ${configDir}.`]);
 });
 
 it('fails an update with npm\'s reason, once, and names --force', async () => {
   installed({ '@ahpd/agent-claude': '0.7.0' });
   const { runner } = fake({ install: { code: 1, stdout: '', stderr: 'E404 no such package' } });
-  const failed = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }).catch((error: unknown) => error as Error);
+  const failed = await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  }).catch((error: unknown) => error as Error);
   expect(failed).toBeInstanceOf(Error);
   // The packages move together or not at all, so the line says what failed and
   // the flag that moves only the ones npm can install.
@@ -332,14 +505,20 @@ it('moves the others, and names the one npm cannot install, with --force', async
     { '@ahpd/agent-acme@0.8.0': { code: 1, stdout: '', stderr: 'E404 no such package' } },
     { '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' },
   );
-  const failed = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, force: true })
-    .catch((error: unknown) => error as Error);
+  const failed = await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, force: true,
+    fetch: registryHolding({
+      '@ahpd/agent-acme': '0.8.0 >=0.8',
+      '@ahpd/agent-claude': '0.8.0 >=0.8',
+      'left-pad': '1.3.0',
+    }),
+  }).catch((error: unknown) => error as Error);
   // One npm call each, so the one npm cannot install is the only one left
   // where it was, and the rest moved and were said.
   expect(calls.map((one) => one.argv)).toEqual([
     ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-acme@0.8.0'],
     ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
-    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', 'left-pad@latest'],
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', 'left-pad@1.3.0'],
   ]);
   expect(said).toEqual(['@ahpd/agent-claude: 0.7.0 to 0.8.0', 'left-pad: 1.0.0 to 1.3.0']);
   expect((failed as Error).message).toBe('npm could not update @ahpd/agent-acme: E404 no such package');
@@ -349,9 +528,11 @@ it('moves every package in its own npm call with --force, and fails none of them
   installed({ '@ahpd/agent-claude': '0.7.0', 'left-pad': '1.0.0' });
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' });
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, force: true }))
-    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }, { name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
-  expect(calls.map((one) => one.argv.at(-1))).toEqual(['@ahpd/agent-claude@0.8.0', 'left-pad@latest']);
+  expect(await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, force: true,
+    fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8', 'left-pad': '1.3.0' }),
+  })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }, { name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['@ahpd/agent-claude@0.8.0', 'left-pad@1.3.0']);
 });
 
 it('leaves a package installed from outside the registry as it is, and says so', async () => {
@@ -369,7 +550,9 @@ it('leaves a package installed from outside the registry as it is, and says so',
   writeFileSync(join(configDir, 'package.json'), JSON.stringify({ dependencies }));
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
-  const moved = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say });
+  const moved = await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  });
   expect(calls.map((one) => one.argv)).toEqual([['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0']]);
   expect(moved).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
   for (const [name, spec] of Object.entries(dependencies).slice(1)) {
@@ -382,7 +565,7 @@ it('runs no npm when every package came from outside the registry, and says ther
   writeFileSync(join(configDir, 'package.json'), JSON.stringify({ dependencies: { mine: 'file:../mine' } }));
   said.length = 0;
   const { runner, calls } = fake();
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({}) })).toEqual([]);
   expect(calls).toEqual([]);
   expect(said).toEqual(['mine: file:../mine, left as installed', 'Nothing to update.']);
 });
@@ -394,8 +577,9 @@ it('reports an sdk the update moved while no plugin did', async () => {
   installed({ '@ahpd/agent-claude': '0.8.0', '@ahpd/sdk': '0.7.0' });
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/sdk': '0.8.0' });
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }))
-    .toEqual([{ name: '@ahpd/sdk', from: '0.7.0', to: '0.8.0' }]);
+  expect(await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  })).toEqual([{ name: '@ahpd/sdk', from: '0.7.0', to: '0.8.0' }]);
   expect(calls).toHaveLength(1);
   expect(said).toEqual(['@ahpd/sdk: 0.7.0 to 0.8.0']);
 });
@@ -406,8 +590,9 @@ it('updates from the plugin root when the variable is set', async () => {
   installed({ '@ahpd/agent-claude': '0.7.0' }, pluginRoot);
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }))
-    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
   expect(calls.map((one) => one.argv)).toEqual([
     ['install', '--prefix', pluginRoot, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
   ]);
@@ -419,7 +604,7 @@ it('names the plugin root, not the configuration directory, when a name is not i
   process.env.AHPD_PLUGIN_ROOT = pluginRoot;
   installed({ '@ahpd/agent-claude': '0.8.0' }, pluginRoot);
   const { runner, calls } = fake();
-  await expect(updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say }))
+  await expect(updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({}) }))
     .rejects.toThrow(`left-pad is not installed in ${pluginRoot}`);
   expect(calls).toEqual([]);
 });
@@ -451,7 +636,9 @@ it('asks the registry about every name at once, before any of them answers', asy
     return Response.json({ ahpd: {} });
   };
   await installPlugins(['one', 'two', 'three'], { configDir, configFile, version: '0.8.0', enable: false, run: runner, fetch, say });
-  expect(asked).toEqual(['one/latest', 'two/latest', 'three/latest']);
+  // Each name's own metadata is asked for, and then the manifest of the
+  // version it named, which here is `latest` because that answer held none.
+  expect(asked).toEqual(['one', 'two', 'three', 'one/latest', 'two/latest', 'three/latest']);
   expect(atOnce).toBe(3);
   expect(calls).toHaveLength(1);
 });
@@ -464,8 +651,9 @@ it('updates only the packages it is named', async () => {
   });
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
-  expect(await updatePlugins(['@ahpd/agent-claude'], { configDir, version: '0.8.0', run: runner, say }))
-    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(await updatePlugins(['@ahpd/agent-claude'], {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
   expect(calls.map((one) => one.argv)).toEqual([['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0']]);
   expect(said).toEqual(['@ahpd/agent-claude: 0.7.0 to 0.8.0']);
 });
@@ -473,7 +661,7 @@ it('updates only the packages it is named', async () => {
 it('refuses to update a name that is not installed, before npm runs', async () => {
   installed({ '@ahpd/agent-claude': '0.7.0' });
   const { runner, calls } = fake();
-  await expect(updatePlugins(['@ahpd/agent-claude', 'left-pad'], { configDir, version: '0.8.0', run: runner, say }))
+  await expect(updatePlugins(['@ahpd/agent-claude', 'left-pad'], { configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({}) }))
     .rejects.toThrow(`left-pad is not installed in ${configDir}`);
   expect(calls).toEqual([]);
 });
@@ -482,7 +670,9 @@ it('updates a named plugin beside another on an older minor, with the daemon\'s 
   installed({ '@ahpd/agent-acp': '0.7.0', '@ahpd/agent-claude': '0.7.0', '@ahpd/sdk': '0.7.0' });
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-acp': '0.8.0' });
-  expect(await updatePlugins(['@ahpd/agent-acp'], { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: '@ahpd/agent-acp', from: '0.7.0', to: '0.8.0' }]);
+  expect(await updatePlugins(['@ahpd/agent-acp'], {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-acp': '0.8.0 >=0.8' }),
+  })).toEqual([{ name: '@ahpd/agent-acp', from: '0.7.0', to: '0.8.0' }]);
   expect(calls.map((one) => one.argv)).toEqual([
     ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-acp@0.8.0'],
   ]);
@@ -496,7 +686,9 @@ it('moves the sdk with update all without calling it a plugin', async () => {
   }));
   said.length = 0;
   const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0' });
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
+  expect(await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8' }),
+  })).toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }]);
   expect(calls.map((one) => one.argv)).toEqual([
     ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
   ]);
@@ -507,11 +699,15 @@ it('names the sdk unpinned when the daemon\'s version is unknown', async () => {
   installed({ '@ahpd/agent-claude': '0.7.0' });
   const { runner, calls } = fake();
   await installPlugins(['left-pad'], { configDir, configFile, version: 'unknown', enable: false, run: runner, fetch: aPlugin, say });
-  await updatePlugins('all', { configDir, version: 'unknown', run: runner, say });
+  await updatePlugins('all', { configDir, version: 'unknown', run: runner, say, fetch: registryHolding({}) });
   expect(calls.map((one) => one.argv.slice(3, 5))).toEqual([
     ['--legacy-peer-deps', '@ahpd/sdk'],
     ['--legacy-peer-deps', '@ahpd/sdk'],
   ]);
+  // No range can be compared against `unknown`, so nothing is chosen and npm
+  // resolves the name itself: an install passes it as written, and an update
+  // asks for `latest`.
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['left-pad', '@ahpd/agent-claude@latest']);
 });
 
 it('refuses to install or update the sdk by name, before npm runs', async () => {
@@ -520,7 +716,7 @@ it('refuses to install or update the sdk by name, before npm runs', async () => 
   const refusal = "@ahpd/sdk is not a plugin: ahpd installs it at the daemon's version with every install and update.";
   await expect(installPlugins(['@ahpd/sdk'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch: aPlugin, say })).rejects.toThrow(refusal);
   await expect(installPlugins(['left-pad', '@ahpd/sdk@0.7.0'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch: aPlugin, say })).rejects.toThrow(refusal);
-  await expect(updatePlugins(['@ahpd/sdk'], { configDir, version: '0.8.0', run: runner, say })).rejects.toThrow(refusal);
+  await expect(updatePlugins(['@ahpd/sdk'], { configDir, version: '0.8.0', run: runner, say, fetch: registryHolding({}) })).rejects.toThrow(refusal);
   expect(calls).toEqual([]);
 });
 
@@ -537,26 +733,31 @@ it('never uninstalls the sdk', async () => {
 it('refuses a registry package with no ahpd field before npm runs, asking at the version it would install', async () => {
   const { runner, calls } = fake();
   const { fetch, asked } = fakeRegistry({
+    '@ahpd%2fagent-claude': packument(['0.8.0 >=0.8']),
     '@ahpd%2fagent-claude/0.8.0': { name: '@ahpd/agent-claude', version: '0.8.0', ahpd: { entry: './dist/index.js' } },
     '@softov%2fahpc/latest': { name: '@softov/ahpc', version: '0.3.0', bin: { ahpc: './dist/main.js' } },
   });
   await expect(installPlugins(['@ahpd/agent-claude', '@softov/ahpc'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch, say }))
     .rejects.toThrow('@softov/ahpc is not an ahpd plugin: its package.json has no "ahpd" field.');
   expect(calls).toEqual([]);
-  expect(asked).toEqual(['@ahpd%2fagent-claude/0.8.0', '@softov%2fahpc/latest']);
+  expect(asked).toEqual(['@ahpd%2fagent-claude', '@softov%2fahpc', '@softov%2fahpc/latest', '@ahpd%2fagent-claude/0.8.0']);
   expect(existsSync(configFile)).toBe(false);
 });
 
-it('installs a package whose manifest has an ahpd field, asked at the version or tag written', async () => {
+it('installs a package whose manifest has an ahpd field, asked at the version chosen or written', async () => {
   const { runner, calls } = fake();
   const { fetch, asked } = fakeRegistry({
-    '@ahpd%2fagent-claude/0.8.0': { ahpd: { entry: './dist/index.js' } },
+    '@ahpd%2fagent-claude': packument(['0.1.0 >=0.8']),
+    '@ahpd%2fagent-claude/0.1.0': { ahpd: { entry: './dist/index.js' } },
     'mine/1.2.0': { ahpd: {} },
     '@acme%2fagent-mine/next': { ahpd: {} },
   });
   await installPlugins(['@ahpd/agent-claude', 'mine@1.2.0', '@acme/agent-mine@next'], { configDir, configFile, version: '0.8.0', enable: true, run: runner, fetch, say });
-  expect(asked).toEqual(['@ahpd%2fagent-claude/0.8.0', 'mine/1.2.0', '@acme%2fagent-mine/next']);
+  expect(asked).toEqual(['@ahpd%2fagent-claude', 'mine/1.2.0', '@acme%2fagent-mine/next', '@ahpd%2fagent-claude/0.1.0']);
   expect(calls).toHaveLength(1);
+  // The bare name is installed at the version its own range admits; a version
+  // and a tag the writer named go to npm as written.
+  expect(calls[0]?.argv.slice(-3)).toEqual(['@ahpd/agent-claude@0.1.0', 'mine@1.2.0', '@acme/agent-mine@next']);
   expect(read().plugins).toEqual(['@ahpd/agent-claude', 'mine', '@acme/agent-mine']);
 });
 
@@ -575,7 +776,7 @@ it('leaves the install to npm when the registry cannot be asked or has no such v
   const { runner, calls } = fake();
   const { fetch, asked } = fakeRegistry({ 'offline/latest': new TypeError('fetch failed'), 'missing/latest': 404 });
   await installPlugins(['offline', 'missing'], { configDir, configFile, version: '0.8.0', enable: false, run: runner, fetch, say });
-  expect(asked).toEqual(['offline/latest', 'missing/latest']);
+  expect(asked).toEqual(['offline', 'missing', 'offline/latest', 'missing/latest']);
   expect(calls.map((one) => one.argv.slice(-2))).toEqual([['offline', 'missing']]);
 });
 
@@ -583,7 +784,10 @@ it('says each update from the version on disk before npm to the one on disk afte
   installed({ '@ahpd/agent-acp': '0.8.0', 'left-pad': '0.6.0' });
   said.length = 0;
   const { runner } = fake({}, { 'left-pad': '0.7.1' });
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([{ name: 'left-pad', from: '0.6.0', to: '0.7.1' }]);
+  expect(await updatePlugins('all', {
+    configDir, version: '0.8.0', run: runner, say,
+    fetch: registryHolding({ '@ahpd/agent-acp': '0.8.0 >=0.8', 'left-pad': '0.7.1' }),
+  })).toEqual([{ name: 'left-pad', from: '0.6.0', to: '0.7.1' }]);
   expect(said).toEqual(['left-pad: 0.6.0 to 0.7.1']);
 });
 
@@ -591,10 +795,11 @@ it('says there was nothing to update when npm moved no version', async () => {
   installed({ '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' });
   said.length = 0;
   const { runner, calls } = fake();
-  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  const fetch = registryHolding({ '@ahpd/agent-claude': '0.8.0 >=0.8', 'left-pad': '1.3.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, fetch })).toEqual([]);
   expect(calls).toHaveLength(1);
   expect(said).toEqual(['Nothing to update.']);
   said.length = 0;
-  expect(await updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say })).toEqual([]);
+  expect(await updatePlugins(['left-pad'], { configDir, version: '0.8.0', run: runner, say, fetch })).toEqual([]);
   expect(said).toEqual(['Nothing to update.']);
 });

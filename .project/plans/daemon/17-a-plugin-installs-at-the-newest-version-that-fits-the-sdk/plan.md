@@ -76,10 +76,10 @@ No decision file: every row below is Softov's answer or a choice anyone would ma
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The version that fits the daemon's sdk is chosen from the registry](task-01-the-version-that-fits-is-chosen.md) | todo | - |
-| [02 - Install asks npm for the version that fits](task-02-install-asks-for-the-version-that-fits.md) | todo | 01 |
-| [03 - Update moves every plugin to the version that fits](task-03-update-moves-to-the-version-that-fits.md) | todo | 01 |
-| [04 - The docs say a plugin installs at the version that fits](task-04-docs.md) | todo | 02, 03 |
+| [01 - The version that fits the daemon's sdk is chosen from the registry](task-01-the-version-that-fits-is-chosen.md) | implemented | - |
+| [02 - Install asks npm for the version that fits](task-02-install-asks-for-the-version-that-fits.md) | implemented | 01 |
+| [03 - Update moves every plugin to the version that fits](task-03-update-moves-to-the-version-that-fits.md) | implemented | 01 |
+| [04 - The docs say a plugin installs at the version that fits](task-04-docs.md) | implemented | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -88,15 +88,15 @@ No decision file: every row below is Softov's answer or a choice anyone would ma
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-version-that-fits-is-chosen.md](task-01-the-version-that-fits-is-chosen.md).
+- **Done so far:** every task, 01 to 04. `fittingVersion` chooses a registry package's version from its `@ahpd/sdk` peer range; install and update use it; the docs say the rule.
+- **Next action:** none. The work is built and the gates pass; no commit was made.
 - **Open questions:** none.
-- **Watch out for:** `daemonsSdk` uses `pinned` for `@ahpd/sdk`; that pin is correct and stays.
+- **Watch out for:** `daemonsSdk` still uses `pinned` for `@ahpd/sdk`; that pin is correct and stays. `commands/configure.ts` installs its backends through `installPlugins`, so it follows the same rule, and `packages/server/test/server-configure.test.ts` now holds a packument for `@ahpd/agent-claude`.
 
 ## Final verification checklist
 
-- [ ] With a fake registry holding `@ahpd/web` `0.1.0` with `@ahpd/sdk: >=0.9`, `ahpd plugin install @ahpd/web` on daemon `0.10.0` runs npm with `@ahpd/web@0.1.0`.
-- [ ] A package whose newest version asks `>=0.11` installs the newest older version that admits `0.10.0`.
-- [ ] A package with no version that admits the daemon is refused before npm runs.
-- [ ] `ahpd plugin update all` moves a plugin that is not `@ahpd/*` by the same rule.
-- [ ] `plans/index.md` updated.
+- [x] With a fake registry holding `@ahpd/web` `0.1.0` with `@ahpd/sdk: >=0.9`, `ahpd plugin install @ahpd/web` on daemon `0.10.0` runs npm with `@ahpd/web@0.1.0`.
+- [x] A package whose newest version asks `>=0.11` installs the newest older version that admits `0.10.0`.
+- [x] A package with no version that admits the daemon is refused before npm runs.
+- [x] `ahpd plugin update all` moves a plugin that is not `@ahpd/*` by the same rule.
+- [x] `plans/index.md` updated.

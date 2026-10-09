@@ -1,6 +1,6 @@
 ---
 title: Update moves every plugin to the version that fits
-status: todo
+status: implemented
 depends: [task-01-the-version-that-fits-is-chosen.md]
 layer: "server"
 refs:
@@ -36,4 +36,6 @@ refs:
 - `npx vitest run packages/server/test/plugin-install.test.ts` passes.
 
 ## Resume
+
+Built. `updatePlugins` plans every moving package at once with `fittingVersion` (from step 2 that is `<name>@<version>`, or `<name>@latest` when it answered `undefined`); a name carrying a version or a tag is kept as written; a package with no fit throws the refusal before npm runs, and with `--force` the refusal is said, that package is left where it is and the others move. `UpdateOptions` takes the `fetch` the registry is asked with, and the command passes the global one. `plugin update`'s summary and description now say the version that fits this daemon. Two existing update cases were corrected to the chosen versions and five added: the newest that fits, the newer one a plugin published on its own, no fit stopping the update, `--force` moving the others, and `latest` when the registry cannot say.
 

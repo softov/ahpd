@@ -57,7 +57,7 @@ export interface ConfigureOptions {
   configDir: string;
   /** The configuration file this reads, asks against and writes. */
   configFile: string;
-  /** The daemon's own version, which an `@ahpd/` package without one is pinned to. */
+  /** The daemon's own version, which a plugin's `@ahpd/sdk` range is checked against, and which the sdk is installed at. */
   version: string;
   /** The terminal the questions are asked on. */
   term: Term;

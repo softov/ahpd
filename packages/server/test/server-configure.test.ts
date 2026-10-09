@@ -57,8 +57,18 @@ const run: Runner = async (program, argv) => {
   calls.push({ program, argv: [...argv] });
   return { code: 0, stdout: '', stderr: '' } satisfies Ran;
 };
-/** A registry that says every version asked for is a plugin. */
-const fetch: Fetch = async () => Response.json({ ahpd: { entry: './dist/index.js' } });
+/**
+ * A registry holding one version of `@ahpd/agent-claude`, whose `@ahpd/sdk`
+ * peer range admits this daemon's `0.8.0`; any other path is answered as the
+ * manifest of a version that is a plugin.
+ */
+const packument = {
+  versions: { '0.8.0': { peerDependencies: { '@ahpd/sdk': '>=0.8' } } },
+  'dist-tags': { latest: '0.8.0' },
+};
+const fetch: Fetch = async (url) => Response.json(
+  String(url).endsWith('@ahpd%2fagent-claude') ? packument : { ahpd: { entry: './dist/index.js' } },
+);
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'ahpd-configure-'));

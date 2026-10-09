@@ -1,6 +1,6 @@
 ---
 title: The version that fits the daemon's sdk is chosen from the registry
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -44,4 +44,6 @@ It answers `undefined` when the registry cannot be asked, and a refusal when no 
 - `npx vitest run packages/server/test/plugin-install.test.ts` passes.
 
 ## Resume
+
+Built. `askRegistry` takes an optional `accept` (its `fetch` option reads `Fetch | undefined`, so a caller can forward an optional fetcher under `exactOptionalPropertyTypes`); `fittingVersion(name, daemonVersion, { fetch })` asks `<name>` for the abbreviated packument, keeps every non-prerelease version at or below `dist-tags.latest` whose `peerDependencies["@ahpd/sdk"]` is absent or admitted by `satisfies`, skips a version whose range `satisfies` throws on, answers the newest kept, answers `undefined` when the registry does not answer or the daemon's version is `unknown`, and throws naming the newest version's range and the daemon's version when none is kept. `pinned` stays, for `@ahpd/sdk` only. Eleven cases in `plugin-install.test.ts` cover steps 3 to 8, including the `accept` header asked for and that nothing is asked when the daemon's version is `unknown`.
 

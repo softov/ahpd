@@ -73,14 +73,16 @@ export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 /**
  * One GET against the registry, answered as parsed JSON, or nothing.
  *
- * `path` follows the registry's base and is sent as written. Every failure is
- * the same nothing: offline, a timeout, an answer that is not `ok`, and a body
+ * `path` follows the registry's base and is sent as written. `accept` is the
+ * representation asked for, `application/json` by default, which a caller
+ * wanting a package's whole metadata names differently. Every failure is the
+ * same nothing: offline, a timeout, an answer that is not `ok`, and a body
  * that is not JSON.
  */
-export async function askRegistry(path: string, options: { registry?: string; timeoutMs?: number; fetch?: Fetch } = {}): Promise<unknown> {
+export async function askRegistry(path: string, options: { registry?: string; timeoutMs?: number; fetch?: Fetch | undefined; accept?: string } = {}): Promise<unknown> {
   try {
     const answer = await (options.fetch ?? fetch)(`${options.registry ?? registry()}/${path}`, {
-      headers: { accept: 'application/json' },
+      headers: { accept: options.accept ?? 'application/json' },
       signal: AbortSignal.timeout(options.timeoutMs ?? 5000),
     });
     if (!answer.ok) return undefined;

@@ -4,8 +4,8 @@
  * A plugin is an installed package: a bare name is resolved from the
  * configuration directory's own `node_modules`, so installing one is `npm
  * install` *there* and enabling it is naming it in `plugins`. This file is the
- * whole of that, kept apart from `main.ts` so the argument list, the pinning
- * and the edit can be tested without a terminal, a registry or a daemon.
+ * whole of that, kept apart from `main.ts` so the argument list, the version
+ * choice and the edit can be tested without a terminal, a registry or a daemon.
  *
  * The configuration file is read and written as the object it is rather than
  * through `loadConfig`, because this is the first thing in this daemon that
@@ -25,7 +25,8 @@ import { readJsonObject, writeJsonAtomic } from '@ahpd/sdk';
 import type { PluginSpec } from '@ahpd/sdk';
 import { asSpec } from './config.js';
 import { hasScheme, nameOf } from './plugins.js';
-import { askRegistry } from './update.js';
+import { satisfies } from './compat.js';
+import { askRegistry, newer, parse } from './update.js';
 import type { Fetch } from './update.js';
 
 /** What one run of a program left behind. */
@@ -109,17 +110,102 @@ export const isPackageName = (spec: PluginSpec): boolean => {
 /**
  * One name as npm should be given it.
  *
- * A plugin of this project's own is pinned to the daemon's version, because a
- * `@ahpd/*` package published later is a different protocol and the loader's
- * peer range would refuse it after the install had already happened. Any other
- * name, and a name that already carries a version or a tag, is passed as it
- * was written.
+ * `@ahpd/sdk` is pinned to the daemon's version, because the daemon is the one
+ * that owns the sdk and installs it beside every plugin. Any other name, and a
+ * name that already carries a version or a tag, is passed as it was written.
  */
 export const pinned = (name: string, daemonVersion: string): string => {
   if (!name.startsWith('@ahpd/') || daemonVersion === 'unknown') return name;
   // A second `@` is the version or tag the writer chose, and scoped names
   // start with one, so the search starts after the first character.
   return name.indexOf('@', 1) === -1 ? `${name}@${daemonVersion}` : name;
+};
+
+/** The registry's abbreviated packument: its `dist-tags` and each version's `peerDependencies`. */
+const ABBREVIATED = 'application/vnd.npm.install-v1+json';
+
+/** What choosing a version was given. */
+export interface VersionOptions {
+  /** How the registry is asked; absent, or undefined, is the global `fetch`. */
+  fetch?: Fetch | undefined;
+}
+
+/** A packument's `versions`, or nothing when the answer is not one. */
+const versionsIn = (packument: unknown): Record<string, unknown> | undefined => {
+  if (typeof packument !== 'object' || packument === null) return undefined;
+  const versions = (packument as Record<string, unknown>).versions;
+  if (typeof versions !== 'object' || versions === null || Array.isArray(versions)) return undefined;
+  return versions as Record<string, unknown>;
+};
+
+/** The `dist-tags.latest` a packument names, which is the version the publisher called current. */
+const latestIn = (packument: unknown): string | undefined => {
+  const tags = typeof packument === 'object' && packument !== null
+    ? (packument as Record<string, unknown>)['dist-tags']
+    : undefined;
+  if (typeof tags !== 'object' || tags === null || Array.isArray(tags)) return undefined;
+  const latest = (tags as Record<string, unknown>).latest;
+  return typeof latest === 'string' ? latest : undefined;
+};
+
+/** The `@ahpd/sdk` peer range one version declares, or nothing when it declares none. */
+const sdkRangeOf = (manifest: unknown): string | undefined => {
+  const peers = typeof manifest === 'object' && manifest !== null
+    ? (manifest as Record<string, unknown>).peerDependencies
+    : undefined;
+  if (typeof peers !== 'object' || peers === null || Array.isArray(peers)) return undefined;
+  const range = (peers as Record<string, unknown>)[SDK];
+  return typeof range === 'string' ? range : undefined;
+};
+
+/** Why no version of a package can be installed, naming the newest one's range. */
+const noFit = (name: string, newest: { version: string; range: string } | undefined, daemonVersion: string): string =>
+  newest === undefined
+    ? `${name} has no version that admits @ahpd/sdk ${daemonVersion}.`
+    : `${name} has no version that admits @ahpd/sdk ${daemonVersion}: its newest, ${newest.version}, needs ${newest.range}.`;
+
+/**
+ * The newest version of a registry package that this daemon can load.
+ *
+ * A plugin is released on its own schedule, so the version it carries says
+ * nothing about which daemon it works with; what it declares is
+ * `peerDependencies["@ahpd/sdk"]`, the range the loader checks at the next
+ * start. The answer is the newest version whose range admits `daemonVersion`,
+ * never above `dist-tags.latest` and never a prerelease: a package published
+ * ahead of this daemon is not installed at a version its publisher had not
+ * called current, and a `-beta` is installed only when somebody names it.
+ *
+ * `undefined` is "no version chosen", and the name then goes to npm as written:
+ * the registry did not answer, the answer was not a packument, or the daemon's
+ * own version is `unknown`, which no range can be compared against. When the
+ * registry did answer and no version admits the daemon, this refuses, because
+ * the loader would refuse such a plugin at the next start.
+ */
+export const fittingVersion = async (name: string, daemonVersion: string, options: VersionOptions = {}): Promise<string | undefined> => {
+  if (daemonVersion === 'unknown') return undefined;
+  const packument = await askRegistry(name.replace('/', '%2f'), { fetch: options.fetch, accept: ABBREVIATED });
+  const versions = versionsIn(packument);
+  if (versions === undefined) return undefined;
+  const latest = latestIn(packument);
+  /** The newest version considered, kept for the refusal below, which names its range. */
+  let newest: { version: string; range: string } | undefined;
+  const fits: string[] = [];
+  for (const [version, manifest] of Object.entries(versions)) {
+    const read = parse(version);
+    if (read === undefined || read.prerelease) continue;
+    if (latest !== undefined && newer(version, latest)) continue;
+    const range = sdkRangeOf(manifest);
+    if (range !== undefined && (newest === undefined || newer(version, newest.version))) newest = { version, range };
+    // No range is a plugin that declares nothing to check, which is one the
+    // loader loads; a range this daemon cannot read is one it would refuse.
+    if (range === undefined) { fits.push(version); continue; }
+    try {
+      if (satisfies(daemonVersion, range)) fits.push(version);
+    }
+    catch { /* refused at the next start, so not installed now */ }
+  }
+  if (fits.length === 0) throw new Error(noFit(name, newest, daemonVersion));
+  return fits.reduce((best, one) => (newer(one, best) ? one : best));
 };
 
 /**
@@ -375,7 +461,7 @@ export interface InstallOptions {
   configDir: string;
   /** The configuration file `plugins` is edited in. */
   configFile: string;
-  /** The daemon's own version, which an `@ahpd/` name without one is pinned to. */
+  /** The daemon's own version, which a plugin's `@ahpd/sdk` range is checked against. */
   version: string;
   /** Whether to name the packages in `plugins`; false is `--no-enable`. */
   enable: boolean;
@@ -391,25 +477,36 @@ export interface InstallOptions {
 const REGISTRY_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
 
 /**
- * Refuse a registry package whose manifest has no `ahpd` field, at the version
- * `install` would ask npm for: an `@ahpd/` name at the daemon's version, any
- * other at the version or tag written, or `latest`.
+ * One name per name asked for, as npm should be given it, refusing a registry
+ * package whose manifest has no `ahpd` field.
  *
+ * A bare registry name has its version chosen by what the package declares it
+ * works with: `fittingVersion` reads the registry's own metadata and answers
+ * the newest version whose `@ahpd/sdk` peer range admits this daemon. A name
+ * that already carries a version or a tag is passed as written, because the
+ * writer chose it, and a name the registry cannot be asked for, or one asked
+ * for an `unknown` daemon version, goes as written too and npm's own `latest`
+ * decides.
+ *
+ * A plugin with no version that admits this daemon is refused here, before npm
+ * runs, so nothing is installed that the loader would refuse at the next start.
  * A registry that does not answer, or has no such version, is npm's to report.
  * Every name is asked at once, so three names are three requests and not one
  * request three times over.
  */
-const refuseNonPlugins = async (names: readonly string[], options: InstallOptions): Promise<void> => {
-  await Promise.all(names.map(async (name) => {
+const refuseNonPlugins = async (names: readonly string[], options: InstallOptions): Promise<string[]> => {
+  return Promise.all(names.map(async (name) => {
     const bare = packageOf(name);
-    if (!REGISTRY_NAME.test(bare)) return;
-    const target = pinned(name, options.version);
+    if (!REGISTRY_NAME.test(bare)) return name;
+    const chosen = name === bare ? await fittingVersion(bare, options.version, { fetch: options.fetch }) : undefined;
+    const target = chosen === undefined ? name : `${bare}@${chosen}`;
     const tag = target === bare ? 'latest' : target.slice(bare.length + 1);
     const manifest = await askRegistry(`${bare.replace('/', '%2f')}/${encodeURIComponent(tag)}`, { fetch: options.fetch });
-    if (manifest === undefined) return;
+    if (manifest === undefined) return target;
     if (typeof manifest !== 'object' || manifest === null || !('ahpd' in manifest)) {
       throw new Error(`${bare} is not an ahpd plugin: its package.json has no "ahpd" field.`);
     }
+    return target;
   }));
 };
 
@@ -419,7 +516,8 @@ const refuseNonPlugins = async (names: readonly string[], options: InstallOption
  * npm does the install, in the configuration directory, because that is the
  * directory a bare name resolves from and a global install is invisible to
  * it. A registry package is refused first when its manifest has no `ahpd`
- * field; nothing is loaded here, so whether the plugin works is what the next
+ * field, and a bare name is installed at the newest version that admits this
+ * daemon; nothing is loaded here, so whether the plugin works is what the next
  * `ahpd plugin list` or the next run says.
  *
  * No `--allow-scripts` here, and that is a finding rather than an omission:
@@ -438,8 +536,7 @@ export async function installPlugins(names: readonly string[], options: InstallO
     }
     if (packageOf(name) === SDK) throw new Error(SDK_IS_NOT_A_PLUGIN);
   }
-  await refuseNonPlugins(names, options);
-  const wanted = names.map((name) => pinned(name, options.version));
+  const wanted = await refuseNonPlugins(names, options);
   const root = pluginRoot(options.configDir);
   // The config dir is made either way: the packages may go elsewhere, but
   // `--enable` still writes the daemon's own configuration there.
@@ -465,10 +562,12 @@ export async function installPlugins(names: readonly string[], options: InstallO
 export interface UpdateOptions {
   /** The configuration directory, which is the plugin root when `AHPD_PLUGIN_ROOT` is unset. */
   configDir: string;
-  /** The daemon's own version, which every `@ahpd/` package is moved to. */
+  /** The daemon's own version, which each plugin's `@ahpd/sdk` range is checked against. */
   version: string;
   /** How npm is run. */
   run: Runner;
+  /** How the registry is asked which version of a package this daemon can load. */
+  fetch: Fetch;
   /** One line of this command's own output. */
   say(line: string): void;
   /**
@@ -489,14 +588,17 @@ export interface Moved {
  * Move the packages installed in the plugin root, in one npm call: every one
  * for `all`, or only those named, each of which must be installed there.
  *
- * An `@ahpd/` package goes to the daemon's version, as `pinned` pins it; any
- * other goes to `latest`, and a name that carries a version or a tag is passed
- * as written. A package installed from outside the registry is left as it is.
- * `config.json` is not touched. Says each package whose installed version
- * changed, from the version before npm to the one npm left, or `Nothing to
- * update.` when none did, and answers those packages. The sdk is installed
- * beside them by every call, so a version of it that changed is answered as
- * moved too, though it is no plugin to name.
+ * Each package goes to the newest of its own versions whose `@ahpd/sdk` range
+ * admits this daemon, `@ahpd/*` or not, or to `latest` when the registry cannot
+ * be asked; a name that carries a version or a tag is passed as written. A
+ * package with no version that admits this daemon cannot be installed at all,
+ * so it ends the update before npm runs, or with `force` is said and left where
+ * it is while the others move. A package installed from outside the registry is
+ * left as it is. `config.json` is not touched. Says each package whose
+ * installed version changed, from the version before npm to the one npm left,
+ * or `Nothing to update.` when none did, and answers those packages. The sdk is
+ * installed beside them by every call, so a version of it that changed is
+ * answered as moved too, though it is no plugin to name.
  *
  * One call makes npm resolve the packages against each other, so one it cannot
  * install fails every move in it, and that failure names `--force`. With
@@ -530,35 +632,56 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
     options.say('Nothing to update.');
     return [];
   }
-  const targets = moving.map((name) => {
-    if (name !== packageOf(name)) return name;
-    return name.startsWith('@ahpd/') ? pinned(name, options.version) : `${name}@latest`;
-  });
-  const from = moving.map((name) => installedVersion(root, packageOf(name)));
+  /*
+   * What each package moving is asked of npm, all of them at once. A package
+   * whose registry holds no version this daemon can load has nothing to be
+   * installed at, and is answered as the same refusal an install gives.
+   */
+  const planned = await Promise.all(moving.map(async (name): Promise<{ name: string; target: string } | { name: string; why: string }> => {
+    if (name !== packageOf(name)) return { name, target: name };
+    try {
+      const version = await fittingVersion(name, options.version, { fetch: options.fetch });
+      return { name, target: version === undefined ? `${name}@latest` : `${name}@${version}` };
+    }
+    catch (error) {
+      return { name, why: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+  const unfit = planned.filter((one): one is { name: string; why: string } => 'why' in one);
+  const first = unfit[0];
+  if (first !== undefined && options.force !== true) throw new Error(first.why);
+  for (const one of unfit) options.say(one.why);
+  const kept = planned.filter((one): one is { name: string; target: string } => 'target' in one);
+  if (kept.length === 0) {
+    options.say('Nothing to update.');
+    return [];
+  }
+  const targets = kept.map((one) => one.target);
+  const from = kept.map((one) => installedVersion(root, packageOf(one.name)));
   const sdkFrom = installedVersion(root, SDK);
   const refused: string[] = [];
   let reason: Ran | undefined;
   if (options.force === true) {
-    for (const [at, name] of moving.entries()) {
+    for (const [at, one] of kept.entries()) {
       const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), targets[at] as string]);
       if (done.code === 0) continue;
       // Which package npm refused, and npm's own words for the first of them.
       reason ??= done;
-      refused.push(packageOf(name));
+      refused.push(packageOf(one.name));
     }
   }
   else {
     const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...targets]);
     if (done.code !== 0) {
-      throw npmFailed(`npm could not update ${moving.map(packageOf).join(', ')}; rerun with --force to update only the plugins that can be updated`, done);
+      throw npmFailed(`npm could not update ${kept.map((one) => packageOf(one.name)).join(', ')}; rerun with --force to update only the plugins that can be updated`, done);
     }
   }
   const moved: Moved[] = [];
-  moving.forEach((name, at) => {
-    const to = installedVersion(root, packageOf(name));
+  kept.forEach((one, at) => {
+    const to = installedVersion(root, packageOf(one.name));
     if (to === from[at]) return;
-    moved.push({ name: packageOf(name), ...(from[at] === undefined ? {} : { from: from[at] }), ...(to === undefined ? {} : { to }) });
-    options.say(`${packageOf(name)}: ${from[at] ?? 'not installed'} to ${to ?? 'not installed'}`);
+    moved.push({ name: packageOf(one.name), ...(from[at] === undefined ? {} : { from: from[at] }), ...(to === undefined ? {} : { to }) });
+    options.say(`${packageOf(one.name)}: ${from[at] ?? 'not installed'} to ${to ?? 'not installed'}`);
   });
   const sdkTo = installedVersion(root, SDK);
   if (sdkTo !== sdkFrom) {
