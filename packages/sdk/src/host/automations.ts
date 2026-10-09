@@ -1176,12 +1176,18 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
      * event arriving on its own, and a person asking for one now is not
      * that - they get a session or a turn in the pinned chat, which is the
      * half of those settings a press is held to.
+     *
+     * `enabled` and a disable condition are not this method's business
+     * either, and the protocol says so: they govern runs an automation
+     * schedules for itself, and a person pressing Run gets a run of one
+     * that is switched off. `-32001` here means there is no automation at
+     * that resource, and nothing else.
      */
     runAutomation: async (params) => {
       const store = need(options.automations, 'runAutomation');
       const automation = String(params.automation ?? '');
       const run = await store.run(automation, { kind: 'manual' }, startForAutomation);
-      if (!run) throw new RpcError(-32001, `No automation at ${automation}, or it is switched off`);
+      if (!run) throw new RpcError(-32001, `No automation at ${automation}`);
       return { resource: run.resource };
     },
     /**

@@ -6,7 +6,7 @@ import { idOf } from '../src/catalog.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Agent, Start } from '../src/types/agent.js';
-import type { StartSession } from '../src/types/automations.js';
+import type { AutomationRun, AutomationStore, StartSession } from '../src/types/automations.js';
 import type { Principal, Users } from '../src/types/users.js';
 import type { Chosen, MessageFrom, Session } from '../src/types/session.js';
 
@@ -65,6 +65,13 @@ const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .map((n) => n.params as { channel: string; action: Record<string, unknown> })
   .filter((n) => n.channel === channel)
   .map((n) => n.action);
+
+/** What the host refused on a channel, as the sentences it refused with. */
+const refusals = (p: ReturnType<typeof peer>, channel: string): string[] => p.notes
+  .filter((n) => n.method === 'action')
+  .map((n) => n.params as { channel: string; rejectionReason?: string })
+  .filter((n) => n.channel === channel && n.rejectionReason !== undefined)
+  .map((n) => n.rejectionReason as string);
 
 const ONE = 'ahp-automation:/nightly';
 const PLAIN = 'ahp-automation:/plain';
@@ -259,6 +266,95 @@ it('patches rather than overwrites, so one client does not revert another', asyn
   expect(found.definition.message).toEqual({ text: 'review what changed today' });
 });
 
+/*
+ * A definition that disables itself.
+ *
+ * The protocol's `disableConditions` is a list where each kind may appear at
+ * most once, and a condition a host cannot read is one it cannot honour. So both
+ * are refused at the write, naming the kind repeated or the field wrong - a
+ * definition kept and never acted on would be an automation somebody asked to
+ * stop and which never stops.
+ */
+describe('a definition that disables itself', () => {
+  const RULES = [
+    { kind: 'afterRuns', max: 2 },
+    { kind: 'afterDate', date: '2030-01-01T00:00:00Z' },
+  ];
+
+  it('takes one of each kind, and echoes them on the entry', async () => {
+    const { client } = await connected();
+    await write(client, { ...DEFINITION, disableConditions: RULES });
+    const found = (await entries(client))[0] as { definition: Record<string, unknown> };
+    expect(found.definition.disableConditions).toEqual(RULES);
+  });
+
+  it('refuses a kind named twice, and keeps nothing', async () => {
+    const { client, peer: p } = await connected();
+    await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+    await write(client, {
+      ...DEFINITION,
+      disableConditions: [{ kind: 'afterRuns', max: 2 }, { kind: 'afterRuns', max: 5 }],
+    });
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('afterRuns is named twice');
+    // Refused before the store, so nothing was made and nothing announced.
+    expect(actions(p, AUTOMATIONS).filter((one) => one.type === 'automation/set')).toEqual([]);
+    expect(await entries(client)).toEqual([]);
+  });
+
+  it('refuses a cap that is not a whole number of one or more', async () => {
+    for (const max of [0, 1.5]) {
+      const { client, peer: p } = await connected();
+      await write(client, { ...DEFINITION, disableConditions: [{ kind: 'afterRuns', max }] });
+      await settle();
+      expect(refusals(p, AUTOMATIONS).at(-1)).toContain('afterRuns has to carry a max');
+    }
+  });
+
+  it('refuses a date that is not a timestamp, and a kind it does not know', async () => {
+    const dated = await connected();
+    await write(dated.client, { ...DEFINITION, disableConditions: [{ kind: 'afterDate', date: 'soon' }] });
+    await settle();
+    expect(refusals(dated.peer, AUTOMATIONS).at(-1)).toContain('afterDate has to carry a date');
+
+    const strange = await connected();
+    await write(strange.client, { ...DEFINITION, disableConditions: [{ kind: 'afterTurns', n: 2 }] });
+    await settle();
+    expect(refusals(strange.peer, AUTOMATIONS).at(-1)).toContain('afterTurns is not a kind');
+  });
+
+  it('refuses a patch whose conditions do not read, and leaves a patch about something else alone', async () => {
+    const { client, peer: p } = await connected();
+    await write(client, { ...DEFINITION, disableConditions: RULES });
+    await client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: AUTOMATIONS,
+        action: {
+          type: 'automation/updateRequested',
+          resource: ONE,
+          changes: { disableConditions: [{ kind: 'afterDate', date: 7 }] },
+        },
+      },
+    });
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('afterDate has to carry a date');
+    // And it still holds what it held: a refused patch changes nothing.
+    const kept = (await entries(client))[0] as { definition: { disableConditions: unknown } };
+    expect(kept.definition.disableConditions).toEqual(RULES);
+
+    // A patch that names no conditions is a patch about something else.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: AUTOMATIONS, action: { type: 'automation/updateRequested', resource: ONE, changes: { title: 'Renamed' } } },
+    });
+    await settle();
+    const renamed = (await entries(client))[0] as { definition: { title: string; disableConditions: unknown } };
+    expect(renamed.definition.title).toBe('Renamed');
+    expect(renamed.definition.disableConditions).toEqual(RULES);
+  });
+});
+
 it('keeps the pinned chat the host holds, whatever a client writes', async () => {
   const auto = memoryAutomations();
   const { client } = await connected(true, 0, auto);
@@ -304,16 +400,142 @@ it('keeps the pinned chat the host holds, whatever a client writes', async () =>
     .toEqual({ overlap: 'skip', pinnedSession: 'claude:/mine' });
 });
 
-it('does not offer to run one that is switched off', async () => {
-  const { client } = await connected();
+it('offers to run one that is switched off, and a press starts it', async () => {
+  const { client, store } = await connected();
   await write(client, { ...DEFINITION, enabled: false });
   const found = (await entries(client))[0] as { operations: string[] };
-  // A Run button beside an Off switch is a control that argues with the one
-  // next to it.
-  expect(found.operations).toEqual(['update', 'remove']);
-  await expect(client.handle({
+  // `enabled` governs the schedule and nothing else, which is what the protocol
+  // says a disable condition governs too: a person pressing Run gets a run, so
+  // the button is offered beside the switch rather than arguing with it.
+  expect(found.operations).toEqual(['update', 'remove', 'run']);
+  const run = await client.handle({
     method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
-  })).rejects.toThrow();
+  }) as { resource: string };
+  expect(run.resource.startsWith('ahp-automation-run:/')).toBe(true);
+
+  // And what it will not do is fire for itself: a run the schedule asked for is
+  // the one `enabled` refuses.
+  const started = await store.run(ONE, { kind: 'trigger' }, async () => 'ahp-session:/never');
+  expect(started).toBeUndefined();
+});
+
+/*
+ * What an automation does once its own definition says it has had enough.
+ *
+ * `afterRuns` is a count of scheduled runs and `afterDate` is a date, and the
+ * protocol puts the number used on the entry rather than deriving it from the
+ * runs - so what a client reads is what the store wrote down, and a manual run
+ * is neither counted nor refused.
+ */
+describe('an automation that switches itself off', () => {
+  const CAPPED = { ...DEFINITION, disableConditions: [{ kind: 'afterRuns', max: 2 }] };
+
+  /** One run the schedule asked for, which is the only kind a condition gates. */
+  const scheduled = (store: AutomationStore): Promise<AutomationRun | undefined> =>
+    store.run(ONE, { kind: 'trigger', triggerId: 't1' }, async () => 'ahp-session:/made');
+
+  const entry = async (client: Parameters<typeof entries>[0]) =>
+    (await entries(client))[0] as {
+      runCount?: number;
+      definition: { enabled?: boolean };
+      operations: string[];
+    };
+
+  it('counts scheduled runs, and switches itself off at the cap', async () => {
+    const { client, store } = await connected();
+    await write(client, CAPPED);
+    // The count is on the entry from the start, because the definition names an
+    // allowance and "none used" is what a fresh one is.
+    expect((await entry(client)).runCount).toBe(0);
+
+    await scheduled(store);
+    expect((await entry(client)).runCount).toBe(1);
+
+    await scheduled(store);
+    const capped = await entry(client);
+    expect(capped.runCount).toBe(2);
+    // Met, so the switch is thrown - and the automation is still there, still
+    // runnable by hand, and its entry says what happened.
+    expect(capped.definition.enabled).toBe(false);
+    expect(capped.operations).toContain('run');
+    // The cap ends the allowance rather than refusing one run: nothing fires
+    // for it any more.
+    expect(await scheduled(store)).toBeUndefined();
+    expect((await entry(client)).runCount).toBe(2);
+  });
+
+  it('runs by hand once it is switched off, without counting or re-enabling it', async () => {
+    const { client, store } = await connected();
+    await write(client, CAPPED);
+    await scheduled(store);
+    await scheduled(store);
+
+    const run = await client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
+    }) as { resource: string };
+    expect(run.resource.startsWith('ahp-automation-run:/')).toBe(true);
+    await settle();
+    // The protocol counts scheduled runs, and a press is not one: the number
+    // stays where the allowance left it, and pressing Run does not switch a
+    // switched-off automation back on.
+    const found = await entry(client);
+    expect(found.runCount).toBe(2);
+    expect(found.definition.enabled).toBe(false);
+  });
+
+  it('reads a fresh allowance when one is switched back on, and when afterRuns is added', async () => {
+    const { client, store } = await connected();
+    await write(client, CAPPED);
+    await scheduled(store);
+    await scheduled(store);
+    expect((await entry(client)).runCount).toBe(2);
+
+    store.update(ONE, { enabled: true });
+    const again = await entry(client);
+    expect(again.definition.enabled).toBe(true);
+    expect(again.runCount).toBe(0);
+
+    // A cap raised is the allowance that was already running, not a new one.
+    await scheduled(store);
+    store.update(ONE, { disableConditions: [{ kind: 'afterRuns', max: 5 }] });
+    expect((await entry(client)).runCount).toBe(1);
+
+    // And one added where there was none is a new allowance, so the runs before
+    // it were never counted against it.
+    const { client: plain, store: bare } = await connected();
+    await write(plain, DEFINITION);
+    expect((await entries(plain))[0]?.runCount).toBeUndefined();
+    await scheduled(bare);
+    bare.update(ONE, { disableConditions: [{ kind: 'afterRuns', max: 5 }] });
+    expect((await entry(plain)).runCount).toBe(0);
+  });
+
+  it('drops the count when the conditions are cleared, and re-enables nothing', async () => {
+    const { client, store } = await connected();
+    await write(client, CAPPED);
+    await scheduled(store);
+    await scheduled(store);
+
+    store.update(ONE, { disableConditions: [] });
+    const cleared = await entry(client);
+    // The protocol says clearing does not re-enable, so the switch stays where
+    // the met condition left it - and a count with no allowance behind it is a
+    // number nobody asked for.
+    expect(cleared.definition.enabled).toBe(false);
+    expect(cleared.runCount).toBeUndefined();
+  });
+
+  it('refuses a scheduled run whose date has gone by, and switches itself off there', async () => {
+    const { client, store } = await connected();
+    // A date in the past, because this store holds no clock: what it compares
+    // an `afterDate` against is the time it is asked at.
+    await write(client, {
+      ...DEFINITION,
+      disableConditions: [{ kind: 'afterDate', date: '2020-01-01T00:00:00.000Z' }],
+    });
+    expect(await scheduled(store)).toBeUndefined();
+    expect((await entry(client)).definition.enabled).toBe(false);
+  });
 });
 
 it('starts a session and says the first message, which is the whole point', async () => {
@@ -613,15 +835,14 @@ it('forgets one when the client asks and the catalogue still says it may', async
   await expect(client.handle({ method: 'subscribe', params: { channel: run.resource } })).rejects.toThrow();
 });
 
-it('will not remove one the catalogue says may not be, even when asked', async () => {
+it('offers remove for one that is switched off, and removes only what it holds', async () => {
   const { client } = await connected();
   await write(client, { ...DEFINITION, enabled: false });
-  // A client holding a stale catalogue would otherwise delete something this
-  // host has since decided may not be deleted. Here `remove` is still offered
-  // for a disabled automation, so the check is shown against `run` instead.
+  // `remove` is not what `enabled` governs, so it is offered whatever the
+  // switch says - while a removal naming something this host does not hold is
+  // a no-op, not an error and not a removal of something else.
   const found = (await entries(client))[0] as { operations: string[] };
   expect(found.operations).toContain('remove');
-  expect(found.operations).not.toContain('run');
   await client.handle({
     method: 'dispatchAction',
     params: { channel: AUTOMATIONS, action: { type: 'automation/removed', resource: 'ahp-automation:/never-existed' } },

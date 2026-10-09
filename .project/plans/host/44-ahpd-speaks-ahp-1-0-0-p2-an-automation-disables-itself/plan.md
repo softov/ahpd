@@ -1,7 +1,7 @@
 ---
 title: An automation disables itself as its definition says, and a kind given twice is refused
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -66,8 +66,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A definition with a kind twice is refused](task-01-a-definition-with-a-kind-twice-is-refused.md) | todo | - |
-| [02 - A scheduled automation counts its runs and switches itself off](task-02-a-scheduled-automation-switches-itself-off.md) | todo | 01 |
+| [01 - A definition with a kind twice is refused](task-01-a-definition-with-a-kind-twice-is-refused.md) | done | - |
+| [02 - A scheduled automation counts its runs and switches itself off](task-02-a-scheduled-automation-switches-itself-off.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -76,14 +76,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** p1 first; then [task-01-a-definition-with-a-kind-twice-is-refused.md](task-01-a-definition-with-a-kind-twice-is-refused.md).
+- **Done so far:** tasks 01-02 built, reviewed and merged 2026-10-09; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a manual run must neither be counted nor be refused by `enabled` or a condition; only `origin.kind === 'trigger'` counts and is gated.
 
 ## Final verification checklist
 
-- [ ] An automation with `afterRuns: 2` fires twice on a test clock and is then announced with `enabled: false` and `runCount: 2`.
-- [ ] That automation still offers `run`, and `runAutomation` starts a run without changing `runCount`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] An automation with `afterRuns: 2` fires twice on a test clock and is then announced with `enabled: false` and `runCount: 2`.
+- [x] That automation still offers `run`, and `runAutomation` starts a run without changing `runCount`.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

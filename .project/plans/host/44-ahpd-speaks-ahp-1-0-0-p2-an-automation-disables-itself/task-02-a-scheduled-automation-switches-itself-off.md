@@ -1,6 +1,6 @@
 ---
 title: A scheduled automation counts its runs and switches itself off
-status: todo
+status: done
 depends: [task-01-a-definition-with-a-kind-twice-is-refused.md]
 layer: "sdk"
 refs:
@@ -44,8 +44,21 @@ A disabled automation, whatever disabled it, still offers `run` and still runs b
 
 ## Validation
 
-- `packages/sdk/test/scheduled.test.ts`, on the test clock: `afterRuns: 2` on an every-minute schedule fires twice, then the entry reads `enabled: false`, `runCount: 2`, and no third run is due; `afterDate` one minute ahead fires once, then the automation is switched off at the next arming and fires no more; a store rebuilt from the same file reads the same `runCount`.
-- `packages/sdk/test/automations.test.ts`: an automation created with `enabled: false` lists `operations` `['update', 'remove', 'run']` and `runAutomation` on it answers a run resource, while the store's `run()` with a trigger origin on it answers `undefined`; one switched off by `afterRuns` runs by hand and stays `enabled: false`; a manual run leaves `runCount` unchanged; patching `enabled: true` on a switched-off automation reads `runCount: 0`; adding `afterRuns` to one with none reads `0`; removing every condition leaves `enabled: false` and drops `runCount`.
-- `pnpm test` passes.
+- `packages/sdk/test/scheduled.test.ts`, `describe('when the time comes') > describe('a definition that stops itself')`, on the test clock: `it('counts the runs an allowance pays for, and stops at the cap')` (`afterRuns: 2` on `* * * * *` fires twice, then `runCount` 2, `enabled: false`, no `nextRunAt`, and a third minute announces nothing), `it('switches itself off when its date has gone by, and fires no more')`, `it('keeps the count across a restart, because it is not derived from runs')` (the file carries `runCount: 3` and a second store reads it back).
+- `packages/sdk/test/automations.test.ts`: `it('offers to run one that is switched off, and a press starts it')` replaces `does not offer to run one that is switched off` - `operations` is `['update', 'remove', 'run']`, `runAutomation` answers a run, and `run()` with a trigger origin answers `undefined`. `describe('a definition that stops itself')` has the count, the manual run, the two resets, the cleared conditions and the past `afterDate`.
+- `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` pass.
+- `npx vitest run --maxWorkers=2 --testTimeout=10000` passes whole.
 
 ## Resume
+
+**Implemented.** `Automation.runCount` is optional on the record and the entry; the entry carries it only while the definition names an `afterRuns` (`runCount ?? 0`), and `operations` is `['update', 'remove', 'run']` whatever `enabled` says. `create` takes an optional `runCount` after `owner`. `update` resets the count to `0` on a disabled-to-enabled patch or on an `afterRuns` appearing where there was none; clearing the conditions leaves the switch where it is and takes the count with it. `run()` reads `origin.kind === 'trigger'`: a disabled automation or one whose `afterDate` has passed is refused there (and switched off, through a store-local `stop()`), an admitted scheduled run adds one and switches the automation off at the cap, and a manual run is neither gated nor counted.
+
+`runCount` is written to the scheduled store's file beside the definition, read back through `inner.create`, and the store switches off an automation whose date has gone by in `rearm()` and skips it in `catchUp()`. `packages/sdk/src/host/automations.ts` refuses `runAutomation` with `No automation at <resource>`, and its doc comment says `enabled` is not what a press is held to.
+
+**Departure 1.** `docs/AHP.md` is left as the automation rows and one new paragraph; `docs/AUTOMATIONS.md:113` ("`run` is left out of an automation that is switched off") and `:203` ("Refused when there is no such automation or it is switched off") are now stale. Neither file is named by any task in this plan.
+
+**Departure 2.** The `afterDate` test in `scheduled.test.ts` uses a date the real clock has not passed (2030-01-01), not one a minute ahead of the test clock: `memoryAutomations` holds no clock to inject, so its half of the comparison is against the real time, and a date in the test clock's own past is refused there before the scheduled store's arming is reached. The store underneath and the clock agree in a daemon.
+
+**Departure 3.** `it('will not remove one the catalogue says may not be, even when asked')` is retitled `it('offers remove for one that is switched off, and removes only what it holds')`. The line this task drops was the only thing backing the old title: with `remove` offered for a disabled automation either way, the `automation/removed` gate on `operations` is unreachable through both real stores, and the body shows a removal of an unknown resource instead.
+
+**Departure 4.** `rearm()` cancels the timer twice, before and after the switch-off pass, because switching one off announces itself and the rearm that announcement triggers arms a timer of its own. The second cancel is what keeps one timer armed at a time; the pass itself is idempotent, so the rearm that comes back through `onChanged` is what arms the clock for what is left.

@@ -93,7 +93,7 @@ is.
 | `resourceCopy` | 🧩 | The same. |
 | `resourceRequest` | ✅ | Answered yes for any `file:` URI, as the reference host answers it, and logged. It withholds nothing, because the write half is served without it; a URI this host does not mediate is refused `-32009`. |
 | `listAutomationTriggerDefinitions` | 🧩 | *Event* triggers only. A schedule is protocol-defined and never listed; manual is not a trigger at all, and an empty trigger list on a definition is what manual-only means. Answered on `ahp-root://`, which is what it declares. |
-| `runAutomation` | 🧩 | The session is created here rather than in the store, because only this file knows what a session is - the store is handed a function and gets a URI back. |
+| `runAutomation` | 🧩 | The session is created here rather than in the store, because only this file knows what a session is - the store is handed a function and gets a URI back. `enabled` and a disable condition do not gate a press: the protocol has them govern the runs an automation schedules for itself, so a switched-off automation still runs by hand, and `-32001` here means there is no automation at that resource and nothing else. |
 | `fetchAutomationRuns` | 🧩 | Answers `{}` and nothing else, which is what the protocol declares for it: the page is not the result. Asking grows the automation's entry by one page of runs, newest first, and every subscriber of `ahp-automations://` reads the longer `runs` and the next `runsNextCursor` off the `automation/set` that follows, so the client that asked and the clients that did not are told the same thing. The cursor is the entry's own `runsNextCursor`, and one this host did not issue is refused `-32602`; one count per automation, so every client sees the same page. |
 
 ## Server-to-client commands
@@ -292,8 +292,8 @@ which is a different complaint from an action nobody has served.
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `automation/createRequested` | client | ✅ | A request, not a fact: what goes back is `automation/set` saying what this host actually holds, which is not an echo of what was asked for. |
-| `automation/updateRequested` | client | ✅ | A patch. Absent keys are left alone, so one client does not revert another. |
+| `automation/createRequested` | client | ✅ | A request, not a fact: what goes back is `automation/set` saying what this host actually holds, which is not an echo of what was asked for. `disableConditions` is checked before the store is asked: a kind named twice, a condition that is neither of the two kinds, an `afterRuns` whose `max` is not a whole number of one or more, and an `afterDate` that is not a timestamp are each refused with the reason. |
+| `automation/updateRequested` | client | ✅ | A patch. Absent keys are left alone, so one client does not revert another. A patch that names `disableConditions` is held to the same rules a create is, and one that names none is a patch about something else. |
 | `automation/set` | host | ✅ | The answer to both requests, and how a store with a clock announces one that fired on its own. |
 | `automation/removed` | both | ✅ | Refused when the catalogue says `remove` is not among the operations, rather than done anyway. |
 
@@ -314,6 +314,18 @@ spelled. Never as a field of its own: the protocol declares `_meta` on both
 shapes and no `owner`, so an owner under that name is one no client can read. A
 run's is the automation's, not whoever pressed Run. Absent on a host given no
 users directory, which has nobody to name.
+
+`disableConditions` is honoured rather than echoed. An `afterRuns` counts the
+scheduled runs admitted since the allowance began - cancelled and failed ones
+included, manual ones never - and the entry carries that number as `runCount`,
+absent while the definition names no `afterRuns`. An `afterDate` is compared
+against the clock. Meeting either sets `enabled: false` on the definition this
+host holds and announces it as an `automation/set`, so a client reads the switch
+rather than being told separately, and nothing is removed: a switched-off
+automation still offers `run` and still runs by hand. A fresh allowance is an
+`afterRuns` added where there was none, or a switched-off automation switched
+back on, and it resets the count to `0`; clearing the conditions re-enables
+nothing.
 
 ### What a refusal is
 

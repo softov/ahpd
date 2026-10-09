@@ -291,6 +291,82 @@ const checkWake = (definition: Bag): void => {
   }
 };
 
+/** The two kinds of self-disable condition the protocol declares, and this host honours. */
+const DISABLE_KINDS = ['afterRuns', 'afterDate'] as const;
+
+/**
+ * What is wrong with a definition's disable conditions, as one sentence, or nothing.
+ *
+ * The protocol's own rules, kept here so the host and the scheduled store read
+ * them the same way: each kind may appear at most once, and a condition this
+ * host cannot read is one it cannot honour - an `afterRuns` whose cap is not a
+ * whole number of one or more, or an `afterDate` that is not a timestamp. A
+ * definition naming a kind twice is refused rather than folded down, because
+ * two caps are two answers to one question.
+ *
+ * Absent is fine: an automation that never disables itself is the ordinary one.
+ */
+export const disableConditionsProblem = (value: unknown): string | undefined => {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) return 'disableConditions has to be a list of conditions';
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      return 'disableConditions has to be a list of conditions';
+    }
+    const condition = raw as Bag;
+    const kind = typeof condition.kind === 'string' ? condition.kind : '';
+    if (!(DISABLE_KINDS as readonly string[]).includes(kind)) {
+      return `${kind === '' ? 'That' : kind} is not a kind of disable condition this host knows`;
+    }
+    if (seen.has(kind)) return `${kind} is named twice, and a condition kind may appear at most once`;
+    seen.add(kind);
+    if (kind === 'afterRuns') {
+      const max = condition.max;
+      if (typeof max !== 'number' || !Number.isInteger(max) || max < 1) {
+        return 'afterRuns has to carry a max that is a whole number of 1 or more';
+      }
+      continue;
+    }
+    const date = condition.date;
+    if (typeof date !== 'string' || Number.isNaN(Date.parse(date))) {
+      return 'afterDate has to carry a date that is a timestamp';
+    }
+  }
+  return undefined;
+};
+
+/** A definition's disable conditions, as the two numbers a store acts on. */
+export interface DisableConditions {
+  /** How many scheduled runs are allowed, where an `afterRuns` names a cap. */
+  allowedRuns?: number;
+  /** The instant scheduling stops after, where an `afterDate` names one. */
+  stopsAfter?: number;
+}
+
+/**
+ * A definition's disable conditions, read into what a store compares against.
+ *
+ * Read rather than re-checked: a definition that reached a store was refused
+ * above if it would not read, and one written before this host checked anything
+ * is read for whatever it holds - a condition that does not read is one there is
+ * nothing to do about.
+ */
+export const disableConditionsOf = (value: unknown): DisableConditions => {
+  const out: DisableConditions = {};
+  for (const raw of Array.isArray(value) ? value : []) {
+    const condition = bag(raw);
+    if (condition.kind === 'afterRuns' && typeof condition.max === 'number') {
+      out.allowedRuns = condition.max;
+    }
+    if (condition.kind === 'afterDate' && typeof condition.date === 'string') {
+      const stopsAfter = Date.parse(condition.date);
+      if (!Number.isNaN(stopsAfter)) out.stopsAfter = stopsAfter;
+    }
+  }
+  return out;
+};
+
 /** Whether a lifecycle has already ended, in the protocol's sense. */
 const ended = (lifecycle: Bag): boolean =>
   lifecycle.status === 'completed' || lifecycle.status === 'failed' || lifecycle.status === 'cancelled';
@@ -336,18 +412,29 @@ export function memoryAutomations(): AutomationStore {
 
   /** Rebuild the entry a client reads, so `runs` and `operations` are never stale. */
   const entry = (automation: Automation): AutomationEntry => {
-    const enabled = automation.definition.enabled !== false;
-    const { owner, ...rest } = automation;
+    const { owner, runCount, ...rest } = automation;
     const runs = history.get(automation.resource) ?? [];
     const count = shown(automation.resource);
+    const allowance = disableConditionsOf(automation.definition.disableConditions).allowedRuns;
     return {
       ...rest,
+      // Carried only beside an `afterRuns` condition, which is the one the
+      // protocol says the field belongs to: a count on an automation with no
+      // allowance is a number nobody asked for. Zero rather than absent while
+      // there is one, because "none used yet" is what a fresh allowance is.
+      ...(allowance === undefined ? {} : { runCount: runCount ?? 0 }),
       runs: runs.slice(0, count).map(summary),
       ...(count < runs.length ? { runsNextCursor: String(count) } : {}),
-      // `run` only where it would do something. A disabled automation is one
-      // somebody switched off, and offering the button anyway is a control
-      // that argues with the switch beside it.
-      operations: enabled ? ['update', 'remove', 'run'] : ['update', 'remove'],
+      /*
+       * `run` whatever `enabled` says.
+       *
+       * `enabled` is about the schedule and nothing else: the protocol says
+       * only automatic runs are governed by a disable condition, so a person
+       * pressing Run gets a run of a switched-off automation - and a client
+       * offering no button for one would be a client that cannot do what this
+       * host would allow.
+       */
+      operations: ['update', 'remove', 'run'],
       /*
        * Whose work this is, where a client can read it.
        *
@@ -358,6 +445,21 @@ export function memoryAutomations(): AutomationStore {
        */
       ...(owner === undefined ? {} : { _meta: { 'ahpd.owner': owner } }),
     };
+  };
+
+  /**
+   * Stop an automation scheduling itself, which is what a met condition does.
+   *
+   * `enabled` is what a schedule reads, so meeting a condition is written down
+   * there - and said out loud, because the entry a client reads is how anybody
+   * learns an automation stopped. Nothing is removed: the definition, its runs
+   * and its count all stay, and a person may still start it by hand.
+   */
+  const stop = (automation: Automation): void => {
+    if (automation.definition.enabled === false) return;
+    automation.definition = { ...automation.definition, enabled: false };
+    automation.modifiedAt = now();
+    said({ automation: automation.resource });
   };
 
   return {
@@ -378,7 +480,7 @@ export function memoryAutomations(): AutomationStore {
      */
     triggers: () => EVENT_TRIGGERS,
 
-    create: (resource, definition, owner) => {
+    create: (resource, definition, owner, runCount) => {
       checkTriggers(definition);
       checkWake(definition);
       const at = now();
@@ -386,6 +488,9 @@ export function memoryAutomations(): AutomationStore {
         resource,
         definition,
         ...(owner === undefined ? {} : { owner }),
+        // What a store reading its own file restores, and what a definition
+        // arriving from a client never carries: a new allowance has used none.
+        ...(runCount === undefined ? {} : { runCount }),
         runs: [],
         operations: [],
         createdAt: at,
@@ -409,12 +514,28 @@ export function memoryAutomations(): AutomationStore {
       if (changes.triggers !== undefined || changes._meta !== undefined) {
         checkWake({ ...found.definition, ...changes });
       }
+      const definition = { ...found.definition, ...changes };
+      /*
+       * A fresh allowance, in the two cases the protocol names: switching a
+       * disabled automation back on, and adding an `afterRuns` where there was
+       * none. Everything else keeps the count, because renaming an automation
+       * is not a new allowance and neither is a cap somebody raised.
+       *
+       * Clearing the conditions re-enables nothing: the switch this store
+       * already threw stays thrown, and what goes is the count along with the
+       * condition that asked for it.
+       */
+      const before = disableConditionsOf(found.definition.disableConditions);
+      const next = disableConditionsOf(definition.disableConditions);
+      const fresh = (next.allowedRuns !== undefined && before.allowedRuns === undefined)
+        || (definition.enabled !== false && found.definition.enabled === false);
       // A patch: absent keys are left alone, which is the whole difference
       // between this and a write. A client sending the whole definition back
       // would otherwise revert whatever another client changed meanwhile.
       const after: Automation = {
         ...found,
-        definition: { ...found.definition, ...changes },
+        definition,
+        ...(fresh ? { runCount: 0 } : {}),
         modifiedAt: now(),
       };
       held.set(resource, after);
@@ -434,7 +555,27 @@ export function memoryAutomations(): AutomationStore {
     run: async (resource, origin, start) => {
       const found = held.get(resource);
       if (!found) return undefined;
-      if (found.definition.enabled === false) return undefined;
+      /*
+       * What a scheduled run is held to, which a manual one is not.
+       *
+       * The protocol says a disable condition governs automatic runs: a person
+       * pressing Run gets a run whatever `enabled` says and whatever a
+       * condition says, and it is not counted against the allowance either -
+       * `runCount` is scheduled runs, and a press is not one. So both gates are
+       * read against the origin rather than against the automation.
+       */
+      const scheduled = bag(origin).kind === 'trigger';
+      const conditions = disableConditionsOf(found.definition.disableConditions);
+      if (scheduled) {
+        if (found.definition.enabled === false) return undefined;
+        if (conditions.stopsAfter !== undefined && conditions.stopsAfter <= Date.parse(now())) {
+          // A date that has gone by is a condition already met: this occurrence
+          // is not one the automation schedules any more, and saying so is what
+          // stops a schedule that named one from firing on for ever.
+          stop(found);
+          return undefined;
+        }
+      }
       const template = (typeof found.definition.session === 'object' && found.definition.session !== null
         ? found.definition.session
         : {}) as Bag;
@@ -462,6 +603,18 @@ export function memoryAutomations(): AutomationStore {
       const past = history.get(resource) ?? [];
       // Newest first, which is the order a client shows them in.
       history.set(resource, [run, ...past]);
+      /*
+       * Counted before the session is asked for, because an admitted run is
+       * what an allowance pays for: one that fails or is cancelled later was
+       * started all the same, and the protocol counts scheduled runs, not
+       * successful ones. The cap switches the automation off rather than only
+       * refusing the next run, because nothing else is going to say it - and a
+       * client reading the catalogue should learn why nothing starts.
+       */
+      if (scheduled && conditions.allowedRuns !== undefined) {
+        found.runCount = (found.runCount ?? 0) + 1;
+        if (found.runCount >= conditions.allowedRuns) stop(found);
+      }
       said({ automation: resource, run: run.resource });
 
       const directories = Array.isArray(template.workingDirectories) ? template.workingDirectories : [];

@@ -110,7 +110,7 @@ A run is started by a schedule, by an event, or by a person pressing Run, and al
 
 The store records the run before the session exists, marks it `running` when the session is asked for, and the host settles it when its sessions stop - decision [An automation run settles when its sessions stop, not when it starts](../.project/decisions/automation-run-settles-when-its-sessions-stop.md). Its lifecycle is `pending`, then `running`, then one of `completed`, `failed` or `cancelled`, and a `failed` one carries the error. A run that could not start at all is `failed` with no `startedAt`, because no execution began.
 
-An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. `operations` is `update`, `remove` and `run`, and `run` is left out of an automation that is switched off, so a client draws no button that argues with the switch beside it.
+An automation's entry carries its runs newest first, twenty at a time, with `runsNextCursor` when there are more: `fetchAutomationRuns` grows the page in view and every subscriber reads the longer list off the same `automation/set`, because the protocol's answer to that command is empty. `operations` is always `update`, `remove` and `run`: `enabled` governs the schedule only, so a person can run a switched-off automation by hand.
 
 ## One chat, or a session each run
 
@@ -200,7 +200,7 @@ Automations have no verb of their own - there is no `ahpd automation`. They are 
 | Command | What it does |
 | --- | --- |
 | `listAutomationTriggerDefinitions` | Every event trigger type this host fires: `session`, `watch`, and each plugin's |
-| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI. Refused when there is no such automation or it is switched off |
+| `runAutomation` | Start one now, as the automation's owner, and answer with the run's URI. Refused when there is no such automation. A switched-off automation runs, and the run does not count against an `afterRuns` cap |
 | `fetchAutomationRuns` | Bring one more page of an automation's runs into view. An unrecognised cursor is refused rather than guessed at |
 | `automation/createRequested` | Write one into the catalogue |
 | `automation/updateRequested` | Patch one - absent keys are left alone, so two clients editing different fields do not revert each other |

@@ -1,6 +1,6 @@
 ---
 title: A definition with a disable-condition kind twice is refused
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -27,7 +27,14 @@ An `automation/createRequested` whose `definition.disableConditions`, or an `aut
 
 ## Validation
 
-- `packages/sdk/test/automations.test.ts`: two `afterRuns` are refused and no `automation/set` follows; `afterRuns` with `max: 0` or `1.5` is refused; `afterDate` with `date: 'soon'` is refused; an unknown `kind` is refused; one of each kind is accepted and echoed in the entry; an update that only renames the automation is accepted with no `disableConditions` at all.
-- `pnpm test` passes.
+- `packages/sdk/test/automations.test.ts`, `describe('a definition that disables itself')`: `it('takes one of each kind, and echoes them on the entry')`, `it('refuses a kind named twice, and keeps nothing')` (no `automation/set`, and the catalogue empty), `it('refuses a cap that is not a whole number of one or more')` (`max: 0` and `max: 1.5`), `it('refuses a date that is not a timestamp, and a kind it does not know')`, `it('refuses a patch whose conditions do not read, and leaves a patch about something else alone')`. A refusal is read off the wire as the `rejectionReason` on the `action` notification, through the file's `refusals(peer, channel)` helper.
+- `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` pass.
+- `npx vitest run --maxWorkers=2 --testTimeout=10000` passes whole: 260 files, 4536 tests.
 
 ## Resume
+
+**Implemented.** `disableConditionsProblem(value: unknown): string | undefined` is exported from `packages/sdk/src/automations.ts` beside the store, and `disableConditionsOf(value)` with it - the same conditions read into the two numbers a store acts on, which task 02 uses. `packages/sdk/src/host/actions.ts` calls the first on the definition a create carries or the `changes` a patch carries, before the store, and answers with its sentence through `no(...)`.
+
+The two `docs/AHP.md` rows in the automation table say the conditions are checked and a kind named twice is refused.
+
+**Departure 1.** The import of `disableConditionsProblem` was added to the top of `packages/sdk/src/host/actions.ts`, outside the `#L403-L423` the plan names. The named region is the create/update block, and the refusal itself is inside it; a file that uses a module has to import it above.

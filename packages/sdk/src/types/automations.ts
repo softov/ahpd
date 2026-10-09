@@ -33,6 +33,21 @@ export interface Automation {
   owner?: Owner;
   /** ISO 8601, when a schedule says it will fire next. Absent for one nothing will fire. */
   nextRunAt?: string;
+  /**
+   * How many scheduled runs the allowance in force has paid for.
+   *
+   * The store's own count, kept beside the definition because the protocol says
+   * an entry carries it only while the definition names an `afterRuns`
+   * condition - so a store that set one unconditionally would be inventing a
+   * field the client's own definition does not account for.
+   *
+   * It is not the length of `runs`: that is a page of what was kept, this
+   * counts admitted scheduled runs alone, and a run that was cancelled or
+   * failed was admitted all the same. The protocol says it is not reconstructed
+   * from the run history, which is why a store that survives a restart has to
+   * write it down.
+   */
+  runCount?: number;
   /** Newest first. A summary per run, not the runs themselves. */
   runs: Bag[];
   /** More runs than were sent, if there are. */
@@ -201,8 +216,14 @@ export interface AutomationStore {
    * `create` takes it: an automation's owner is fixed by the person who made
    * it, and `update` patches a definition rather than moving the work to
    * whoever edited it last.
+   *
+   * `runCount` restores what an allowance has already paid for, and a store
+   * reading its own file is the only caller that passes it: a definition
+   * arriving from a client has used none of its allowance yet, and a store that
+   * let a create carry a count would be letting a client write a run history
+   * nobody ran.
    */
-  create(resource: string, definition: Bag, owner?: Owner): AutomationEntry;
+  create(resource: string, definition: Bag, owner?: Owner, runCount?: number): AutomationEntry;
   /** Patch one. Absent keys are left alone, which is what a patch means. */
   update(resource: string, changes: Bag): AutomationEntry | undefined;
   /** Forget one, and everything it ever did. */

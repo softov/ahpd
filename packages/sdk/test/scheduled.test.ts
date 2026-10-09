@@ -173,6 +173,113 @@ describe('when the time comes', () => {
     clock.advance('2026-09-01T09:00:00Z');
     expect(seen).toEqual([]);
   });
+
+  /*
+   * A definition that stops itself, on a clock the test moves.
+   *
+   * The store says what is due and the host is what runs it, so a run is made
+   * here the way the host makes one - with the origin the store gave - and the
+   * count moves because a scheduled run is what an allowance pays for.
+   */
+  describe('an automation that switches itself off', () => {
+    const settle = async (times = 12): Promise<void> => {
+      for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+    };
+
+    /** Answer every occasion the store announces, as the host does. */
+    const answered = (fired: string[]) => {
+      store?.onDue?.((event) => {
+        fired.push(event.automation);
+        void store?.run(event.automation, event.origin, async () => 'ahp-session:/made');
+      });
+    };
+
+    it('counts the runs an allowance pays for, and stops at the cap', async () => {
+      const clock = clockwork();
+      store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+      const fired: string[] = [];
+      answered(fired);
+      store.create(ONE, {
+        ...nightly('* * * * *'),
+        disableConditions: [{ kind: 'afterRuns', max: 2 }],
+      });
+      expect(store.get(ONE)?.runCount).toBe(0);
+
+      clock.advance('2026-09-01T08:01:00Z');
+      clock.advance('2026-09-01T08:02:00Z');
+      // A third minute goes by with the allowance spent: the schedule is off,
+      // so it is not even announced. The cap ends the allowance rather than
+      // refusing one run.
+      clock.advance('2026-09-01T08:03:00Z');
+      await settle();
+
+      expect(fired).toEqual([ONE, ONE]);
+      const found = store.get(ONE);
+      expect(found?.runCount).toBe(2);
+      expect(found?.definition.enabled).toBe(false);
+      expect(found?.nextRunAt).toBeUndefined();
+    });
+
+    it('switches itself off when its date has gone by, and fires no more', async () => {
+      const clock = clockwork();
+      store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+      const fired: string[] = [];
+      answered(fired);
+      /*
+       * A date the clock this test moves will reach, and one the store
+       * underneath will still admit a run against: it holds no clock of its
+       * own, so its half of the comparison is against the real time. Both
+       * halves agree in a daemon, where there is only one clock.
+       */
+      const date = '2030-01-01T00:00:30.000Z';
+      store.create(ONE, { ...nightly('* * * * *'), disableConditions: [{ kind: 'afterDate', date }] });
+
+      // The occurrence the store was holding is before the date, so it runs.
+      clock.advance('2030-01-01T00:00:00Z');
+      await settle();
+      expect(fired).toEqual([ONE]);
+      expect(store.get(ONE)?.definition.enabled).toBe(true);
+      expect(store.get(ONE)?.nextRunAt).toBe('2030-01-01T00:01:00.000Z');
+
+      // Between occurrences the date passes, and what the store is holding is
+      // the next one - so this is where it goes: switched off rather than left
+      // armed to fire on into a date that has gone.
+      clock.advance('2030-01-01T00:00:40Z');
+      await settle();
+      expect(store.get(ONE)?.definition.enabled).toBe(false);
+      expect(store.get(ONE)?.nextRunAt).toBeUndefined();
+
+      clock.advance('2030-01-01T00:05:00Z');
+      await settle();
+      expect(fired).toEqual([ONE]);
+    });
+
+    it('keeps the count across a restart, because it is not derived from runs', () => {
+      const first = clockwork();
+      const one = scheduledAutomations({ file, now: first.now, timer: first.timer });
+      one.onDue?.((event) => {
+        void one.run(event.automation, event.origin, async () => 'ahp-session:/made');
+      });
+      one.create(ONE, {
+        ...nightly('* * * * *'),
+        disableConditions: [{ kind: 'afterRuns', max: 5 }],
+      });
+      first.advance('2026-09-01T08:01:00Z');
+      first.advance('2026-09-01T08:02:00Z');
+      first.advance('2026-09-01T08:03:00Z');
+      one.close?.();
+
+      // This store keeps no run history - runs point at sessions that went with
+      // the daemon - so what it has used is what it wrote down and nothing else.
+      expect(JSON.parse(readFileSync(file, 'utf8')).automations)
+        .toMatchObject([{ resource: ONE, runCount: 3 }]);
+      const second = clockwork();
+      store = scheduledAutomations({ file, now: second.now, timer: second.timer });
+      expect(store.get(ONE)?.runCount).toBe(3);
+      // Still enabled, because the allowance has two runs left in it.
+      expect(store.get(ONE)?.definition.enabled).toBe(true);
+    });
+  });
 });
 
 describe('across a restart', () => {

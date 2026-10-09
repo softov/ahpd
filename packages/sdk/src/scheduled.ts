@@ -1,6 +1,6 @@
 /** Automations that fire on their own: a clock, and a file they survive in. */
 
-import { memoryAutomations } from './automations.js';
+import { disableConditionsOf, memoryAutomations } from './automations.js';
 import { readJson, writeJsonAtomic } from './jsonfile.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationEntry, AutomationStore } from './types/automations.js';
@@ -39,6 +39,14 @@ interface Saved {
     definition: Bag;
     /** Whose work it is, as the decision's typed reference, when it has one. */
     owner?: string;
+    /**
+     * How many scheduled runs the allowance in force has paid for.
+     *
+     * Written down because the protocol says it is not reconstructed from the
+     * runs, and this store keeps no run history to reconstruct it from anyway.
+     * A row without it - every row written before this - reads as none used.
+     */
+    runCount?: number;
     createdAt: string;
     modifiedAt: string;
     /** The occurrence this was waiting for when it was written. What catch-up reads. */
@@ -176,6 +184,10 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
           resource: one.resource,
           definition: one.definition,
           ...(owner === undefined ? {} : { owner }),
+          // Absent while the definition names no allowance, which is what the
+          // entry carries too - a count written for an automation that has none
+          // is a number nothing will ever read.
+          ...(one.runCount === undefined ? {} : { runCount: one.runCount }),
           ...(stamps.get(one.resource) ?? { createdAt: one.createdAt, modifiedAt: one.modifiedAt }),
           ...(at ? { nextRunAt: at.toISOString() } : {}),
         };
@@ -192,12 +204,47 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     }
   };
 
-  /** Work out when everything next fires, and set one timer for the first of them. */
-  const rearm = (): void => {
+  /**
+   * Whether an automation's own date has gone by, so it schedules itself no more.
+   *
+   * Read rather than re-checked, exactly as the memory store reads it: a
+   * definition that reached this store was refused at the write if its
+   * conditions would not read, and one written before the host checked anything
+   * is read for whatever it holds.
+   */
+  const expired = (definition: Bag, at: Date): boolean => {
+    const stopsAfter = disableConditionsOf(definition.disableConditions).stopsAfter;
+    return stopsAfter !== undefined && stopsAfter <= at.getTime();
+  };
+
+  /** Let go of the timer, so whatever is armed next is the only one. */
+  const disarm = (): void => {
     timer?.cancel();
     timer = undefined;
+  };
+
+  /** Work out when everything next fires, and set one timer for the first of them. */
+  const rearm = (): void => {
+    disarm();
     if (closed) return;
     const at = now();
+    /*
+     * An automation whose date has gone by is switched off here rather than
+     * left to fire - which is the other half of what `soonest` says by
+     * answering nothing for it.
+     *
+     * Switching one off is a write, and a write is announced, so this comes
+     * back through `onChanged` and this function runs again - with that
+     * automation already disabled. Each iteration therefore re-reads what it is
+     * about to switch off rather than trusting the list it is walking, and the
+     * clock is armed from the state the pass leaves behind.
+     */
+    for (const automation of inner.list()) {
+      const held = inner.get(automation.resource);
+      if (held && held.definition.enabled !== false && expired(held.definition, at)) {
+        inner.update(automation.resource, { enabled: false });
+      }
+    }
     let first: Date | undefined;
     for (const automation of inner.list()) {
       const found = soonest(automation, at);
@@ -207,6 +254,10 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       }
       else nextAt.delete(automation.resource);
     }
+    // Let go once more, for the same reason: a switch-off above may have armed
+    // one through the rearm its own announcement triggered, and two timers
+    // racing for the same clock is one firing an occurrence nobody is due.
+    disarm();
     if (!first) return;
     // One timer for the earliest, not one per automation: the second earliest
     // is recomputed when the first fires, and a hundred automations should not
@@ -248,6 +299,11 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       if (!(missed < at)) continue;
       const automation = inner.get(one.resource);
       if (!automation || automation.definition.enabled === false) continue;
+      // A date that has gone by while this daemon was not running is a
+      // condition met, not an occurrence missed: caught up, it would be the one
+      // run the automation asked never to have. Switched off and left there,
+      // which `rearm` has already done by the time catch-up is asked for.
+      if (expired(automation.definition, at)) continue;
       const schedule = soonest(automation, new Date(missed.getTime() - 1));
       if (!schedule?.schedule.catchUp) continue;
       const origin: Bag = {
@@ -279,7 +335,10 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     const back: { resource: string; nextRunAt?: string }[] = [];
     for (const one of held.automations) {
       if (typeof one.resource !== 'string') continue;
-      inner.create(one.resource, bag(one.definition), ownerOf(one.owner));
+      // What an allowance has paid for survives with the definition, because
+      // the protocol says it is not reconstructed from the runs.
+      const runCount = typeof one.runCount === 'number' ? one.runCount : undefined;
+      inner.create(one.resource, bag(one.definition), ownerOf(one.owner), runCount);
       stamps.set(one.resource, {
         createdAt: String(one.createdAt ?? now().toISOString()),
         modifiedAt: String(one.modifiedAt ?? now().toISOString()),
@@ -374,6 +433,6 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       catchUp(wasWaiting);
     },
 
-    close: () => { closed = true; timer?.cancel(); timer = undefined; },
+    close: () => { closed = true; disarm(); },
   };
 }

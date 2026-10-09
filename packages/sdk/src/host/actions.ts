@@ -1,6 +1,7 @@
 import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-host-protocol';
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../catalog.js';
+import { disableConditionsProblem } from '../automations.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, PER_CONNECTION } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction } from './chatactions.js';
@@ -447,6 +448,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(`${resource || 'That'} is not an automation URI`);
         return;
       }
+      /*
+       * What the definition says about disabling itself, refused before the
+       * store is asked - a definition the host cannot honour is one it must not
+       * keep, and a kind named twice is the protocol's own refusal. Read off
+       * the definition for a create and off the patch for an update, so a
+       * patch that says nothing about conditions is a patch about nothing.
+       */
+      const written = keyed(type === 'automation/createRequested' ? action.definition : action.changes);
+      const problem = disableConditionsProblem(written['disableConditions']);
+      if (problem !== undefined) { no(problem); return; }
       const made = type === 'automation/createRequested'
         ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection))
         : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag));
