@@ -15,12 +15,13 @@
 import type { AutomationTriggerDefinition } from '@microsoft/agent-host-protocol';
 
 import type { Agent } from './agent.js';
+import type { StartSession } from './automations.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
 import type { HostOptions, HostTool } from './host.js';
 import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
-import type { UsageEntry } from './usage.js';
+import type { Owner, UsageEntry } from './usage.js';
 import type { SecretWork } from './vault.js';
 
 /**
@@ -55,6 +56,59 @@ export interface PluginTriggers {
    * Nothing is kept for later, because a fire is about what is happening now.
    */
   deliver?: (type: string, event: string, data: Record<string, unknown>) => void;
+}
+
+/**
+ * What a plugin asks the host for when it starts a session for somebody.
+ *
+ * The subset of `StartSession` a plugin has any business naming. What is left
+ * out is left out on purpose: an `origin` is an automation's run, and a session
+ * a plugin starts is not one; the host decides the backend's own bookkeeping
+ * and the model. What a plugin knows is whose the work is, what it is for, and
+ * the first thing to say - which is `prompt` and not `text`, because a plugin
+ * is asking for a conversation to begin rather than recording a run.
+ */
+export interface SessionRequest {
+  /**
+   * Whose the session is, and who the host starts it as.
+   *
+   * Required: the whole point of this door is starting work *for* somebody, and
+   * a plugin that wants work of the host's own says `root:<hostName>` rather
+   * than leaving it to be guessed. The owner's own grants and policies are what
+   * the session is started under - decision
+   * `work-is-owned-by-a-typed-reference`.
+   */
+  owner: Owner;
+  /** The backend it runs on, or the host's own default. */
+  provider?: string;
+  /** Where it works, or wherever a session with nothing said usually works. */
+  workingDirectory?: string;
+  /** Config values for the new session, as a client's `createSession` gives. */
+  config?: Record<string, unknown>;
+  /** The first thing said in it, which is what a session with nothing said is not. */
+  prompt: string;
+}
+
+/**
+ * One plugin's way of starting a session, and what reaches the host.
+ *
+ * Built by the plugin host and carried through the fold rather than copied, for
+ * the same reason `PluginTriggers` is: a plugin starts a session from a route or
+ * a timer long after `apply` returned, so the object its closure holds has to be
+ * the object the host fills in. `start` is that place.
+ */
+export interface PluginStarts {
+  /** The plugin that asked. */
+  by: string;
+  /**
+   * Where the ask goes, set by the host once it exists.
+   *
+   * Absent until then, which is a plugin asking while `apply` runs or from its
+   * own unit test with no host built over it. Unlike a fire, which is about
+   * what is happening now, this is a call that owes an answer - so a plugin
+   * that asks too early is told rather than dropped.
+   */
+  start?: (wanted: StartSession) => Promise<string>;
 }
 
 /**
@@ -206,8 +260,7 @@ export interface PluginContext {
  *
  * Not here yet, and named in the domain reference so an author is not left
  * looking for a method that should not exist: `registerCustomization`,
- * `registerMcpServer`, `registerConfig`, `registerMethod`, and the `on` that
- * subscribes to the host's own events.
+ * `registerMcpServer`, `registerConfig` and `registerMethod`.
  */
 export interface PluginHost extends PluginContext {
   /**
@@ -282,6 +335,27 @@ export interface PluginHost extends PluginContext {
    * answers `false` for all of them, and adopts nothing.
    */
   sessionKept(uri: string): Promise<boolean>;
+  /**
+   * Start a session for somebody, and answer its URI.
+   *
+   * A plugin that needs a session of its own - a bot, a machine that has to be
+   * talked to - has nobody at the keyboard to be, and this is how it gets one
+   * without inventing a second road into the host. What it takes is every step
+   * a client's `createSession` takes: the tree is isolated, the owner's grants
+   * and policies are asked about, the machine the config names is made, and the
+   * prompt is the first turn - so a session started here is one the owner could
+   * have started themselves, and is theirs in the catalogue afterwards.
+   *
+   * The owner's own `session:create` is asked first, and a refusal reads
+   * exactly as it does at the door. A plugin may not start work the person it
+   * names could not have started. A host with no users directory gates nothing,
+   * here as anywhere else.
+   *
+   * Resolved when it is called rather than at load: the host this reaches does
+   * not exist while `apply` runs, so asking before one is built over this
+   * plugin throws rather than being kept for later.
+   */
+  startSession(wanted: SessionRequest): Promise<string>;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */
@@ -547,6 +621,14 @@ export interface Contribution {
    * the plugin offered no type, so the fold can read it without a case.
    */
   triggers: PluginTriggers;
+  /**
+   * Where this plugin's `startSession` goes.
+   *
+   * Carried through rather than copied, so the object `pluginHost` built is the
+   * one the host fills in. Always here, whether or not the plugin ever asks for
+   * a session, so the fold can read it without a case.
+   */
+  starts: PluginStarts;
   /**
    * The one route this plugin registered, when it registered one.
    *

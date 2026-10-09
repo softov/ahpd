@@ -149,12 +149,17 @@ const CONFLICT = -32011;
       const uri = String(params.uri ?? '');
       const encoding = params.encoding === 'base64' ? 'base64' as const : 'utf-8' as const;
       /*
-       * Whose the write is, handed on to the store.
+       * Whose the write is, handed on to the store, and who is asking.
        *
-       * The `file:` store has no use for it. A plugin's scheme may: what a
+       * The `file:` store has no use for either. A plugin's scheme may: what a
        * write makes is sometimes charged to whoever asked, and a machine
        * made by a `computer:` write is up from then on - decision
        * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+       *
+       * The reader is the same one `resourceRead` hands over, and it is here
+       * for the other direction: nothing excuses a write, so a provider that
+       * has to decide what may be written - a `bot:` for a team, say - is
+       * given the only thing that says what the writer belongs to.
        */
       const owner = ownerFor(connection);
       await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
@@ -175,7 +180,7 @@ const CONFLICT = -32011;
         ...(typeof params.position === 'number' ? { position: params.position } : {}),
         ...(params.createOnly === true ? { createOnly: true } : {}),
         ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
-      }, owner);
+      }, owner, connection.principal);
       void fire({ type: 'resource_write', uri });
       log(`${connection.clientId} wrote ${uri}`);
       wroteThrough(uri);
@@ -183,8 +188,17 @@ const CONFLICT = -32011;
     },
     resourceDelete: async (params) => {
       const uri = String(params.uri ?? '');
+      /*
+       * Whose the delete is, and who is asking, the pair a write carries.
+       *
+       * The `file:` store has no use for either. A plugin's scheme may: a
+       * delete takes one of its objects away for good, and a scheme that
+       * decides who may change one - a `bot:` in a team, say - decides with
+       * the same writer here as there.
+       */
+      const owner = ownerFor(connection);
       await need(need(storeFor(uri), 'resourceDelete').remove, 'resourceDelete')(
-        uri, params.recursive === true,
+        uri, params.recursive === true, owner, connection.principal,
       );
       log(`${connection.clientId} removed ${uri}`);
       wroteThrough(uri);

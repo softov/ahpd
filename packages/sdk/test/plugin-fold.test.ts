@@ -60,6 +60,7 @@ const contribution = (
   providers: parts.providers ?? {},
   events: {},
   triggers: { by, types: {} },
+  starts: { by },
   closers: parts.closers ?? [],
   ...(parts.routes === undefined ? {} : { routes: parts.routes }),
 });

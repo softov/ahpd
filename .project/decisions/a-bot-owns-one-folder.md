@@ -3,7 +3,7 @@ title: A bot owns one folder, and every session the host starts for it runs ther
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L638-L700](../../packages/sdk/src/host/automations.ts#L638-L700) - a run's working directory, made before anything runs in it"
+  - "[code://packages/sdk/src/host/automations.ts#L580-L648](../../packages/sdk/src/host/automations.ts#L580-L648) - `beginSession`, where a run's working directory is made before anything runs in it"
 ---
 
 ## Context

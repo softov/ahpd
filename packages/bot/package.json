@@ -1,0 +1,67 @@
+{
+  "name": "@ahpd/bot",
+  "version": "0.10.0",
+  "type": "module",
+  "description": "Bots for the ahpd daemon: a bot: resource provider, where a bot is a record with a workspace and a session",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "plugin",
+    "resource",
+    "bot",
+    "assistant"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/bot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/bot"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typings": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p .",
+    "test": "cd ../.. && vitest run packages/bot/test"
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": ">=0.10"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "Bot",
+    "options": {
+      "root": { "required": false }
+    }
+  }
+}

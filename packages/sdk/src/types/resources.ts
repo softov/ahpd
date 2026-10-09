@@ -161,10 +161,24 @@ export interface ResourceStore {
    * The `file:` store has no use for it; a scheme whose objects cost money does,
    * and a `computer:` machine writes its own up time against it - decision
    * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
+   *
+   * `reader` is whoever the connection is, the same one `read` is handed and
+   * absent in the same two cases - a host with no user directory, and the root
+   * connection. It is not here to excuse a write, which nothing opens: it is
+   * what a scheme checks a write against, and a `bot:` made for a team needs it
+   * to know whether the writer belongs to that team.
    */
-  write?(uri: string, content: Write, owner?: Owner): Promise<void>;
-  /** Remove a file, or a directory when `recursive`. */
-  remove?(uri: string, recursive?: boolean): Promise<void>;
+  write?(uri: string, content: Write, owner?: Owner, reader?: Principal): Promise<void>;
+  /**
+   * Remove a file, or a directory when `recursive`.
+   *
+   * `owner` and `reader` mean what they mean on `write`, and are absent in the
+   * same two cases. A delete is the other road that changes what a scheme
+   * holds, so a provider that decides who may write one of its objects is
+   * handed the same writer here - and a delete is the one road nothing takes
+   * back, which is the worse of the two to leave unasked.
+   */
+  remove?(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   /** Make a directory, and the parents it needs. */
   mkdir?(uri: string): Promise<void>;
   /** Rename. `failIfExists` refuses a destination already there. */

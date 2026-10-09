@@ -17,7 +17,9 @@
  * `Agent` with no `probe` are all valid.
  */
 
+import type { StartSession } from './types/automations.js';
 import type { PortKey } from './types/plugin.js';
+import type { Owner } from './types/usage.js';
 
 /**
  * The one message shape every check reports through.
@@ -221,6 +223,60 @@ export const checkResourceProvider = (scheme: string, value: unknown, by: string
     if (object[member] === undefined) continue;
     if (!right(object[member], expected)) throw new Error(miss(by, 'registerResourceProvider', member, expected));
   }
+};
+
+/**
+ * An owner, as the four kinds the usage rules spell.
+ *
+ * Written here rather than imported: the shape is what a *grant* is checked
+ * against at this boundary, and a plugin's string is the one thing in the host
+ * that has not been through a type.
+ */
+const OWNER = /^(?:user|team|project|root):.+$/;
+
+/**
+ * Check one `startSession` request, and answer it in the host's own shape.
+ *
+ * Checked here rather than where the session is started, because this is the
+ * boundary a plugin's value crosses: a JavaScript plugin's request reaches
+ * `createHost` as an object nothing has looked at, and the refusal has to name
+ * the plugin and the member the way every other one here does. What comes back
+ * is a `StartSession`, so nothing downstream has to know there are two shapes.
+ *
+ * `prompt` is required and is not allowed to be whitespace. A session started
+ * with nothing said in it is a session that does nothing, which is the whole
+ * reason a plugin asks for one - so an empty prompt is a mistake and not a
+ * quiet session.
+ */
+export const checkSessionRequest = (value: unknown, by: string): StartSession => {
+  const object = asObject(value, by, 'startSession', 'a session request');
+  const prompt = typeof object.prompt === 'string' ? object.prompt.trim() : '';
+  if (prompt === '') {
+    throw new Error(miss(by, 'startSession', 'prompt', 'the first message, as a line of text'));
+  }
+  const owner = object.owner;
+  if (typeof owner !== 'string' || !OWNER.test(owner)) {
+    throw new Error(miss(by, 'startSession', String(owner), 'an owner: user:, team:, project: or root:'));
+  }
+  const provider = object.provider;
+  if (provider !== undefined && !right(provider, 'string')) {
+    throw new Error(miss(by, 'startSession', 'provider', 'a string, or nothing for the host default'));
+  }
+  const workingDirectory = object.workingDirectory;
+  if (workingDirectory !== undefined && !right(workingDirectory, 'string')) {
+    throw new Error(miss(by, 'startSession', 'workingDirectory', 'a string, or nothing'));
+  }
+  const config = object.config;
+  if (config !== undefined && !right(config, 'object')) {
+    throw new Error(miss(by, 'startSession', 'config', 'an object of session config, or nothing'));
+  }
+  return {
+    text: prompt,
+    owner: owner as Owner,
+    ...(provider === undefined ? {} : { provider: provider as string }),
+    ...(workingDirectory === undefined ? {} : { workingDirectory: workingDirectory as string }),
+    ...(config === undefined ? {} : { config: config as Record<string, unknown> }),
+  };
 };
 
 /**

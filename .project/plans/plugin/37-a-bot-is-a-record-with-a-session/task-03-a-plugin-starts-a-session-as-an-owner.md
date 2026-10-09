@@ -1,12 +1,13 @@
 ---
 title: A plugin starts a session as an owner
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L638-L700](../../../../packages/sdk/src/host/automations.ts#L638-L700) - the steps an automation's run takes to start a session"
-  - "[code://packages/sdk/src/types/plugin.ts#L317](../../../../packages/sdk/src/types/plugin.ts#L317) - `PluginHost`"
-  - "[code://packages/sdk/src/plugins.ts#L610-L617](../../../../packages/sdk/src/plugins.ts#L610-L617) - how a `PluginHost` method is made"
+  - "[code://packages/sdk/src/host/automations.ts#L580-L648](../../../../packages/sdk/src/host/automations.ts#L580-L648) - `beginSession`, the steps an automation's run takes to start a session"
+  - "[code://packages/sdk/src/host/automations.ts#L755-L764](../../../../packages/sdk/src/host/automations.ts#L755-L764) - `beginPluginSession`, which asks `session:create` first"
+  - "[code://packages/sdk/src/types/plugin.ts#L265](../../../../packages/sdk/src/types/plugin.ts#L265) - `PluginHost`"
+  - "[code://packages/sdk/src/plugins.ts#L599-L606](../../../../packages/sdk/src/plugins.ts#L599-L606) - how a `PluginHost` method is made, and where a plugin's request is checked"
 ---
 
 ## Objective
@@ -36,4 +37,8 @@ It takes the steps of an automation's run: isolation, the owner's grants and pol
 - `pnpm build`, `pnpm typecheck` and `npx vitest run packages/sdk` pass.
 
 ## Resume
+
+Implemented 2026-10-08. The steps both roads take are `beginSession`. `beginAutomation` keeps the pinned-session branch and calls it. `beginPluginSession` asks `session:create` of the owner first, and answers with the refusal a client gets at the door, word for word. `session:create` is asked only on the plugin's road, because an automation's run is not gated by it. `automation-wake.test.ts` has an owner holding `session:read` alone still getting a run.
+
+Three files beyond the ones this task lists were needed to carry the method to a live host, on the pattern `PluginTriggers.deliver` set. `types/plugin.ts` carries `SessionRequest`, `PluginStarts` and `Contribution.starts`, and `types/host.ts` carries `pluginStarts`. `createAutomations` fills each plugin's `start`, so a test that builds a host through `foldHostOptions` and `createHost` reaches the same road a daemon does. `validate.ts`'s `checkSessionRequest` is the boundary where a plugin's untrusted request becomes the host's own `StartSession`. Nothing downstream needs a translation.
 

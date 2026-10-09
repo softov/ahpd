@@ -3,8 +3,8 @@ title: A plugin starts a session as a named owner, through the steps an automati
 status: accepted
 date: 2026-10-07
 refs:
-  - "[code://packages/sdk/src/host/automations.ts#L638-L700](../../packages/sdk/src/host/automations.ts#L638-L700) - an automation's run starts a session as its owner"
-  - "[code://packages/sdk/src/types/plugin.ts#L317](../../packages/sdk/src/types/plugin.ts#L317) - `PluginHost`, which has no way to start a session today"
+  - "[code://packages/sdk/src/host/automations.ts#L657-L732](../../packages/sdk/src/host/automations.ts#L657-L732) - an automation's run starts a session as its owner"
+  - "[code://packages/sdk/src/types/plugin.ts#L358](../../packages/sdk/src/types/plugin.ts#L358) - `startSession` on `PluginHost`, through which a plugin starts a session as an owner"
 ---
 
 ## Context

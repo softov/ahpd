@@ -4,7 +4,7 @@ status: todo
 depends: [task-01-the-bot-plugin-serves-bot-records.md, task-03-a-plugin-starts-a-session-as-an-owner.md]
 layer: "bot"
 refs:
-  - "[code://packages/sdk/src/types/plugin.ts#L317](../../../../packages/sdk/src/types/plugin.ts#L317) - `PluginHost`, with `startSession` from task 03"
+  - "[code://packages/sdk/src/types/plugin.ts#L358](../../../../packages/sdk/src/types/plugin.ts#L358) - `startSession` on `PluginHost`, from task 03"
 ---
 
 ## Objective

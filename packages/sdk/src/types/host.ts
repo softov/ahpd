@@ -11,7 +11,7 @@ import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
-import type { PluginTriggers } from './plugin.js';
+import type { PluginStarts, PluginTriggers } from './plugin.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
@@ -426,6 +426,15 @@ export interface HostOptions {
    * plugin, so dropping one plugin's types is one entry to remove.
    */
   pluginTriggers?: PluginTriggers[];
+  /**
+   * Every plugin that may start a session for somebody, one entry each.
+   *
+   * The fold fills this from every contribution, and the host sets each entry's
+   * `start`, so a plugin's `startSession` reaches the live host from wherever it
+   * is called. Kept by plugin, so a plugin's own entry is the whole of what
+   * removing it would take.
+   */
+  pluginStarts?: PluginStarts[];
 }
 
 /**

@@ -15,13 +15,13 @@ import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions } from './types/host.js';
-import type { Contribution, PluginContext, PluginHost, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
+import type { Contribution, PluginContext, PluginHost, PluginStarts, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
 import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
 import type { Vault } from './types/vault.js';
 import { idOf, schemeOf } from './catalog.js';
 import { readSecret } from './vault.js';
-import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkTool, checkTriggerType, miss } from './validate.js';
+import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, miss } from './validate.js';
 
 /**
  * Every key a `set` registration may name.
@@ -401,6 +401,18 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   }
   if (pluginTriggers.length > 0) options.pluginTriggers = pluginTriggers;
 
+  /*
+   * Every plugin's way of starting a session, one entry each.
+   *
+   * Unconditional and unnamed, unlike the trigger types: asking for a session
+   * is not a claim on a name two plugins could disagree about, so there is
+   * nothing to arbitrate and no entry to drop. The objects are the ones
+   * `pluginHost` built and not copies, because the host sets `start` on them and
+   * each plugin's own `startSession` holds the same one.
+   */
+  const pluginStarts = contributions.map((one) => one.starts);
+  if (pluginStarts.length > 0) options.pluginStarts = pluginStarts;
+
   return { options, problems, routes };
 }
 
@@ -491,6 +503,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
    */
   const events: Record<string, EventListener[]> = {};
   const triggers: PluginTriggers = { by, types: {} };
+  const starts: PluginStarts = { by };
   const contribution: Contribution = {
     by,
     ...(options.spec === undefined ? {} : { spec: options.spec }),
@@ -503,6 +516,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     events: events as unknown as HostHandlers,
     closers: [],
     triggers,
+    starts,
   };
   const providers = new Set<string>();
   const tools = new Set<string>();
@@ -572,6 +586,23 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
        * charged to a session that cannot run in it.
        */
       return sessions.provider(idOf(uri)) === schemeOf(uri);
+    },
+    /*
+     * Checked here and started there.
+     *
+     * A plugin's request is the one value on this road that has not been
+     * through a type, so it is checked at this boundary the way every
+     * registration is - and then handed to the host's own road, which is the
+     * same one a run takes. Asked while `apply` runs there is no host yet, and
+     * a call that owes an answer is told rather than dropped.
+     */
+    startSession(wanted) {
+      const asked = checkSessionRequest(wanted, by);
+      const start = starts.start;
+      if (start === undefined) {
+        throw new Error(miss(by, 'startSession', 'the session', 'asked for once a host is built over this plugin'));
+      }
+      return start(asked);
     },
     registerAgent(agent) {
       checkAgent(agent, by);

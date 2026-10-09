@@ -161,6 +161,14 @@ export interface Automations {
   beginAutomation(wanted: StartSession): Promise<string>;
   /** `beginAutomation`, refused once the host is closing, and held while it runs. */
   startForAutomation(wanted: StartSession): Promise<string>;
+  /**
+   * A session a plugin asked for, as the owner it named.
+   *
+   * The same steps a run takes, asked the same way, and one question more: a
+   * plugin starts work *for* somebody, who could have started it themselves,
+   * so the owner's own `session:create` is asked first.
+   */
+  startForPlugin(wanted: StartSession): Promise<string>;
   /** The clock, wired to the only thing that can act on it. */
   due(event: { automation: string; origin: Bag }): void;
 }
@@ -559,6 +567,87 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   /**
+   * A session started for somebody, taking every step a client's `createSession`
+   * takes.
+   *
+   * Two roads reach here, and they are the two ways this host starts work for a
+   * person who is not at the keyboard: an automation's run, and a plugin asking
+   * for one. Neither may take a shorter route than a client, so the steps are
+   * here once - the tree is isolated, the owner's policies and grants are asked
+   * about, the machine the config names is made, and the first turn is sent -
+   * and what each road adds is the question that is its own.
+   */
+  const beginSession = async (wanted: StartSession): Promise<string> => {
+    const provider = wanted.provider ?? first.provider;
+    // Held under its provider's name, as a client's `createSession` is.
+    const uri = `${provider}:/${crypto.randomUUID()}`;
+    unheld(uri);
+    const config = wanted.config ?? {};
+    // The same two steps a client's `createSession` takes: the tree is made
+    // before anything runs in it, and the host's own keys are not the
+    // backend's to read. An automation asking for isolation is the case this
+    // exists for - nobody is at the keyboard to notice two of them colliding.
+    const where = await isolated(uri, config, wanted.workingDirectory);
+    await settle(uri, wanted.workingDirectory, config);
+    /*
+     * The two checks a client's `createSession` makes, asked here too and before
+     * anything runs in the machine - an automation is nobody at the keyboard to
+     * notice a refusal, so this is the only gate before the run.
+     *
+     * It acts as its owner, which is who sent the work and whose policies apply
+     * to it. An owner this process has never seen sign in cannot be checked, so
+     * the run waits for them rather than going unchecked.
+     */
+    const owner = wanted.owner;
+    const person = principalFor(owner);
+    /*
+     * `computer:write`, which only a source asks for: naming one is a machine
+     * made for this run, held to the same grant a client's `createSession` is.
+     * It is asked of the owner, who is who this run acts as, and read in this
+     * one place - decision
+     * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
+     *
+     * Asked before the sign-in below, because it is the narrower of the two:
+     * an owner this process has never met has no grants to ask about, and what
+     * this run cannot do is make a machine, which is what it says. A host with
+     * no users directory gates nothing here as anywhere else.
+     *
+     * And only a `user:` owner, which is the only owner with a person behind
+     * it: an automation the host owns, or one nobody owns, is not a somebody's
+     * machine to hand a grant to, and a root connection is not gated as
+     * anywhere else.
+     */
+    if (options.users !== undefined && computerSource(config.computer) !== undefined && owner?.startsWith('user:') === true) {
+      if (person === undefined) {
+        throw new RpcError(-32009, `${owner} has not signed in since this daemon started, so this run cannot make a machine for itself; sign in on this host, or start it without a computer`);
+      }
+      if (!person.can('computer:write')) throw new RpcError(-32009, refusalReason(person.id, 'computer:write'), {});
+    }
+    if (owner?.startsWith('user:') === true && person === undefined) {
+      throw new RpcError(-32009, `${owner.slice('user:'.length)} has to sign in once before an automation of theirs may run`);
+    }
+    const wrong = await admitted(person, charged.get(uri)?.scope, config, provider, uri, owner);
+    if (wrong !== undefined) throw new RpcError(-32009, wrong);
+    // A source in the config is made into a machine before anything runs, the
+    // same step a client's `createSession` takes.
+    await placedIn(uri, provider, config, where, wanted.owner);
+    openSession(
+      uri,
+      provider,
+      backendsOwn(config),
+      where,
+      wanted.origin,
+      undefined,
+      undefined,
+      undefined,
+      forWhom(wanted.owner),
+    );
+    fireRun(wanted);
+    beginIn(uri, wanted);
+    return uri;
+  };
+
+  /**
    * What a store is handed when a run starts, however it started.
    *
    * The session *and* the first message: a session created and never spoken to
@@ -635,72 +724,7 @@ export function createAutomations(ctx: HostContext): Automations {
       beginIn(pin, wanted);
       return pin;
     }
-    const provider = wanted.provider ?? first.provider;
-    // Held under its provider's name, as a client's `createSession` is.
-    const uri = `${provider}:/${crypto.randomUUID()}`;
-    unheld(uri);
-    const config = wanted.config ?? {};
-    // The same two steps a client's `createSession` takes: the tree is made
-    // before anything runs in it, and the host's own keys are not the
-    // backend's to read. An automation asking for isolation is the case this
-    // exists for - nobody is at the keyboard to notice two of them colliding.
-    const where = await isolated(uri, config, wanted.workingDirectory);
-    await settle(uri, wanted.workingDirectory, config);
-    /*
-     * The two checks a client's `createSession` makes, asked here too and before
-     * anything runs in the machine - an automation is nobody at the keyboard to
-     * notice a refusal, so this is the only gate before the run.
-     *
-     * It acts as its owner, which is who sent the work and whose policies apply
-     * to it. An owner this process has never seen sign in cannot be checked, so
-     * the run waits for them rather than going unchecked.
-     */
-    const owner = wanted.owner;
-    const person = principalFor(owner);
-    /*
-     * `computer:write`, which only a source asks for: naming one is a machine
-     * made for this run, held to the same grant a client's `createSession` is.
-     * It is asked of the owner, who is who this run acts as, and read in this
-     * one place - decision
-     * `a-machine-made-for-a-session-counts-against-max-and-needs-computer-write`.
-     *
-     * Asked before the sign-in below, because it is the narrower of the two:
-     * an owner this process has never met has no grants to ask about, and what
-     * this run cannot do is make a machine, which is what it says. A host with
-     * no users directory gates nothing here as anywhere else.
-     *
-     * And only a `user:` owner, which is the only owner with a person behind
-     * it: an automation the host owns, or one nobody owns, is not a somebody's
-     * machine to hand a grant to, and a root connection is not gated as
-     * anywhere else.
-     */
-    if (options.users !== undefined && computerSource(config.computer) !== undefined && owner?.startsWith('user:') === true) {
-      if (person === undefined) {
-        throw new RpcError(-32009, `${owner} has not signed in since this daemon started, so this run cannot make a machine for itself; sign in on this host, or start it without a computer`);
-      }
-      if (!person.can('computer:write')) throw new RpcError(-32009, refusalReason(person.id, 'computer:write'), {});
-    }
-    if (owner?.startsWith('user:') === true && person === undefined) {
-      throw new RpcError(-32009, `${owner.slice('user:'.length)} has to sign in once before an automation of theirs may run`);
-    }
-    const wrong = await admitted(person, charged.get(uri)?.scope, config, provider, uri, owner);
-    if (wrong !== undefined) throw new RpcError(-32009, wrong);
-    // A source in the config is made into a machine before anything runs, the
-    // same step a client's `createSession` takes.
-    await placedIn(uri, provider, config, where, wanted.owner);
-    openSession(
-      uri,
-      provider,
-      backendsOwn(config),
-      where,
-      wanted.origin,
-      undefined,
-      undefined,
-      undefined,
-      forWhom(wanted.owner),
-    );
-    fireRun(wanted);
-    beginIn(uri, wanted);
+    const uri = await beginSession(wanted);
     // A pinned automation keeps the session it just made, so its next run adds
     // a turn to this chat rather than making another.
     if (automation !== undefined && wake?.session === 'pinned') keepPinned(automation, uri);
@@ -708,17 +732,53 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   /**
+   * A session a plugin asked for, as the owner it named.
+   *
+   * A plugin starts work for somebody - the person whose bot it is, the person
+   * whose machine it is - and what makes that honest is that it is the same
+   * session they would have made: the same isolation, the same policies, the
+   * same machine, and the same first turn.
+   *
+   * The one question a run is not asked is asked here. A run is an automation
+   * doing its own work, which its owner already agreed to by writing it; a
+   * plugin naming somebody is asking for a session *as* them, so their own
+   * `session:create` is what has to hold - and the refusal is word for word the
+   * one a client gets at the door, because a client branching on it has to read
+   * the same answer whichever way the work was asked for.
+   *
+   * Asked first, before the steps below: `session:create` is what a client is
+   * stopped by, so it is what a plugin is stopped by, and a `computer:write`
+   * refusal would be the answer to a question that had not been reached yet. A
+   * host with no users directory gates nothing, as it gates nothing for a
+   * client.
+   */
+  const beginPluginSession = async (wanted: StartSession): Promise<string> => {
+    const owner = wanted.owner;
+    if (options.users !== undefined && owner?.startsWith('user:') === true) {
+      const person = principalFor(owner);
+      if (person !== undefined && !person.can('session:create')) {
+        throw new RpcError(-32009, refusalReason(person.id, 'session:create'), {});
+      }
+    }
+    return await beginSession(wanted);
+  };
+
+  /**
    * `beginAutomation`, refused once the host is closing, and held in
    * `starting` while it runs so a close waits for it as it waits for a session.
    */
-  const startForAutomation = (wanted: StartSession): Promise<string> => {
+  const startHeld = (begin: () => Promise<string>): Promise<string> => {
     if (ctx.closed) return Promise.reject(new Error(CLOSING));
-    const run = beginAutomation(wanted);
+    const run = begin();
     ctx.starting.add(run);
     const done = (): void => { ctx.starting.delete(run); };
     run.then(done, done);
     return run;
   };
+
+  const startForAutomation = (wanted: StartSession): Promise<string> => startHeld(() => beginAutomation(wanted));
+
+  const startForPlugin = (wanted: StartSession): Promise<string> => startHeld(() => beginPluginSession(wanted));
 
   /**
    * Every automation this host is watching, by resource.
@@ -1001,6 +1061,21 @@ export function createAutomations(ctx: HostContext): Automations {
     one.deliver = (type, event, data) => { fired(one.by, type, event, data); };
   }
 
+  /*
+   * Every plugin's sessions are started here.
+   *
+   * Set now rather than handed over at load, for the same reason: a plugin asks
+   * from a route or a timer long after its `apply` returned, and the object it
+   * holds has to be the one this host filled in. A plugin that registered no
+   * `startSession` has nothing here, and a host with no automation port at all
+   * - an embedder that never asked for one - leaves every `start` absent, which
+   * is a plugin asking into nothing rather than a session started somewhere
+   * else.
+   */
+  for (const one of options.pluginStarts ?? []) {
+    one.start = (wanted) => startForPlugin(wanted);
+  }
+
   /**
    * The clock, wired to the only thing that can act on it.
    *
@@ -1021,7 +1096,7 @@ export function createAutomations(ctx: HostContext): Automations {
     request(automation, origin, undefined, `${automation} was due`, false);
   };
 
-  return { linked, settleRun, gone, stop, changed, beginAutomation, startForAutomation, due };
+  return { linked, settleRun, gone, stop, changed, beginAutomation, startForAutomation, startForPlugin, due };
 }
 
 /**
