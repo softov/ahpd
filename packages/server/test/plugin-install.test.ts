@@ -36,14 +36,16 @@ afterEach(() => {
  * A runner that records every call and lets a verb fail. `lands` is what an
  * install leaves in `node_modules`, as a package name and its version.
  *
- * The packages land where the call's own `--prefix` says, which is what npm
- * does: a case that moves the root sees them under the root.
+ * `answers` is keyed by the program's verb, or by the last argument, so a case
+ * can fail the one package of a `--force` update that gets its own call. The
+ * packages land where the call's own `--prefix` says, which is what npm does: a
+ * case that moves the root sees them under the root.
  */
 const fake = (answers: Record<string, Ran> = {}, lands: Record<string, string> = {}) => {
   const calls: { program: string; argv: string[] }[] = [];
   const runner: Runner = async (program, argv) => {
     calls.push({ program, argv: [...argv] });
-    const answer = answers[argv[0] ?? ''] ?? { code: 0, stdout: '', stderr: '' };
+    const answer = answers[argv[0] ?? ''] ?? answers[argv.at(-1) ?? ''] ?? { code: 0, stdout: '', stderr: '' };
     const at = argv.indexOf('--prefix');
     if (argv[0] === 'install' && answer.code === 0 && at !== -1) {
       const into = argv[at + 1] as string;
@@ -313,12 +315,43 @@ it('runs no npm when nothing is installed', async () => {
   expect(said).toEqual([`No plugin is installed in ${configDir}.`, `No plugin is installed in ${configDir}.`]);
 });
 
-it('fails an update with npm\'s reason, once', async () => {
+it('fails an update with npm\'s reason, once, and names --force', async () => {
   installed({ '@ahpd/agent-claude': '0.7.0' });
   const { runner } = fake({ install: { code: 1, stdout: '', stderr: 'E404 no such package' } });
   const failed = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say }).catch((error: unknown) => error as Error);
   expect(failed).toBeInstanceOf(Error);
-  expect((failed as Error).message).toBe('npm could not update @ahpd/agent-claude: E404 no such package');
+  // The packages move together or not at all, so the line says what failed and
+  // the flag that moves only the ones npm can install.
+  expect((failed as Error).message).toBe('npm could not update @ahpd/agent-claude; rerun with --force to update only the plugins that can be updated: E404 no such package');
+});
+
+it('moves the others, and names the one npm cannot install, with --force', async () => {
+  installed({ '@ahpd/agent-acme': '0.7.0', '@ahpd/agent-claude': '0.7.0', 'left-pad': '1.0.0' });
+  said.length = 0;
+  const { runner, calls } = fake(
+    { '@ahpd/agent-acme@0.8.0': { code: 1, stdout: '', stderr: 'E404 no such package' } },
+    { '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' },
+  );
+  const failed = await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, force: true })
+    .catch((error: unknown) => error as Error);
+  // One npm call each, so the one npm cannot install is the only one left
+  // where it was, and the rest moved and were said.
+  expect(calls.map((one) => one.argv)).toEqual([
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-acme@0.8.0'],
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', '@ahpd/agent-claude@0.8.0'],
+    ['install', '--prefix', configDir, '--legacy-peer-deps', '@ahpd/sdk@0.8.0', 'left-pad@latest'],
+  ]);
+  expect(said).toEqual(['@ahpd/agent-claude: 0.7.0 to 0.8.0', 'left-pad: 1.0.0 to 1.3.0']);
+  expect((failed as Error).message).toBe('npm could not update @ahpd/agent-acme: E404 no such package');
+});
+
+it('moves every package in its own npm call with --force, and fails none of them', async () => {
+  installed({ '@ahpd/agent-claude': '0.7.0', 'left-pad': '1.0.0' });
+  said.length = 0;
+  const { runner, calls } = fake({}, { '@ahpd/agent-claude': '0.8.0', 'left-pad': '1.3.0' });
+  expect(await updatePlugins('all', { configDir, version: '0.8.0', run: runner, say, force: true }))
+    .toEqual([{ name: '@ahpd/agent-claude', from: '0.7.0', to: '0.8.0' }, { name: 'left-pad', from: '1.0.0', to: '1.3.0' }]);
+  expect(calls.map((one) => one.argv.at(-1))).toEqual(['@ahpd/agent-claude@0.8.0', 'left-pad@latest']);
 });
 
 it('leaves a package installed from outside the registry as it is, and says so', async () => {

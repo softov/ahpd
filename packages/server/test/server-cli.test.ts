@@ -1201,6 +1201,21 @@ describe('plugin', () => {
     }
   }, 30000);
 
+  it('update --force installs each package in its own npm call', async () => {
+    const dir = join(home, 'ahpd');
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ dependencies: { 'some-plugin': '^1.0.0', 'another-plugin': '^1.0.0' } }));
+    const log = join(home, 'npm.log');
+    // Nothing lands, so no version moved; what the case pins is the calls the
+    // flag makes, one package each rather than the one `update all` makes.
+    const said = await cli(['plugin', 'update', 'all', '--force'], { env: { ...fakeNpm(0), FAKE_NPM_LOG: log } });
+    expect(said.code).toBe(0);
+    const starts = readFileSync(log, 'utf8').split('\n').filter((line) => line.startsWith('start install'));
+    expect(starts).toEqual([
+      `start install --prefix ${dir} --legacy-peer-deps @ahpd/sdk@${version()} some-plugin@latest`,
+      `start install --prefix ${dir} --legacy-peer-deps @ahpd/sdk@${version()} another-plugin@latest`,
+    ]);
+  }, 20000);
+
   it('asks for a restart when an update moved only the sdk', async () => {
     // Every update installs the daemon's own sdk beside the plugins, so a
     // daemon upgraded before its plugins moves the sdk on a call that moves no

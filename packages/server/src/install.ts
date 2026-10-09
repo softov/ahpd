@@ -473,6 +473,11 @@ export interface UpdateOptions {
   run: Runner;
   /** One line of this command's own output. */
   say(line: string): void;
+  /**
+   * Whether each package is its own npm call, so one npm cannot install does
+   * not stop the others; absent is one call for everything that moves.
+   */
+  force?: boolean;
 }
 
 /** A package `plugin update` moved, with its version on disk before and after npm; absent is not installed. */
@@ -494,6 +499,11 @@ export interface Moved {
  * update.` when none did, and answers those packages. The sdk is installed
  * beside them by every call, so a version of it that changed is answered as
  * moved too, though it is no plugin to name.
+ *
+ * One call makes npm resolve the packages against each other, so one it cannot
+ * install fails every move in it, and that failure names `--force`. With
+ * `force` each package is a call of its own: every one is attempted, what
+ * moved is said, and the ones npm refused together end the command.
  */
 export async function updatePlugins(names: 'all' | readonly string[], options: UpdateOptions): Promise<Moved[]> {
   const root = pluginRoot(options.configDir);
@@ -528,9 +538,22 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
   });
   const from = moving.map((name) => installedVersion(root, packageOf(name)));
   const sdkFrom = installedVersion(root, SDK);
-  const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...targets]);
-  if (done.code !== 0) {
-    throw npmFailed(`npm could not update ${moving.map(packageOf).join(', ')}`, done);
+  const refused: string[] = [];
+  let reason: Ran | undefined;
+  if (options.force === true) {
+    for (const [at, name] of moving.entries()) {
+      const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), targets[at] as string]);
+      if (done.code === 0) continue;
+      // Which package npm refused, and npm's own words for the first of them.
+      reason ??= done;
+      refused.push(packageOf(name));
+    }
+  }
+  else {
+    const done = await options.run('npm', ['install', '--prefix', root, ...daemonsSdk(options.version), ...targets]);
+    if (done.code !== 0) {
+      throw npmFailed(`npm could not update ${moving.map(packageOf).join(', ')}; rerun with --force to update only the plugins that can be updated`, done);
+    }
   }
   const moved: Moved[] = [];
   moving.forEach((name, at) => {
@@ -544,7 +567,10 @@ export async function updatePlugins(names: 'all' | readonly string[], options: U
     moved.push({ name: SDK, ...(sdkFrom === undefined ? {} : { from: sdkFrom }), ...(sdkTo === undefined ? {} : { to: sdkTo }) });
     options.say(`${SDK}: ${sdkFrom ?? 'not installed'} to ${sdkTo ?? 'not installed'}`);
   }
-  if (moved.length === 0) options.say('Nothing to update.');
+  // "Nothing to update." is left unsaid when npm refused some, because the
+  // refusal that follows says why nothing did.
+  if (moved.length === 0 && reason === undefined) options.say('Nothing to update.');
+  if (reason !== undefined) throw npmFailed(`npm could not update ${refused.join(', ')}`, reason);
   return moved;
 }
 

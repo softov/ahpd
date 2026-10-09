@@ -524,7 +524,7 @@ describe('a request signs in', () => {
   }, 30000);
 
   it('serves a plugin update only to the deployment token, and answers what moved', async () => {
-    writeFileSync(join(home, 'ahpd', 'package.json'), JSON.stringify({ dependencies: { 'left-pad': '^1.0.0' } }));
+    writeFileSync(join(home, 'ahpd', 'package.json'), JSON.stringify({ dependencies: { 'left-pad': '^1.0.0', 'right-pad': '^1.0.0' } }));
     mkdirSync(join(home, 'ahpd', 'node_modules', 'left-pad'), { recursive: true });
     writeFileSync(join(home, 'ahpd', 'node_modules', 'left-pad', 'package.json'), JSON.stringify({ name: 'left-pad', version: '1.0.0' }));
     const log = join(home, 'npm.log');
@@ -556,6 +556,16 @@ describe('a request signs in', () => {
     const unmoved = await post(url, 'root-secret', { name: ['all'] });
     expect(unmoved.status).toBe(200);
     expect(await unmoved.json()).toEqual({ plugins: [] });
+
+    // The body's `force` reaches npm as one call per package, the way the
+    // flag does at the terminal.
+    const forced = await post(url, 'root-secret', { name: ['all'], force: true });
+    expect(forced.status).toBe(200);
+    const starts = readFileSync(log, 'utf8').split('\n').filter((line) => line.startsWith('start install'));
+    expect(starts.slice(-2)).toEqual([
+      `start install --prefix ${join(home, 'ahpd')} --legacy-peer-deps @ahpd/sdk@${version()} left-pad@latest`,
+      `start install --prefix ${join(home, 'ahpd')} --legacy-peer-deps @ahpd/sdk@${version()} right-pad@latest`,
+    ]);
   }, 30000);
 
   it('answers user list for a role that holds user:read', async () => {

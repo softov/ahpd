@@ -1,6 +1,6 @@
 ---
 title: Docs say how to upgrade the plugins
-status: todo
+status: implemented
 depends: [task-01-plugin-update.md, task-02-a-refused-install-names-the-blocker.md, task-06-the-plugin-keeps-npms-sdk.md, task-08-the-daemon-pins-the-sdk.md]
 layer: "docs"
 refs:
@@ -31,3 +31,5 @@ Implemented again 2026-09-29 for task 06: `docs/DAEMON.md` says every `@ahpd/*` 
 Reopened 2026-09-29 for task 08: the docs say ahpd installs the daemon's `@ahpd/sdk` beside the plugins and one plugin never blocks another; the refused-install sentence goes; a plugin for another minor is refused at load.
 Implemented again 2026-09-29 for tasks 08 and 09: `docs/DAEMON.md` says every plugin takes `@ahpd/sdk` as a peer and states the oldest it needs, such as `>=0.8`; ahpd installs the daemon's own `@ahpd/sdk` with every install and update and npm checks no peer, so one plugin never blocks another; a plugin whose range leaves out the daemon's sdk, such as one for an older minor saying `^0.7`, is refused at load and the others load; `install` and `update` refuse `@ahpd/sdk` by name. The refused-install sentence is gone. `docs/PLUGINS.md`'s manifest example says `">=0.8"` and its table says the range states the oldest sdk. `packages/server/README.md` says the same in one sentence after the upgrade line. No em dash; each file's wrapping kept.
 Reopened 2026-10-04 for task 01's `--force`.
+Implemented 2026-10-08 for `--force`: `docs/DAEMON.md`'s upgrade paragraph gained three lines, that one package npm cannot install fails the whole call and the failure says to rerun with `--force`, which gives each package its own `npm install` so the ones npm can install move and the one it cannot is the one named; its command list says the same in one clause on the `update all` row. Both keep the file's own wrapping and use no em dash.
+`packages/server/README.md` needed no change: its upgrade line carries no flag for `install` either, and the `--force` failure is detail the paragraph in DAEMON.md holds.

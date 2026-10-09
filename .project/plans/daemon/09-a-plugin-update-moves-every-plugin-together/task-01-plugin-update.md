@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin update` moves every installed plugin together"
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -44,3 +44,6 @@ Reopened for `all` or names, and implemented again 2026-09-29: `updatePlugins(na
 Failing first: `updates only the packages it is named` and `refuses to update a name that is not installed, before npm runs` in `test/plugin-install.test.ts` failed on the old signature, and the HTTP case saw 200 for an empty body. All pass after.
 Open: plain `ahpd plugin update` cannot show both forms yet. `@cofold/commands` 0.2.2 rejects the optional variadic slot `:name?...` in `commandFor` (`the pattern names :name?, which is not an input field`), so the slot is the required `:name...`, and a bare `update` gets cofold's own refusal (CLI `unknown command "plugin update"`, exit 2; HTTP `name is required`, 400). This is the same cofold gap as task 03.
 Reopened 2026-10-04 for `--force`: the one-call failure names `--force`, and `--force` installs each package in its own call.
+Implemented 2026-10-08 for `--force`. `updatePlugins` takes `force?: boolean`. Absent, the packages move in one npm call as before, and a failed call throws `npm could not update <names>; rerun with --force to update only the plugins that can be updated` beside npm's reason. Set, each package is its own `npm install` with the daemon's sdk; every one is attempted, what moved is said, and the ones npm refused end the command with `npm could not update <names>` and the first refusal's reason. The `plugin.update` action declares `force` beside `name`, so both `ahpd plugin update all --force` and a `force: true` in the HTTP body reach the same `updatePlugins`, and its description says the call count either way.
+Failing first: `moves the others, and names the one npm cannot install, with --force` and `moves every package in its own npm call with --force, and fails none of them` in `test/plugin-install.test.ts` (the second saw one call naming both packages); `update --force installs each package in its own npm call` in `test/server-cli.test.ts` (exit 2 while `--force` was undeclared); and the body assertion added to the `plugin update` case in `test/server-http.test.ts` (one call naming both packages). `fails an update with npm's reason, once, and names --force` replaces the old one-call expectation with the new line.
+The `--force` path loses the restart line, because the action's `stop()` ends the command before it is said: the person is told what npm refused and the moves are already on screen.

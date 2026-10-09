@@ -73,6 +73,9 @@ moves only the packages named, each of which must be installed there. One
 installed from a path, a link, git or a URL is left as it is. It says each move,
 or `Nothing to update.` when no version moved, and leaves `config.json` as it
 is. `@ahpd/sdk` is not a plugin, so `install` and `update` refuse it by name.
+One package npm cannot install fails that whole call, and the failure says to
+rerun with `--force`. `--force` gives each package its own `npm install`, so
+the ones npm can install move and the one it cannot is the one named.
 
 `ahpd config` prints the directory if it is somewhere else, which it is when
 `XDG_CONFIG_HOME` says so. A path in `plugins` is resolved instead against the
@@ -167,7 +170,9 @@ ahpd plugin install <name>  install a plugin into the configuration directory
 ahpd plugin remove <name>   drop it from the configuration and uninstall it,
                             unless --keep
 ahpd plugin update all      move every installed plugin to the daemon's
-                            version, in one npm call
+                            version, in one npm call. --force gives each
+                            package its own call, so one that fails does not
+                            stop the others
 ahpd plugin update <name>   move only the plugins named
 ahpd plugin config <name>   show a plugin's options
 ahpd plugin config <name> <key> <value>
