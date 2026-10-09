@@ -1,6 +1,6 @@
 ---
 title: The list shows charged pools the reader may read
-status: doing
+status: done
 depends: [task-01-a-member-reads-their-teams-pool.md]
 layer: sdk
 refs:

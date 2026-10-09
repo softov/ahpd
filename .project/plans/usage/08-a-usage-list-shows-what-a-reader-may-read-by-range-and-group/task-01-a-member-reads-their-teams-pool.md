@@ -1,6 +1,6 @@
 ---
 title: A member reads their team's pool
-status: doing
+status: done
 depends: []
 layer: sdk
 refs:

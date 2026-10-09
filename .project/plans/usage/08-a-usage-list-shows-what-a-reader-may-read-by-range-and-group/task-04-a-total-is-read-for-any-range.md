@@ -1,6 +1,6 @@
 ---
 title: A total is read for any range
-status: doing
+status: done
 depends: []
 layer: sdk
 refs:

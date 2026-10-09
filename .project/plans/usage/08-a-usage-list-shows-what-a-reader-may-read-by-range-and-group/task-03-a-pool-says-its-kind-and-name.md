@@ -1,6 +1,6 @@
 ---
 title: A pool says its kind and name
-status: doing
+status: done
 depends: []
 layer: sdk
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A usage list shows the charged pools a reader may read, names them, and sums any range by user, team and project
 domain: usage
-status: planned
+status: built
 priority: high
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -71,11 +71,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A member reads their team's pool](task-01-a-member-reads-their-teams-pool.md) | doing | - |
-| [02 - The list shows charged pools the reader may read](task-02-the-list-shows-charged-pools-the-reader-may-read.md) | doing | 01 |
-| [03 - A pool says its kind and name](task-03-a-pool-says-its-kind-and-name.md) | doing | - |
-| [04 - A total is read for any range](task-04-a-total-is-read-for-any-range.md) | doing | - |
-| [05 - Usage is summed by user, team and project](task-05-usage-is-summed-by-user-team-and-project.md) | doing | 01, 03, 04 |
+| [01 - A member reads their team's pool](task-01-a-member-reads-their-teams-pool.md) | done | - |
+| [02 - The list shows charged pools the reader may read](task-02-the-list-shows-charged-pools-the-reader-may-read.md) | done | 01 |
+| [03 - A pool says its kind and name](task-03-a-pool-says-its-kind-and-name.md) | done | - |
+| [04 - A total is read for any range](task-04-a-total-is-read-for-any-range.md) | done | - |
+| [05 - Usage is summed by user, team and project](task-05-usage-is-summed-by-user-team-and-project.md) | done | 01, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -84,8 +84,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 05 are built and wait for review.
-- **Next action:** review the five tasks.
+- **Done so far:** tasks 01-05 are done. Merged 2026-10-09 as 9e38af1. [implemented.md](implemented.md) lists the files and the departures.
+- **Next action:** none. ahpapp `usage/04` builds the screen on these reads.
 - **Open questions:** none.
 - **Watch out for:** a record charged to three pools counts once in a group, and three times across pool rows.
 

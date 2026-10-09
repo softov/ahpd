@@ -348,7 +348,7 @@ Reference: [00-usage.md](usage/00-usage.md)
 | [05 - A usage total says the tokens sent and the tokens received, beside the sum](usage/05-a-total-says-tokens-sent-and-received/plan.md) | high | built 2026-10-07 ([implemented.md](usage/05-a-total-says-tokens-sent-and-received/implemented.md)) | - | ahpapp usage 02 |
 | [06 - A usage record keeps the provider's cost beside the cost it charges, each split into sent and received](usage/06-a-record-keeps-the-providers-cost-beside-ours/plan.md) | high | active 2026-10-07; 01-02 done (2b5a656), 03 waits on Softov's captures | usage 05 | usage 07 |
 | [07 - An agent's reported cost is kept as the provider's, and a record says nothing it was not told](usage/07-an-agents-reported-cost-is-the-providers/plan.md) | high | active 2026-10-08; 01-03 and 05 done ([implemented.md](usage/07-an-agents-reported-cost-is-the-providers/implemented.md)); 04 blocked on a live `claude-openrouter` capture | usage 06 | - |
-| [08 - A usage list shows the charged pools a reader may read, names them, and sums any range by user, team and project](usage/08-a-usage-list-shows-what-a-reader-may-read-by-range-and-group/plan.md) | high | planned 2026-10-09; tasks 01-05 todo | - | ahpapp `usage/04` |
+| [08 - A usage list shows the charged pools a reader may read, names them, and sums any range by user, team and project](usage/08-a-usage-list-shows-what-a-reader-may-read-by-range-and-group/plan.md) | high | built 2026-10-09 (9e38af1) | - | ahpapp `usage/04` |
 
 Next free number in `usage`: `09`.
 

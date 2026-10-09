@@ -1,6 +1,6 @@
 ---
 title: Usage is summed by user, team and project
-status: doing
+status: done
 depends: [task-01-a-member-reads-their-teams-pool.md, task-03-a-pool-says-its-kind-and-name.md, task-04-a-total-is-read-for-any-range.md]
 layer: sdk
 refs:
