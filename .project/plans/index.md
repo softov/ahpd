@@ -158,6 +158,7 @@ Reference: [00-host.md](host/00-host.md)
 | [72 - A plugin is told when the host closes, and the computer plugin stops its work there](host/72-a-plugin-is-told-when-the-host-closes/plan.md) | high | built 2026-10-07 ([implemented.md](host/72-a-plugin-is-told-when-the-host-closes/implemented.md)); reviewed and merged | - | release 0.10.0 |
 | [73 - A role editor offers trust and proxy, the two subjects the gate asks for and does not advertise](host/73-a-role-editor-offers-trust-and-proxy/plan.md) | medium | built 2026-10-08 | - | - |
 | [74 - The sdk's tools live in one folder](host/74-the-sdks-tools-live-in-one-folder/plan.md) | medium | built 2026-10-09 ([implemented.md](host/74-the-sdks-tools-live-in-one-folder/implemented.md)); 79a3541 | - | - |
+| [75 - VS Code opens the uncommitted changes first](host/75-vs-code-opens-the-uncommitted-changes-first/plan.md) | medium | built 2026-10-09 ([implemented.md](host/75-vs-code-opens-the-uncommitted-changes-first/implemented.md)) | - | VS Code shows Commit |
 
 Next free number in `host`: `75`.
 

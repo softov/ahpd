@@ -856,11 +856,13 @@ export function gitChanges(): ChangesetSource {
         : [];
       const turns = seen.get(session);
       if (!turns || turns.size === 0) return scopes;
-      // The session's own first. A client showing one changeset shows the
-      // first that needs no variable filling in, and what a *conversation*
-      // changed is the one that belongs beside a conversation - the working
-      // tree includes whatever else happened to the directory meanwhile.
+      // The working tree first. A client that shows one changeset shows the
+      // first, VS Code opens it, and `commit` is offered on the working tree
+      // alone - so the session's own changes must not come before it. "This
+      // Session" stays in the picker, and what a *conversation* changed is
+      // still the one that belongs beside a conversation.
       return [
+        ...scopes,
         {
           id: 'session',
           label: 'This Session',
@@ -868,7 +870,6 @@ export function gitChanges(): ChangesetSource {
           changeKind: 'session',
           reviewable: true,
         },
-        ...scopes,
         // Templates, which is how the protocol offers a scope that has to be
         // filled in: a client expands them from turns it can already see.
         {

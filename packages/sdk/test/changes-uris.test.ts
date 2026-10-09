@@ -361,6 +361,32 @@ describe('the directory a session\'s changesets are of', () => {
   });
 });
 
+describe('the changesets a session offers, in the order a client sees them', () => {
+  /**
+   * The working tree first, because a client that shows one changeset shows
+   * the first - and VS Code offers Commit on the working tree alone.
+   */
+  it('lists the working tree, then the session, then the two templates', async () => {
+    const dir = repository();
+    const source = gitChanges();
+    // The tree is read so the working tree has an entry, and a turn is
+    // observed so the session's own changeset does. Both are needed before
+    // the order is about anything.
+    await source.refresh?.(dir);
+    const file = join(dir, 'docs', 'AHP.md');
+    source.observe?.(dir, 'ahp-session:/s', 't1', file, 'before');
+    await settle();
+    source.observe?.(dir, 'ahp-session:/s', 't1', file, 'after');
+    await settle();
+    expect(source.scopes(dir, 'ahp-session:/s').map((one) => one.id)).toEqual([
+      'uncommitted',
+      'session',
+      'turn/{turnId}',
+      'compare/{originalTurnId}/{modifiedTurnId}',
+    ]);
+  });
+});
+
 describe('file:, a target an operation names', () => {
   /** `discard` on one resource of a directory's uncommitted changes. */
   const discard = (dir: string, resource: string) => {
