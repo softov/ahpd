@@ -90,15 +90,23 @@ export function createParts(ctx: SessionContext): Parts {
    * rather than reported as zero - a nought is a measurement and an absence
    * is not. Cache writes are no different: a measurement the protocol names no
    * field for, so it rides `_meta` the way cofold's does.
+   *
+   * An input of zero with no cache read or write and an output above zero is a
+   * prompt the provider did not count, so it is left out as well.
    */
   const usageOf = (raw: unknown, model?: string): Bag | undefined => {
     const found = bag(raw);
     const num = (value: unknown): number | undefined => (typeof value === 'number' ? value : undefined);
+    const input = num(found.input_tokens);
+    const output = num(found.output_tokens);
+    const read = num(found.cache_read_input_tokens);
     const writes = num(found.cache_creation_input_tokens);
+    const uncounted = input === 0 && output !== undefined && output > 0
+      && (read === undefined || read === 0) && (writes === undefined || writes === 0);
     const info: Bag = {
-      ...(num(found.input_tokens) !== undefined ? { inputTokens: num(found.input_tokens) } : {}),
-      ...(num(found.output_tokens) !== undefined ? { outputTokens: num(found.output_tokens) } : {}),
-      ...(num(found.cache_read_input_tokens) !== undefined ? { cacheReadTokens: num(found.cache_read_input_tokens) } : {}),
+      ...(input !== undefined && !uncounted ? { inputTokens: input } : {}),
+      ...(output !== undefined ? { outputTokens: output } : {}),
+      ...(read !== undefined ? { cacheReadTokens: read } : {}),
       ...(model !== undefined ? { model } : {}),
       ...(writes !== undefined ? { _meta: { 'ahpd.cacheWriteTokens': writes } } : {}),
     };

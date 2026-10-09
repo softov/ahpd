@@ -1,6 +1,6 @@
 ---
 title: A turn's tokens are what the provider counted
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -9,7 +9,7 @@ refs:
 
 ## Objective
 
-A Claude turn through OpenRouter records the input tokens OpenRouter counted, or no input when none was reported, never 0 beside an output.
+A Claude turn records the input tokens the provider counted, or no input when it reported 0 beside an output.
 
 ## Files
 
@@ -18,16 +18,20 @@ A Claude turn through OpenRouter records the input tokens OpenRouter counted, or
 
 ## Steps
 
-1. Capture the stream of a `claude-openrouter` turn: the `message_start` and `message_delta` usage, and the CLI's `result`.
-2. Find where the 0 comes from: OpenRouter's `message_start`, the CLI, or `usageOf`.
-3. If the count is in the stream, read it from there. If nothing reports it, record the input as absent.
+1. Find where `usageOf` in `packages/agent-claude/src/session/parts.ts` sets the input.
+2. Leave the input absent when it is 0, with no cache read or write and an output above 0.
+3. Keep an input of 0 when the output is also 0.
+4. Write the tests below from made-up messages in the shape of a `message_start` and a `result`.
 
 ## Validation
 
-- A test from the capture: the record's input is the count, or absent.
+- A test: input 0, no cache and output 6 gives a record with no input.
+- A test: input 0 with a cache read gives an input of 0.
+- A test: input 10 and output 6 gives an input of 10.
 - `npx vitest run packages/agent-claude` passes.
 
 ## Resume
 
-2026-10-08. Not started, and its step 1 cannot be done here: the capture is a live `claude-openrouter` turn, and this box has no network egress. The repo holds no capture of one either - the four fixtures under `packages/agent-claude/test/fixtures/` are Anthropic-direct, with an input count on every `message_start`. Step 3 is also the fork the capture is meant to settle: whether the count is in the stream to be read, or nowhere and the input is recorded absent. Softov runs the capture.
+2026-10-09. The 77 records with input 0 all came from `stealth/space-bunny-alpha` through OpenRouter. OpenRouter now answers "No endpoints found" for it, so no capture is possible. `anthropic/claude-sonnet-4` through OpenRouter reports input and cache.
 
+2026-10-09: `usageOf` leaves out an uncounted input of 0, with five cases in `agent-claude-usage.test.ts`. Merged after review.

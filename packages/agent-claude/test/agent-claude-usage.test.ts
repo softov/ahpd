@@ -176,6 +176,21 @@ const total = (...calls: Call[]): Bag => ({
   _meta: { 'ahpd.cacheWriteTokens': calls.reduce((sum, one) => sum + one.wrote, 0) },
 });
 
+/** One model call's frames: `usage` on its `message_start`, `output` on its `message_delta`. */
+const round = (usage: Bag, output: number): Record<string, unknown>[] => [
+  {
+    type: 'stream_event',
+    event: {
+      type: 'message_start',
+      message: { id: 'msg-counted', model: 'stealth/space-bunny-alpha', usage },
+    },
+  },
+  {
+    type: 'stream_event',
+    event: { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: output } },
+  },
+];
+
 /** Replay frames through a real session with a recording host seam. */
 async function replay(frames: Record<string, unknown>[]) {
   sdk.reset();
@@ -403,4 +418,32 @@ it('falls back to the result\'s own count when the stream carried no partial mes
   sdk.push(frame);
   await settle();
   expect(payload(reports(main).at(-1))).toMatchObject({ inputTokens: 7, outputTokens: 11, cacheReadTokens: 3 });
+});
+
+it('records no input for a turn whose prompt was never counted', async () => {
+  const { main } = await replay([...round({ input_tokens: 0 }, 6), result(0.5)]);
+  expect(payload(reports(main).at(-1))).toMatchObject({ outputTokens: 6 });
+  expect(payload(reports(main).at(-1))).not.toHaveProperty('inputTokens');
+});
+
+it('keeps an input of 0 that a cache read stands beside', async () => {
+  const { main } = await replay([...round({ input_tokens: 0, cache_read_input_tokens: 21686 }, 6), result(0.5)]);
+  expect(payload(reports(main).at(-1)))
+    .toMatchObject({ inputTokens: 0, outputTokens: 6, cacheReadTokens: 21686 });
+});
+
+it('keeps an input of 0 that a cache write stands beside', async () => {
+  const { main } = await replay([...round({ input_tokens: 0, cache_creation_input_tokens: 3766 }, 6), result(0.5)]);
+  expect(payload(reports(main).at(-1)))
+    .toMatchObject({ inputTokens: 0, outputTokens: 6, _meta: { 'ahpd.cacheWriteTokens': 3766 } });
+});
+
+it('keeps an input of 0 beside an output of 0', async () => {
+  const { main } = await replay([...round({ input_tokens: 0, output_tokens: 0 }, 0), result(0.5)]);
+  expect(payload(reports(main).at(-1))).toMatchObject({ inputTokens: 0, outputTokens: 0 });
+});
+
+it('keeps the input a provider counted', async () => {
+  const { main } = await replay([...round({ input_tokens: 10 }, 6), result(0.5)]);
+  expect(payload(reports(main).at(-1))).toMatchObject({ inputTokens: 10, outputTokens: 6 });
 });

@@ -22,6 +22,12 @@ A model record written for an agent's turn now keeps the harness's cost as both 
 - `packages/agent-pi/test/agent-pi-usage.test.ts`, 6 cases. Two are new: two calls priced at `{input: 1, cacheRead: 0.5, output: 2}` send `input: 3`, `output: 4` and `amount: 7`; a call priced as a bare total sends the amount with no split. The split case failed before the change and the other five held.
 - The whole suite: 251 files and 4384 tests. `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `node tools/schema.mjs` pass. The test run rewrote `packages/sdk/test/fixtures/wire.jsonl` with this box's provider endpoint, which was restored; no frame format changed.
 
+## Task 04, 2026-10-09
+
+- `usageOf` in `packages/agent-claude/src/session/parts.ts` leaves the input out when it is 0 with no cache read or write and an output above 0.
+- It keeps an input of 0 beside a cache read, a cache write, or an output of 0.
+- `agent-claude-usage.test.ts` has five new cases from made-up `message_start` and `message_delta` frames. The whole suite passes with 260 files and 4550 tests.
+
 ## Departures from the plan
 
 - Task 01's Files name `costOf` and where the record is built. The cost's `input` and `output` are also differenced in `addition`, which the plan did not name: a per-report meter differences a harness's running total, and without the same treatment for its split every round would carry the whole split so far.
@@ -30,5 +36,4 @@ A model record written for an agent's turn now keeps the harness's cost as both 
 
 ## Left for later
 
-- Task 04, a turn's tokens being what the provider counted, is not built. Its step 1 is a capture of a live `claude-openrouter` turn, which this box cannot take: it has no network egress, the repo holds no capture of one, and the recorded evidence is under `~/.config/ahpd/usage/`, which is outside the paths this session may read. Softov runs the capture.
-- Task 05's reset is built and not yet reviewed or merged. It is the last of the plan but task 04, and the `/clear` gap the tasks 01-03 review found is closed: `conversation_reset` clears `paid`, so the turns after it are billed what they spent.
+Nothing.

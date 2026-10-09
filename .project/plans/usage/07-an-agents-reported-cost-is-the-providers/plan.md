@@ -1,7 +1,7 @@
 ---
 title: An agent's reported cost is kept as the provider's, and a record says nothing it was not told
 domain: usage
-status: active
+status: built
 priority: high
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -60,6 +60,7 @@ harness usage -> agent mapping (_meta.cost) -> meter costOf -> ModelUse { cost, 
 | An agent record's cost is the harness's, written as both costs | Softov, 2026-10-07: "if a provider price is informmed use that in both" | 01 |
 | Agents do not get a price from `proxy.models` in this plan | Softov, 2026-10-07, asked "Should agent records also get our price?" and answered "Proxy now, agents later" | - |
 | The cost on a zero-token record and the input of 0 are each a task with a test | Softov, 2026-10-07, asked "Should defects 3 and 4 go in this plan?" and answered "Yes, as their own tasks" | 02, 04 |
+| A turn that reports input 0 and no cache beside an output above 0 records no input, not 0 | Softov, 2026-10-09, asked "What should task 04 do?": "Record 0 input as absent"; the model that did it, `stealth/space-bunny-alpha`, is gone from OpenRouter | 04 |
 | A harness's cost of 0 with no token counted is no cost | (defaulted: the turn spent nothing, so there is nothing to report) | 01, 02 |
 
 ## Proposed architecture
@@ -75,7 +76,7 @@ harness usage -> agent mapping (_meta.cost) -> meter costOf -> ModelUse { cost, 
 | [01 - The meter writes a harness's cost as both costs, with its split](task-01-the-meter-writes-both-costs.md) | done | - |
 | [02 - Claude sends no cost for a result that spent nothing](task-02-claude-sends-no-cost-for-nothing-spent.md) | done | - |
 | [03 - pi sends its cost split into sent and received](task-03-pi-sends-its-cost-split.md) | done | 01 |
-| [04 - A turn's tokens are what the provider counted](task-04-a-turns-tokens-are-what-was-counted.md) | todo | - |
+| [04 - A turn's tokens are what the provider counted](task-04-a-turns-tokens-are-what-was-counted.md) | done | - |
 | [05 - A reset conversation starts the cost baseline again](task-05-a-reset-conversation-starts-the-cost-baseline-again.md) | done | 02 |
 
 ## Risks and tradeoffs
@@ -85,14 +86,14 @@ harness usage -> agent mapping (_meta.cost) -> meter costOf -> ModelUse { cost, 
 
 ## Resume state
 
-- **Done so far:** 2026-10-08 - task 01, where the meter reads a harness cost's `input` and `output` beside its amount and writes the whole of it as both `cost` and `providerCost`, and drops a cost of 0 on a turn that counted no token. 2026-10-08 - task 02, where a `result` whose `modelUsage` did not move sends no cost, and Claude's `costUSD` baseline moves only for a model the result spent on. 2026-10-08 - task 03, where pi sums its four priced parts and sends the sent and received sides beside the total. 2026-10-08 - task 05, where a `conversation_reset` clears the `costUSD` baseline, so a `result` after a `/clear` is billed what it spent rather than nothing.
-- **Reviewed and merged 2026-10-08:** tasks 01-03 (6f26875) and task 05 (ef3a783).
-- **Next action:** [task-04-a-turns-tokens-are-what-was-counted.md](task-04-a-turns-tokens-are-what-was-counted.md), the last task open. Its step 1 is a capture of a live `claude-openrouter` turn, which Softov runs: this box has no network egress, and the repo holds no capture of one. Task 04 waits on him; tasks 01, 02, 03 and 05 are built.
+- **Done so far:** 2026-10-08 - task 01, where the meter reads a harness cost's `input` and `output` beside its amount and writes the whole of it as both `cost` and `providerCost`, and drops a cost of 0 on a turn that counted no token. 2026-10-08 - task 02, where a `result` whose `modelUsage` did not move sends no cost, and Claude's `costUSD` baseline moves only for a model the result spent on. 2026-10-08 - task 03, where pi sums its four priced parts and sends the sent and received sides beside the total. 2026-10-08 - task 05, where a `conversation_reset` clears the `costUSD` baseline, so a `result` after a `/clear` is billed what it spent rather than nothing. 2026-10-09 - task 04, where `usageOf` leaves the input out when the provider counted it as 0 beside an output above 0 and no cache count of its own, and keeps the 0 where a cache read, a cache write or the output is 0 as well.
+- **Reviewed and merged:** tasks 01-03 (6f26875) and task 05 (ef3a783) on 2026-10-08; task 04 on 2026-10-09.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a record written as `0` by a harness and a record with the field absent mean different things. Keep both kinds in the tests.
 
 ## Final verification checklist
 
-- [ ] A test per defect, from the records in the searches.
-- [ ] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
-- [ ] `plans/index.md` updated.
+- [x] A test per defect, from the records in the searches.
+- [x] `pnpm build`, `pnpm typecheck`, `pnpm boundary` and `npx vitest run` pass.
+- [x] `plans/index.md` updated.
