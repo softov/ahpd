@@ -10,22 +10,19 @@ A [Dev Tunnel](https://aka.ms/devtunnels) plugin for the [`@ahpd/server`](https:
 
 Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/tunnel-devtunnel`](https://github.com/softov/ahpd/tree/main/packages/tunnel-devtunnel).
 
-## What it needs
-
-The [`devtunnel` CLI](https://aka.ms/devtunnels/download), installed and logged in:
-
-```bash
-devtunnel user login       # a Microsoft account
-devtunnel user login -g    # or a GitHub one
-```
-
-## Install
+## In the daemon
 
 ```bash
 ahpd plugin install @ahpd/tunnel-devtunnel
 ```
 
 That installs it where the daemon looks for plugins and adds it to `plugins` in the configuration file. A plugin installed with `npm i -g` is not seen.
+
+In the configuration file, with every option set:
+
+```json
+{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "name": "dev82", "anonymous": true } }] }
+```
 
 The daemon prints the tunnel beside its own address, and `ahpd status` shows it:
 
@@ -36,6 +33,15 @@ tunnel sunny-otter-9k3 (dev82), port 31546
 
 In VS Code, sign in to the same Dev Tunnels account and run **Agents: Connect to Remote Agent Host via Dev Tunnel**. Finding a tunnel needs that sign-in. A direct WebSocket address does not, and is what **Agents: Add Remote Agent Host...** takes.
 
+### What it needs
+
+The [`devtunnel` CLI](https://aka.ms/devtunnels/download), installed and logged in:
+
+```bash
+devtunnel user login       # a Microsoft account
+devtunnel user login -g    # or a GitHub one
+```
+
 ## Options
 
 | Option | Default | What it does |
@@ -44,11 +50,43 @@ In VS Code, sign in to the same Dev Tunnels account and run **Agents: Connect to
 | `keep` | `true` | Whether the tunnel outlives the daemon |
 | `anonymous` | `false` | Whether somebody not signed in to this account may reach it |
 
-```json
-{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "name": "dev82", "anonymous": true } }] }
-```
-
 Keep `keep` on: a client derives its connection token from the tunnel's id, so a new tunnel on every start is a new token on every start.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `ahpd plugin install @ahpd/tunnel-devtunnel` | Install the package into the configuration directory and name it in `config.json` |
+| `ahpd plugin update @ahpd/tunnel-devtunnel` | Move it to the version that matches the daemon; `all` in place of the name moves every installed plugin |
+| `ahpd plugin list` | What the configuration names, and what a run would load, without loading it |
+
+No option holds a credential, so the plugin takes nothing from the vault. The tunnel signs in through the `devtunnel` CLI's own login.
+
+## In your own host
+
+The package's `apply` is the plugin entry. Hand it a plugin host from `@ahpd/sdk` and fold what it registered into the host's options. The plugin does its work on the `listening` and `stopping` events, which the daemon raises and an embedding host raises itself:
+
+```ts
+import { createHost, foldHostOptions, listen, pluginHost, raise } from '@ahpd/sdk';
+import { claude } from '@ahpd/agent-claude';
+import { apply, name } from '@ahpd/tunnel-devtunnel';
+
+const path = process.cwd();
+const context = { path, paths: [path], version: '0.10.0', hostName: 'my-host', configDir: '/var/lib/my-host', log: console.log, say: console.log };
+const { host: plugin, contribution, seal } = pluginHost(name, context);
+await apply(plugin, { name: 'dev82', keep: true });
+seal();
+
+const { options } = foldHostOptions({ path, agents: [claude({ paths: [path] })] }, [contribution]);
+const host = createHost(options);
+const listener = await listen({ port: 9187 }, (peer) => host.accept(peer));
+const { runtime, host: address, port, guarded } = listener;
+await raise(options.events, { type: 'listening', runtime, host: address, port, guarded });
+
+// On the way down, before the listener closes:
+await raise(options.events, { type: 'stopping' });
+await listener.close();
+```
 
 ## The connection token
 

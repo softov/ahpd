@@ -12,34 +12,90 @@ Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/agen
 
 ## In the daemon
 
-Install it where the daemon resolves a plugin name from, and name it:
+Install it where the daemon resolves a plugin name from, and name it in the configuration. The ordinary install takes no options: it catalogues whatever directories the daemon was started on.
 
 ```bash
 ahpd plugin install @ahpd/agent-claude
-ahpd --plugin @ahpd/agent-claude
 ```
 
 ```json
 {
-  "plugins": ["@ahpd/agent-claude"]
+  "plugins": [
+    { "name": "@ahpd/agent-claude", "options": { "paths": ["/work/project"] } }
+  ]
 }
 ```
 
-It takes no options in the ordinary install: it catalogues whatever directories the daemon was started on. A configuration may narrow that:
+`paths` is the one option a person sets most often, because it narrows the catalogue the daemon serves. Everything else has a default that fits most installs. The daemon loads the change on its next restart.
 
-| option | |
+## Options
+
+Every option below is a key under `options` in the plugin's entry, and the daemon checks each value against the schema before `apply` runs. An option written per variant, such as `provider`, `displayName`, `models` or `keepCliModels`, fails the load and says where it goes: inside `presets.<id>`.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `paths` | the host's directories | The directories it catalogues, and where a session goes by default |
+| `computerExecutable` | `claude` | Where the CLI is *inside a machine* |
+| `computerCli` | `part` | Where the CLI a machine runs comes from |
+| `computerCliFallback` | `refuse` | With `computerCli: "part"`, what a machine gets when the `claude` part cannot be built |
+| `computerConfigDir` | `/ahpd/<variant>`, or `/ahpd/claude` for the built-in | The configuration directory the CLI reads *inside a machine*; `false` leaves the image's own |
+| `workerStop` | `worker` | What a stop given in a subagent's chat stops |
+| `presets` | the built-in `claude` | The variants this package registers an agent for, by the id clients name |
+
+`computerCli` is `part`, the `claude` part this host builds at its pinned version, or `host`, which mounts this host's own installed CLI. `computerCliFallback` is `refuse`, which refuses a Claude session in a machine and names the part, or `host`, which mounts this host's own CLI instead and logs that it did. `workerStop` is `worker`, which stops that subagent and lets the turn that started it go on, or `session`, which cancels that turn instead.
+
+### `presets.<id>`
+
+Each key under `presets` is the id clients name for that agent, and each one registers an agent of its own, with its own name, models and options. The built-in `claude` is registered whether or not it is written: an object under its key is laid over it, and `false` drops it.
+
+| Field | Default | What it does |
+| --- | --- | --- |
+| `name` | the preset's key | What a client reads instead of the id |
+| `models` | the CLI's own list | The models that agent offers in the picker |
+| `keepCliModels` | `false` | With `models`, add them to the CLI's list rather than replace it |
+| `sandbox` | `default` | The CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
+| `thinking` | `adaptive` | Extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
+| `outputStyle` | none | The name of a style from the CLI's own settings |
+| `env` | none | Variables for the CLI's process, laid over the daemon's own environment on this host, and the whole of it in a machine |
+| `extraArgs` | none | Arguments the CLI is started with beyond the ones this backend builds |
+
+A `models` entry is a model id, `{ "id", "name" }`, or `{ "fetch": "<url>", "match": "<pattern>", "key": { "fromEnv": "NAME" } }`, which reads an OpenAI-shaped model list and keeps the ids the pattern covers, where `*` is any run of characters. A fetch that fails is logged and offers nothing.
+
+A preset's `env` value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A variable that is named with `fromEnv` and is not there when the plugin loads skips the preset that names it.
+
+An `extraArgs` value is given by name without the `--`, and `null` for a flag that takes none. A value that is not a string reaches the CLI as its JSON text, so `"settings": { "permissions": { "allow": ["Read"] } }` is started as `--settings '{"permissions":{"allow":["Read"]}}'`.
+
+Every field is checked when the plugin loads. A preset that is wrongly written, whose `fromEnv` variable is not in the daemon's environment or whose `$secret` cannot be read, is not registered: it is skipped with one line naming it, which is stamped to the daemon's log and printed by `ahpd start` and `ahpd restart` as `skipped: <plugin>: <the preset and why>`, above the line that says the daemon is up. The other presets register as they were written, and the load is refused only when no preset is left to register an agent for.
+
+## Commands
+
+| Command | What it does |
 | --- | --- |
-| `paths` | the directories it catalogues, and where a session goes by default. Defaults to the host's |
-| `computerExecutable` | where the CLI is *inside a machine*. `claude` on the image's PATH by default |
-| `computerCli` | where the CLI a machine runs comes from. `part` by default, the `claude` part this host builds at its pinned version; `host` mounts this host's own installed CLI |
-| `computerCliFallback` | with `computerCli: "part"`, what a machine gets when the `claude` part cannot be built. `refuse` by default, which refuses a Claude session there naming the part; `host` mounts this host's own CLI instead and logs that it did |
-| `computerConfigDir` | the configuration directory the CLI reads *inside a machine*. `/ahpd/<variant>` by default, `/ahpd/claude` for the built-in; `false` leaves the image's own |
-| `workerStop` | what a stop given in a subagent's chat stops. `worker` by default, which stops that subagent and lets the turn that started it go on; `session` cancels that turn instead |
-| `presets` | the variants of this package, by the id clients name. Each key registers an agent of its own, with its own name, models and options |
+| `ahpd plugin install @ahpd/agent-claude` | Install the package into the configuration directory and name it in `config.json` |
+| `ahpd plugin update @ahpd/agent-claude` | Move it to the version that matches the daemon; `all` in place of the name moves every installed plugin |
+| `ahpd plugin list` | What the configuration names, and what a run would load, without loading it |
+| `ahpd vault set host:<name>` | Keep the credential a preset's `env` reads with `{ "$secret": "host:<name>" }`, from standard input |
 
-The package is loaded once. Its variants are written under `presets`, and each one is a harness in the picker of its own.
+See [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md#--plugin-and-what-naming-one-runs) for what naming a plugin runs, and [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md#marking-a-credential) for what a credential is.
 
-### Presets
+## In your own host
+
+```bash
+pnpm add @ahpd/agent-claude @ahpd/sdk @microsoft/agent-host-protocol
+```
+
+```ts
+import { createHost, listen } from '@ahpd/sdk';
+import { claude } from '@ahpd/agent-claude';
+
+const path = process.cwd();
+const host = createHost({ path, agents: [claude({ paths: [path] })] });
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
+
+`createHost` takes a list of agents, so this can run alongside other backends. The plugin entry wraps the same `claude()`.
+
+## Presets
 
 The built-in `claude` is Claude Code as it runs here, named `Claude Code`, and it is registered whether or not it is written. An object under its key is laid over it, and `false` drops it:
 
@@ -56,22 +112,7 @@ The built-in `claude` is Claude Code as it runs here, named `Claude Code`, and i
 }
 ```
 
-Two presets, two entries in the picker, and a session picks the agent rather than a preset of it. Every key is the id clients name for that agent, and a preset that names none of its own is called by its key.
-
-A preset holds eight fields, and each is checked when the plugin loads. A preset that is wrongly written, whose `fromEnv` variable is not in the daemon's environment or whose `$secret` cannot be read is not registered: it is skipped with one line naming it, which is stamped to the daemon's log and printed by `ahpd start` and `ahpd restart` as `skipped: <plugin>: <the preset and why>`, above the line that says the daemon is up. The other presets register as they were written. The load is refused only when no preset is left to register an agent for.
-
-| field | |
-| --- | --- |
-| `name` | what a client reads instead of the id. Defaults to the preset's key |
-| `models` | the models that agent offers in the picker, in place of the CLI's: a model id, `{ "id", "name" }`, or `{ "fetch": "<url>", "match": "<pattern>", "key": { "fromEnv": "NAME" } }`, which reads an OpenAI-shaped model list and keeps the ids the pattern covers (`*` is any run of characters). A fetch that fails is logged and offers nothing |
-| `keepCliModels` | with `models`, add them to the CLI's list rather than replace it |
-| `sandbox` | the CLI's own sandbox for shell commands: `default` leaves it to the settings files, `on` and `off` set it |
-| `thinking` | extended thinking: `adaptive` lets the agent decide when to think, `disabled` is none |
-| `outputStyle` | the name of a style from the CLI's own settings |
-| `env` | variables for the CLI's process, laid over the daemon's own environment on this host, and the whole of it in a machine. A value is a string, `null` to unset the variable, `{ "fromEnv": "NAME" }` for the daemon's own `NAME`, or `{ "$secret": "host:<name>" }` for a credential kept in the vault. A variable that is not there when the plugin loads skips the preset that names it |
-| `extraArgs` | arguments the CLI is started with beyond the ones this backend builds, by name without the `--`, and `null` for a flag that takes none. A value that is not a string reaches the CLI as its JSON text, so `"settings": { "permissions": { "allow": ["Read"] } }` is started as `--settings '{"permissions":{"allow":["Read"]}}'` |
-
-With nothing written the built-in runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer.
+Two presets, two entries in the picker, and a session picks the agent rather than a preset of it. Every key is the id clients name for that agent, and a preset that names none of its own is called by its key. With nothing written the built-in runs on what this backend has always run on, which is `thinking: "adaptive"` and no sandbox layer.
 
 ### Project files, and trust
 
@@ -107,23 +148,6 @@ A preset with its own name, its own models and an `env` that points the CLI else
 ```
 
 Both agents carry their key in the daemon's environment, and the endpoint a preset names is the one it is probed at.
-
-## In your own host
-
-```bash
-pnpm add @ahpd/agent-claude @ahpd/sdk @microsoft/agent-host-protocol
-```
-
-```ts
-import { createHost, listen } from '@ahpd/sdk';
-import { claude } from '@ahpd/agent-claude';
-
-const path = process.cwd();
-const host = createHost({ path, agents: [claude({ paths: [path] })] });
-await listen({ port: 9187 }, (peer) => host.accept(peer));
-```
-
-`createHost` takes a list of agents, so this can run alongside other backends. The plugin entry wraps the same `claude()`.
 
 ## What it does
 
@@ -180,4 +204,3 @@ The CLI there runs with the variant's own `env`, a pushed token and `CLAUDE_CONF
 ## License
 
 MIT © Softov
-

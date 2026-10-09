@@ -1,6 +1,6 @@
 ---
 title: The bot, computer and tunnel READMEs explain every option
-status: todo
+status: implemented
 depends: []
 layer: "docs"
 refs:

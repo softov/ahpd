@@ -1,6 +1,6 @@
 ---
 title: Each agent README explains every option
-status: todo
+status: implemented
 depends: []
 layer: "docs"
 refs:

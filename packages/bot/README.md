@@ -10,13 +10,57 @@ A bot plugin for the [`@ahpd/server`](https://www.npmjs.com/package/@ahpd/server
 
 Part of [ahpd](https://github.com/softov/ahpd). The source is in [`packages/bot`](https://github.com/softov/ahpd/tree/main/packages/bot).
 
-## Install
+## In the daemon
 
 ```bash
 ahpd plugin install @ahpd/bot
 ```
 
 That installs it where the daemon looks for plugins and adds it to `plugins` in the configuration file. A plugin installed with `npm i -g` is not seen.
+
+In the configuration file, with every option set:
+
+```json
+{ "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }
+```
+
+## Options
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
+
+The records themselves are kept beside the daemon's own configuration, in `<configDir>/bots/`, and the tombstones in `<configDir>/bots-gone/`. A file there that cannot be read is reported at startup and skipped, and every other bot is kept.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `ahpd plugin install @ahpd/bot` | Install the package into the configuration directory and name it in `config.json` |
+| `ahpd plugin update @ahpd/bot` | Move it to the version that matches the daemon; `all` in place of the name moves every installed plugin |
+| `ahpd plugin list` | What the configuration names, and what a run would load, without loading it |
+
+No option holds a credential, so the plugin takes nothing from the vault.
+
+## In your own host
+
+The package's `apply` is the plugin entry. Hand it a plugin host from `@ahpd/sdk`, then fold what it registered into the host's options:
+
+```ts
+import { createHost, foldHostOptions, listen, pluginHost } from '@ahpd/sdk';
+import { claude } from '@ahpd/agent-claude';
+import { apply, name } from '@ahpd/bot';
+
+const path = process.cwd();
+const context = { path, paths: [path], version: '0.10.0', hostName: 'my-host', configDir: '/var/lib/my-host', log: console.log, say: console.log };
+const { host: plugin, contribution, seal } = pluginHost(name, context);
+await apply(plugin, { root: '/srv/bots' });
+seal();
+
+const { options } = foldHostOptions({ path, agents: [claude({ paths: [path] })] }, [contribution]);
+const host = createHost(options);
+await listen({ port: 9187 }, (peer) => host.accept(peer));
+```
 
 ## The `bot:` scheme
 
@@ -65,18 +109,6 @@ An edit that sets `session` to `null` unlinks it, and an edit that says nothing 
 ### The tombstone
 
 A deleted slug is not made again. A client held the address, and a different bot answering to it would be a lie about what that client has. A make on a deleted slug is refused `-32010`.
-
-## Options
-
-| Option | Default | What it does |
-| --- | --- | --- |
-| `root` | `~/.bots` | The folder a bot's workspace is under, as `<root>/<slug>` |
-
-```json
-{ "plugins": [{ "name": "@ahpd/bot", "options": { "root": "/srv/bots" } }] }
-```
-
-The records themselves are kept beside the daemon's own configuration, in `<configDir>/bots/`, and the tombstones in `<configDir>/bots-gone/`. A file there that cannot be read is reported at startup and skipped, and every other bot is kept.
 
 ## Documentation
 

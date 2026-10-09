@@ -19,11 +19,17 @@ ahpd plugin install @ahpd/agent-pi
 ahpd --plugin @ahpd/agent-pi --path /work/project
 ```
 
-Or in the configuration file:
+Or in the configuration file, with the options a person sets most often:
 
 ```json
-{ "plugins": ["@ahpd/agent-pi"] }
+{
+  "plugins": [
+    { "name": "@ahpd/agent-pi", "options": { "model": "anthropic/claude-sonnet-4-5", "projectTrust": "deny" } }
+  ]
+}
 ```
+
+`{ "plugins": ["@ahpd/agent-pi"] }` is enough when pi's own settings already name a model.
 
 pi reads its model providers and credentials from its own settings, so nothing here needs configuring. Set up at least one provider for pi first; running `pi` by hand in the same directory is the quickest check.
 
@@ -41,6 +47,37 @@ pi's agent directory inside is `/ahpd/pi`, set as `PI_CODING_AGENT_DIR`: a state
 
 Such a key reaches pi's nested host and no other agent in the machine. A variable only pi's own `models.json` names is not declared, and does not reach a machine. See [pi in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#pi-in-a-machine).
 
+## Options
+
+Every option below is a key under `options` in the plugin's entry, and the daemon checks each value against the schema before `apply` runs.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `provider` | `pi` | The id a client names in `createSession` |
+| `displayName` | `pi` | What a person reads instead of the id |
+| `description` | `The pi coding agent, embedded in this host` | One line about this backend |
+| `model` | pi's own default | The model a new session runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
+| `projectTrust` | `trust` | Whether a project's own pi extensions, skills and prompts are loaded |
+| `sessionDir` | pi's own | Where pi keeps its sessions |
+
+`projectTrust` is `trust` or `deny`. pi's third answer, `ask`, is not offered, because a daemon has nobody at a terminal to answer it. `trust` loads the project's pi resources, which runs its code.
+
+The host's own answer about the folder is asked as well, and both have to say yes. A folder no window vouched for loads none of the project's extensions, skills or prompts, however `projectTrust` is set. See [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/AUTHENTICATION.md#trusted-folders).
+
+With `sessionDir` left alone, `pi` run by hand in the same directory lists the sessions started here, and the other way round.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `ahpd plugin install @ahpd/agent-pi` | Install the package into the configuration directory and name it in `config.json` |
+| `ahpd plugin update @ahpd/agent-pi` | Move it to the version that matches the daemon; `all` in place of the name moves every installed plugin |
+| `ahpd plugin list` | What the configuration names, and what a run would load, without loading it |
+
+No option of this plugin holds a credential, so it needs no `ahpd vault`. A key for a machine is the `@ahpd/computer` profile's, as above.
+
+See [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md#--plugin-and-what-naming-one-runs) for what naming a plugin runs.
+
 ## In your own host
 
 ```bash
@@ -56,32 +93,7 @@ const host = createHost({ path, agents: [piAgent({}, [path])] });
 await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
-`piAgent(options, directories)` takes the options below and the directories the backend may work in.
-
-## Options
-
-| Option | Default | What it does |
-| --- | --- | --- |
-| `provider` | `pi` | The id a client names in `createSession` |
-| `displayName` | `pi` | What a person reads instead of the id |
-| `description` | | One line about this backend |
-| `model` | | The model a new session runs on, as `provider/modelId`; a turn may choose another, and a resumed or forked session keeps its own |
-| `projectTrust` | `trust` | Whether a project's own pi extensions, skills and prompts are loaded |
-| `sessionDir` | pi's own (`~/.pi`) | Where pi keeps its sessions |
-
-```json
-{
-  "plugins": [
-    { "name": "@ahpd/agent-pi", "options": { "projectTrust": "deny" } }
-  ]
-}
-```
-
-`projectTrust` is `trust` or `deny`. pi's third answer, `ask`, is not offered, because a daemon has nobody at a terminal to answer it. `trust` loads the project's pi resources, which runs its code.
-
-The host's own answer about the folder is asked as well, and both have to say yes. A folder no window vouched for loads none of the project's extensions, skills or prompts, however `projectTrust` is set. See [Trusted folders](https://github.com/softov/ahpd/blob/main/docs/AUTHENTICATION.md#trusted-folders).
-
-With `sessionDir` left alone, `pi` run by hand in the same directory lists the sessions started here, and the other way round.
+`piAgent(options, directories)` takes the options above and the directories the backend may work in.
 
 ## What maps, and what does not
 

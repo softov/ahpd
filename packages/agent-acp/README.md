@@ -25,15 +25,76 @@ Then add one entry to `plugins` in the daemon's `config.json`, and one key per A
   "plugins": [
     {
       "name": "@ahpd/agent-acp",
-      "options": { "presets": { "copilot": {}, "codex": {} } }
+      "options": {
+        "presets": {
+          "copilot": {},
+          "codex": {},
+          "my-agent": { "name": "My agent", "command": "my-agent", "args": ["--acp"], "env": { "MY_AGENT_KEY": { "$secret": "host:my-agent" } } }
+        },
+        "hostTools": true,
+        "toolsChanged": "notify"
+      }
     }
   ]
 }
 ```
 
-Each key registers an agent of its own, under that key as the provider id, so `copilot` and `codex` are two entries in the picker out of one load.
+Each key registers an agent of its own, under that key as the provider id, so `copilot`, `codex` and `my-agent` are three entries in the picker out of one load.
 
 The shipped presets are `codex`, `gemini`, `copilot`, `opencode`, `kilo`, `goose`, `pi`, `dsh`, `devin`, `cursor`, `amp` and `qwen`. A key that names none of them writes a `command` of its own, and a key that names one takes its command, its arguments and its environment. The command has to be on the daemon's `PATH`. The `codex` CLI has no ACP mode of its own; `codex-acp` comes from `npm i -g @agentclientprotocol/codex-acp`. `cursor` runs `cursor-agent acp`, the name Cursor's installer puts on the host and its part ships. A command that is missing fails that provider's turns with a message and leaves the daemon running.
+
+## Options
+
+Every option below is a key under `options` in the plugin's entry, and the daemon checks each value against the schema before `apply` runs.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `presets` | required | The agents this load registers, by the id clients name. A key that names a shipped preset takes it; a key that names none writes a `command` of its own |
+| `hostTools` | `true` | Offer the host's own tools to each session as an MCP server. A preset may set its own |
+| `toolsChanged` | `notify` | How a session's agent hears that the tools it listed have moved: `notify` sends `notifications/tools/list_changed` down a stream the host holds open, `list` sends nothing. A preset may set its own |
+
+### `presets.<id>`
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `base` | the key, when it names a shipped preset | The shipped preset this one takes, for a key that is not itself one |
+| `name` | the shipped preset's name, then the key | What a client reads instead of the id |
+| `command` | the shipped preset's | The program to spawn as the ACP server. Required for a key that names no shipped preset and no `base` |
+| `args` | the shipped preset's | The arguments to give it, replacing the preset's own |
+| `env` | none | Environment variables merged over the daemon's own for the child, by variable name. A value written `{ "$secret": "host:<name>" }` is read from the vault when the daemon loads |
+| `cwd` | the session's working directory | The directory the server runs in |
+| `description` | none | One line about what this agent is |
+| `model` | the server's own | The model a session that names none runs on |
+| `authenticate` | none | `{ "methodId": "<id>" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
+| `hostTools` | the plugin-wide `hostTools` | Whether this agent's sessions are offered the host's own tools |
+| `honoursTrust` | the shipped preset's, else `false` | Whether this agent asks before it loads a project's own settings and hooks. Absent, a session in a folder the host did not vouch for is refused, because ACP carries no trust field |
+| `toolsChanged` | the plugin-wide `toolsChanged` | How this agent hears that the tools it listed have moved |
+| `machine` | the shipped preset's | What a machine needs to run this agent, laid over the shipped preset's by key |
+
+### `presets.<id>.machine`
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `env` | the shipped preset's | Variables set only inside the machine: a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made. Laid over the preset's by variable |
+| `copy` | none | Host paths copied into the machine, each `{ "source", "target" }`, with `target` an absolute path |
+| `part` | the shipped preset's | The part the CLI comes from |
+| `state` | `/ahpd/<id>` for a shipped preset | The absolute directory the agent keeps its configuration in, as a state volume |
+| `seed` | the agent's own host files | The host files `state` is seeded from, each `{ "source", "target", "keep", "drop" }` |
+
+Every shipped preset brings a `machine`: its CLI's part, a state directory at `/ahpd/<id>` seeded from the agent's own host files and never its login file, and the variables that point the CLI there. So a preset in a machine runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. See [ACP agents in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#acp-agents-in-a-machine).
+
+A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved is skipped with one line naming it, and the rest register: a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, a `$secret` the vault does not hold, or a `machine` that is wrongly written or reads a variable the daemon does not have. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable, and for a session placed in a machine also when the preset's `machine.env` sets it.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `ahpd plugin install @ahpd/agent-acp` | Install the package into the configuration directory and name it in `config.json` |
+| `ahpd plugin update @ahpd/agent-acp` | Move it to the version that matches the daemon; `all` in place of the name moves every installed plugin |
+| `ahpd plugin list` | What the configuration names, and what a run would load, without loading it |
+| `ahpd vault set host:<name>` | Keep the credential a preset's `env` reads with `{ "$secret": "host:<name>" }`, from standard input |
+
+See [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md#--plugin-and-what-naming-one-runs) for what naming a plugin runs, and [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md#naming-a-secret-instead-of-holding-one) for a `$secret`.
 
 ## In your own host
 
@@ -56,36 +117,6 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 ```
 
 `createHost` takes a list of agents, so several ACP servers run beside each other and beside any other backend.
-
-## Options
-
-| option | | |
-| --- | --- | --- |
-| `presets` | required | the agents this one load registers, by the id clients name. A key that names a shipped preset takes it; a key that names none writes a `command` of its own |
-| `hostTools` | | offer the host's own tools to each session as an MCP server, on by default. A preset may set its own |
-| `toolsChanged` | | how a session's agent hears that the tools it listed have moved: `notify` holds a stream open and sends `notifications/tools/list_changed` down it, which is the default, and `list` says nothing and leaves it to the agent's next `tools/list`. Both serve the current list, so an agent that ignores the notification is no worse off. A preset may set its own |
-
-Under `presets.<id>`:
-
-| option | | |
-| --- | --- | --- |
-| `base` | | the shipped preset this one takes, for a key that is not itself one |
-| `name` | | what a client reads instead of the id, which is this key. The preset's own name when it has one |
-| `command` | | the program to spawn as the ACP server. Required for a key that names no shipped preset and no `base` |
-| `args` | | the arguments to give it, replacing the preset's own |
-| `env` | | environment variables merged over `process.env` for the child, by variable name. A value written `{ "$secret": "host:<name>" }` is read from the vault when the daemon loads |
-| `cwd` | | the directory the server runs in; the session's working directory when absent |
-| `description` | | one line about what this agent is |
-| `model` | | the model a session that names none runs on |
-| `authenticate` | | `{ "methodId": "api-key" }`, the sign-in to send after the handshake, for a server that refuses a session until one has happened |
-| `hostTools` | | whether this agent's sessions are offered the host's own tools, over the plugin-wide setting |
-| `honoursTrust` | | whether this agent asks before it loads a project's own settings and hooks. Absent, a session of it in a folder the host did not vouch for is refused rather than started, because ACP carries no trust field |
-| `toolsChanged` | | how this agent hears that the tools it listed have moved, over the plugin-wide setting |
-| `machine` | | what a machine needs to run this agent: `env`, variables set only inside the machine, each a string, `{ "fromEnv": "NAME" }` read when the daemon loads, or `{ "$secret": "<scope>:<name>" }` read when the machine is made; `copy`, a list of `{ "source", "target" }` host paths copied in; `part`, the part the CLI comes from; `state`, the absolute directory the agent keeps its configuration in, as a state volume; and `seed`, the host files that directory is seeded from, each `{ "source", "target", "keep", "drop" }`. A shipped preset brings its own, and this one is laid over it by key, `env` by variable |
-
-Every shipped preset brings a `machine`: its CLI's part, a state directory at `/ahpd/<id>` seeded from the agent's own host files and never its login file, and the variables that point the CLI there. So a preset in a machine runs from its part on any glibc image, and signs in with the key a person adds in `machine.env`. A vault-filled key reaches only this agent's commands in the machine. See [ACP agents in a machine](https://github.com/softov/ahpd/blob/main/docs/COMPUTER.md#acp-agents-in-a-machine).
-
-A per-agent option written at the top level fails the load and says where it goes now. A preset that cannot be resolved - a `base` naming no shipped preset, no `command` where one is needed, an `authenticate` with no `methodId`, a `$secret` the vault does not hold, or a `machine` that is wrongly written or reads a variable the daemon does not have - is skipped with one line naming it, and the rest register. A row whose sign-in depends on a variable sends it only when the daemon's own environment or that preset's `env` has the variable, and for a session placed in a machine also when the preset's `machine.env` sets it.
 
 ## What it does
 

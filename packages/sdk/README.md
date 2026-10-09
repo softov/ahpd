@@ -68,20 +68,48 @@ const host = createHost({
 });
 ```
 
-| option | |
-| --- | --- |
-| `path` | the directory whose sessions this host serves |
-| `agents` | the backends to serve, as `Agent` implementations |
-| `resources` | file reads, writes, and `@` completion. Use `fileResources()` |
-| `terminals` | a shell as a terminal channel. Use `shellTerminals()` |
-| `changes` | uncommitted changes as a changeset. Use `gitChanges()` |
-| `directories` | the current branch of each served directory. Use `gitBranches()` |
-| `automations` | triggered agents. Use `memoryAutomations()`, or `scheduledAutomations({ file })` for cron |
-| `worktrees` | sessions in their own git worktree. Use `gitWorktrees()` |
-| `worktreesRoot` | an absolute folder every session tree goes under, as `<root>/<repo>/<name>`. Left out, a tree sits at `<repo>.worktrees` beside its repository, which is where VS Code's host looks for it |
-| `tools` | tools the host adds to every session. Use `hostTools()` |
-| `resourceProviders` | one provider per URI scheme beside `file:`; an optional `describe()` is what the host advertises in `_meta['ahpd.resourceProviders']` |
-| `onEvent` | called with one line per notable event, for logging |
+| Option | Default | What it does |
+| --- | --- | --- |
+| `path` | required | The directory whose sessions this host serves; sessions outside it are neither listed nor openable |
+| `agents` | required | The backends to serve, as `Agent` implementations, each with its own `provider`. The first is what a client gets when it names none |
+| `hostName` | `host` | What the host is called in the owner `root:<hostName>` of work nobody started as themselves |
+| `agentPlugins` | none | The plugin that registered each agent, by provider, so a session of it can run nested in a machine. `foldHostOptions` writes it |
+| `resources` | none | File reads, writes and `@` completion. Use `fileResources()`. See [resources](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#resources) |
+| `resourceProviders` | none | One provider per URI scheme beside `file:`; an optional `describe()` is what the host advertises in `_meta['ahpd.resourceProviders']` |
+| `terminals` | none | A shell as a terminal channel. Use `shellTerminals()`. See [terminals](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#terminals) |
+| `changes` | none | Uncommitted changes as a changeset. Use `gitChanges()`. See [changes](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#changes) |
+| `directories` | none | The current branch of each served directory. Use `gitBranches()`. See [directories](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#directories) |
+| `worktrees` | none | Sessions in their own git worktree. Use `gitWorktrees()` |
+| `worktreesRoot` | beside the repository | An absolute folder every session tree goes under, as `<root>/<repo>/<name>`. Left out, a tree sits at `<repo>.worktrees` beside its repository, which is where VS Code's host looks for it |
+| `github` | none | What GitHub knows about a session's branch, such as its pull request. Use `githubPullRequests()`. See [github](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#github) |
+| `users` | none | The people who may use this host. Left out, the connection token is the whole of who may connect. Use `fileUsers({ file })` |
+| `automations` | none | Triggered agents. Use `memoryAutomations()`, or `scheduledAutomations({ file })` for cron. See [automations](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#automations) |
+| `unownedAutomations` | `every` | What an automation that names no owner sees: `every` or `none` |
+| `sessions` | `memorySessions()` | Where the flags and configuration the host adds to a session are kept. A daemon wants `fileSessions({ dir })`, which outlives a restart |
+| `computers` | none | How a backend runs its process inside a named machine. The plugin that owns the `computer:` scheme contributes it |
+| `containers` | none | How this host runs another host inside a container. Present, the host serves the dev container requests |
+| `usage` | none | Where the cost of the work is kept. Use `fileUsage({ folder })` |
+| `usagePer` | `turn` | Whether a turn leaves one usage record (`turn`), or each of its reports leaves one (`report`) |
+| `policies` | none | Where the policies that say who may use what are kept. Use `filePolicies({ file })` or `memoryPolicies()` |
+| `policiesCheck` | `false` | Whether what the policies say is enforced |
+| `vault` | none | Where the secrets the host's work needs are kept, by scoped name. Left out, a plugin that reads a secret is told there is no vault |
+| `tools` | none | Tools the host adds to every session, as the protocol's `serverTools`. Use `hostTools()`. See [The tools](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#the-tools) |
+| `mcpServers` | none | The MCP servers every session is offered, by name, in VS Code's `mcpServers` shape |
+| `toolsServers` | none | Where the host serves its own tools as an MCP server. Use `toolServers(...)` and mount its handler on your listener |
+| `sessionConfig` | none | Session settings merged into every session's schema. The fold fills it from the plugins' `registerSessionConfig` |
+| `sessionConfigCompletions` | none | Who answers `sessionConfigCompletions` for a contributed setting, by key |
+| `advancedTools` | `false` | Whether the tools that declare `advancedPermission` are offered |
+| `clientToolTimeoutMs` | `600000` | How long a tool call a client runs may wait before the host calls it failed, in milliseconds. `0` is no limit |
+| `deltaWindowMs` | `75` | How long a streamed delta waits for the next one before it is sent, in milliseconds. `0` sends every delta as it arrives |
+| `rootConfig` | none | The daemon's own settings, shown in root config beside the host's keys, with writes handed back |
+| `diagnostics` | none | What the host answers when a window asks for its version, logs, network or shutdown. See [What the window asks](https://github.com/softov/ahpd/blob/main/docs/LIBRARY.md#what-the-window-asks-a-host-about-itself) |
+| `onEvent` | none | Called with one line per notable event, for a log |
+| `events` | none | What plugins subscribed to, by event. The fold fills it from `pluginHost`; `raise()` calls them |
+| `closers` | none | What plugins asked to run when the host closes. The fold fills it from `registerClose` |
+| `pluginTriggers` | none | The trigger types plugins offer for automations. The fold fills it from `registerTriggerType` |
+| `pluginStarts` | none | Every plugin that may start a session for somebody. The fold fills it |
+
+`agentPlugins`, `sessionConfig`, `sessionConfigCompletions`, `events`, `closers`, `pluginTriggers` and `pluginStarts` are what `foldHostOptions` writes from the plugins a host loads, and a host that loads none can leave them out. `pluginHost()` records what one plugin registers, and the `In your own host` section of each plugin README shows the fold.
 
 The host imports none of these itself. `fileResources` reads files, `shellTerminals` spawns shells and `gitBranches` runs `git`, and you decide which to pass in.
 
@@ -124,7 +152,7 @@ All types are exported. Nothing under `types/` imports a runtime value, so you c
 | [src/resources.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/resources.ts) | The `resources` port: files, reads and writes |
 | [src/terminals.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/terminals.ts) | The `terminals` port: a shell over pipes |
 | [src/changes.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/changes.ts) | The `changes` port: a changeset from git |
-| [src/git.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/git.ts) | The `directories` port: which branch a directory is on |
+| [src/repo/git.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/repo/git.ts) | The `directories` port: which branch a directory is on |
 | [src/automations.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/automations.ts) | The `automations` port, without a clock |
 | [src/scheduled.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/scheduled.ts) | The `automations` port, with a clock |
 | [src/tools/session.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/tools/session.ts) | The tools a session's agent is given |

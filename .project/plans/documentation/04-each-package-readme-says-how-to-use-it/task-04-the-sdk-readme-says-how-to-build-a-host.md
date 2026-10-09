@@ -1,6 +1,6 @@
 ---
 title: The sdk README says how to build a host
-status: todo
+status: implemented
 depends: []
 layer: "docs"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: Each package's README says how to use it, how to configure it and what each option does
 domain: documentation
-status: planned
+status: active
 priority: medium
 created: 2026-10-08
 revalidated: 2026-10-09
@@ -69,10 +69,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The server README lists every command and flag](task-01-the-server-readme-lists-every-command-and-flag.md) | todo | - |
-| [02 - Each agent README explains every option](task-02-each-agent-readme-explains-every-option.md) | todo | - |
-| [03 - The bot, computer and tunnel READMEs explain every option](task-03-the-bot-computer-and-tunnel-readmes-explain-every-option.md) | todo | - |
-| [04 - The sdk README says how to build a host](task-04-the-sdk-readme-says-how-to-build-a-host.md) | todo | - |
+| [01 - The server README lists every command and flag](task-01-the-server-readme-lists-every-command-and-flag.md) | implemented | - |
+| [02 - Each agent README explains every option](task-02-each-agent-readme-explains-every-option.md) | implemented | - |
+| [03 - The bot, computer and tunnel READMEs explain every option](task-03-the-bot-computer-and-tunnel-readmes-explain-every-option.md) | implemented | - |
+| [04 - The sdk README says how to build a host](task-04-the-sdk-readme-says-how-to-build-a-host.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -81,10 +81,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** any task; they touch different files and can run in one build.
-- **Open questions:** none.
-- **Watch out for:** `ahpd.options` in `package.json` is not the option list; read `optionsSchema`. No em dashes in the READMEs, and no hard wrap.
+- **Done so far:** tasks 01-04 are implemented and wait for review. [implemented.md](implemented.md) lists the files and the departures.
+- **Next action:** review the README diffs against each `optionsSchema` and against `HostOptions`.
+- **Open questions:** the computer, Claude and acp schemas leave out fields that the code accepts. The READMEs document these fields. Decide whether the schemas must declare them.
+- **Watch out for:** a README row with no schema property is a field that the code reads. It is not an error. Do not remove it until the schema question has an answer.
 
 ## Final verification checklist
 
