@@ -1,7 +1,7 @@
 ---
 title: An AskUserQuestion shows each question's header, and an answer shows on every client at once with its typed text reaching the tool
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-10-06
 revalidated: 2026-10-06
@@ -69,9 +69,9 @@ No decision: every row below is a fix against the protocol or VS Code.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an answer is dispatched back to the chat](task-01-an-answer-is-dispatched-back.md) | todo | - |
-| [02 - each question carries its header as its title](task-02-each-question-carries-its-header.md) | todo | - |
-| [03 - text typed beside a choice reaches the tool](task-03-text-beside-a-choice-reaches-the-tool.md) | todo | - |
+| [01 - an answer is dispatched back to the chat](task-01-an-answer-is-dispatched-back.md) | done | - |
+| [02 - each question carries its header as its title](task-02-each-question-carries-its-header.md) | done | - |
+| [03 - text typed beside a choice reaches the tool](task-03-text-beside-a-choice-reaches-the-tool.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,15 +80,15 @@ No decision: every row below is a fix against the protocol or VS Code.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-answer-is-dispatched-back.md](task-01-an-answer-is-dispatched-back.md).
+- **Done so far:** tasks 01-03 done; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `questionAnswers` in `input.ts` keys restored answers by the question's text; adding `title` must not change ids or that key.
 
 ## Final verification checklist
 
-- [ ] A client sees `response` on the `inputRequest` part right after another client answers, with no tool call completed yet.
-- [ ] A question built from an AskUserQuestion input has `title` equal to its `header`.
-- [ ] An answer `{ kind: 'selected', value: 'Blue', freeformValues: ['teal'] }` reaches the tool as `Blue, teal`.
-- [ ] `pnpm test` passes in `packages/sdk` and `packages/agent-claude`.
-- [ ] `plans/index.md` updated.
+- [x] A client sees `response` on the `inputRequest` part right after another client answers, with no tool call completed yet.
+- [x] A question built from an AskUserQuestion input has `title` equal to its `header`.
+- [x] An answer `{ kind: 'selected', value: 'Blue', freeformValues: ['teal'] }` reaches the tool as `Blue, teal`.
+- [x] `pnpm test` passes in `packages/sdk` and `packages/agent-claude`.
+- [x] `plans/index.md` updated.

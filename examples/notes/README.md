@@ -113,10 +113,11 @@ was asked.
 
 ### Say it back
 
-`chat/toolCallConfirmed` and `chat/inputCompleted` are dispatched by a client
-and emitted again by the backend. Nothing in a client applies what it sent
-itself, so without the echo the row stays `pending-confirmation` on every
-screen watching it - including the one that just answered.
+`chat/toolCallConfirmed` is dispatched by a client and emitted again by the
+backend. Nothing in a client applies what it sent itself, so without the echo
+the row stays `pending-confirmation` on every screen watching it - including
+the one that just answered. `chat/inputCompleted` is said back by the host once
+`answer` returns true, so the backend does not emit it.
 
 ### Cancelling answers as well as stops
 

@@ -1,6 +1,6 @@
 ---
 title: Text typed beside a choice reaches the tool with the choice
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -29,3 +29,4 @@ An answer of kind `selected` or `selected-many` with `freeformValues` reaches th
 
 ## Resume
 
+Implemented. A selection with no `freeformValues` keeps its shape, so a multi-select without text is still an array.

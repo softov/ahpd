@@ -288,7 +288,7 @@ const scriptedAgent = (
       confirm: (toolCallId: string, approved: boolean, optionId?: string) => {
         told.confirmed.push({ id: toolCallId, approved, ...(optionId === undefined ? {} : { option: optionId }) });
       },
-      answer: (requestId: string, accepted: boolean, answers: Bag) => { told.answered.push({ id: requestId, accepted, answers }); },
+      answer: (requestId: string, accepted: boolean, answers: Bag) => { told.answered.push({ id: requestId, accepted, answers }); return true; },
       cancel: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
       setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}),
@@ -342,10 +342,16 @@ it('a question the inner agent asks is answered from outside', async () => {
   // A draft answer is taken while the request is open, and refused for one that is not.
   expect(session.setAnswer?.('req-1', 'q1', { kind: 'text', value: 'lulu' })).toBe(true);
   expect(session.setAnswer?.('req-9', 'q1', { kind: 'text', value: 'lulu' })).toBe(false);
-  session.answer('req-1', true, { q1: { kind: 'text', value: 'lulu' } });
+  expect(session.answer('req-9', true, {})).toBe(false);
+  expect(session.answer('req-1', true, { q1: { kind: 'text', value: 'lulu' } })).toBe(true);
   await until(() => told.answered.length > 0);
+  expect(told.answered).toHaveLength(1);
   expect(told.answered[0]?.id).toBe('req-1');
   expect(told.answered[0]?.accepted).toBe(true);
+  // The inner host says the answer back, and the outer host says it again on
+  // its own clients; the proxy keeps the inner one back so it arrives once.
+  await new Promise((resolve) => { setTimeout(resolve, 100); });
+  expect(seen.map(({ action }) => action.type)).not.toContain('chat/inputCompleted');
   session.close();
 });
 

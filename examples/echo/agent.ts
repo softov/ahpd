@@ -355,7 +355,7 @@ export function echo(options: EchoOptions): Agent {
       // backend that does settles the promise it parked in `canUseTool` or
       // its equivalent - see `src/session.ts` for one that does.
       confirm: () => {},
-      answer: () => {},
+      answer: () => false,
 
       // Nothing here has a runtime switch and there are no MCP servers, so
       // all three refuse. False is a real answer: a control that reported

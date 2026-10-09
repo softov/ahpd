@@ -242,11 +242,12 @@ export const createPauses = (
        *
        * A declined question is a deny rather than an empty answer, because
        * cofold's own validation refuses a form with nothing in it and the model
-       * is owed the reason either way.
+       * is owed the reason either way. False when the run is not waiting on
+       * that request.
        */
       answer: (requestId, accepted, answers) => {
         const held = pending.get(requestId);
-        if (held === undefined || held.kind !== 'input') return;
+        if (held === undefined || held.kind !== 'input') return false;
         pending.delete(requestId);
         const removal = ctx.activeMapping?.settle(requestId);
         if (removal !== undefined) start.emit('session', removal);
@@ -254,6 +255,7 @@ export const createPauses = (
           ? { type: 'answer', requestId, answers: answersOf(answers) }
           : { type: 'deny', requestId, reason: DECLINED });
         ctx.touch();
+        return true;
       },
     },
   };

@@ -105,7 +105,7 @@ export interface Asking {
   methods: {
     confirm: (toolCallId: string, approved: boolean, optionId?: string) => void;
     setAnswer: (requestId: string, questionId: string, answer: Bag | undefined) => boolean;
-    answer: (requestId: string, accepted: boolean, answers?: Bag) => void;
+    answer: (requestId: string, accepted: boolean, answers?: Bag) => boolean;
   };
 }
 
@@ -419,17 +419,20 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * Keyed by each question's own *text* and valued by the option's own
      * label - not by any id. Sending ids, or dropping `questions`, is a call
      * the tool cannot process and a turn that stalls rather than errors.
+     *
+     * False when the request is not one this session is waiting on; the host
+     * says the `chat/inputCompleted` back on true.
      */
     answer: (requestId, accepted, answers) => {
       const held = pending.get(requestId);
-      if (!held) return;
+      if (!held) return false;
       pending.delete(requestId);
       ctx.inputNeededRemoved(requestId);
 
       if (!accepted) {
         held.settle({ behavior: 'deny', message: 'The person declined to answer' });
         ctx.touch();
-        return;
+        return true;
       }
       const said: Record<string, unknown> = {};
       /*
@@ -458,9 +461,17 @@ export function createAsking(ctx: SessionContext): Asking {  /**
          *
          * Freeform is the person's own words as the value, not the word they
          * typed it under - the tool reads the value as the answer itself.
+         *
+         * Words typed beside a choice are the selection's `freeformValues`,
+         * and the tool reads the choice and those words joined with `, `, as
+         * VS Code joins them.
          */
         const inner = bag(answer.value);
-        said[question] = inner.value ?? answer.value ?? value;
+        const chosen = inner.value ?? answer.value ?? value;
+        const beside = list(inner.freeformValues).filter((one): one is string => typeof one === 'string');
+        said[question] = beside.length === 0
+          ? chosen
+          : [...(Array.isArray(chosen) ? chosen : typeof chosen === 'string' && chosen !== '' ? [chosen] : []), ...beside].join(', ');
       }
       /*
        * The input the tool ran with: its questions as sent plus what was
@@ -471,6 +482,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       answeredInputs.set(held.id, updated);
       held.settle({ behavior: 'allow', updatedInput: updated });
       ctx.touch();
+      return true;
     },
   };
 

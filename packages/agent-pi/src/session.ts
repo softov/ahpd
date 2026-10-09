@@ -1270,7 +1270,7 @@ export function piSession(
       held.settle(approved ? undefined : { block: true, reason: DECLINED });
       touch();
     },
-    answer: () => {},
+    answer: () => false,
 
     toolCallOwner: (toolCallId) => calls.owner(toolCallId),
 

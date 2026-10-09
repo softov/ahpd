@@ -1,6 +1,6 @@
 ---
 title: Each AskUserQuestion question carries its header as its title
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -30,3 +30,4 @@ A question built from AskUserQuestion input has `title` set to that question's `
 
 ## Resume
 
+Implemented. An empty `header` gives no `title`.

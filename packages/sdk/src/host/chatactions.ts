@@ -1046,9 +1046,20 @@ export function chatAction(
        */
       const response = typeof action.response === 'string' ? action.response : undefined;
       const accepted = response !== undefined ? response === 'accept' : action.accepted !== false;
-      session.answer(String(action.requestId ?? action.id ?? ''), accepted, (typeof action.answers === 'object' && action.answers !== null
+      const requestId = String(action.requestId ?? action.id ?? '');
+      const taken = session.answer(requestId, accepted, (typeof action.answers === 'object' && action.answers !== null
         ? action.answers
         : {}) as Record<string, unknown>);
+      // An answer to a request this chat is not waiting on is a no-op, as the
+      // protocol has it: nothing to say back, and nothing refused.
+      if (!taken) break;
+      /*
+       * Said back to every client of the chat, the answering one included,
+       * so each one's `inputRequest` part carries the response now rather
+       * than when the agent next moves. On the chat the question is in: a
+       * worker's own chat, or the chat this session leads.
+       */
+      dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }
     /*

@@ -305,7 +305,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
      * the confirmation above; there is no question shape to answer, so an
      * answer names something this session never asked.
      */
-    answer: () => {},
+    answer: () => false,
 
     setConfig: ctx.setConfig,
 

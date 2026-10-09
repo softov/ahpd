@@ -624,13 +624,15 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
    * Every chat URI in it is the outer one. A catalogue action about a chat
    * this session does not serve - a worker's chat, a fork - is kept back, so a
    * client is never told of a chat it cannot open, and a reorder names only
-   * the chats that are served.
+   * the chats that are served. A `chat/inputCompleted` is kept back as well,
+   * because the outer host says it once `answer` has taken it.
    */
   const served = (channel: 'session' | 'chat', action: Bag): Bag | undefined => {
     if (channel === 'session' && action.type === 'session/chatsReordered' && Array.isArray(action.chats)) {
       return { ...action, chats: (action.chats as unknown[]).filter((chat) => typeof chat === 'string' && outerOf.has(chat)).map(outward) };
     }
     if (channel === 'session' && action.type === 'session/chatAdded' && opensWorker((action.summary ?? {}) as Bag)) return undefined;
+    if (channel === 'chat' && action.type === 'chat/inputCompleted') return undefined;
     // A worker's row is the host's own, kept by the seam that opened it.
     if (channel === 'session' && CATALOGUE.has(String(action.type)) && workers.has(String(action.chat ?? ''))) return undefined;
     const stray = channel === 'session' && CATALOGUE.has(String(action.type)) ? strayIn(action) : undefined;
@@ -997,8 +999,12 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     confirm: (toolCallId: string, approved: boolean, optionId?: string): void => {
       deliver('chat', { type: 'chat/toolCallConfirmed', toolCallId, approved, ...(optionId === undefined ? {} : { selectedOptionId: optionId }) });
     },
-    answer: (requestId: string, accepted: boolean, answers: Bag): void => {
+    /* Taken only for an input request the inner session has open. */
+    answer: (requestId: string, accepted: boolean, answers: Bag): boolean => {
+      const open = (session?.inputNeeded ?? []).some((entry) => entry.id === requestId) || asking(requestId);
+      if (!open) return false;
       deliver('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });
+      return true;
     },
     /* Taken only for an input request the running inner turn has open. */
     setAnswer: (requestId: string, questionId: string, answer: Bag | undefined): boolean => {

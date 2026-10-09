@@ -192,7 +192,7 @@ function spawning(late = false): Agent {
         setDraft: () => {},
         reorder: () => {},
         confirm: () => {},
-        answer: () => {},
+        answer: () => false,
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
         stopMcpServer: async () => false,
@@ -458,7 +458,7 @@ function askingInWorker(stoppable = false): Agent {
         setDraft: (draft) => { told.push({ what: 'draft', id: '', value: draft }); },
         reorder: () => {},
         confirm: (toolCallId, approved, optionId) => { told.push({ what: 'confirm', id: toolCallId, value: approved, option: optionId }); },
-        answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); },
+        answer: (requestId, accepted) => { told.push({ what: 'answer', id: requestId, value: accepted }); return true; },
         ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
@@ -600,6 +600,13 @@ it('takes an answer to a question given on a worker chat to the session\'s backe
   expect(told).toEqual([{ what: 'answer', id: 'toolu_ask', value: true }]);
 });
 
+it('says an answer given on a worker chat back on that chat, once', async () => {
+  const { lead, worker, send } = await waiting();
+  await send(worker, { type: 'chat/inputCompleted', requestId: 'toolu_ask', response: 'accept', answers: {} });
+  expect(on(worker).filter((one) => one.type === 'chat/inputCompleted')).toHaveLength(1);
+  expect(on(lead).filter((one) => one.type === 'chat/inputCompleted')).toHaveLength(0);
+});
+
 it('cancels the lead turn when a worker chat is stopped', async () => {
   const { lead, worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
@@ -702,7 +709,7 @@ function busy(): Agent {
         setDraft: () => {},
         reorder: () => {},
         confirm: () => {},
-        answer: () => {},
+        answer: () => false,
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
         stopMcpServer: async () => false,

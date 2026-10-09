@@ -58,6 +58,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createSession } = await import('../src/session.js');
 const { turnsOf } = await import('../src/transcript.js');
+const { questionRequest } = await import('../src/input.js');
 
 /** An input whose JSON is well past 400 characters, for a tool with no subject. */
 const long = { todos: [{ content: 'x'.repeat(500), status: 'pending', activeForm: 'Doing x' }], nested: { keep: true } };
@@ -650,4 +651,97 @@ it('draws no question for a restored one that was never answered', async () => {
   await asking(false);
   const parts = await partsOf([answerWith()]);
   expect(parts.filter((one) => one.kind === 'inputRequest')).toEqual([]);
+});
+
+/*
+ * Each question's header, as its title.
+ *
+ * AskUserQuestion gives every question a short `header`, and a client draws it
+ * above the question as the question's `title`. The request's own line stays
+ * the default one: the input has no header of its own.
+ */
+
+it('titles each question by its header, and leaves a question with none untitled', () => {
+  const { request, asked: keys } = questionRequest({
+    header: 'Not a field AskUserQuestion has',
+    questions: [
+      { question: 'Which colour?', header: 'Colour', options: [{ label: 'Red' }] },
+      { question: 'Which size?', options: [{ label: 'S' }] },
+      { question: 'Which shape?', header: 'Shape', multiSelect: true, options: [{ label: 'Round' }] },
+    ],
+  }, 'toolu_ask');
+  expect(request.message).toBe('The agent has a question');
+  expect(request.questions?.map((one) => one.id)).toEqual(['q1', 'q2', 'q3']);
+  expect(request.questions?.map((one) => one.message)).toEqual(['Which colour?', 'Which size?', 'Which shape?']);
+  expect(request.questions?.map((one) => one.title)).toEqual(['Colour', undefined, 'Shape']);
+  expect(request.questions?.[1]).not.toHaveProperty('title');
+  expect([...keys.entries()]).toEqual([['q1', 'Which colour?'], ['q2', 'Which size?'], ['q3', 'Which shape?']]);
+});
+
+it('titles a live question and its restored part by the same headers', async () => {
+  const { sent, part: answered } = await asking(true);
+  const request = sent.find((one) => one.type === 'chat/inputRequested')?.request as Bag;
+  expect((request.questions as Bag[]).map((one) => one.title)).toEqual(['Colour', 'Size']);
+  const parts = await partsOf([answerWith({ questions: asked.questions, answers: picked })]);
+  const restoredPart = parts.find((one) => one.kind === 'inputRequest');
+  expect(((restoredPart?.request as Bag).questions as Bag[]).map((one) => one.title)).toEqual(['Colour', 'Size']);
+  expect(restoredPart).toEqual(answered);
+});
+
+/*
+ * Words typed beside a choice.
+ *
+ * A client sends text typed beside a picked option as the selection's
+ * `freeformValues`, and the tool reads the choice and the text joined with
+ * `, `, as VS Code joins them. A text answer is the text alone.
+ */
+
+/** What the tool is handed for one answer, synced first or carried by the completion. */
+async function toolReads(question: 'q1' | 'q2', value: Bag, synced: boolean): Promise<unknown> {
+  let decision: Promise<unknown> | undefined;
+  const { session } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+  ], () => {
+    decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+  });
+  const answer = { state: 'submitted', value };
+  if (synced) {
+    expect(session.setAnswer?.('toolu_ask', question, answer)).toBe(true);
+    session.answer('toolu_ask', true, {});
+  }
+  else {
+    session.answer('toolu_ask', true, { [question]: answer });
+  }
+  const settled = await decision as { updatedInput: { answers: Record<string, unknown> } };
+  return settled.updatedInput.answers[question === 'q1' ? 'Which colour?' : 'Which sizes?'];
+}
+
+for (const synced of [true, false]) {
+  const how = synced ? 'a synced answer' : 'a completion\'s own answer';
+  it(`joins a selection and the text beside it, through ${how}`, async () => {
+    expect(await toolReads('q1', { kind: 'selected', value: 'Blue', freeformValues: ['teal'] }, synced)).toBe('Blue, teal');
+  });
+  it(`joins a multiple selection and the text beside it, through ${how}`, async () => {
+    expect(await toolReads('q2', { kind: 'selected-many', value: ['A', 'B'], freeformValues: ['c'] }, synced)).toBe('A, B, c');
+  });
+  it(`hands a text answer over as its text, through ${how}`, async () => {
+    expect(await toolReads('q1', { kind: 'text', value: 'teal' }, synced)).toBe('teal');
+  });
+}
+
+it('records the joined answer as what the tool ran with', async () => {
+  let decision: Promise<unknown> | undefined;
+  const { session } = await live([
+    { type: 'assistant', parent_tool_use_id: null, uuid: 'a1', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ask', name: 'AskUserQuestion', input: asked }] } },
+  ], () => {
+    decision = sdk.canUseTool?.('AskUserQuestion', asked, { toolUseID: 'toolu_ask' });
+  });
+  session.answer('toolu_ask', true, {
+    q1: { state: 'submitted', value: { kind: 'selected', value: 'Blue', freeformValues: ['teal'] } },
+    q2: { state: 'submitted', value: { kind: 'selected-many', value: ['S', 'L'] } },
+  });
+  expect(await decision).toEqual({
+    behavior: 'allow',
+    updatedInput: { questions: asked.questions, answers: { 'Which colour?': 'Blue, teal', 'Which sizes?': ['S', 'L'] } },
+  });
 });

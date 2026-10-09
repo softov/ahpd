@@ -1,6 +1,6 @@
 ---
 title: A lead chat's chat/inputCompleted is dispatched back to every client
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -33,3 +33,4 @@ When a client answers or declines a question on a lead chat, every client of tha
 
 ## Resume
 
+Implemented. `Session.answer` returns a boolean in every backend. The nested proxy keeps the inner host's `chat/inputCompleted` back so the answer arrives once, and the notes example no longer emits it itself.

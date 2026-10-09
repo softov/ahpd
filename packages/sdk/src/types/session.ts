@@ -488,8 +488,14 @@ export interface Session {
    * hangs for ever is worse than a tool that says it could not run.
    */
   clientGone?(clientId: string): void;
-  /** Answer a question the agent asked, keyed by question id. */
-  answer(requestId: string, accepted: boolean, answers: Bag): void;
+  /**
+   * Answer a question the agent asked, keyed by question id.
+   *
+   * False when the request is not one this session is waiting on. True is
+   * what the host says the `chat/inputCompleted` back to every client of the
+   * chat on, so a backend does not emit that action itself.
+   */
+  answer(requestId: string, accepted: boolean, answers: Bag): boolean;
   /**
    * One question of an open request, as somebody types the answer.
    *

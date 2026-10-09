@@ -2,10 +2,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
 import { checker } from '../../../tools/wire.mjs';
 import { fileSessions } from '../src/sessions.js';
 import {
-  resetSdk, actions, emit, sdk, settle, running,
+  resetSdk, actions, emit, sdk, settle, running, peer, hello,
 } from './support/host.js';
 import type { Bag } from '../src/types/common.js';
 
@@ -285,6 +286,88 @@ describe('driving a turn', () => {
     // find that out by being told.
     const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
     expect(refused?.rejectionReason).toContain('not a question this chat is waiting on');
+  });
+
+  describe('an answer said back to every client of the chat', () => {
+    const questions = [{ question: 'Which database?', options: [{ label: 'Postgres' }, { label: 'SQLite' }] }];
+
+    /** Two clients on one chat, a question open on it, and the second one's chat as it reduces. */
+    const twoAsked = async () => {
+      const { host, client, peer: p, chatUri } = await running();
+      const q = peer();
+      const other = host.accept(q);
+      await other.handle(hello(['0.9.0']));
+      const opened = await other.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: Record<string, unknown> };
+      };
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      const decision = sdk.canUseTool?.('AskUserQuestion', { questions });
+      await settle();
+      const request = actions(p, chatUri).find((e) => e.action.type === 'chat/inputRequested')
+        ?.action.request as { id: string };
+      const complete = (action: Record<string, unknown>) => client.handle({
+        method: 'dispatchAction',
+        params: { channel: chatUri, action: { type: 'chat/inputCompleted', requestId: request.id, ...action } },
+      });
+      /** The second client's chat, put through the protocol's reducer. */
+      const otherChat = () => {
+        let chat = opened.snapshot.state;
+        for (const e of actions(q, chatUri)) chat = chatReducer(chat as never, e.action as never) as never;
+        return chat as { activeTurn?: { responseParts: { kind: string; response?: string; request?: { answers?: unknown } }[] } };
+      };
+      return { p, q, chatUri, request, decision, complete, otherChat };
+    };
+
+    it('reaches the answering client and the other one before the tool call completes', async () => {
+      const { p, q, chatUri, request, decision, complete, otherChat } = await twoAsked();
+      const answers = { q1: { state: 'submitted', value: { kind: 'selected', value: 'SQLite' } } };
+      complete({ response: 'accept', answers });
+      for (const one of [p, q]) {
+        const said = actions(one, chatUri).filter((e) => e.action.type === 'chat/inputCompleted');
+        expect(said).toHaveLength(1);
+        expect(said[0]?.action).toMatchObject({ requestId: request.id, response: 'accept', answers });
+        expect(actions(one, chatUri).map((e) => e.action.type)).not.toContain('chat/toolCallComplete');
+      }
+      // Open on the other client's screen no longer: the part carries the response.
+      const part = otherChat().activeTurn?.responseParts.find((one) => one.kind === 'inputRequest');
+      expect(part?.response).toBe('accept');
+      expect(part?.request?.answers).toEqual(answers);
+      expect(await decision).toMatchObject({ behavior: 'allow' });
+    });
+
+    it('says a decline back as a decline', async () => {
+      const { p, q, chatUri, decision, complete, otherChat } = await twoAsked();
+      complete({ response: 'decline' });
+      for (const one of [p, q]) {
+        const said = actions(one, chatUri).filter((e) => e.action.type === 'chat/inputCompleted');
+        expect(said.map((e) => e.action.response)).toEqual(['decline']);
+      }
+      expect(otherChat().activeTurn?.responseParts.find((one) => one.kind === 'inputRequest')?.response).toBe('decline');
+      expect(await decision).toMatchObject({ behavior: 'deny' });
+    });
+
+    it('takes an answer to a request nothing is waiting on as a no-op, and says nothing back', async () => {
+      const { p, q, chatUri } = await running().then(async ({ host, client, peer: p, chatUri }) => {
+        const q = peer();
+        const other = host.accept(q);
+        await other.handle(hello(['0.9.0']));
+        await other.handle({ method: 'subscribe', params: { channel: chatUri } });
+        client.handle({
+          method: 'dispatchAction',
+          params: { channel: chatUri, action: { type: 'chat/inputCompleted', requestId: 'nobody', response: 'accept' } },
+        });
+        await settle();
+        return { p, q, chatUri };
+      });
+      expect(actions(p).filter((e) => e.rejectionReason !== undefined)).toEqual([]);
+      expect(actions(q, chatUri).map((e) => e.action.type)).not.toContain('chat/inputCompleted');
+      expect(actions(p, chatUri).filter((e) => e.rejectionReason === undefined).map((e) => e.action.type))
+        .not.toContain('chat/inputCompleted');
+    });
   });
 
   it('settles the blocked promise when the turn is cancelled', async () => {

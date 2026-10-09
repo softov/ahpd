@@ -277,17 +277,11 @@ export function notes(options: NotesOptions): Agent {
           settle: (accepted, answers) => { settle(accepted ? answers : undefined); },
         });
       });
-      // Said back, because nothing in a client applies what it dispatched
-      // itself: without this the question stays open on the screen that just
-      // answered it, and on every other screen watching.
+      // On the part this backend holds, so a snapshot shows the question
+      // answered. Every client is told by the host, which says the
+      // `chat/inputCompleted` back once `answer` has taken it.
       part.response = given ? 'accept' : 'decline';
       if (given) (part.request as Bag).answers = given;
-      start.emit('chat', {
-        type: 'chat/inputCompleted',
-        requestId: request.id,
-        response: given ? 'accept' : 'decline',
-        ...(given ? { answers: given } : {}),
-      });
       return given;
     };
 
@@ -687,12 +681,16 @@ export function notes(options: NotesOptions): Agent {
         held.settle(approved, {});
       },
 
-      /** Answer a question, keyed by the request's own id. */
+      /**
+       * Answer a question, keyed by the request's own id. False when nothing
+       * is waiting on it; the host says the `chat/inputCompleted` back on true.
+       */
       answer: (requestId, accepted, answers) => {
         const held = waiting.get(requestId);
-        if (!held || held.entry.kind !== 'chatInput') return;
+        if (!held || held.entry.kind !== 'chatInput') return false;
         wanted(held.id);
         held.settle(accepted, answers as Bag);
+        return true;
       },
 
       /**

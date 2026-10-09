@@ -170,6 +170,9 @@ A confirmation may offer the agent's own choices as `options` on the call's `cha
 `optionId` is the `id` of the one the person picked, from the client's `selectedOptionId`, and is absent when none was.
 Say it back as `selectedOptionId` on the `chat/toolCallConfirmed` the backend emits, so the call records which choice was made.
 
+`answer` returns false for a request the session is not waiting on, and the host then says nothing back.
+On true the host says the `chat/inputCompleted` back to every client of the chat, so the backend does not emit it.
+
 Hold them in a **map keyed by id**, never in one slot. A backend that can ask
 twice will: an agent firing two tools in parallel asks twice before either is
 answered, and with a single slot the second overwrites the first - the first

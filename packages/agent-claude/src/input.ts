@@ -74,8 +74,10 @@ export function titleOf(description: string | undefined, agentType: string | und
  * The carousel an `AskUserQuestion` asks for, and the map its answers are read
  * back through.
  *
- * The questions keyed `q1`..`qN` in the order they were asked, each an option
- * list keyed by the label the SDK wants the answer valued by. The map is from
+ * The questions keyed `q1`..`qN` in the order they were asked, each titled by
+ * its `header` when it has one and an option list keyed by the label the SDK
+ * wants the answer valued by. The request's line is the default one, since
+ * AskUserQuestion has no header of its own above its questions. The map is from
  * each question's key to the question's own text, which is what an answer is
  * keyed by.
  *
@@ -89,8 +91,10 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
     const question = bag(entry);
     const key = `q${index + 1}`;
     asked.set(key, str(question.question) ?? '');
+    const header = str(question.header);
     const carousel = {
       id: key,
+      ...(header === undefined || header === '' ? {} : { title: header }),
       message: str(question.question) ?? '',
       required: true,
       // The label is the id, because the label is what the SDK wants back:
@@ -114,7 +118,7 @@ export function questionRequest(input: Bag, id: string): { request: OnWire<ChatI
       ? { ...carousel, kind: 'multi-select' } satisfies OnWire<ChatInputQuestion>
       : { ...carousel, kind: 'single-select' } satisfies OnWire<ChatInputQuestion>;
   });
-  return { request: { id, message: str(input.header) ?? 'The agent has a question', questions }, asked };
+  return { request: { id, message: 'The agent has a question', questions }, asked };
 }
 
 /**
