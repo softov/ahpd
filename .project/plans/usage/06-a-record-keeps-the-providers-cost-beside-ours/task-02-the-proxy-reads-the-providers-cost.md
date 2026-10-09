@@ -1,6 +1,6 @@
 ---
 title: The proxy reads the provider's cost and never prices a missing side as 0
-status: implemented
+status: done
 depends: [task-01-a-record-and-a-total-carry-both-costs.md]
 layer: "server"
 refs:

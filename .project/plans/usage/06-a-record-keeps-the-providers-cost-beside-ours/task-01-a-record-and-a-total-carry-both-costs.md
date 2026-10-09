@@ -1,6 +1,6 @@
 ---
 title: A record and a total carry both costs and their split
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -1,0 +1,38 @@
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"We"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" need"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" answer"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" user"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" says"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" \""},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"Say"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" P"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"ONG"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":"\"."},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" We"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" need"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" likely"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" just"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" say"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":null,"reasoning_content":" P"},"logprobs":null,"finish_reason":null}],"usage":null}
+
+data: {"object":"chat.completion.chunk","created":1791554689,"model":"deepseek-flash","choices":[{"index":0,"delta":{"content":"","reasoning_content":null},"logprobs":null,"finish_reason":"length"}],"usage":{"prompt_tokens":5234,"completion_tokens":16,"total_tokens":5250,"prompt_tokens_details":{"cached_tokens":4992},"completion_tokens_details":{"reasoning_tokens":16},"prompt_cache_hit_tokens":4992,"prompt_cache_miss_tokens":242}}
+
+data: [DONE]
+
