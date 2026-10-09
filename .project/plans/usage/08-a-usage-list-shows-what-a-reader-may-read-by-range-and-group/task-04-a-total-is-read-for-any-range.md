@@ -1,6 +1,6 @@
 ---
 title: A total is read for any range
-status: todo
+status: doing
 depends: []
 layer: sdk
 refs:
@@ -32,3 +32,9 @@ refs:
 - The ahpd gates pass.
 
 ## Resume
+
+- `packages/sdk/src/usage.ts`: `range` is in `LEAVES`, and answers `store.total` over the asked range.
+- `rangeOf` holds the `records` defaults, the first day of the month in the zone and now, and `records`, `range` and `groups` read their bounds through it.
+- A bound that is not a date is refused with `-32602`. The `records` leaf had no such error before, so this adds it to `records` as well.
+- `packages/sdk/test/usage-scheme.test.ts`: a test of a two-day range, of `records` and `range` agreeing, of the default range, and of the refusal on both leaves.
+- `docs/USAGE.md`: the `range` row and a section on the range.

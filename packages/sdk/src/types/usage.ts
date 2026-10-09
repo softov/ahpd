@@ -162,4 +162,38 @@ export interface Usage {
    * newest 200 records are answered.
    */
   records(pool: string, from?: string, until?: string): Promise<UsageEntry[]>;
+  /**
+   * What the records between `from` and `until` (ISO 8601) were charged,
+   * summed by the keys in `by` - decision `usage-is-grouped-by-the-host`.
+   *
+   * One row per distinct set of key values, each record counted once however
+   * many pools it is charged to. `keep` is asked with a record's pools, and a
+   * record it refuses is in no row. The range is compared at the day, as
+   * `records` compares it.
+   */
+  groups(
+    by: readonly UsageKey[],
+    from: string,
+    until: string,
+    keep: (pools: readonly string[]) => boolean,
+  ): Promise<UsageGroup[]>;
+}
+
+/**
+ * What a grouped total is summed by.
+ *
+ * `user` is the record's owner, `team` its `team:` pool and `project` its
+ * `project:` pool, each spelled as the pool key it is charged under.
+ */
+export type UsageKey = 'user' | 'team' | 'project';
+
+/** One row of a grouped total. */
+export interface UsageGroup {
+  /**
+   * The pool key of each key asked for. A key the records had none of, such as
+   * the project of team work, is absent.
+   */
+  keys: Partial<Record<UsageKey, string>>;
+  /** What those records were charged. */
+  total: UsageTotal;
 }

@@ -702,6 +702,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     usage: usageProvider({
       usage: store,
       ...(options.usageTimezone === undefined ? {} : { timezone: options.usageTimezone }),
+      // The titles a pool is named with, read from the same directory the gate asks.
+      ...(users === undefined ? {} : { titles: users }),
       onProblem: (message) => process.stdout.write(`${message}\n`),
     }),
   };

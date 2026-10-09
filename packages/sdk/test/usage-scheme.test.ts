@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { fileUsage, usageProvider } from '../src/usage.js';
-import { poolsFor } from '../src/scopes.js';
+import { mayRead, poolsFor } from '../src/scopes.js';
 import type { ComputerTime, ModelCall, ModelUse } from '../src/types/usage.js';
 import type { Principal } from '../src/types/users.js';
 
@@ -97,8 +97,8 @@ it('lists the pools a reader may see, and not another person\'s', async () => {
   ]);
   expect((await provider.list('usage://', ANA)).map((one) => one.name)).not.toContain('user:beto');
 
-  // A pool nothing has been charged to is still a pool they may read, so the
-  // listing is not a report of what exists.
+  // The pools they name are the same three, and the listing is the ones of
+  // those that something was charged to.
   expect(poolsFor(ANA)).toEqual(['user:ana', 'project:backend:search', 'team:frontend']);
 
   // One holding `usage:read` sees every pool the store holds.
@@ -124,7 +124,7 @@ it('reads a pool as its day, week and month, and each is what total says over th
   const from = (day: string): [string, string] => [`${day}T00:00:00.000Z`, NOW];
 
   const read = await json('usage://user%3Aana', undefined, provider);
-  expect(Object.keys(read).sort()).toEqual(['day', 'month', 'pool', 'week']);
+  expect(Object.keys(read).sort()).toEqual(['day', 'kind', 'month', 'name', 'pool', 'week']);
 
   // The same calls the store makes, over the same ranges.
   expect(read.day).toEqual(await usage.total('user:ana', ...from('2026-10-07')));
@@ -151,6 +151,7 @@ it('reads one period at a time, and the listing names what can be read', async (
     { name: 'day', type: 'file' },
     { name: 'week', type: 'file' },
     { name: 'month', type: 'file' },
+    { name: 'range', type: 'file' },
     { name: 'records', type: 'file' },
   ]);
 
@@ -217,9 +218,10 @@ it('reads a pool name holding colons as one encoded segment', async () => {
   expect(read.pool).toBe('project:backend:search');
   expect(read.month).toEqual({ usd: 0.25, providerUsd: 0.25, calls: 1 });
   // The same pool as the listing spells it, and the listing is what a client
-  // browses before it builds the URI.
+  // browses before it builds the URI. Their own pool has nothing charged to it,
+  // so it is not listed.
   expect((await provider.list('usage://', person('ana', [], ['backend:search']))).map((one) => one.name))
-    .toEqual(['project:backend:search', 'user:ana']);
+    .toEqual(['project:backend:search']);
 });
 
 it('answers the records charged to a pool, newest first, and takes the range off the query', async () => {
@@ -254,9 +256,10 @@ it('refuses a pool the reader may not see, and answers an empty one with an empt
 
   // Their own pool and their team's pool, one of which has nothing in it: a
   // measure nothing was charged in is absent rather than zero.
-  expect(await provider.list('usage://user%3Aana', ana)).toHaveLength(4);
-  expect(await provider.list('usage://team%3Abackend', ana)).toHaveLength(4);
-  expect(await json('usage://team%3Abackend', ana, provider)).toEqual({ pool: 'team:backend', day: {}, week: {}, month: {} });
+  expect(await provider.list('usage://user%3Aana', ana)).toHaveLength(5);
+  expect(await provider.list('usage://team%3Abackend', ana)).toHaveLength(5);
+  expect(await json('usage://team%3Abackend', ana, provider))
+    .toEqual({ pool: 'team:backend', kind: 'team', name: 'backend', day: {}, week: {}, month: {} });
 
   // Somebody else's is refused with the sentence the host would have said.
   await expect(provider.read('usage://user%3Abeto', undefined, ana)).rejects.toMatchObject({
@@ -282,7 +285,7 @@ it('says what it is for on the handshake, and makes nothing', () => {
   });
 });
 
-it('refuses a URI of another scheme, a leaf that is not one of the four, and the root itself', async () => {
+it('refuses a URI of another scheme, a leaf that is not one of the five, and the root itself', async () => {
   const { provider } = await over([modelUse('2026-10-02T10:00:00.000Z', ['user:ana'])], 'UTC');
 
   // Not this scheme's URI: a bad argument, not a denial - the code a client
@@ -295,4 +298,171 @@ it('refuses a URI of another scheme, a leaf that is not one of the four, and the
   expect(await provider.resolve('usage://')).toMatchObject({ uri: 'usage://', type: 'directory' });
   expect(await provider.resolve('usage://user%3Aana/week')).toMatchObject({ uri: 'usage://user%3Aana/week', type: 'file' });
   await expect(provider.resolve('usage://user%3Aana/total')).rejects.toMatchObject({ code: -32008 });
+});
+/*
+ * A member reads the team pool their own work is charged to, whichever
+ * membership in the team they hold, and `team:*` reads every project of the
+ * team rather than the install's projects crossed with it.
+ */
+it('lets a member read their team\'s pool, and `team:*` every project of that team', async () => {
+  const { provider } = await over([], 'UTC');
+  const any = person('soft', [], ['backend:*']);
+  expect(mayRead(any, 'team:backend')).toBe(true);
+  expect(mayRead(any, 'project:backend:ahpc')).toBe(true);
+  expect(mayRead(any, 'project:testing:ahpc')).toBe(false);
+  expect(await provider.authorize('usage://team%3Abackend', any)).toBe(true);
+  expect(await provider.authorize('usage://project%3Abackend%3Aahpc', any)).toBe(true);
+  expect(await provider.authorize('usage://project%3Atesting%3Aahpc', any)).toBe(false);
+
+  const one = person('soft', [], ['backend:ahpapp']);
+  expect(mayRead(one, 'team:backend')).toBe(true);
+  expect(mayRead(one, 'project:backend:ahpapp')).toBe(true);
+  expect(mayRead(one, 'project:backend:ahpc')).toBe(false);
+  expect(await provider.authorize('usage://team%3Abackend', one)).toBe(true);
+  expect(await provider.authorize('usage://project%3Abackend%3Aahpc', one)).toBe(false);
+
+  // A bare team reads the team's pool and none of its projects.
+  const bare = person('soft', [], ['backend']);
+  expect(mayRead(bare, 'team:backend')).toBe(true);
+  expect(mayRead(bare, 'project:backend:ahpapp')).toBe(false);
+
+  // Holding `usage:read` reads every pool, the host's own among them.
+  const keeper = person('keeper', ['usage:read']);
+  for (const pool of ['user:soft', 'team:testing', 'project:testing:ahpc', 'root:x']) {
+    expect(await provider.authorize(`usage://${encodeURIComponent(pool)}`, keeper)).toBe(true);
+  }
+  expect(mayRead(one, 'root:x')).toBe(false);
+});
+
+it('lists the pools something was charged to that the reader may read, the same rows root sees', async () => {
+  const { provider } = await over([
+    modelUse('2026-10-02T10:00:00.000Z', ['user:soft', 'team:backend', 'project:backend:ahpapp'], { owner: 'user:soft' }),
+    modelUse('2026-10-03T10:00:00.000Z', ['root:x'], { owner: 'root:x' }),
+  ], 'UTC');
+  const soft = person('soft', [], ['backend:*', 'testing:*', 'backend:ahpapp'], ['ahpapp', 'ahpc', 'ahpd']);
+
+  expect((await provider.list('usage://', soft)).map((one) => one.name))
+    .toEqual(['project:backend:ahpapp', 'team:backend', 'user:soft']);
+  expect((await provider.list('usage://')).map((one) => one.name))
+    .toEqual(['project:backend:ahpapp', 'root:x', 'team:backend', 'user:soft']);
+
+  // A pool they may read that nothing was charged to is not a row.
+  expect(mayRead(soft, 'project:testing:ahpc')).toBe(true);
+  expect((await provider.list('usage://', soft)).map((one) => one.name)).not.toContain('project:testing:ahpc');
+});
+
+it('names a pool by its kind and the titles of its team and project', async () => {
+  const usage = fileUsage({ folder });
+  const titles = {
+    teams: async () => [{ id: 'backend', title: 'Backend' }, { id: 'testing' }],
+    projects: async () => [{ id: 'ahpapp' }, { id: 'ahpc', title: 'The client' }],
+  };
+  const provider = usageProvider({ usage, timezone: 'UTC', titles });
+  // A reader with no `team` or `project` grant, who reads the pool by membership.
+  const soft = person('soft', [], ['backend:ahpapp', 'testing:*']);
+
+  expect(await json('usage://project%3Abackend%3Aahpapp', soft, provider))
+    .toMatchObject({ pool: 'project:backend:ahpapp', kind: 'project', name: 'Backend / ahpapp' });
+  expect(await json('usage://project%3Atesting%3Aahpc', soft, provider))
+    .toMatchObject({ kind: 'project', name: 'testing / The client' });
+  // A team with no title is named by its id.
+  expect(await json('usage://team%3Atesting', soft, provider)).toMatchObject({ kind: 'team', name: 'testing' });
+  expect(await json('usage://team%3Abackend', soft, provider)).toMatchObject({ kind: 'team', name: 'Backend' });
+  expect(await json('usage://user%3Asoft', soft, provider)).toMatchObject({ kind: 'user', name: 'soft' });
+  expect(await json('usage://root%3Ax', undefined, provider)).toMatchObject({ kind: 'root', name: 'x' });
+
+  // With no titles to read, every name is its ids.
+  expect(await json('usage://project%3Abackend%3Aahpapp', soft, usageProvider({ usage })))
+    .toMatchObject({ kind: 'project', name: 'backend / ahpapp' });
+});
+
+it('reads a total over any range, and the records over the same range agree with it', async () => {
+  const { usage, provider } = await over([
+    modelUse('2026-09-28T10:00:00.000Z', ['user:ana'], { cost: { amount: 9, currency: 'usd', from: 'harness' } }),
+    modelUse('2026-09-29T10:00:00.000Z', ['user:ana'], { cost: { amount: 1, currency: 'usd', from: 'harness' } }),
+    computerTime('2026-09-30T11:00:00.000Z', 3600, ['user:ana']),
+    modelUse('2026-10-01T09:00:00.000Z', ['user:ana'], { cost: { amount: 3, currency: 'usd', from: 'harness' } }),
+  ], 'UTC');
+
+  // The two days in the middle, and neither side of them.
+  const range = await json('usage://user%3Aana/range?from=2026-09-29&until=2026-09-30', undefined, provider);
+  expect(range).toEqual({ usd: 1, providerUsd: 1, calls: 1, hours: 1 });
+  expect(range).toEqual(await usage.total('user:ana', '2026-09-29', '2026-09-30'));
+
+  const records = await json('usage://user%3Aana/records?from=2026-09-29&until=2026-09-30', undefined, provider);
+  expect(records.map((one: { at: string }) => one.at)).toEqual(['2026-09-30T11:00:00.000Z', '2026-09-29T10:00:00.000Z']);
+  const usd = records.reduce((sum: number, one: { cost?: { amount: number } }) => sum + (one.cost?.amount ?? 0), 0);
+  expect(usd).toBe(range.usd);
+
+  // With no range, both are this month to now.
+  expect(await json('usage://user%3Aana/range', undefined, provider)).toEqual({ usd: 3, providerUsd: 3, calls: 1 });
+
+  // A bound that is not a date is refused, the same way on both leaves.
+  for (const leaf of ['range', 'records']) {
+    await expect(provider.read(`usage://user%3Aana/${leaf}?from=yesterday`)).rejects.toMatchObject({ code: -32602 });
+    await expect(provider.read(`usage://user%3Aana/${leaf}?until=2026-13-45`)).rejects.toMatchObject({ code: -32602 });
+  }
+});
+
+/*
+ * A record is charged to its user, team and project pools, so it is in three
+ * pool totals. A group counts it once.
+ */
+it('sums the records by user, team and project, each record once', async () => {
+  const usage = fileUsage({ folder });
+  const scoped = (at: string, owner: `user:${string}`, team: string, project: string | undefined, amount: number): ModelUse =>
+    modelUse(at, [owner, `team:${team}`, ...(project === undefined ? [] : [`project:${team}:${project}`])], {
+      owner,
+      team,
+      ...(project === undefined ? {} : { project }),
+      cost: { amount, currency: 'usd', from: 'harness' },
+    });
+  for (const one of [
+    scoped('2026-10-02T10:00:00.000Z', 'user:soft', 'backend', 'ahpapp', 1),
+    scoped('2026-10-03T10:00:00.000Z', 'user:soft', 'backend', 'ahpc', 2),
+    scoped('2026-10-04T10:00:00.000Z', 'user:ana', 'backend', 'ahpapp', 4),
+    scoped('2026-10-05T10:00:00.000Z', 'user:ana', 'backend', undefined, 8),
+    scoped('2026-10-06T10:00:00.000Z', 'user:beto', 'testing', 'ahpc', 16),
+    // Outside the range asked for below.
+    scoped('2026-09-20T10:00:00.000Z', 'user:soft', 'backend', 'ahpapp', 32),
+  ]) await usage.record(one);
+  const provider = usageProvider({
+    usage,
+    timezone: 'UTC',
+    titles: { teams: async () => [{ id: 'backend', title: 'Backend' }], projects: async () => [] },
+  });
+  const october = 'from=2026-10-01&until=2026-10-07';
+
+  const byUser = await json(`usage://groups?by=user&${october}`, undefined, provider);
+  expect(byUser).toEqual([
+    { keys: { user: 'user:ana' }, names: { user: 'ana' }, total: { usd: 12, providerUsd: 12, calls: 2 } },
+    { keys: { user: 'user:beto' }, names: { user: 'beto' }, total: { usd: 16, providerUsd: 16, calls: 1 } },
+    { keys: { user: 'user:soft' }, names: { user: 'soft' }, total: { usd: 3, providerUsd: 3, calls: 2 } },
+  ]);
+
+  // A team's spending split by project, and its team work apart from them.
+  const byProject = await json(`usage://groups?by=team,project&${october}`, undefined, provider);
+  expect(byProject.map((row: { keys: unknown; total: { usd: number } }) => [row.keys, row.total.usd])).toEqual([
+    [{ team: 'team:backend' }, 8],
+    [{ team: 'team:backend', project: 'project:backend:ahpapp' }, 5],
+    [{ team: 'team:backend', project: 'project:backend:ahpc' }, 2],
+    [{ team: 'team:testing', project: 'project:testing:ahpc' }, 16],
+  ]);
+  expect(byProject[1].names).toEqual({ team: 'Backend', project: 'Backend / ahpapp' });
+
+  // No keys is one row, the whole range.
+  expect(await json(`usage://groups?${october}`, undefined, provider))
+    .toEqual([{ keys: {}, names: {}, total: { usd: 31, providerUsd: 31, calls: 5 } }]);
+
+  // A reader sees no row built from records whose pools they may not read.
+  const soft = person('soft', [], ['backend:ahpapp']);
+  const theirs = await json(`usage://groups?by=user&${october}`, soft, provider);
+  expect(theirs.map((row: { keys: { user: string } }) => row.keys.user)).toEqual(['user:ana', 'user:soft']);
+  expect(await provider.authorize('usage://groups?by=user', soft)).toBe(true);
+
+  // A key that is not one is refused, and so is a bound that is not a date.
+  await expect(provider.read('usage://groups?by=user,agent')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.read('usage://groups?by=user&from=soon')).rejects.toMatchObject({ code: -32602 });
+  await expect(provider.list('usage://groups')).rejects.toMatchObject({ code: -32008 });
+  expect(await provider.resolve('usage://groups?by=user')).toMatchObject({ type: 'file' });
 });

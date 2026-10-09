@@ -74,7 +74,7 @@ export { peopleProviders } from './people.js';
 export type { PeopleProvider } from './people.js';
 export { policyProviders } from './policy.js';
 export type { PolicyProvider } from './policy.js';
-export { covers, membership, namesOf, poolsFor, scopeFor } from './scopes.js';
+export { covers, mayRead, membership, namesOf, poolsFor, scopeFor } from './scopes.js';
 export type { Membership, Scope, ScopeAnswer } from './scopes.js';
 export { githubIssuer, isIssuerUrl, issuerFrom, issuerKind, oidcIssuer } from './issuers.js';
 export type { Fetcher, GitHubIssuerOptions, IssuerKind, OidcIssuerOptions } from './issuers.js';

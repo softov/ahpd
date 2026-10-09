@@ -71,11 +71,11 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A member reads their team's pool](task-01-a-member-reads-their-teams-pool.md) | todo | - |
-| [02 - The list shows charged pools the reader may read](task-02-the-list-shows-charged-pools-the-reader-may-read.md) | todo | 01 |
-| [03 - A pool says its kind and name](task-03-a-pool-says-its-kind-and-name.md) | todo | - |
-| [04 - A total is read for any range](task-04-a-total-is-read-for-any-range.md) | todo | - |
-| [05 - Usage is summed by user, team and project](task-05-usage-is-summed-by-user-team-and-project.md) | todo | 01, 03, 04 |
+| [01 - A member reads their team's pool](task-01-a-member-reads-their-teams-pool.md) | doing | - |
+| [02 - The list shows charged pools the reader may read](task-02-the-list-shows-charged-pools-the-reader-may-read.md) | doing | 01 |
+| [03 - A pool says its kind and name](task-03-a-pool-says-its-kind-and-name.md) | doing | - |
+| [04 - A total is read for any range](task-04-a-total-is-read-for-any-range.md) | doing | - |
+| [05 - Usage is summed by user, team and project](task-05-usage-is-summed-by-user-team-and-project.md) | doing | 01, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -84,8 +84,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-member-reads-their-teams-pool.md](task-01-a-member-reads-their-teams-pool.md).
+- **Done so far:** tasks 01 to 05 are built and wait for review.
+- **Next action:** review the five tasks.
 - **Open questions:** none.
 - **Watch out for:** a record charged to three pools counts once in a group, and three times across pool rows.
 

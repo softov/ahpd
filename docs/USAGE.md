@@ -42,12 +42,42 @@ Through the `usage:` scheme, one leaf under the pool - decision [Usage is read t
 
 | URI | What it answers |
 | --- | --- |
-| `usage://` | The pools this reader may see, as directory entries: every pool a record was charged to for a reader holding `usage:read`, and their own pools otherwise |
-| `usage://<pool>` | That pool as `{ pool, day, week, month }`, each a total |
+| `usage://` | The pools a record was charged to that this reader may read, as directory entries |
+| `usage://<pool>` | That pool as `{ pool, kind, name, day, week, month }`, the last three each a total |
 | `usage://<pool>/day`, `/week`, `/month` | One of those periods on its own |
+| `usage://<pool>/range?from=&until=` | One total between two days |
 | `usage://<pool>/records?from=&until=` | The records charged to it, newest first, at most the newest 200 |
+| `usage://groups?by=&from=&until=` | The records between two days summed by user, team and project, one row per set of key values |
 
-A pool name holds colons, so it is one encoded path segment: `usage://project%3Abackend%3Asearch` is the pool `project:backend:search` and not an authority called `project`. A record naming no instant is kept nowhere and said out loud, which is the only answer that is not a charge in the wrong place. A request for a leaf that is not one of the four is `-32008`.
+A listing is the same for every reader: the pools the store has records for, limited to the pools the reader may read - decision [The usage list shows the charged pools a reader may read](../.project/decisions/usage-lists-the-charged-pools-a-reader-may-read.md). Root and a member see the same row for the same pool, and a pool nothing was charged to is listed for neither, so a team or project that spent nothing has no row until its first record.
+
+A pool name holds colons, so it is one encoded path segment: `usage://project%3Abackend%3Asearch` is the pool `project:backend:search` and not an authority called `project`. A record naming no instant is kept nowhere and said out loud, which is the only answer that is not a charge in the wrong place. A request for a leaf that is not one of the five is `-32008`.
+
+### A pool's kind and name
+
+`kind` is the pool key's prefix: `user`, `team`, `project` or `root`. `name` is what a person reads the pool by: the user's id, the team's title, `<team title> / <project title>`, or the host of a `root:` pool. Each title falls back to its id, so `project:backend:ahpapp` is `Backend / ahpapp` when the team has the title `Backend` and the project has none. The titles come from the people directory, and a reader needs no `team` or `project` grant to get them: only the title goes out, and only for a pool the reader may read.
+
+### A range
+
+`range`, `records` and `groups` take `from` and `until`, each a day as `2026-10-01` or an ISO 8601 instant, and compare them at the day as the totals do. A bound left out is the first day of the current month in the configured zone, and now. A bound that is not a date is `-32602`, rather than a range of every record or of none. `range` and `records` over the same `from` and `until` agree: the records are the ones that total summed.
+
+### Groups
+
+`usage://groups` sums the records of a range by the keys in `by`, a comma-separated list of `user`, `team` and `project` - decision [Usage is grouped by the host](../.project/decisions/usage-is-grouped-by-the-host.md). It answers one row per distinct set of key values:
+
+```json
+[
+  {
+    "keys": { "team": "team:backend", "project": "project:backend:ahpapp" },
+    "names": { "team": "Backend", "project": "Backend / ahpapp" },
+    "total": { "usd": 5, "calls": 2 }
+  }
+]
+```
+
+Each key is spelled as the pool key the record is charged under: `user` is the owner, which is `root:<host>` for a root connection's work, `team` is `team:<team>` and `project` is `project:<team>:<project>`. A key the records had none of is left out of `keys`, so team work grouped by `team,project` is a row with a `team` and no `project`. Each name is the pool's name as above. A `by` naming another key is `-32602`, and no `by` at all is one row for the whole range.
+
+A record counts once in a group, however many pools it is charged to, where a pool row counts it once under each of its pools. A record counts when the reader may read at least one pool it is charged to, so a member grouping by `user` sees their team's spending split by person. The store reads the month files for this, which is slower than a pool total over a long range, and a store plugin answers the same call.
 
 The three periods are ranges in the configured zone rather than in UTC, so a week starts on the deployment's Monday 00:00 and not the evening before - see the `timezone` key below. `until` is always now, so the day behind the current hour is a partly covered one and is counted whole. The records a period's total summed are the records that period's `records` leaf lists, because both compare the range at the day.
 
@@ -70,8 +100,8 @@ Two, and both read through the `usage:` provider rather than holding a second co
 
 | Command | What it does |
 | --- | --- |
-| `ahpd usage` | Lists every pool a record was charged to that you may see |
-| `ahpd usage <pool>` | Prints that pool's today, this week and this month, cut in `usage.timezone` |
+| `ahpd usage` | Lists every pool a record was charged to that you may read |
+| `ahpd usage <pool>` | Prints that pool's today, this week and this month, cut in `usage.timezone`, and with `--json` its `kind` and `name` |
 
 Served over HTTP they are `GET /api/usage` and `GET /api/usage/<pool>`, and a pool that is not the caller's is `403` whichever transport asked. There is no write verb: a record is written by the meter that charges it, and nothing edits one.
 
@@ -79,7 +109,7 @@ Served over HTTP they are `GET /api/usage` and `GET /api/usage/<pool>`, and a po
 
 Reading a pool is `usage:get` on the `usage` subject, which like every scheme's carries the resource operations under its own name - `get`, `list`, `resolve`, `watch` in the read group - and `usage:read` is the group that holds all four ([RESOURCES.md](RESOURCES.md#grants)). There is no write half, because a record is never edited and nothing is made, and this provider implements `get`, `list` and `resolve`: a `usage:watch` is a grant a role may hold and an operation nothing here answers.
 
-What a person may see is not only the grant. Their own `user:<id>` pool, and the `team:` and `project:` pools of the teams and projects they belong to, are readable with no grant at all, because a client showing somebody their own spending has to be able to. Every other pool needs `usage:read`. That is the provider's own `authorize` rather than a rule in the host, which is how a scheme opens part of itself without a host change - decision [A scheme provider may let a read through that its grant would refuse](../.project/decisions/a-scheme-provider-may-authorize-a-read-itself.md). Where the pools come from is [USERS.md](USERS.md#roles).
+What a person may see is not only the grant. Their own `user:<id>` pool, and the `team:` and `project:` pools of the teams and projects they belong to, are readable with no grant at all, because a client showing somebody their own spending has to be able to. Any membership in a team reads `team:<team>`, so a member reads the team pool their own work is charged to. `team:*` reads every `project:<team>:<project>` and `team:<project>` reads that one, and a bare `team` reads no project pool. The grouped read at `usage://groups` needs no grant either, as the listing needs none, and it counts only the records the reader may read. Every other pool needs `usage:read`. That is the provider's own `authorize` rather than a rule in the host, which is how a scheme opens part of itself without a host change - decision [A scheme provider may let a read through that its grant would refuse](../.project/decisions/a-scheme-provider-may-authorize-a-read-itself.md). Where the pools come from is [USERS.md](USERS.md#roles).
 
 ## See also
 

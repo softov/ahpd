@@ -1,6 +1,6 @@
 ---
 title: A pool says its kind and name
-status: todo
+status: doing
 depends: []
 layer: sdk
 refs:
@@ -31,3 +31,12 @@ refs:
 - The ahpd gates pass.
 
 ## Resume
+
+- `packages/sdk/src/usage.ts`: `UsageProviderOptions.titles` is a reader with `teams()` and `projects()`, which a `Users` port answers.
+- The pool body is `{ pool, kind, name, day, week, month }`.
+- `kind` is the pool key's prefix, and `name` is the user's id, the team's title, `<team title> / <project title>`, or the host of a `root:` pool, each title falling back to its id.
+- A titles reader that throws is reported through `onProblem`, and the names fall back to ids.
+- `packages/server/src/commands/run.ts`: the daemon passes its `users` directory as `titles`.
+- `packages/server/src/commands/usage.ts`: the served `ahpd usage` passes `served.users` as `titles`, and `TotalsRow` declares `kind` and `name`.
+- `packages/sdk/test/usage-scheme.test.ts`: a test of the names, and `packages/server/test/usage-command.test.ts` expects the two new fields.
+- `docs/USAGE.md`: a section on the kind and the name.

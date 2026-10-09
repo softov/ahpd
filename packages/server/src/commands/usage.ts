@@ -13,7 +13,7 @@ import { output } from '@cofold/commands';
 import type { Command, Registry } from '@cofold/commands';
 import { HttpError } from '@cofold/remote';
 import { fileUsage, RpcError, usageProvider } from '@ahpd/sdk';
-import type { Principal, Usage, UsageProvider } from '@ahpd/sdk';
+import type { Principal, Usage, UsageProvider, Users } from '@ahpd/sdk';
 import { configDir, loadConfig } from '../config.js';
 import { flagFields, stop } from './options.js';
 import type { ServedFacts } from './served.js';
@@ -29,10 +29,14 @@ import { bounded } from './user.js';
 const storeOf = (
   context: { input: Readonly<Record<string, unknown>>; error(text: string): void },
   served?: ServedFacts,
-): { store: Usage; zone: string | undefined } => {
+): { store: Usage; zone: string | undefined; titles?: Users } => {
   if (served !== undefined) {
     if (served.usage === undefined) stop('This daemon has no usage store, so it has nothing to say it spent.');
-    return { store: served.usage(), zone: served.options.usageTimezone };
+    return {
+      store: served.usage(),
+      zone: served.options.usageTimezone,
+      ...(served.users === undefined ? {} : { titles: served.users }),
+    };
   }
   const input = context.input;
   const from = loadConfig(typeof input['configFile'] === 'string' ? input['configFile'] : undefined).values;
@@ -46,8 +50,13 @@ const storeOf = (
 };
 
 /** The provider over that store, which is where both the listing and the totals come from. */
-const over = (store: Usage, zone: string | undefined, error: (line: string) => void): UsageProvider =>
-  usageProvider({ usage: store, ...(zone === undefined ? {} : { timezone: zone }), onProblem: error });
+const over = (read: { store: Usage; zone: string | undefined; titles?: Users }, error: (line: string) => void): UsageProvider =>
+  usageProvider({
+    usage: read.store,
+    ...(read.zone === undefined ? {} : { timezone: read.zone }),
+    ...(read.titles === undefined ? {} : { titles: read.titles }),
+    onProblem: error,
+  });
 
 /**
  * The provider's own refusal, said as this surface's.
@@ -77,6 +86,10 @@ export interface PoolRow {
 /** One pool as it reads: the three periods, each a `UsageTotal`. */
 export interface TotalsRow {
   pool: string;
+  /** The pool key's prefix: `user`, `team`, `project` or `root`. */
+  kind: string;
+  /** What a person reads the pool by: the user's id, the team's title, or `<team title> / <project title>`. */
+  name: string;
   day: Record<string, number>;
   week: Record<string, number>;
   month: Record<string, number>;
@@ -118,8 +131,7 @@ export const declareUsage = (registry: Registry<object>, served?: ServedFacts): 
       // There is a caller, and holding nothing further is the whole of it: which
       // pools are theirs is the provider's question, not a declaration's.
       bounded(context, []);
-      const { store, zone } = storeOf(context, served);
-      const provider = over(store, zone, (line) => { context.error(line); });
+      const provider = over(storeOf(context, served), (line) => { context.error(line); });
       const actor = context.request?.actor as Principal | undefined;
       const rows: PoolRow[] = (await provider.list('usage://', actor).catch(refusal)).map((one) => ({ pool: one.name }));
       return output(rows, rows.length === 0 ? 'no pools\n' : `${rows.map((one) => `${one.pool}\n`).join('')}`);
@@ -141,8 +153,7 @@ export const declareUsage = (registry: Registry<object>, served?: ServedFacts): 
     required: ['pool'],
     run: async (context) => {
       bounded(context, []);
-      const { store, zone } = storeOf(context, served);
-      const provider = over(store, zone, (line) => { context.error(line); });
+      const provider = over(storeOf(context, served), (line) => { context.error(line); });
       const actor = context.request?.actor as Principal | undefined;
       const pool = context.value<string>('pool');
       const read = await provider.read(`usage://${encodeURIComponent(pool)}`, undefined, actor).catch(refusal);

@@ -22,6 +22,7 @@ export const apply: Plugin['apply'] = (host, options) => {
     total: async () => ({ calls: 1 }),
     pools: async () => ['the fixture'],
     records: async () => [],
+    groups: async () => [],
   };
   host.registerUsage(usage, options['replace'] === true ? 'replace' : undefined);
 };

@@ -11,10 +11,10 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { refusalReason } from './host.js';
 import { RpcError } from './rpc.js';
-import { poolsFor } from './scopes.js';
+import { mayRead, membership } from './scopes.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription } from './types/resources.js';
-import type { Principal } from './types/users.js';
-import type { Cost, Usage, UsageEntry, UsageTotal } from './types/usage.js';
+import type { Named, Principal } from './types/users.js';
+import type { Cost, Usage, UsageEntry, UsageGroup, UsageKey, UsageTotal } from './types/usage.js';
 
 /** An hour, which is what computer time is reported in. */
 const HOUR_S = 3_600;
@@ -36,6 +36,36 @@ interface Measured {
 const none = (): Measured => ({
   usd: 0, providerUsd: 0, inputUsd: 0, outputUsd: 0, tokens: 0, input: 0, output: 0, cache: 0, calls: 0, hours: 0,
 });
+
+/** Add one measure to another, in place. */
+const addTo = (sum: Measured, what: Measured): void => {
+  sum.usd += what.usd;
+  sum.providerUsd += what.providerUsd;
+  sum.inputUsd += what.inputUsd;
+  sum.outputUsd += what.outputUsd;
+  sum.tokens += what.tokens;
+  sum.input += what.input;
+  sum.output += what.output;
+  sum.cache += what.cache;
+  sum.calls += what.calls;
+  sum.hours += what.hours;
+};
+
+/** A sum as the port reports it: a measure nothing was charged in is absent rather than zero. */
+const reported = (sum: Measured): UsageTotal => {
+  const out: UsageTotal = {};
+  if (sum.usd !== 0) out.usd = sum.usd;
+  if (sum.providerUsd !== 0) out.providerUsd = sum.providerUsd;
+  if (sum.inputUsd !== 0) out.inputUsd = sum.inputUsd;
+  if (sum.outputUsd !== 0) out.outputUsd = sum.outputUsd;
+  if (sum.tokens !== 0) out.tokens = sum.tokens;
+  if (sum.input !== 0) out.input = sum.input;
+  if (sum.output !== 0) out.output = sum.output;
+  if (sum.cache !== 0) out.cache = sum.cache;
+  if (sum.calls !== 0) out.calls = sum.calls;
+  if (sum.hours !== 0) out.hours = sum.hours;
+  return out;
+};
 
 /** A number the record meant, or zero: a count nothing was told is not a count. */
 const counted = (value: unknown): number =>
@@ -175,16 +205,7 @@ export function fileUsage(options: FileUsageOptions): Usage {
     for (const pool of pools) {
       const days = held.get(pool) ?? new Map<string, Measured>();
       const charged = days.get(day) ?? none();
-      charged.usd += what.usd;
-      charged.providerUsd += what.providerUsd;
-      charged.inputUsd += what.inputUsd;
-      charged.outputUsd += what.outputUsd;
-      charged.tokens += what.tokens;
-      charged.input += what.input;
-      charged.output += what.output;
-      charged.cache += what.cache;
-      charged.calls += what.calls;
-      charged.hours += what.hours;
+      addTo(charged, what);
       days.set(day, charged);
       held.set(pool, days);
     }
@@ -295,31 +316,10 @@ export function fileUsage(options: FileUsageOptions): Usage {
         const last = DAY.test(until) ? until.slice(0, 10) : '';
         for (const [day, charged] of days) {
           if (day < first || day > last) continue;
-          sum.usd += charged.usd;
-          sum.providerUsd += charged.providerUsd;
-          sum.inputUsd += charged.inputUsd;
-          sum.outputUsd += charged.outputUsd;
-          sum.tokens += charged.tokens;
-          sum.input += charged.input;
-          sum.output += charged.output;
-          sum.cache += charged.cache;
-          sum.calls += charged.calls;
-          sum.hours += charged.hours;
+          addTo(sum, charged);
         }
       }
-      // A measure nothing was charged in is absent rather than zero.
-      const out: UsageTotal = {};
-      if (sum.usd !== 0) out.usd = sum.usd;
-      if (sum.providerUsd !== 0) out.providerUsd = sum.providerUsd;
-      if (sum.inputUsd !== 0) out.inputUsd = sum.inputUsd;
-      if (sum.outputUsd !== 0) out.outputUsd = sum.outputUsd;
-      if (sum.tokens !== 0) out.tokens = sum.tokens;
-      if (sum.input !== 0) out.input = sum.input;
-      if (sum.output !== 0) out.output = sum.output;
-      if (sum.cache !== 0) out.cache = sum.cache;
-      if (sum.calls !== 0) out.calls = sum.calls;
-      if (sum.hours !== 0) out.hours = sum.hours;
-      return out;
+      return reported(sum);
     },
     pools: async () => {
       const seen = new Set<string>();
@@ -354,17 +354,64 @@ export function fileUsage(options: FileUsageOptions): Usage {
       found.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
       return found.slice(0, KEPT);
     },
+    groups: async (by, from, until, keep) => {
+      /*
+       * Each record of the range read once, from the lines rather than the
+       * totals in memory: a total is kept per pool, and a record charged to
+       * three pools is in three of them, so no sum of pool totals counts it
+       * once.
+       */
+      const first = DAY.test(from) ? from.slice(0, 10) : '';
+      const last = DAY.test(until) ? until.slice(0, 10) : '';
+      const rows = new Map<string, { keys: UsageGroup['keys']; sum: Measured }>();
+      for (const name of months()) {
+        for (const one of entriesIn(name)) {
+          if (one.day < first || one.day > last) continue;
+          if (!keep(poolsOf(one.entry))) continue;
+          const keys = keysOf(one.entry, by);
+          const id = JSON.stringify(by.map((key) => keys[key] ?? ''));
+          const row = rows.get(id) ?? { keys, sum: none() };
+          addTo(row.sum, measured(one.entry));
+          rows.set(id, row);
+        }
+      }
+      // Sorted by the key values, and a key the records had none of before any value.
+      return [...rows.entries()]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([, row]) => ({ keys: row.keys, total: reported(row.sum) }));
+    },
   };
 }
+
+/**
+ * The pool key a record is summed under for each key asked for.
+ *
+ * `user` is the owner, `team` is `team:<team>` and `project` is
+ * `project:<team>:<project>`, the spellings `meter.ts` charges the record's
+ * pools under. A key the record has none of is left out.
+ */
+const keysOf = (entry: UsageEntry, by: readonly UsageKey[]): UsageGroup['keys'] => {
+  const keys: UsageGroup['keys'] = {};
+  const team = typeof entry.team === 'string' && entry.team !== '' ? entry.team : undefined;
+  const project = typeof entry.project === 'string' && entry.project !== '' ? entry.project : undefined;
+  for (const key of by) {
+    if (key === 'user' && typeof entry.owner === 'string') keys.user = entry.owner;
+    if (key === 'team' && team !== undefined) keys.team = `team:${team}`;
+    if (key === 'project' && team !== undefined && project !== undefined) keys.project = `project:${team}:${project}`;
+  }
+  return keys;
+};
 
 /*
  * The `usage:` scheme.
  *
- * Three leaves under a pool and one root listing, through the resource calls a
- * client already uses: `usage://` lists the pools the reader may see, a pool
- * reads its day, week and month, and `records` reads what was charged. There is
- * no manifest and nothing is made here, which is why `describe` has no body for
- * a create form to draw.
+ * Leaves under a pool, a root listing and one grouped read, through the
+ * resource calls a client already uses: `usage://` lists the charged pools the
+ * reader may read, a pool reads its kind, name, day, week and month, `range`
+ * reads a total between two days, `records` reads what was charged, and
+ * `usage://groups` sums the records by user, team and project. There is no
+ * manifest and nothing is made here, which is why `describe` has no body for a
+ * create form to draw.
  *
  * The store answers every question below; the provider is the shape the answer
  * arrives in, and the reader is what decides which pools it arrives for.
@@ -396,7 +443,17 @@ export interface UsageProviderOptions {
    * handed a week that started the evening before.
    */
   timezone?: string;
-  /** Somewhere to say that the zone could not be read. */
+  /**
+   * The titles a pool is named with: the teams and projects the people
+   * directory holds, which a `Users` port answers.
+   *
+   * Absent, a pool is named by its ids.
+   */
+  titles?: {
+    teams(): Promise<Named[]>;
+    projects(): Promise<Named[]>;
+  };
+  /** Somewhere to say that the zone or the titles could not be read. */
   onProblem?(message: string): void;
 }
 
@@ -404,16 +461,27 @@ export interface UsageProviderOptions {
 interface At {
   /** The pool, decoded, empty at the root. */
   pool: string;
-  /** `day`, `week`, `month` or `records`, empty for the pool itself. */
+  /** `day`, `week`, `month`, `range` or `records`, empty for the pool itself. */
   leaf: string;
   /** What the query asked for. */
   asked: URLSearchParams;
 }
 
 /**
- * The three totals a pool reads, and the leaf each is written under.
+ * The leaves a pool reads: the three periods, a total over any range, and the
+ * records behind them.
  */
-const LEAVES = ['day', 'week', 'month', 'records'] as const;
+const LEAVES = ['day', 'week', 'month', 'range', 'records'] as const;
+
+/**
+ * The read at the scheme's root that sums records by key.
+ *
+ * Not a pool, because a pool key holds a `:` and this does not.
+ */
+const GROUPS = 'groups';
+
+/** The keys a grouped read may sum by. */
+const KEYS: readonly UsageKey[] = ['user', 'team', 'project'];
 
 /**
  * Where a `usage:` URI points, or nothing when it is another scheme's.
@@ -519,13 +587,13 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
    *
    * A reader behind no read at all is the root connection or a host with no
    * users directory, and sees everything; so does a reader holding
-   * `usage:read`. The rest see `poolsFor`, which is their own pool and one per
-   * scope they may name.
+   * `usage:read`. The rest see what `mayRead` answers: their own pool, their
+   * teams' and their projects'.
    */
   const refused = (reader: Principal | undefined, pool: string): boolean =>
     reader !== undefined && pool !== ''
     && !reader.can('usage:read')
-    && !poolsFor(reader).includes(pool);
+    && !mayRead(reader, pool);
 
   /**
    * Said as the host would have said it.
@@ -538,9 +606,102 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
     if (refused(reader, pool)) throw new RpcError(-32009, refusalReason((reader as Principal).id, 'usage:read'));
   };
 
-  /** Every pool this reader may see, whether or not anything has been charged to it. */
+  /**
+   * The pools something was charged to that this reader may read - decision
+   * `usage-lists-the-charged-pools-a-reader-may-read`.
+   *
+   * The same rows for root and for a member, for the same work: a pool nothing
+   * was charged to is listed for neither.
+   */
   const visible = async (reader: Principal | undefined): Promise<string[]> =>
-    reader === undefined || reader.can('usage:read') ? store.pools() : [...poolsFor(reader)].sort();
+    (await store.pools()).filter((pool) => !refused(reader, pool));
+
+  /** Whether a record charged to these pools is one this reader may count. */
+  const keeper = (reader: Principal | undefined) => (pools: readonly string[]): boolean =>
+    pools.some((pool) => !refused(reader, pool));
+
+  /** The titles of the teams and projects, by id, or none when they could not be read. */
+  const titled = async (): Promise<{ teams: Map<string, string>; projects: Map<string, string> }> => {
+    const byId = (named: Named[]): Map<string, string> =>
+      new Map(named.flatMap((one) => (typeof one.title === 'string' && one.title !== '' ? [[one.id, one.title] as const] : [])));
+    if (options.titles === undefined) return { teams: new Map(), projects: new Map() };
+    try {
+      const [teams, projects] = await Promise.all([options.titles.teams(), options.titles.projects()]);
+      return { teams: byId(teams), projects: byId(projects) };
+    } catch (error) {
+      options.onProblem?.(`Could not read the titles usage pools are named with: ${error instanceof Error ? error.message : String(error)}`);
+      return { teams: new Map(), projects: new Map() };
+    }
+  };
+
+  /**
+   * A pool's kind and the name a person reads it by.
+   *
+   * The kind is the key's prefix. The name is the user's id, the team's title,
+   * `<team title> / <project title>`, or the host of a `root:` pool, each title
+   * falling back to its id.
+   */
+  const named = (pool: string, titles: { teams: Map<string, string>; projects: Map<string, string> }): { kind: string; name: string } => {
+    const colon = pool.indexOf(':');
+    const kind = colon === -1 ? '' : pool.slice(0, colon);
+    const rest = colon === -1 ? pool : pool.slice(colon + 1);
+    if (kind === 'team') return { kind, name: titles.teams.get(rest) ?? rest };
+    if (kind === 'project') {
+      const one = membership(rest);
+      if (one?.project === undefined) return { kind, name: rest };
+      return { kind, name: `${titles.teams.get(one.team) ?? one.team} / ${titles.projects.get(one.project) ?? one.project}` };
+    }
+    return { kind, name: rest };
+  };
+
+  /**
+   * The range a query asks for, on the defaults `records` has always had: the
+   * first day of the month in `zone`, and now.
+   *
+   * A bound that is not a date is refused rather than read as no bound, which
+   * would answer every record or none.
+   */
+  const rangeOf = (asked: URLSearchParams, now: Date): [string, string] => {
+    const local = shown(zone, now);
+    const month = `${String(local.getUTCFullYear())}-${String(local.getUTCMonth() + 1).padStart(2, '0')}`;
+    const bound = (which: 'from' | 'until', fallback: string): string => {
+      const value = asked.get(which);
+      if (value === null) return fallback;
+      if (!DAY.test(value) || Number.isNaN(Date.parse(value))) {
+        throw new RpcError(-32602, `${which} must be a date, as 2026-10-01, or an ISO 8601 instant: ${value}`);
+      }
+      return value;
+    };
+    return [bound('from', `${month}-01`), bound('until', now.toISOString())];
+  };
+
+  /** The keys a grouped read sums by, refused when one is not a key. */
+  const keysAsked = (asked: URLSearchParams): UsageKey[] => {
+    const written = (asked.get('by') ?? '').split(',').map((one) => one.trim()).filter((one) => one !== '');
+    const keys: UsageKey[] = [];
+    for (const one of written) {
+      const key = KEYS.find((known) => known === one);
+      if (key === undefined) throw new RpcError(-32602, `by takes ${KEYS.join(', ')}, not ${one}`);
+      if (!keys.includes(key)) keys.push(key);
+    }
+    return keys;
+  };
+
+  /** The bytes behind `usage://groups`: one row per set of key values, each named. */
+  const groupsBody = async (held: At, reader: Principal | undefined): Promise<string> => {
+    const by = keysAsked(held.asked);
+    const [from, until] = rangeOf(held.asked, new Date());
+    const rows = await store.groups(by, from, until, keeper(reader));
+    const titles = await titled();
+    return JSON.stringify(rows.map((row) => {
+      const names: Partial<Record<UsageKey, string>> = {};
+      for (const key of by) {
+        const pool = row.keys[key];
+        if (pool !== undefined) names[key] = named(pool, titles).name;
+      }
+      return { keys: row.keys, names, total: row.total };
+    }), null, 2);
+  };
 
   /**
    * The three periods, as the range each covers in `zone`.
@@ -561,6 +722,7 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       const spans = spansOf(now);
       return JSON.stringify({
         pool: held.pool,
+        ...named(held.pool, await titled()),
         day: await store.total(held.pool, ...spans.day),
         week: await store.total(held.pool, ...spans.week),
         month: await store.total(held.pool, ...spans.month),
@@ -572,13 +734,10 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
        * are cut in rather than in UTC: a client listing this month's records
        * gets the ones behind this month's total.
        */
-      const local = shown(zone, now);
-      const month = `${String(local.getUTCFullYear())}-${String(local.getUTCMonth() + 1).padStart(2, '0')}`;
-      return JSON.stringify(
-        await store.records(held.pool, held.asked.get('from') ?? `${month}-01`, held.asked.get('until') ?? now.toISOString()),
-        null,
-        2,
-      );
+      return JSON.stringify(await store.records(held.pool, ...rangeOf(held.asked, now)), null, 2);
+    }
+    if (held.leaf === 'range') {
+      return JSON.stringify(await store.total(held.pool, ...rangeOf(held.asked, now)), null, 2);
     }
     if (held.leaf === 'day' || held.leaf === 'week' || held.leaf === 'month') {
       const [from, until] = spansOf(now)[held.leaf];
@@ -614,6 +773,8 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       if (reader === undefined) return true;
       const held = split(uri);
       if (held === undefined || held.pool === '') return true;
+      // The grouped read counts only the records the reader may read.
+      if (held.pool === GROUPS && held.leaf === '') return true;
       return !refused(reader, held.pool);
     },
 
@@ -623,12 +784,22 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       if (held.pool === '') {
         return (await visible(reader)).map((one) => ({ name: one, type: 'directory' as const }));
       }
+      if (held.pool === GROUPS) throw absent(uri);
       notYours(reader, held.pool);
       return LEAVES.map((name) => ({ name, type: 'file' as const }));
     },
 
     resolve: async (uri) => {
       const held = at(uri);
+      if (held.pool === GROUPS && held.leaf === '') {
+        return {
+          uri,
+          type: 'file',
+          size: Buffer.byteLength(await groupsBody(held, undefined), 'utf8'),
+          mtime: moment,
+          ctime: moment,
+        };
+      }
       if (held.leaf === '') {
         return { uri, type: 'directory', mtime: moment, ctime: moment };
       }
@@ -646,6 +817,9 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       const held = at(uri);
       if (held.pool === '') {
         throw new RpcError(-32008, `${uri} is the usage directory; read usage://<pool>`);
+      }
+      if (held.pool === GROUPS && held.leaf === '') {
+        return { data: await groupsBody(held, reader), encoding: 'utf-8', contentType: 'application/json' };
       }
       notYours(reader, held.pool);
       return { data: await body(held), encoding: 'utf-8', contentType: 'application/json' };

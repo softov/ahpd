@@ -88,6 +88,7 @@ export const memoryUsage = (): Usage & { entries: UsageEntry[] } => {
     total: async () => ({}),
     pools: async () => [],
     records: async () => [],
+    groups: async () => [],
   } as unknown as Usage & { entries: UsageEntry[] };
 };
 

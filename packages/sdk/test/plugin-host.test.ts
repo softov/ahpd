@@ -573,6 +573,7 @@ it('advertises usage as a scheme a host serves itself, beside file:', async () =
     total: async () => ({}),
     pools: async () => ['user:ana'],
     records: async () => [],
+    groups: async () => [],
   };
   const host = createHost({ ...base(), usage, resourceProviders: { usage: usageProvider({ usage }) } });
   const client = host.accept(peer());

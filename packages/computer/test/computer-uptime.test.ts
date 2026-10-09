@@ -107,6 +107,7 @@ function meter(): Usage & { entries: UsageEntry[] } {
     total: async (): Promise<UsageTotal> => ({}),
     pools: async () => [],
     records: async () => [],
+    groups: async () => [],
   };
 }
 

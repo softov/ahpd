@@ -218,6 +218,8 @@ describe('usage at the terminal', () => {
     // machine in hours, as the store reports them.
     expect(body).toEqual({
       pool: 'user:ana',
+      kind: 'user',
+      name: 'ana',
       day: { usd: 0.75, providerUsd: 0.75, calls: 1 },
       week: { usd: 0.75, providerUsd: 0.75, calls: 1 },
       month: { usd: 1, providerUsd: 1, calls: 2, hours: 1 },

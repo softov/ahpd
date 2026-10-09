@@ -113,14 +113,13 @@ export const namesOf = (principal: Principal): string[] => {
 };
 
 /**
- * The usage pools one person may see without `usage:read` - decision
- * `usage-is-read-through-a-usage-scheme`.
+ * The usage pools one person names: their own `user:` pool, and one pool per
+ * name `namesOf` gives.
  *
- * Their own `user:` pool, and one pool per name `namesOf` gives: a bare team
- * becomes `team:<name>` and a `team:project` becomes `project:<team>:<project>`.
- * That is the spelling `meter.ts` charges a record under, so a pool a record was
- * charged to is a pool this lists - and a pool this lists that nothing has been
- * charged to yet is still a pool they may read.
+ * A bare team becomes `team:<name>` and a `team:project` becomes
+ * `project:<team>:<project>`, the spelling `meter.ts` charges a record under.
+ * Which pools a person may read is `mayRead`, which answers for any pool key
+ * rather than for the install's projects crossed with a `team:*`.
  */
 export const poolsFor = (principal: Principal): string[] => [
   `user:${principal.id}`,
@@ -129,6 +128,30 @@ export const poolsFor = (principal: Principal): string[] => [
     return one?.project === undefined ? `team:${name}` : `project:${name}`;
   }),
 ];
+
+/**
+ * Whether one person may read one usage pool without `usage:read` - decision
+ * `usage-is-read-through-a-usage-scheme`.
+ *
+ * Their own `user:<id>` pool, `team:<team>` for any membership in that team,
+ * and `project:<team>:<project>` for `team:*` or `team:<project>`. A bare
+ * `team` reads no project pool, because team work is not one of its projects.
+ * Any other pool, `root:<host>` among them, is not theirs.
+ */
+export const mayRead = (principal: Principal, pool: string): boolean => {
+  if (pool === `user:${principal.id}`) return true;
+  const held = heldBy(principal);
+  if (pool.startsWith('team:')) {
+    const team = pool.slice('team:'.length);
+    return held.some((one) => one.team === team);
+  }
+  if (pool.startsWith('project:')) {
+    const wanted = membership(pool.slice('project:'.length));
+    if (wanted?.project === undefined || wanted.project === '*') return false;
+    return held.some((one) => one.team === wanted.team && (one.project === '*' || one.project === wanted.project));
+  }
+  return false;
+};
 
 /** What they may name, said as a refusal. */
 const refused = (principal: Principal): string => {

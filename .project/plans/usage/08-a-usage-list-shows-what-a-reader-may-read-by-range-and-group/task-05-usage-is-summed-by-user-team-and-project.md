@@ -1,6 +1,6 @@
 ---
 title: Usage is summed by user, team and project
-status: todo
+status: doing
 depends: [task-01-a-member-reads-their-teams-pool.md, task-03-a-pool-says-its-kind-and-name.md, task-04-a-total-is-read-for-any-range.md]
 layer: sdk
 refs:
@@ -37,3 +37,12 @@ refs:
 - The ahpd gates pass.
 
 ## Resume
+
+- `packages/sdk/src/types/usage.ts`: the `Usage` port gains `groups(by, from, until, keep)`, with `UsageKey` and `UsageGroup`, exported from `packages/sdk/src/types/index.ts`.
+- `packages/sdk/src/usage.ts`: the file store's `groups` reads each record of the range once, keeps it when `keep` accepts its pools, and sums it by its keys.
+- A key is the pool key: `user` is the record's owner, `team` is `team:<team>`, and `project` is `project:<team>:<project>`. A key the record has none of is left out.
+- `usage://groups?by=&from=&until=` answers `[{ keys, names, total }]`. A `by` with an unknown key is `-32602`, and no `by` is one row.
+- The grouped read is authorized for every reader, and keeps a record when the reader may read one of its pools.
+- Other `Usage` implementations gained `groups`: the plugin fixture, the proxy harness, and the fakes in `computer-uptime`, `plugin-fold`, `plugin-host` and `usage-meter`.
+- `packages/sdk/test/usage-scheme.test.ts`: a test of the groups by user, by team and project, with no keys, as a member, and of the refusals.
+- `docs/USAGE.md` and `docs/HOST.md`: the groups read.

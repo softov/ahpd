@@ -1,6 +1,6 @@
 ---
 title: A member reads their team's pool
-status: todo
+status: doing
 depends: []
 layer: sdk
 refs:
@@ -31,3 +31,10 @@ A person reads `team:<team>` when they hold `team`, `team:*` or `team:<project>`
 - The ahpd gates pass.
 
 ## Resume
+
+- `packages/sdk/src/scopes.ts`: added `mayRead(principal, pool)`, exported from `packages/sdk/src/index.ts`.
+- `mayRead` reads the own `user:` pool, `team:<team>` for any membership in that team, and `project:<team>:<project>` for `team:*` or `team:<project>`.
+- A bare `team` reads no project pool, and `root:` pools are never read through `mayRead`.
+- `poolsFor`'s comment now says it is the pools a person names.
+- `packages/sdk/src/usage.ts`: `refused` asks `mayRead`, so the `authorize` hook and `notYours` use it.
+- `packages/sdk/test/usage-scheme.test.ts`: a test for `backend:*`, `backend:ahpapp`, a bare `backend` and a `usage:read` reader.
