@@ -1,6 +1,6 @@
 ---
 title: A principal cannot be changed once the host builds it
-status: implemented
+status: done
 depends: []
 layer: "sdk, server"
 refs:

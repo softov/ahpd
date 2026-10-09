@@ -1,6 +1,6 @@
 ---
 title: The host holds copies of what a plugin contributes
-status: implemented
+status: done
 depends: [task-01-a-principal-cannot-be-changed.md]
 layer: "sdk, server"
 refs:

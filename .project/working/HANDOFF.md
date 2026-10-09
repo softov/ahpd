@@ -4,7 +4,7 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-10-08. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
+Current progress and pending items only, as of 2026-10-09. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
 
 ## How builds run now
 
@@ -17,17 +17,16 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), their closures and the documentation/04 plan.
-- **Restart:** plugin/37 tasks 02, 04 and 05 are merged and need a daemon restart: a bot made with no session now starts one, and `PluginHost.startSession` and `sessionOwner` are wired.
+- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), plugin/38 (`9f3798c`), their closures and the documentation/04 plan.
+- **Restart:** plugin/37 tasks 02, 04 and 05, host/43 p4 task 01 and plugin/38 are merged and need a daemon restart. A bot made with no session now starts one, and a commit message is read as `ahpd.commit` too. Every value a plugin is handed is a frozen copy, and registration closes after `apply`.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Building:** [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) tasks 01-06, session `96331c3f`, worktree `/github/ahpd.worktrees/build-agents-96331c3f`, started 2026-10-08 from `77aa94a`.
+- **Building:** [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md) task 01, alone because it moves files, session `d5e57f69`, worktree `/github/ahpd.worktrees/build-agents-d5e57f69`, started 2026-10-09 from `9f3798c`.
 
 ## Next, buildable now
 
-1. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, after plugin/38 merges, because it moves files.
-2. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08; two open questions for Softov in its Resume state (a README-vs-schema test, and `LICENSE` files for bot and agent-cofold).
-3. host/43 p4 task 01 is merged; tasks 02-05 wait on ahpapp and ahpc reading both names.
-4. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
+1. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08; two open questions for Softov in its Resume state (a README-vs-schema test, and `LICENSE` files for bot and agent-cofold).
+2. host/43 p4 task 01 is merged; tasks 02-05 wait on ahpapp and ahpc reading both names.
+3. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
 [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.

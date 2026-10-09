@@ -1,6 +1,6 @@
 ---
 title: The fold keeps the base's getters
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

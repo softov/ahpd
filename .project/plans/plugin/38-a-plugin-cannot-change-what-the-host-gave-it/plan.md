@@ -1,10 +1,10 @@
 ---
 title: A plugin cannot change what the host gave it
 domain: plugin
-status: active
+status: built
 priority: high
 created: 2026-10-08
-revalidated: 2026-10-08
+revalidated: 2026-10-09
 requires: []
 changes: []
 creates: []
@@ -91,12 +91,12 @@ plugin contribution -> copy + freeze at registration or fold -> host keeps only 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a principal cannot be changed](task-01-a-principal-cannot-be-changed.md) | implemented | - |
-| [02 - an agent's start holds copies](task-02-an-agents-start-holds-copies.md) | implemented | 01 |
-| [03 - the host holds copies of contributions](task-03-the-host-holds-copies-of-contributions.md) | implemented | 01 |
-| [04 - events, paths and options are per plugin copies](task-04-events-paths-and-options-are-per-plugin-copies.md) | implemented | 01 |
-| [05 - the fold keeps the base's getters](task-05-the-fold-keeps-the-bases-getters.md) | implemented | - |
-| [06 - docs](task-06-docs.md) | implemented | 02, 03, 04 |
+| [01 - a principal cannot be changed](task-01-a-principal-cannot-be-changed.md) | done | - |
+| [02 - an agent's start holds copies](task-02-an-agents-start-holds-copies.md) | done | 01 |
+| [03 - the host holds copies of contributions](task-03-the-host-holds-copies-of-contributions.md) | done | 01 |
+| [04 - events, paths and options are per plugin copies](task-04-events-paths-and-options-are-per-plugin-copies.md) | done | 01 |
+| [05 - the fold keeps the base's getters](task-05-the-fold-keeps-the-bases-getters.md) | done | - |
+| [06 - docs](task-06-docs.md) | done | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -107,7 +107,7 @@ plugin contribution -> copy + freeze at registration or fold -> host keeps only 
 
 ## Resume state
 
-- **Done so far:** all six tasks, in dependency order, 2026-10-08. Nothing is committed: Softov reads the diff first.
+- **Done so far:** all six tasks, in dependency order, 2026-10-08, merged to main as 9f3798c on 2026-10-09.
   - **01 - a principal cannot be changed.** `frozenCopy(value)` and `deepFreeze(value)` in the new `packages/sdk/src/frozen.ts`; every principal the host builds is frozen, the daemon's `ROOT` and the `can`/`id` literals in `packages/sdk/src/users.ts` included, so the reader a provider is handed at `read`, `write` and `remove` is read-only.
   - **02 - an agent's start holds copies.** `Start`'s schema, tool definitions, MCP servers and per-session file store are the host's own frozen copies; a host tool's `context()` answers a frozen copy of the turns.
   - **03 - the host holds copies of contributions.** The fold takes its own copy of every agent, tool, session-config schema, trigger type and `optionsSchema`; a `register*` after `apply` returns throws the loader's seal sentence; `fired` asks the door which plugin holds a trigger type.
@@ -115,7 +115,7 @@ plugin contribution -> copy + freeze at registration or fold -> host keeps only 
   - **05 - the fold keeps the base's getters.** The fold starts from `Object.defineProperties({}, Object.getOwnPropertyDescriptors(base))`, so the daemon's `get mcpServers()` is still read at each session's start. Found on the way and fixed here rather than left.
   - **06 - docs.** `docs/PLUGINS.md` gained "Everything you are handed is read-only", at the end of the contract and before what may be registered.
   - **Review round, 2026-10-08.** Softov read the diff and found three sites where the promise held on paper and not in the value. All three are fixed, each with a case that failed first: an agent written as a class lost its prototype methods to `keptAgent`; a plugin that lost every trigger type kept its own record and dropped a fire in silence; and a principal was frozen one level deep, so `roles` stayed a writable array in both `users.ts` and the embedder's road into `host.ts`. The details are in `implemented.md` and in the Resume sections of tasks 01 and 03.
-- **Next action:** the three review findings are fixed and the gates are green. Softov reads the diff again; the plan stays `active` until that read closes it as built.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:**
   1. `PluginHost.sessionOwner` answers an `Owner`, which is a string type, so nothing there is a value a plugin could write to and nothing needed freezing. The principal the resource roads hand a provider (`read`, `write`, `remove`) was the writable one, and task 01 is what covers it.

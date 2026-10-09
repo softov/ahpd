@@ -1,6 +1,6 @@
 ---
 title: Events, paths and options are per plugin copies
-status: implemented
+status: done
 depends: [task-01-a-principal-cannot-be-changed.md]
 layer: "sdk, server"
 refs:

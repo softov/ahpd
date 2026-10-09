@@ -1,6 +1,6 @@
 ---
 title: An agent's start holds copies of what the host keeps
-status: implemented
+status: done
 depends: [task-01-a-principal-cannot-be-changed.md]
 layer: "sdk"
 refs:
