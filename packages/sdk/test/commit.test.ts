@@ -229,7 +229,7 @@ describe('committing what is staged', () => {
     writeFileSync(join(dir, 'b.txt'), 'b2\n');
     writeFileSync(join(dir, 'c.txt'), 'c\n');
     git(dir, 'add', 'a.txt');
-    const said = await invoke(dir, { 'ahp.commit': { message: 'Only a\n\nand why' } });
+    const said = await invoke(dir, { 'ahpd.commit': { message: 'Only a\n\nand why' } });
     expect(git(dir, 'log', '-1', '--format=%s')).toBe('Only a');
     expect(git(dir, 'log', '-1', '--format=%b')).toBe('and why');
     expect(git(dir, 'show', 'HEAD:a.txt')).toBe('a2');
@@ -244,7 +244,7 @@ describe('committing what is staged', () => {
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     git(dir, 'add', 'tracked.txt');
     writeFileSync(join(dir, 'tracked.txt'), 'three\n');
-    await invoke(dir, { 'ahp.commit': { message: 'Staged half' } });
+    await invoke(dir, { 'ahpd.commit': { message: 'Staged half' } });
     expect(git(dir, 'show', 'HEAD:tracked.txt')).toBe('two');
     expect(porcelain(dir)).toBe(' M tracked.txt');
   });
@@ -262,7 +262,7 @@ describe('committing what is staged', () => {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     writeFileSync(join(dir, 'fresh.txt'), 'new\n');
-    await invoke(dir, { 'ahp.commit': { message: 'All of it' } });
+    await invoke(dir, { 'ahpd.commit': { message: 'All of it' } });
     expect(porcelain(dir)).toBe('');
     expect(git(dir, 'show', '--stat', '--format=', 'HEAD')).toContain('fresh.txt');
   });
@@ -275,7 +275,7 @@ describe('committing what is staged', () => {
     git(dir, 'config', 'user.name', 'Test');
     writeFileSync(join(dir, 'first.txt'), 'one\n');
     git(dir, 'add', 'first.txt');
-    await invoke(dir, { 'ahp.commit': { message: 'First' } });
+    await invoke(dir, { 'ahpd.commit': { message: 'First' } });
     expect(git(dir, 'log', '-1', '--format=%s')).toBe('First');
     expect(git(dir, 'show', '--stat', '--format=', 'HEAD')).toContain('first.txt');
   });
@@ -292,14 +292,14 @@ describe('the key a commit message arrives under', () => {
     expect(subjectOf(dir)).toBe('Under my own name');
   });
 
-  it('still takes it from `ahp.commit`, the name it had before the prefix', async () => {
+  it('ignores `ahp.commit`, a name this host no longer reads', async () => {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     await invoke(dir, { 'ahp.commit': { message: 'Under the old name' } });
-    expect(subjectOf(dir)).toBe('Under the old name');
+    expect(subjectOf(dir)).toBe('Changes from an agent session');
   });
 
-  it('lets `ahpd.commit` win when a client sends both', async () => {
+  it('takes it from `ahpd.commit` when a client sends both names', async () => {
     const dir = repository();
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     await invoke(dir, { 'ahpd.commit': { message: 'The new name' }, 'ahp.commit': { message: 'The old name' } });

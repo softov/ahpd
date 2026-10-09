@@ -67,5 +67,26 @@ Implemented 2026-10-09 in the `build/agents/6dac4670` worktree, not committed. E
 
 ### Left for later
 
-- Task 05, after review and once ahpapp sends `ahpd.commit`.
 - cofold's restored usage has no test with cache or reasoning tokens.
+
+## Task 05
+
+Merged 2026-10-09. It needed no client release: ahpapp has no releases, and the only one in use is the Expo dev server on `main`, which sends `ahpd.commit` (Softov, 2026-10-09).
+
+### What was built
+
+- [`code://packages/sdk/src/changes.ts`](../../../../packages/sdk/src/changes.ts) - `invoke`'s `commit` branch reads `_meta['ahpd.commit']` alone. The `ahp.commit` fallback and the comment that carried its history are gone.
+- [`code://packages/sdk/test/commit.test.ts`](../../../../packages/sdk/test/commit.test.ts) - the four cases that sent `ahp.commit` send `ahpd.commit`, and `the key a commit message arrives under` changes: a message under the old name is ignored, so the commit keeps `Changes from an agent session`, and the both-names case reads `ahpd.commit`.
+- [`code://packages/sdk/test/wire.test.ts`](../../../../packages/sdk/test/wire.test.ts) - `PENDING` is removed, so `announced` is `PREFIXED` or `REFERENCE` and the both-ways check is `REFERENCE` alone. A bare invented key is a stray at every place, not only where no task claimed it.
+- [`code://docs/AHP.md`](../../../../docs/AHP.md) - the `commit` paragraph no longer says `ahp.commit` is read, and the introduction states the convention once: this host's own `_meta` keys are `ahpd.<name>`, and a key the protocol or the reference client defines keeps its spelling.
+
+### Verified
+
+- Step 2 needed no work: `rg -n "ahpd\.startedAt|ahpd\.endedAt|ahpd\.durationMs" packages/*/src` finds the three constants in `packages/sdk/src/timing.ts`, which `callTimes` and `withCallTimes` write and every plugin goes through, live and restored (plugin/29). The bare names survive only as cofold's own transcript fields and as the test that refuses them on the wire.
+- `node tools/schema.mjs` prints 508 definitions and 633 closed objects. `pnpm build`, `pnpm typecheck` and `pnpm boundary` are clean.
+- `npx vitest run --maxWorkers=2 --testTimeout=10000` from the root: 260 files, 4550 tests pass in the build worktree, and 261 files, 4580 tests in the review worktree.
+
+### Departures from the plan
+
+- None. The read site is one line shorter than the plan's line 1068 because the fallback's comment went with it.
+- `docs/AHP.md` gained the convention paragraph in the introduction, beside the sentence about what was read off the source, rather than inside a section about one key.

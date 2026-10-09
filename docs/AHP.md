@@ -13,6 +13,16 @@ refusing.
 Everything below was read off the source and the type declarations, not off the
 specification: nothing here is listed because AHP defines it.
 
+A thing the protocol declares no field for travels in `_meta`, which every shape
+that carries one declares open. The keys this host invents there are named
+`ahpd.<name>` - `ahpd.owner`, `ahpd.sender`, `ahpd.staged`, `ahpd.commit`,
+`ahpd.cost`, `ahpd.model` and the rest - so a reader can tell this host's
+extensions from the protocol's. A key the protocol or the reference client
+defines keeps its own spelling: `command`, `description`, `argumentHint` and
+`uri` on a completion item, `toolKind` on an action, `git`, `github`,
+`githubData` and `workingDirectoryKeys` on a session, and the `vscode.` and
+`agentHost/` key spaces.
+
 ## Markers
 
 Every table below is one row per declared thing, so a marker is about that one
@@ -693,8 +703,7 @@ operation and not only these two.
 `commit` also takes an optional `_meta['ahpd.commit']`. `message` is the sentence
 the commit goes in with, replacing the session title this host would otherwise
 use. The protocol has no field for it, so it travels in the bag the reference
-client already uses for an operation's arguments. `ahp.commit` is read in its
-place while a client still sends that name, and goes when none does.
+client already uses for an operation's arguments.
 
 The uncommitted changeset follows the tree between turns. It is re-read when git's
 `index` or `HEAD` moves, when a tool call completes, when a client writes a file

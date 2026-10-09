@@ -1,7 +1,7 @@
 ---
 title: Every _meta key ahpd invents is named ahpd.<name>
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -71,6 +71,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | Client-to-host `ahp.commit`: ahpd reads both first, then ahpapp sends `ahpd.commit`, then ahpd drops `ahp.commit` | (defaulted: the same rule, run in the direction the key travels) | 01, 05 |
 | ahpd's `cost` becomes `ahpd.cost` and the reference's numeric `_meta.cost` is not sent | (defaulted: the reference's is a number in credits per ahpc `src/ahp/live.ts:1171`, and ahpd's is an amount and a currency; same name, different value) | 04 |
 | ahpd's own readers (the meter, the changeset, pi's running sum, acp's `context`) move with the producers, in the same task | (defaulted: one repository, one change) | 02, 04 |
+| Task 05 starts now: ahpapp has no releases, and the only ahpapp in use is the Expo dev server on `main`, which sends `ahpd.commit` | Softov, 2026-10-09, asked "Is any ahpapp in use that is a standalone build (not the Expo dev server from /github/ahpapp) made before a66f582?": "No, start task 05" | 05 |
 
 ## Proposed architecture
 
@@ -86,7 +87,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [02 - Owner, sender and staging are sent as ahpd keys](task-02-owner-sender-and-staging-are-ahpd-keys.md) | done | ahpapp reading both names (ahpapp host/05, a66f582) |
 | [03 - A Claude session's model and a skill's hint are ahpd keys](task-03-claudes-model-and-skill-hint-are-ahpd-keys.md) | done | ahpc reading both names (ahpc ahp/07, a13ec65) |
 | [04 - Usage extensions are ahpd keys in every backend](task-04-usage-extensions-are-ahpd-keys.md) | done | ahpapp reading both names (ahpapp host/05, a66f582) |
-| [05 - The old names are gone](task-05-the-old-names-are-gone.md) | todo | 01-04, and ahpapp sending `ahpd.commit` |
+| [05 - The old names are gone](task-05-the-old-names-are-gone.md) | done | 01-04 |
 
 ## Risks and tradeoffs
 
@@ -95,8 +96,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** task 01, merged 2026-10-08 (85b0dc4). Tasks 02, 03 and 04, merged 2026-10-09 (995f0ce). Owner, sender, staging, the Claude model, a skill's hint and the four usage keys are sent as `ahpd.*`, and every internal reader moved with them. The `PENDING` list in `wire.test.ts` is empty. See [implemented.md](implemented.md).
-- **Next action:** task 05, once the ahpapp build people run sends `ahpd.commit`.
+- **Done so far:** task 01, merged 2026-10-08 (85b0dc4). Tasks 02, 03 and 04, merged 2026-10-09 (995f0ce). Task 05, merged 2026-10-09. Owner, sender, staging, the Claude model, a skill's hint and the four usage keys are sent as `ahpd.*`, and every internal reader moved with them. `ahpd.commit` is the only name a commit's message is read under, the `PENDING` list is gone from `wire.test.ts`, and `docs/AHP.md` states the `ahpd.<name>` convention. The three timing keys were plugin/29's and are already `ahpd.*`. See [implemented.md](implemented.md).
+- **Next action:** none. The plan is built; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Answered:** the tool-call timing keys are prefixed too, as `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`: Softov, 2026-10-03, asked "Does \"Rename all + clients\" also cover the tool-call timing keys?": "We will prefix all.. then after I will see about that to remove the prefixes.. So its not a decision to rule.. Its to organize all that is not ahp protocol and to avoid breaking the protocol." The prefix marks what is not the protocol's, for now; it is not a standing rule. The decision `a-tool-calls-times-are-stamped-by-its-plugin` is superseded for the names only by [`a-tool-calls-times-are-stamped-as-ahpd-keys`](../../../decisions/a-tool-calls-times-are-stamped-as-ahpd-keys.md), and plugin/29 is amended to stamp the prefixed names, cofold's restored calls included (p5). plugin/29 is built, so the timing keys are already `ahpd.*` and task 05 has none left to rename.
 - **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package.

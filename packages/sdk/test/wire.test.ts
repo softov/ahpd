@@ -251,23 +251,13 @@ const REFERENCE: { key: string; at: string; from: string }[] = [
   { key: 'description', at: 'attachment/_meta', from: 'docs/AHP.md' },
 ];
 
-/**
- * What this host writes under a name of its own, and the task that renames it.
- *
- * Empty: every key this host invents is sent as `ahpd.<name>`. A bare key that
- * has to ship before it is renamed is written here with its task, where the
- * next one has to be added rather than left for a reader to find.
- */
-const PENDING: { key: string; at: string; task: string }[] = [];
-
 /** A key at a place, as the census reports it. */
 const where = (key: string, at: string): string => `${key} @ ${at}`;
 
 /** Whether a key at a place is one this file has looked at and written down. */
 const announced = (key: string, at: string): boolean =>
   PREFIXED.some((prefix) => key.startsWith(prefix))
-  || REFERENCE.some((one) => one.key === key && at.endsWith(one.at))
-  || PENDING.some((one) => one.key === key && at.endsWith(one.at));
+  || REFERENCE.some((one) => one.key === key && at.endsWith(one.at));
 
 /** The `_meta` keys in a frame that nothing here announces, as `key @ place`. */
 const strayMeta = (frame: Record<string, unknown>): string[] =>
@@ -715,7 +705,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   // Both ways round here too: a listed key the traffic stopped sending is a
   // line that would otherwise sit here for ever, naming a rename of something
   // nothing writes.
-  const missing = [...REFERENCE, ...PENDING].filter((one) =>
+  const missing = REFERENCE.filter((one) =>
     !census.some(({ key, at }) => key === one.key && at.endsWith(one.at)));
   expect(missing.map((one) => where(one.key, one.at))).toEqual([]);
 
