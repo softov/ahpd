@@ -97,7 +97,7 @@ const { echo } = await import('../../../examples/echo/agent.js');
 const { shellTerminals } = await import('../src/terminals.js');
 const { fileResources } = await import('../src/resources.js');
 const { memoryAutomations } = await import('../src/automations.js');
-const { hostTools } = await import('../src/tools.js');
+const { hostTools } = await import('../src/tools/index.js');
 
 /** The team and project this capture's work is charged to. */
 const research = { id: 'research', title: 'Research' };

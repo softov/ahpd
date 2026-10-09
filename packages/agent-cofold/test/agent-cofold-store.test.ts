@@ -10,7 +10,7 @@ import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, BoundTool, Listed, Start } from '@ahpd/sdk';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { cofoldAgent, turnsOf } from '../src/index.js';
 
 /**

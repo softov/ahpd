@@ -5,7 +5,7 @@ import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
-import type { ClientCallAnswer } from '../clientcalls.js';
+import type { ClientCallAnswer } from '../tools/clientcalls.js';
 import type { Origin } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
 

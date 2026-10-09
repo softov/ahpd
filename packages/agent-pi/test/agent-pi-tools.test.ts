@@ -1,8 +1,8 @@
 import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
-import type { ClientCallAnswer } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
+import type { ClientCallAnswer } from '../../sdk/src/tools/clientcalls.js';
 import { mapEvent } from '../src/mapping.js';
 import { THINKING_KEY } from '../src/models.js';
 import { piSession } from '../src/session.js';

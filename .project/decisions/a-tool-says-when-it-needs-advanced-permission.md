@@ -9,7 +9,7 @@ refs:
   - "[code://packages/sdk/src/host.ts#L3606-L3620](../../packages/sdk/src/host.ts#L3606-L3620) - `toolDefinitions`, what a session reports"
   - "[code://packages/sdk/src/host.ts#L3822-L3845](../../packages/sdk/src/host.ts#L3822-L3845) - `boundTools`, where a call is made"
   - "[code://packages/computer/src/tools.ts#L34-L132](../../packages/computer/src/tools.ts#L34-L132) - the three tools that declare it"
-  - "[code://packages/sdk/src/tools.ts](../../packages/sdk/src/tools.ts) - `hostTools()`, which declares it nowhere and is untouched"
+  - "[code://packages/sdk/src/tools/index.ts](../../packages/sdk/src/tools/index.ts) - `hostTools()`, which declares it nowhere and is untouched"
   - "[code://packages/server/src/config.ts](../../packages/server/src/config.ts) - the daemon key"
   - "[code://docs/PLUGINS.md](../../docs/PLUGINS.md) - where a plugin author reads the contract"
 ---

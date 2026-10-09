@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';

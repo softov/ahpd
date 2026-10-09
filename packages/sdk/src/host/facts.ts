@@ -1,4 +1,4 @@
-import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../artifacttools.js';
+import { ARTIFACTS_META, artifactsIn, isGitHubLink, recordArtifact } from '../tools/artifacts.js';
 import { idOf } from '../catalog.js';
 import { localPath, uriOf } from '../fileuri.js';
 import type { Bag } from '../types/common.js';

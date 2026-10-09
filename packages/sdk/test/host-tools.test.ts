@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { sessionReducer } from '@microsoft/agent-host-protocol';
-import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/clientcalls.js';
+import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/tools/clientcalls.js';
 import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import type { Agent, BoundTool, McpServer, Start } from '../src/types/agent.js';
-import type { ClientCalls } from '../src/clientcalls.js';
+import type { ClientCalls } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostEvent } from '../src/types/events.js';
 import type { HostOptions } from '../src/types/host.js';
@@ -1185,7 +1185,7 @@ describe('tools a client contributes', () => {
 /*
  * The same calls, held where every backend holds them.
  *
- * `packages/sdk/src/clientcalls.ts` is the one place a call a client runs is
+ * `packages/sdk/src/tools/clientcalls.ts` is the one place a call a client runs is
  * kept, and a backend spreads its three methods onto its `Session`. This drives
  * that backend through `createHost`: the entry on the session and what the
  * protocol's own reducer makes of it, who may answer, and every way a call ends.

@@ -126,8 +126,8 @@ asking".
 client directly, and `ahp_resource` (see [state actions](#state-actions),
 `serverTools`) is how a session's agent reaches one. The rest of what an agent
 gets from this host is the reference host's own set - `list_sessions`,
-`send_message`, `create_session` and the others in `sessiontools.ts`, and the
-artifact three in `artifacttools.ts` - under the same names and schemas, so a
+`send_message`, `create_session` and the others in `tools/session.ts`, and the
+artifact three in `tools/artifacts.ts` - under the same names and schemas, so a
 skill written for VS Code's host runs here.
 
 ## Server notifications

@@ -7,11 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../../sdk/src/host.js';
 import { fileResources } from '../../sdk/src/resources.js';
-import { toolServers } from '../../sdk/src/toolserver.js';
+import { toolServers } from '../../sdk/src/tools/server.js';
 import { acpAgent } from '../src/index.js';
 import { Status } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
-import type { ToolsEndpoint, ToolsServers } from '../../sdk/src/toolserver.js';
+import type { ToolsEndpoint, ToolsServers } from '../../sdk/src/tools/server.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
 /*

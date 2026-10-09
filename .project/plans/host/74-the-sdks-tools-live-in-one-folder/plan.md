@@ -1,7 +1,7 @@
 ---
 title: The sdk's tools live in one folder
 domain: host
-status: planned
+status: active
 priority: medium
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -10,12 +10,12 @@ changes: []
 creates: []
 decisions: []
 refs:
-  - "[code://packages/sdk/src/tools.ts](../../../../packages/sdk/src/tools.ts) - `hostTools`, the tools the package gives every session"
-  - "[code://packages/sdk/src/sessiontools.ts](../../../../packages/sdk/src/sessiontools.ts) - the session tools, under VS Code's names"
-  - "[code://packages/sdk/src/artifacttools.ts](../../../../packages/sdk/src/artifacttools.ts) - the artifact tools"
-  - "[code://packages/sdk/src/toolserver.ts](../../../../packages/sdk/src/toolserver.ts) - the host's tools served as an MCP server"
-  - "[code://packages/sdk/src/clientcalls.ts](../../../../packages/sdk/src/clientcalls.ts) - a call a client's tool runs"
-  - "[code://packages/sdk/src/mcpcontent.ts](../../../../packages/sdk/src/mcpcontent.ts) - a client's answer as MCP content"
+  - "[code://packages/sdk/src/tools/index.ts](../../../../packages/sdk/src/tools/index.ts) - `hostTools`, the tools the package gives every session"
+  - "[code://packages/sdk/src/tools/session.ts](../../../../packages/sdk/src/tools/session.ts) - the session tools, under VS Code's names"
+  - "[code://packages/sdk/src/tools/artifacts.ts](../../../../packages/sdk/src/tools/artifacts.ts) - the artifact tools"
+  - "[code://packages/sdk/src/tools/server.ts](../../../../packages/sdk/src/tools/server.ts) - the host's tools served as an MCP server"
+  - "[code://packages/sdk/src/tools/clientcalls.ts](../../../../packages/sdk/src/tools/clientcalls.ts) - a call a client's tool runs"
+  - "[code://packages/sdk/src/tools/mcpcontent.ts](../../../../packages/sdk/src/tools/mcpcontent.ts) - a client's answer as MCP content"
   - "[code://packages/sdk/src/index.ts#L41-L53](../../../../packages/sdk/src/index.ts#L41-L53) - the exports of the six files"
   - "[code://packages/sdk/src/host](../../../../packages/sdk/src/host) - the folder pattern this mirrors"
 ---
@@ -64,7 +64,7 @@ packages/sdk/src/tools/*.ts -> packages/sdk/src/index.ts -> @ahpd/sdk -> every b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The six files move into tools](task-01-the-six-files-move-into-tools.md) | todo | - |
+| [01 - The six files move into tools](task-01-the-six-files-move-into-tools.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -72,10 +72,10 @@ packages/sdk/src/tools/*.ts -> packages/sdk/src/index.ts -> @ahpd/sdk -> every b
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-six-files-move-into-tools.md](task-01-the-six-files-move-into-tools.md).
+- **Done so far:** task 01, 2026-10-09. The six files are in `packages/sdk/src/tools/`. Every importer, comment and ref that named an old path is repointed. The gates pass. Nothing is committed: Softov reads the diff first. See [implemented.md](implemented.md).
+- **Next action:** Softov reviews the diff; the plan closes when task 01 passes it.
 - **Open questions:** none.
-- **Watch out for:** use `git mv`, so the history follows each file.
+- **Watch out for:** the six files are renames, so their history follows them; do not put a file back at the top of `packages/sdk/src`.
 
 ## Final verification checklist
 

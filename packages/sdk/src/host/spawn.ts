@@ -7,7 +7,7 @@ import { deepFreeze, frozenCopy } from '../frozen.js';
 import { nestedAgent } from '../nested.js';
 import { idOf, uriFor, Status } from '../catalog.js';
 import { meter } from '../meter.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { chatUriFor, subagentChatUri } from './channels.js';
 import { CLOSING } from './common.js';
 import { sameFolder, trusted } from './trust.js';
@@ -16,7 +16,7 @@ import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { ResourceStore } from '../types/resources.js';
-import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
+import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
 

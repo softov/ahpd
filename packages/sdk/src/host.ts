@@ -36,7 +36,7 @@ import type { Connection, Credential, Host, HostOptions, HostTool, TitleStrategy
 import type { Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool, Listed, McpServer } from './types/agent.js';
-import type { ToolsEndpoint } from './toolserver.js';
+import type { ToolsEndpoint } from './tools/server.js';
 import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { Peer } from './types/rpc.js';

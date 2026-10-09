@@ -15,9 +15,9 @@
  */
 
 import type { ToolResultContent } from '@microsoft/agent-host-protocol';
-import type { Bag } from './types/common.js';
-import type { Emit } from './types/session.js';
-import type { OnWire } from './types/wire.js';
+import type { Bag } from '../types/common.js';
+import type { Emit } from '../types/session.js';
+import type { OnWire } from '../types/wire.js';
 
 /**
  * What a client said its own tool did.

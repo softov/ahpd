@@ -3,7 +3,7 @@
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
 import type { BoundTool } from './agent.js';
-import type { ClientCallAnswer } from '../clientcalls.js';
+import type { ClientCallAnswer } from '../tools/clientcalls.js';
 
 export type { MessageAttachment };
 

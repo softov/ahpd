@@ -227,7 +227,7 @@ export function piSession(
    * to settle it itself or pi waits for ever on a promise nobody owns. The
    * holder also raises the session entry a client reads and times a call out,
    * which is what the map this replaces did neither of - see
-   * `packages/sdk/src/clientcalls.ts`.
+   * `packages/sdk/src/tools/clientcalls.ts`.
    */
   const calls = createClientCalls({
     chat: start.chatUri,

@@ -13,7 +13,7 @@
  * which is an answer that still said something.
  */
 
-import type { Bag } from './types/common.js';
+import type { Bag } from '../types/common.js';
 import type { ClientCallAnswer } from './clientcalls.js';
 
 /**

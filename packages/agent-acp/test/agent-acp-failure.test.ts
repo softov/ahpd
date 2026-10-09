@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { Bag, Session, Start } from '@ahpd/sdk';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { acpAgent, connectAcp, watchSession } from '../src/index.js';
 
 /*

@@ -9,7 +9,7 @@ It has no runtime dependencies and one peer dependency, which `scripts/boundary.
 
 ## Packages
 
-- `code://packages/sdk` - entry point `src/index.ts`; the host itself `src/host.ts`; the socket `src/listen.ts`; the peer `src/rpc.ts`; the stores and ports `src/sessions.ts`, `src/resources.ts`, `src/terminals.ts`, `src/git.ts`, `src/github.ts`, `src/changes.ts`, `src/worktrees.ts`, `src/automations.ts`, `src/catalog.ts`, `src/scheduled.ts`, `src/cron.ts`, `src/debuglogs.ts`, `src/paging.ts`, `src/zip.ts`; the tools a session's agent is given `src/tools.ts`, `src/sessiontools.ts`, `src/artifacttools.ts`.
+- `code://packages/sdk` - entry point `src/index.ts`; the host itself `src/host.ts`; the socket `src/listen.ts`; the peer `src/rpc.ts`; the stores and ports `src/sessions.ts`, `src/resources.ts`, `src/terminals.ts`, `src/git.ts`, `src/github.ts`, `src/changes.ts`, `src/worktrees.ts`, `src/automations.ts`, `src/catalog.ts`, `src/scheduled.ts`, `src/cron.ts`, `src/debuglogs.ts`, `src/paging.ts`, `src/zip.ts`; the tools a session's agent is given `src/tools/index.ts`, `src/tools/session.ts`, `src/tools/artifacts.ts`.
 
 ## Contracts
 

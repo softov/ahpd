@@ -1,13 +1,13 @@
 import { expect, describe, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { toolServers } from '../src/toolserver.js';
-import { toMcpContent } from '../src/mcpcontent.js';
+import { toolServers } from '../src/tools/server.js';
+import { toMcpContent } from '../src/tools/mcpcontent.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, BoundTool, Start } from '../src/types/agent.js';
-import type { ClientCallAnswer } from '../src/clientcalls.js';
+import type { ClientCallAnswer } from '../src/tools/clientcalls.js';
 import type { OnWire } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
-import type { RunClientTool, ToolsEndpoint, ToolsServers } from '../src/toolserver.js';
+import type { RunClientTool, ToolsEndpoint, ToolsServers } from '../src/tools/server.js';
 import type { ToolResultContent } from '@microsoft/agent-host-protocol';
 
 /*

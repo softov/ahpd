@@ -3,7 +3,7 @@ title: Artifact tool answers are the reference's, status and id only
 status: accepted
 date: 2026-09-19
 refs:
-  - code://packages/sdk/src/artifacttools.ts#L178-L196 - the answers as they are written today, which name the entry
+  - code://packages/sdk/src/tools/artifacts.ts#L178-L196 - the answers as they are written today, which name the entry
   - src/vs/platform/agentHost/node/shared/artifactServerTools.ts#L210-L240 - the reference answers, which name the status and the id, inside the clone
 ---
 

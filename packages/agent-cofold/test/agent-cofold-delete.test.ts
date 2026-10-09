@@ -6,7 +6,7 @@ import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { cofoldAgent } from '../src/index.js';
 
 /*

@@ -1,5 +1,5 @@
-import type { HostTool } from './types/host.js';
-import type { Bag } from './types/common.js';
+import type { HostTool } from '../types/host.js';
+import type { Bag } from '../types/common.js';
 
 /**
  * The tools an agent gets for recording what its session produced or found,

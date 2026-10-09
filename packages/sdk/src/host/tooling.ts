@@ -8,7 +8,7 @@ import type { HostTool, ToolCall, TitleStrategy } from '../types/host.js';
 import type { BoundTool, McpServer } from '../types/agent.js';
 import type { Session } from '../types/session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
-import type { ToolsEndpoint } from '../toolserver.js';
+import type { ToolsEndpoint } from '../tools/server.js';
 import type { Held } from './state.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';

@@ -58,7 +58,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 const { createHost } = await import('../src/host.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
-const { hostTools } = await import('../src/tools.js');
+const { hostTools } = await import('../src/tools/index.js');
 
 const settle = async (times = 8): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });

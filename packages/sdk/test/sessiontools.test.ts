@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Status } from '../src/catalog.js';
 import {
   filterSessions, openLink, serializeContext, serializeSession, sessionMeant, sessionTools, statusWords,
-} from '../src/sessiontools.js';
+} from '../src/tools/session.js';
 import type { Summary } from '../src/types/catalog.js';
 
 /*

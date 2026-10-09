@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { SNAPSHOT_TAG } from '@ahpd/sdk';
 import { fileResources } from '../../sdk/src/resources.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import type { Agent, Bag, Emit, MessageAttachment, Session, Start } from '@ahpd/sdk';
 import { acpAgent } from '../src/index.js';
 

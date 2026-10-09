@@ -34,7 +34,7 @@ export const { gitBranches } = await import('../../src/repo/git.js');
 export const machine = () => ({ resources: fileResources(), terminals: shellTerminals(), directories: gitBranches() });
 export const { claude } = await import('../../../agent-claude/src/claude.js');
 export const { echo } = await import('../../../../examples/echo/agent.js');
-export const { hostTools } = await import('../../src/tools.js');
+export const { hostTools } = await import('../../src/tools/index.js');
 export const { gitChanges } = await import('../../src/changes.js');
 
 /**

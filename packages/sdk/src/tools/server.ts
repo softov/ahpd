@@ -25,7 +25,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { toMcpContent } from './mcpcontent.js';
-import type { BoundTool } from './types/agent.js';
+import type { BoundTool } from '../types/agent.js';
 import type { ClientCallAnswer } from './clientcalls.js';
 
 /** Where these endpoints are served, on the host's own listener. */

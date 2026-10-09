@@ -7,7 +7,7 @@ import type { Agent as CofoldAgent, ModelAdapter, ModelProvider, Store } from '@
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatAction, ChatState } from '@microsoft/agent-host-protocol';
 import type { Bag, Emit, Start } from '@ahpd/sdk';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { cofoldSession, compactionNotice, harnessConfig, storeOf, turnsOf } from '../src/index.js';
 import type { CofoldOptions, Held } from '../src/agent.js';
 import type { SessionContext } from '../src/context.js';

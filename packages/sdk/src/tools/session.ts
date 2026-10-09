@@ -1,9 +1,9 @@
 import { posix } from 'node:path';
-import { Status, idOf } from './catalog.js';
-import { localPath, uriOf } from './fileuri.js';
-import type { HostTool, ToolCall } from './types/host.js';
-import type { Summary } from './types/catalog.js';
-import type { Bag } from './types/common.js';
+import { Status, idOf } from '../catalog.js';
+import { localPath, uriOf } from '../fileuri.js';
+import type { HostTool, ToolCall } from '../types/host.js';
+import type { Summary } from '../types/catalog.js';
+import type { Bag } from '../types/common.js';
 
 /**
  * The tools an agent gets for the host it runs in, under VS Code's names.

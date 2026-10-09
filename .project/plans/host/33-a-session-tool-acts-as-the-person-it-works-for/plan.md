@@ -8,8 +8,8 @@ revalidated: 2026-10-04
 requires:
   - plans/host/30-a-session-is-listed-under-its-providers-name/plan.md
 refs:
-  - "[code://packages/sdk/src/sessiontools.ts](../../../../packages/sdk/src/sessiontools.ts) - the nine session tools, VS Code's by name and schema; `delete_session` refuses only the current session"
-  - "[code://packages/sdk/src/tools.ts#L24-L27](../../../../packages/sdk/src/tools.ts#L24-L27) - `hostTools`, the session and artifact tools every session is offered"
+  - "[code://packages/sdk/src/tools/session.ts](../../../../packages/sdk/src/tools/session.ts) - the nine session tools, VS Code's by name and schema; `delete_session` refuses only the current session"
+  - "[code://packages/sdk/src/tools/index.ts#L24-L27](../../../../packages/sdk/src/tools/index.ts#L24-L27) - `hostTools`, the session and artifact tools every session is offered"
   - "[code://packages/sdk/src/host/tooling.ts#L229](../../../../packages/sdk/src/host/tooling.ts#L229) - `toolContext`, what a tool may see and do: it carries no person"
   - "[code://packages/sdk/src/types/host.ts#L374-L380](../../../../packages/sdk/src/types/host.ts#L374-L380) - `ToolCall`"
   - "[code://packages/sdk/src/users.ts#L22-L31](../../../../packages/sdk/src/users.ts#L22-L31) - the built-in roles; sessions are reached by role, and none is any one person's"
@@ -28,7 +28,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ### Searches performed
 
-- `rg "delete_session|list_sessions" packages/*/src` - the tools are in `sessiontools.ts` and reach the host only through `ToolCall`.
+- `rg "delete_session|list_sessions" packages/*/src` - the tools are in `tools/session.ts` and reach the host only through `ToolCall`.
 - `git -C /github/externals/vscode grep SessionServerToolName origin/main` - the same nine names; VS Code's group bounds depth and counts and confirms five tools host-side.
 - `rg "principal" packages/sdk/src/host.ts` - a principal lives on a `Connection`; no session or turn records one.
 
@@ -59,7 +59,7 @@ agent calls list_sessions -> host tool run(input, toolContext(uri, chat)) -> eve
 - **Data flow** - `toolContext` gains the person a call works for; each session tool asks it before acting, and the listing filters by it.
 - **State flow** - spawn depth is per session, from the session that created it; what the counts for task 02 are kept per waits on the open question.
 - **Layer responsibilities** - `packages/sdk`: the person, the grants, the limits; `packages/server`: the option for task 03.
-- **Source-of-truth files** - [`code://packages/sdk/src/sessiontools.ts`](../../../../packages/sdk/src/sessiontools.ts)
+- **Source-of-truth files** - [`code://packages/sdk/src/tools/session.ts`](../../../../packages/sdk/src/tools/session.ts)
 
 ## Tasks
 

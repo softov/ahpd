@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { expect, it } from 'vitest';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { piAgent } from '../src/agent.js';
 import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';

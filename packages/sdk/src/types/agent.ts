@@ -8,7 +8,7 @@ import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
 import type { StartTerminals } from './terminals.js';
-import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
+import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
 import type { ComputerPort } from './computers.js';
 import type { MachineNeed } from './machine.js';
 

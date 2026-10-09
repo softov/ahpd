@@ -2,7 +2,7 @@
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, McpServer, ToolEffects } from './agent.js';
-import type { ToolsServers } from '../toolserver.js';
+import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
 import type { Principal, Users } from './users.js';

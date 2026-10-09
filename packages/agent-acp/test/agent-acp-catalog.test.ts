@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Emit, McpServer, Session, Start } from '@ahpd/sdk';
-import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/clientcalls.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { acpAgent, watchSession } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { toolsReachable } from '../src/session/opening.js';

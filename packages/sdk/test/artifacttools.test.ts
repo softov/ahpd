@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artifactTools, artifactsIn, isGitHubLink, parseArtifacts } from '../src/artifacttools.js';
+import { artifactTools, artifactsIn, isGitHubLink, parseArtifacts } from '../src/tools/artifacts.js';
 import type { Bag } from '../src/types/common.js';
 import type { ToolCall } from '../src/types/host.js';
 

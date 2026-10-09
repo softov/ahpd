@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/clientcalls.js';
-import type { ClientCallAnswer, ClientCallsOptions } from '../src/clientcalls.js';
+import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/tools/clientcalls.js';
+import type { ClientCallAnswer, ClientCallsOptions } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { OnWire } from '../src/types/wire.js';
 import type { ToolResultContent } from '@microsoft/agent-host-protocol';

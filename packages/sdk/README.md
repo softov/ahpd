@@ -127,7 +127,7 @@ All types are exported. Nothing under `types/` imports a runtime value, so you c
 | [src/git.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/git.ts) | The `directories` port: which branch a directory is on |
 | [src/automations.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/automations.ts) | The `automations` port, without a clock |
 | [src/scheduled.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/scheduled.ts) | The `automations` port, with a clock |
-| [src/sessiontools.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/sessiontools.ts) | The tools a session's agent is given |
+| [src/tools/session.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/tools/session.ts) | The tools a session's agent is given |
 | [src/users.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/users.ts) | The user directory, roles and grants |
 | [src/catalog.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/catalog.ts) | Session names and status bits |
 | [src/paging.ts](https://github.com/softov/ahpd/blob/main/packages/sdk/src/paging.ts) | A long list of turns, served a page at a time |
