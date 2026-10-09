@@ -72,7 +72,7 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 | [01 - The way cofold's tools close the window is chosen](task-01-the-approach-is-chosen.md) | done | - |
 | [02 - A write re-checks the file it opened](task-02-a-write-rechecks-the-file-it-opened.md) | done | 01 |
 | [03 - A stale write is refused](task-03-a-stale-write-is-refused.md) | done | 01 |
-| [04 - ahpd takes the cofold release](task-04-ahpd-takes-the-cofold-release.md) | todo | 02, 03, cofold release |
+| [04 - ahpd takes the cofold release](task-04-ahpd-takes-the-cofold-release.md) | dropped | 02, 03, cofold release |
 
 ## Risks and tradeoffs
 
@@ -82,7 +82,7 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 ## Resume state
 
 - **Done so far:** task 01, the approach chosen 2026-09-30. Tasks 02 and 03 merged in cofold 2026-10-09 as d39935f, unreleased.
-- **Next action:** [task-04-ahpd-takes-the-cofold-release.md](task-04-ahpd-takes-the-cofold-release.md), after the cofold release that also carries agent/07. `agent-cofold-tools.test.ts` "reports a file edit through onFileEdit" edits a file it never read, so it needs a read first.
+- **Next action:** none here; task 04 moved to [plugin 40 task 07](../40-ahpd-runs-on-the-current-cofold/task-07-a-test-reads-before-it-writes.md), and this plan closes when plugin 40 is built.
 - **Known limits:** a parent folder swapped for a link before a new file is opened is still followed; after a restart, a file is read again before it is written; tested on Linux only.
 - **Watch out for:** Node's `fs` has `O_NOFOLLOW` but no `openat`, so "open by descriptor" can refuse a link only at the last name, not walk the path from the workspace one name at a time.
 

@@ -1,6 +1,6 @@
 ---
 title: ahpd takes the cofold release
-status: todo
+status: dropped
 depends: [task-02-a-write-rechecks-the-file-it-opened.md, task-03-a-stale-write-is-refused.md]
 layer: "agent-cofold"
 refs:
@@ -9,6 +9,8 @@ refs:
 ---
 
 ## Objective
+
+Dropped 2026-10-09: [plugin 40 task 07](../40-ahpd-runs-on-the-current-cofold/task-07-a-test-reads-before-it-writes.md) takes the release with the rest of the cofold range.
 
 After Softov releases `@cofold/tools` through cofold's `release.yml`, ahpd's range takes it and the suite passes.
 

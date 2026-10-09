@@ -7,6 +7,7 @@ created: 2026-10-06
 revalidated: 2026-10-07
 requires:
   - plans/host/68-an-attachments-bytes-are-a-file-the-host-wrote/plan.md
+  - plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md
 changes: []
 creates: []
 decisions:
