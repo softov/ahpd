@@ -453,6 +453,92 @@ it('writes nothing for a session nobody flagged', async () => {
   expect(row(dir, 'a')).toBeUndefined();
 });
 
+/**
+ * A row the version before this plan wrote, with every field it could hold.
+ *
+ * The bytes are the point of the case below: a store that reads this writes it
+ * back the same way, so a row is not quietly reordered by being read.
+ */
+const WRITTEN = `{
+  "version": 1,
+  "id": "a",
+  "flags": 64,
+  "config": {
+    "voice": "shouty"
+  },
+  "scope": {
+    "team": "backend",
+    "project": "ahpd"
+  },
+  "owner": "user:ana",
+  "senders": {
+    "turn-1": "user:ana"
+  },
+  "provider": "claude",
+  "artifacts": [
+    {
+      "id": "a1",
+      "type": "website",
+      "label": "Docs",
+      "isArtifact": false,
+      "link": "https://example.com"
+    }
+  ],
+  "pullRequests": {
+    "initialPullRequestUrls": [
+      "https://github.com/softov/ahpd/pull/7"
+    ],
+    "associatedPullRequestUrls": []
+  },
+  "chatTitles": {
+    "ahp-chat:/one": "Kqueue port"
+  },
+  "parent": "parent-1",
+  "nested": {
+    "provider": "cofold",
+    "machine": "box",
+    "inner": "n1",
+    "title": "In the box",
+    "createdAt": "2026-10-06T10:00:00.000Z",
+    "modifiedAt": "2026-10-06T10:05:00.000Z",
+    "workingDirectories": [
+      "file:///srv/app"
+    ]
+  }
+}
+`;
+
+it('reads a row written before this version whole, and writes it back as it was', async () => {
+  const dir = join(root, 'sessions');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'a.json'), WRITTEN);
+
+  const store = fileSessions({ dir });
+  expect(store.flags('a')).toBe(ARCHIVED);
+  expect(store.config('a')).toEqual({ voice: 'shouty' });
+  expect(store.scope('a')).toEqual({ team: 'backend', project: 'ahpd' });
+  expect(store.owner('a')).toBe('user:ana');
+  expect(store.sender('a', 'turn-1')).toBe('user:ana');
+  expect(store.provider('a')).toBe('claude');
+  expect(store.artifacts('a')).toEqual([
+    { id: 'a1', type: 'website', label: 'Docs', isArtifact: false, link: 'https://example.com' },
+  ]);
+  expect(store.pullRequests('a')).toEqual({
+    initialPullRequestUrls: ['https://github.com/softov/ahpd/pull/7'],
+    associatedPullRequestUrls: [],
+  });
+  expect(store.chatTitle('a', 'ahp-chat:/one')).toBe('Kqueue port');
+  expect(store.parent?.('a')).toBe('parent-1');
+  expect(store.nested?.('a')?.machine).toBe('box');
+
+  // A change that leaves the row as it was is still a write of it, and what it
+  // writes is the bytes it read: the field order on disk is the file's rather
+  // than the order the fields happened to be set in.
+  store.setFlags('a', ARCHIVED);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(readFileSync(join(dir, 'a.json'), 'utf8')).toBe(WRITTEN);
+});
+
 it('forgets a session that was disposed, rather than keeping its bits for ever', async () => {
   const dir = join(root, 'sessions');
   const store = fileSessions({ dir });
@@ -484,6 +570,42 @@ it('keeps the settings a session was given, so a resumed one still has them', as
   expect(store.config('one')).toEqual({ voice: 'shouty' });
   store.forget('one');
   expect(store.config('one')).toBeUndefined();
+});
+
+it('keeps no row for a session whose every field was set back to nothing', () => {
+  const store = memorySessions();
+  // A flag read and cleared, and a sender taken back: back where it started, so
+  // there is no row left for a listing to carry for months.
+  store.setFlags('a', READ);
+  store.setFlags('a', 0);
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setSender('a', 'turn-1', undefined);
+
+  // A session nothing is left about is not one a prune sees at all, and an
+  // always-true predicate is asked about every id the store holds.
+  const asked: string[] = [];
+  store.prune?.((id) => { asked.push(id); return true; });
+  expect(asked).toEqual([]);
+  expect(store.flags('a')).toBe(0);
+});
+
+it('forgets a session entirely, whatever was set on it', () => {
+  const store = memorySessions();
+  store.setFlags('a', ARCHIVED);
+  store.setConfig('a', { voice: 'shouty' });
+  store.setScope('a', { team: 'backend', project: 'ahpd' });
+  store.setOwner('a', 'user:ana');
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setProvider('a', 'claude');
+
+  store.forget('a');
+
+  expect(store.flags('a')).toBe(0);
+  expect(store.config('a')).toBeUndefined();
+  expect(store.scope('a')).toBeUndefined();
+  expect(store.owner('a')).toBeUndefined();
+  expect(store.sender('a', 'turn-1')).toBeUndefined();
+  expect(store.provider('a')).toBeUndefined();
 });
 
 it('keeps the scope a session is charged to across a restart, and forgets it with the session', async () => {

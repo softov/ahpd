@@ -1,7 +1,8 @@
 /** The two `SessionStore` implementations: one that forgets, one that does not. */
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { readJson, writeJsonAtomic } from './jsonfile.js';
 import type { Scope } from './scopes.js';
 import type { NestedRecord, PullRequestBaseline, SessionStore } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
@@ -22,92 +23,112 @@ interface Held {
   nested(id: string): NestedRecord | undefined;
   setNested(id: string, value: NestedRecord | undefined): void;
   nestedSessions(): [string, NestedRecord][];
+  /** Everything held about one session, in the file's field order, or nothing where nothing is. */
+  rowOf(id: string): Row | undefined;
 }
 
 /**
  * What a host keeps about its sessions, for as long as the process runs.
  *
  * The default, and the right one for a host embedded in something that has its
- * own place to put this, or for a test. Everything in a `Map`, so a restart
- * returns every archived session to the catalogue and marks every read one
- * unread - which is a real answer for a host that was never meant to outlive
- * the thing that started it, and the wrong one for a daemon.
+ * own place to put this, or for a test. One row per session in a `Map`, so a
+ * restart returns every archived session to the catalogue and marks every read
+ * one unread - which is a real answer for a host that was never meant to
+ * outlive the thing that started it, and the wrong one for a daemon.
+ *
+ * A row is held only while it says something: a field handed the value that
+ * means nothing goes, and a row left with every field gone is not a row at all.
+ * So what is held is the sessions something was recorded for, and `prune` sees
+ * those and no id that was merely asked about.
  */
 export function memorySessions(): SessionStore & Held {
-  const flags = new Map<string, number>();
-  const config = new Map<string, Record<string, unknown>>();
-  const scope = new Map<string, Scope | null>();
-  const owners = new Map<string, Owner>();
-  const senders = new Map<string, Map<string, Owner>>();
-  const providers = new Map<string, string>();
-  const artifacts = new Map<string, Record<string, unknown>[]>();
-  const pullRequests = new Map<string, PullRequestBaseline>();
-  const chatTitles = new Map<string, Map<string, string>>();
-  const nested = new Map<string, NestedRecord>();
-  const parents = new Map<string, string>();
-  const forget = (id: string): void => {
-    flags.delete(id); config.delete(id); scope.delete(id); owners.delete(id); senders.delete(id);
-    providers.delete(id); artifacts.delete(id); pullRequests.delete(id); chatTitles.delete(id); nested.delete(id);
-    parents.delete(id);
+  const rows = new Map<string, Row>();
+
+  /**
+   * Apply one change to a session's row, keeping it only while it still says
+   * something.
+   *
+   * The one place a row is written, so every setter forgets a field the same
+   * way: by handing `patch` the value that means nothing, which the setter has
+   * already turned into the field's absence.
+   */
+  const patch = (id: string, change: Partial<Row>): void => {
+    const held: Row = { ...rows.get(id), ...change };
+    if (empty(held)) rows.delete(id);
+    else rows.set(id, held);
   };
+
   return {
-    flags: (id) => flags.get(id) ?? 0,
-    setFlags: (id, value) => { flags.set(id, value); },
-    config: (id) => config.get(id),
-    setConfig: (id, values) => { config.set(id, values); },
-    scope: (id) => scope.get(id),
-    setScope: (id, value) => { if (value === undefined) scope.delete(id); else scope.set(id, value); },
-    owner: (id) => owners.get(id),
-    setOwner: (id, value) => { if (value === undefined) owners.delete(id); else owners.set(id, value); },
-    sender: (id, turnId) => senders.get(id)?.get(turnId),
+    flags: (id) => rows.get(id)?.flags ?? 0,
+    setFlags: (id, value) => { patch(id, { flags: value === 0 ? undefined : value }); },
+    config: (id) => rows.get(id)?.config,
+    setConfig: (id, values) => { patch(id, { config: values }); },
+    scope: (id) => rows.get(id)?.scope,
+    setScope: (id, value) => { patch(id, { scope: value }); },
+    owner: (id) => rows.get(id)?.owner,
+    setOwner: (id, value) => { patch(id, { owner: value }); },
+    sender: (id, turnId) => rows.get(id)?.senders?.get(turnId),
     setSender: (id, turnId, value) => {
-      const held = senders.get(id);
-      if (value === undefined) {
-        held?.delete(turnId);
-        if (held !== undefined && held.size === 0) senders.delete(id);
-        return;
-      }
-      if (held === undefined) senders.set(id, new Map([[turnId, value]]));
+      // Copied rather than edited in place, because the row is replaced whole:
+      // the map a row holds is never written to after it is put there.
+      const held = new Map(rows.get(id)?.senders);
+      if (value === undefined) held.delete(turnId);
       else held.set(turnId, value);
+      patch(id, { senders: held.size === 0 ? undefined : held });
     },
-    provider: (id) => providers.get(id),
-    setProvider: (id, value) => { if (value === undefined) providers.delete(id); else providers.set(id, value); },
-    parent: (id) => parents.get(id),
-    setParent: (id, value) => { if (value === undefined) parents.delete(id); else parents.set(id, value); },
-    nested: (id) => nested.get(id),
-    setNested: (id, value) => { if (value === undefined) nested.delete(id); else nested.set(id, value); },
-    nestedSessions: () => [...nested.entries()],
-    artifacts: (id) => artifacts.get(id),
-    setArtifacts: (id, values) => { if (values.length === 0) artifacts.delete(id); else artifacts.set(id, values); },
-    pullRequests: (id) => pullRequests.get(id),
-    setPullRequests: (id, value) => { pullRequests.set(id, value); },
-    chatTitle: (id, chatUri) => chatTitles.get(id)?.get(chatUri),
+    provider: (id) => rows.get(id)?.provider,
+    setProvider: (id, value) => { patch(id, { provider: value }); },
+    parent: (id) => rows.get(id)?.parent,
+    setParent: (id, value) => { patch(id, { parent: value }); },
+    nested: (id) => rows.get(id)?.nested,
+    setNested: (id, value) => { patch(id, { nested: value }); },
+    nestedSessions: () => [...rows.entries()]
+      .flatMap(([id, held]) => held.nested === undefined ? [] : [[id, held.nested] as [string, NestedRecord]]),
+    artifacts: (id) => rows.get(id)?.artifacts,
+    setArtifacts: (id, values) => { patch(id, { artifacts: values.length === 0 ? undefined : values }); },
+    pullRequests: (id) => rows.get(id)?.pullRequests,
+    // An all-empty pair is still a baseline, so it is kept rather than dropped.
+    setPullRequests: (id, value) => { patch(id, { pullRequests: value }); },
+    chatTitle: (id, chatUri) => rows.get(id)?.chatTitles?.get(chatUri),
     setChatTitle: (id, chatUri, title) => {
-      const held = chatTitles.get(id);
-      if (title === '') {
-        held?.delete(chatUri);
-        if (held !== undefined && held.size === 0) chatTitles.delete(id);
-        return;
-      }
-      if (held === undefined) chatTitles.set(id, new Map([[chatUri, title]]));
+      const held = new Map(rows.get(id)?.chatTitles);
+      if (title === '') held.delete(chatUri);
       else held.set(chatUri, title);
+      patch(id, { chatTitles: held.size === 0 ? undefined : held });
     },
     chatTitlesOf: (id) => {
-      const held = chatTitles.get(id);
+      const held = rows.get(id)?.chatTitles;
       return held === undefined ? undefined : Object.fromEntries(held);
     },
     sendersOf: (id) => {
-      const held = senders.get(id);
+      const held = rows.get(id)?.senders;
       return held === undefined ? undefined : Object.fromEntries(held);
     },
-    forget,
+    rowOf: (id) => {
+      const held = rows.get(id);
+      if (held === undefined) return undefined;
+      // Written in the field order the file has always used, so a row read back
+      // and written again is the same bytes.
+      return {
+        ...(held.flags === undefined ? {} : { flags: held.flags }),
+        ...(held.config === undefined ? {} : { config: held.config }),
+        ...(held.scope === undefined ? {} : { scope: held.scope }),
+        ...(held.owner === undefined ? {} : { owner: held.owner }),
+        ...(held.senders === undefined ? {} : { senders: held.senders }),
+        ...(held.provider === undefined ? {} : { provider: held.provider }),
+        ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
+        ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+        ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
+        ...(held.parent === undefined ? {} : { parent: held.parent }),
+        ...(held.nested === undefined ? {} : { nested: held.nested }),
+      };
+    },
+    forget: (id) => { rows.delete(id); },
     prune: (gone) => {
-      // Every id any of the eleven holds, since a session is remembered under
-      // whichever of them was written last and nothing else names it.
-      for (const id of new Set([...flags.keys(), ...config.keys(), ...scope.keys(), ...owners.keys(),
-        ...senders.keys(), ...providers.keys(), ...artifacts.keys(), ...pullRequests.keys(), ...chatTitles.keys(),
-        ...nested.keys(), ...parents.keys()])) {
-        if (gone(id)) forget(id);
+      // One id per row, since a session is remembered under whichever of the
+      // row's fields was written last and nothing else names it.
+      for (const id of [...rows.keys()]) {
+        if (gone(id)) rows.delete(id);
       }
     },
   };
@@ -149,7 +170,47 @@ const nestedOf = (value: unknown): NestedRecord | undefined => {
   };
 };
 
-/** What is persisted for one session. Versioned, so a later shape can be recognised rather than guessed at. */
+/**
+ * Everything a host holds about one session, as the store holds it.
+ *
+ * A field is absent where nothing was recorded for it, which is the whole of
+ * what "unset" means here: the two that are answered with an empty value rather
+ * than an absence - the flags, and the artifacts - are held as that absence as
+ * well, so a row with nothing set is a row that is not there.
+ *
+ * Each field carries `undefined` in its type because that is what a setter
+ * hands over to clear it, and nothing else in the store ever writes a row.
+ */
+interface Row {
+  flags?: number | undefined;
+  config?: Record<string, unknown> | undefined;
+  /** `null` is charged to nothing on purpose, which is not the same as never decided. */
+  scope?: Scope | null | undefined;
+  owner?: Owner | undefined;
+  senders?: Map<string, Owner> | undefined;
+  provider?: string | undefined;
+  artifacts?: Record<string, unknown>[] | undefined;
+  pullRequests?: PullRequestBaseline | undefined;
+  chatTitles?: Map<string, string> | undefined;
+  parent?: string | undefined;
+  nested?: NestedRecord | undefined;
+}
+
+/** Whether a row says nothing at all, and so is not one to keep. */
+const empty = (row: Row): boolean =>
+  row.flags === undefined && row.config === undefined && row.scope === undefined
+  && row.owner === undefined && row.senders === undefined && row.provider === undefined
+  && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
+  && row.parent === undefined && row.nested === undefined;
+
+/**
+ * What is persisted for one session: a `Row` as the file holds it.
+ *
+ * Versioned, so a later shape can be recognised rather than guessed at, and
+ * carrying `id` because a file is opened on its own rather than under the name
+ * the store holds it by. The two maps a row keeps are objects here, and the
+ * owner is the reference it is spelled as.
+ */
 interface Saved {
   version: 1;
   id: string;
@@ -275,37 +336,27 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   /**
    * What one session is written down as, or nothing where there is nothing to
    * write: a session somebody looked at and left alone is not remembered.
+   *
+   * `version` and `id` come first, and the rest in the field order the file has
+   * always written, so a row read back and written again is the same bytes.
    */
   const rowOf = (id: string): Saved | undefined => {
-    const flags = inner.flags(id);
-    const config = inner.config(id);
-    const scope = inner.scope(id);
-    const owner = inner.owner(id);
-    const senders = inner.sendersOf(id);
-    const provider = inner.provider(id);
-    const artifacts = inner.artifacts(id);
-    const pullRequests = inner.pullRequests(id);
-    const chatTitles = inner.chatTitlesOf(id);
-    const parent = inner.parent(id);
-    const nested = inner.nested(id);
-    if (flags === 0 && config === undefined && scope === undefined && owner === undefined
-      && senders === undefined && provider === undefined && artifacts === undefined
-      && pullRequests === undefined && chatTitles === undefined && parent === undefined
-      && nested === undefined) return undefined;
+    const held = inner.rowOf(id);
+    if (held === undefined) return undefined;
     return {
       version: 1,
       id,
-      ...(flags === 0 ? {} : { flags }),
-      ...(config === undefined ? {} : { config }),
-      ...(scope === undefined ? {} : { scope }),
-      ...(owner === undefined ? {} : { owner }),
-      ...(senders === undefined ? {} : { senders }),
-      ...(provider === undefined ? {} : { provider }),
-      ...(artifacts === undefined ? {} : { artifacts }),
-      ...(pullRequests === undefined ? {} : { pullRequests }),
-      ...(chatTitles === undefined ? {} : { chatTitles }),
-      ...(parent === undefined ? {} : { parent }),
-      ...(nested === undefined ? {} : { nested }),
+      ...(held.flags === undefined ? {} : { flags: held.flags }),
+      ...(held.config === undefined ? {} : { config: held.config }),
+      ...(held.scope === undefined ? {} : { scope: held.scope }),
+      ...(held.owner === undefined ? {} : { owner: held.owner }),
+      ...(held.senders === undefined ? {} : { senders: Object.fromEntries(held.senders) }),
+      ...(held.provider === undefined ? {} : { provider: held.provider }),
+      ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
+      ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
+      ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
+      ...(held.parent === undefined ? {} : { parent: held.parent }),
+      ...(held.nested === undefined ? {} : { nested: held.nested }),
     };
   };
 
@@ -323,12 +374,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           rmSync(file, { force: true });
           continue;
         }
-        mkdirSync(dir, { recursive: true, mode: 0o700 });
-        // Written beside and moved into place, so a daemon killed mid-write
-        // leaves the last good file rather than half of this one.
-        const temporary = `${file}.${process.pid}.tmp`;
-        writeFileSync(temporary, `${JSON.stringify(row, null, 2)}\n`, { mode: 0o600 });
-        renameSync(temporary, file);
+        // The folder is made at 0700: every file under it holds a person's
+        // session, which is nobody else's business on a host with more than one
+        // person on it.
+        writeJsonAtomic(file, row, { dirMode: 0o700 });
       }
       catch (error) {
         told(`Could not write ${file}: ${error instanceof Error ? error.message : String(error)}`);
@@ -344,6 +393,20 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     writing.unref?.();
   };
 
+  /**
+   * One setter's whole work: record that the id is one this store has heard of,
+   * change it, and write the row it changed to on the next tick.
+   *
+   * Written once, so every setter is this plus the one call it makes - and so
+   * none of them can forget to mark what it moved.
+   */
+  const touched = (id: string, run: () => void): void => {
+    heard.add(id);
+    run();
+    dirty.add(id);
+    later();
+  };
+
   const load = (): void => {
     let names: string[];
     try { names = readdirSync(dir); }
@@ -355,16 +418,15 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       // its files.
       if (idIn(name.slice(0, -'.json'.length)) === undefined) continue;
       const file = join(dir, name);
+      const read = readJson(file);
       let row: Saved | undefined;
-      try {
-        const read: unknown = JSON.parse(readFileSync(file, 'utf8'));
-        if ((read as Partial<Saved>).version === 1 && typeof (read as Partial<Saved>).id === 'string')
-          row = read as Saved;
-        else told(`Ignoring ${file}: it is not a session store this version can read.`);
+      if (!read.ok) {
+        told(`Could not read ${file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
       }
-      catch (error) {
-        told(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+      else if ((read.value as Partial<Saved>).version === 1 && typeof (read.value as Partial<Saved>).id === 'string') {
+        row = read.value as Saved;
       }
+      else told(`Ignoring ${file}: it is not a session store this version can read.`);
       // One file this version cannot read is one session it does not know, and
       // the rest of the folder still does.
       if (row === undefined) continue;
@@ -429,27 +491,27 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
   return {
     flags: (id) => inner.flags(id),
     config: (id) => inner.config(id),
-    setFlags: (id, value) => { heard.add(id); inner.setFlags(id, value); dirty.add(id); later(); },
-    setConfig: (id, values) => { heard.add(id); inner.setConfig(id, values); dirty.add(id); later(); },
+    setFlags: (id, value) => { touched(id, () => { inner.setFlags(id, value); }); },
+    setConfig: (id, values) => { touched(id, () => { inner.setConfig(id, values); }); },
     scope: (id) => inner.scope(id),
-    setScope: (id, value) => { heard.add(id); inner.setScope(id, value); dirty.add(id); later(); },
+    setScope: (id, value) => { touched(id, () => { inner.setScope(id, value); }); },
     owner: (id) => inner.owner(id),
-    setOwner: (id, value) => { heard.add(id); inner.setOwner(id, value); dirty.add(id); later(); },
+    setOwner: (id, value) => { touched(id, () => { inner.setOwner(id, value); }); },
     sender: (id, turnId) => inner.sender(id, turnId),
-    setSender: (id, turnId, value) => { heard.add(id); inner.setSender(id, turnId, value); dirty.add(id); later(); },
+    setSender: (id, turnId, value) => { touched(id, () => { inner.setSender(id, turnId, value); }); },
     provider: (id) => inner.provider(id),
-    setProvider: (id, value) => { heard.add(id); inner.setProvider(id, value); dirty.add(id); later(); },
+    setProvider: (id, value) => { touched(id, () => { inner.setProvider(id, value); }); },
     parent: (id) => inner.parent(id),
-    setParent: (id, value) => { heard.add(id); inner.setParent(id, value); dirty.add(id); later(); },
+    setParent: (id, value) => { touched(id, () => { inner.setParent(id, value); }); },
     nested: (id) => inner.nested(id),
-    setNested: (id, value) => { heard.add(id); inner.setNested(id, value); dirty.add(id); later(); },
+    setNested: (id, value) => { touched(id, () => { inner.setNested(id, value); }); },
     nestedSessions: () => inner.nestedSessions(),
     artifacts: (id) => inner.artifacts(id),
-    setArtifacts: (id, values) => { heard.add(id); inner.setArtifacts(id, values); dirty.add(id); later(); },
+    setArtifacts: (id, values) => { touched(id, () => { inner.setArtifacts(id, values); }); },
     pullRequests: (id) => inner.pullRequests(id),
-    setPullRequests: (id, value) => { heard.add(id); inner.setPullRequests(id, value); dirty.add(id); later(); },
+    setPullRequests: (id, value) => { touched(id, () => { inner.setPullRequests(id, value); }); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
-    setChatTitle: (id, chatUri, title) => { heard.add(id); inner.setChatTitle(id, chatUri, title); dirty.add(id); later(); },
+    setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
     attachmentsDir: attachmentsOf,
     forget: (id) => {
       heard.delete(id);
@@ -517,29 +579,22 @@ export function migrateSessions(options: SessionMigrationOptions): void {
   const said = (message: string): void => { options.onProblem?.(message); };
   // A folder means the split has already happened, whatever became of the file.
   if (existsSync(options.dir)) return;
-  let text: string;
-  try { text = readFileSync(options.file, 'utf8'); }
+  const read = readJson(options.file);
   // Not there, which is what a first run looks like.
-  catch { return; }
-  let read: unknown;
-  try { read = JSON.parse(text); }
-  catch (error) {
-    said(`Could not read ${options.file}: ${error instanceof Error ? error.message : String(error)}`);
+  if (!read.ok && read.kind === 'missing') return;
+  if (!read.ok) {
+    said(`Could not read ${options.file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
     return;
   }
-  const whole = read as Partial<Whole>;
+  const whole = read.value as Partial<Whole>;
   if (whole.version !== 1 || !Array.isArray(whole.sessions)) {
     said(`Ignoring ${options.file}: it is not a session store this version can read.`);
     return;
   }
   try {
-    mkdirSync(options.dir, { recursive: true, mode: 0o700 });
     for (const row of whole.sessions) {
       if (typeof row?.id !== 'string' || row.id === '') continue;
-      const file = join(options.dir, fileNameOf(row.id));
-      const temporary = `${file}.${process.pid}.tmp`;
-      writeFileSync(temporary, `${JSON.stringify({ ...row, version: 1 }, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, file);
+      writeJsonAtomic(join(options.dir, fileNameOf(row.id)), { ...row, version: 1 }, { dirMode: 0o700 });
     }
     // Renamed rather than deleted, and only once every row is a file: a
     // daemon that is killed halfway has to find something to start from again.

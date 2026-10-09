@@ -11,9 +11,8 @@
  * scheme and `decide` name a row they were handed.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { RpcError } from './rpc.js';
+import { readJson, writeJsonAtomic } from './jsonfile.js';
 import type {
   Measure, Period, Policies, Policy, PolicyKind, PolicyLimit, PolicyMatch, PolicyValueType,
 } from './types/policies.js';
@@ -281,20 +280,20 @@ export function filePolicies(options: FilePoliciesOptions): Policies {
 
   /** Every row the file holds, and one refusal for each that is not one. */
   const load = (): void => {
-    let text: string;
-    try { text = readFileSync(file, 'utf8'); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        told(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    const read = readJson(file);
+    if (!read.ok) {
+      // Not there yet, which is what a first run looks like.
+      if (read.kind === 'missing') return;
+      // A file that could not be opened is said with what the system call
+      // answered, which is the sentence it has always been said with.
+      if (read.kind === 'unreadable') {
+        told(`Could not read ${file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
+        return;
       }
-      return;
-    }
-    let parsed: unknown;
-    try { parsed = JSON.parse(text); }
-    catch {
       told(`${file} is not JSON; this host starts with no policies.`);
       return;
     }
+    const parsed = read.value;
     if (typeof parsed !== 'object' || parsed === null || !Array.isArray((parsed as Saved).policies)) {
       told(`${file} holds no policies list; this host starts with no policies.`);
       return;
@@ -320,20 +319,10 @@ export function filePolicies(options: FilePoliciesOptions): Policies {
   const save = (): void => {
     const body: Saved = { version: 1, policies: [...held.values()] };
     try {
-      mkdirSync(dirname(file), { recursive: true });
-      // Written beside and moved into place, so a daemon killed mid-write
-      // leaves the last good file rather than half of this one.
-      const temporary = `${file}.${process.pid}.tmp`;
-      // Removed before it is written, because `mode` is applied when a file is
-      // *created*: a temp this pid left readable - one of ours killed between
-      // the write and the rename, and this process given its pid back - would
-      // keep its 0644, and the rename would put that on the real file.
-      rmSync(temporary, { force: true });
-      // 0600, as the daemon's own records are: this names who may use what,
-      // and that is not everybody's business on a host with more than one
-      // person on it.
-      writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, file);
+      // Owner-only, as the daemon's own records are: this names who may use
+      // what, and that is not everybody's business on a host with more than
+      // one person on it.
+      writeJsonAtomic(file, body);
     }
     catch (error) {
       told(`Could not write ${file}: ${error instanceof Error ? error.message : String(error)}`);

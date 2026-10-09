@@ -26,6 +26,8 @@
 export { createHost, HOST_CLOSE_WAIT_MS, ROOT, refusalReason } from './host.js';
 export { foldHostOptions, pluginHost, raise, routeOf, routePrefix, AGENT_CLASH, ROUTE_ROOT } from './plugins.js';
 export { frozenCopy, deepFreeze } from './frozen.js';
+export { readJson, readJsonObject, writeJsonAtomic } from './jsonfile.js';
+export type { JsonRead, JsonObjectRead, JsonWriteOptions } from './jsonfile.js';
 export type { FoldedOptions, HostRecording, ServedRoute } from './plugins.js';
 export { sdkVersion } from './version.js';
 export { listen, overStdio, runtime, serveRequests } from './listen.js';

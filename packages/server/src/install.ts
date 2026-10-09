@@ -19,8 +19,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
+import { readJsonObject, writeJsonAtomic } from '@ahpd/sdk';
 import type { PluginSpec } from '@ahpd/sdk';
 import { asSpec } from './config.js';
 import { hasScheme, nameOf } from './plugins.js';
@@ -135,18 +136,15 @@ export const packageOf = (name: string): string => {
 
 /** The object a configuration file holds, refusing one that is not an object. */
 export const readEntry = (path: string): Record<string, unknown> => {
-  if (!existsSync(path)) return {};
-  let held: unknown;
-  try {
-    held = JSON.parse(readFileSync(path, 'utf8'));
-  }
-  catch (error) {
-    throw new Error(`${path} could not be read: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (typeof held !== 'object' || held === null || Array.isArray(held)) {
-    throw new Error(`${path} is not a JSON object.`);
-  }
-  return held as Record<string, unknown>;
+  const read = readJsonObject(path);
+  if (read.ok) return read.value;
+  // Not there yet is an entry holding nothing, which is what a first install
+  // writes onto.
+  if (read.kind === 'missing') return {};
+  if (read.kind === 'not-object') throw new Error(`${path} is not a JSON object.`);
+  // Both of the other two are the file failing to be read, which is said with
+  // what went wrong: text the parser choked on, or the system call's own words.
+  throw new Error(`${path} could not be read: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
 };
 
 /**
@@ -157,7 +155,7 @@ export const readEntry = (path: string): Record<string, unknown> => {
  * the one writing it now.
  */
 export const writeEntry = (path: string, held: Record<string, unknown>): void => {
-  writeFileSync(path, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
+  writeJsonAtomic(path, held, { mode: 0o600 });
 };
 
 /*

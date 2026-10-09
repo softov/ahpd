@@ -8,9 +8,7 @@
  * idea `the-local-vault-is-encrypted`.
  */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { scopeOf } from '@ahpd/sdk';
+import { readJson, scopeOf, writeJsonAtomic } from '@ahpd/sdk';
 import type { Vault } from '@ahpd/sdk';
 
 /** What one file holds, so a file written by hand or by a later version is said and not guessed at. */
@@ -29,25 +27,21 @@ const OWNER_ONLY = 0o600;
 
 /** What the file was written as, or why it is not something this can read. */
 const readSaved = (file: string): Saved => {
-  let text: string;
-  try { text = readFileSync(file, 'utf8'); }
-  catch (error) {
+  const read = readJson(file);
+  if (!read.ok) {
     // A file that is not there is a vault holding nothing yet, which is where a
     // daemon starts before anybody has set a secret.
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return { version: 1, secrets: {} };
+    if (read.kind === 'missing') return { version: 1, secrets: {} };
     // The code and nothing else: what a system call says about a file this one
     // holds can be a line of it, and every refusal here reaches the log.
-    throw new Error(`${file} could not be read as a vault: ${code ?? 'the file could not be opened'}`);
-  }
-  let parsed: unknown;
-  try { parsed = JSON.parse(text); }
-  catch {
+    if (read.kind === 'unreadable') {
+      throw new Error(`${file} could not be read as a vault: ${read.code ?? 'the file could not be opened'}`);
+    }
     // A fixed sentence, never the parser's: `JSON.parse` quotes the source it
     // choked on, which is the secret the file was holding.
     throw new Error(`${file} is not a vault: it is not JSON`);
   }
-  const body = parsed as Partial<Saved> | null;
+  const body = read.value as Partial<Saved> | null;
   const secrets = body === null || typeof body !== 'object' ? undefined : body.secrets;
   if (body === null || typeof body !== 'object' || typeof secrets !== 'object' || secrets === null
     || Array.isArray(secrets) || Object.values(secrets).some((one) => typeof one !== 'string')) {
@@ -100,14 +94,5 @@ export function fileVault(options: { file: string }): Vault {
  */
 const writeSaved = (file: string, secrets: Record<string, string>): void => {
   const body: Saved = { version: 1, secrets };
-  mkdirSync(dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.tmp`;
-  // Removed before it is written, because `mode` is applied when a file is
-  // *created*: a temp this pid left readable - one of ours killed between the
-  // write and the rename, and this process given its pid back - would keep its
-  // 0644, and the rename would put that on the vault, which holds everybody's
-  // credentials.
-  rmSync(temporary, { force: true });
-  writeFileSync(temporary, `${JSON.stringify(body, null, 2)}\n`, { mode: OWNER_ONLY });
-  renameSync(temporary, file);
+  writeJsonAtomic(file, body, { mode: OWNER_ONLY });
 };

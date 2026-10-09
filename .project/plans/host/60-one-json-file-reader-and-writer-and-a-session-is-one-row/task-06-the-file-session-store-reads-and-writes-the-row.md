@@ -1,6 +1,6 @@
 ---
 title: The file session store reads and writes the row
-status: todo
+status: done
 depends: [task-01-one-json-file-reader-and-one-atomic-writer.md, task-05-the-memory-session-store-keeps-one-row-per-session.md]
 layer: "sdk"
 refs:
@@ -36,3 +36,11 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+Implemented 2026-10-09 in the `build/agents/61968c74` worktree, test-first.
+
+- `rowOf` reads `inner.rowOf(id)` and writes `version` and `id` first, then the rest in the field order the file has always had, so a row read back and written again is the same bytes; `save` is `writeJsonAtomic(file, row, { dirMode: 0o700 })` and still removes the file of a session that has nothing left. `later` and its next-tick timer are unchanged.
+- `load` reads each file with `readJson`: a failure is `Could not read ${file}: it went between the listing and the read` for `missing` and the reader's message otherwise, and the version and id check keeps `Ignoring ${file}: it is not a session store this version can read.`. Steps 1 and 2 hold: every field is still checked on its own and set on the inner store, and a row that is empty after the checks leaves no session to restore.
+- The eleven setters are built by one `touched(id, run)` wrapper, which hears the id, runs the setter on the inner store, marks the id dirty and leaves the write to the next tick.
+- `migrateSessions` reads with `readJson` (`missing` returns; another failure is `Could not read ${options.file}: <message>`) and writes each row with `writeJsonAtomic(join(options.dir, fileNameOf(row.id)), { ...row, version: 1 }, { dirMode: 0o700 })`, keeping the `renameSync` to `<file>.migrated` and its `Could not migrate ...` line.
+- `packages/sdk/test/sessions.test.ts` gains `reads a row written before this version whole, and writes it back as it was`: a fixture holding all nine fields in canonical order with a trailing newline loads with every getter answering what the file said, and one `setFlags` writes the same bytes back. Every existing case is unchanged, which with that one is what says the files on disk did not move.

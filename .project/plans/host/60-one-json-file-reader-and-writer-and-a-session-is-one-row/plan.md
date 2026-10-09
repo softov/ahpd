@@ -1,7 +1,7 @@
 ---
 title: JSON files are read and written through one helper, and the session store keeps one row per session
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-05
 revalidated: 2026-10-05
@@ -88,12 +88,12 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - One JSON file reader and one atomic writer](task-01-one-json-file-reader-and-one-atomic-writer.md) | todo | - |
-| [02 - The sdk's stores read and write through them](task-02-the-sdks-stores-read-and-write-through-them.md) | todo | 01 |
-| [03 - The daemon's files read and write through them](task-03-the-daemons-files-read-and-write-through-them.md) | todo | 01 |
-| [04 - Computer's owner file reads and writes through them](task-04-computers-owner-file-reads-and-writes-through-them.md) | todo | 01, host 59 task 05 |
-| [05 - The memory session store keeps one row per session](task-05-the-memory-session-store-keeps-one-row-per-session.md) | todo | - |
-| [06 - The file session store reads and writes the row](task-06-the-file-session-store-reads-and-writes-the-row.md) | todo | 01, 05 |
+| [01 - One JSON file reader and one atomic writer](task-01-one-json-file-reader-and-one-atomic-writer.md) | done | - |
+| [02 - The sdk's stores read and write through them](task-02-the-sdks-stores-read-and-write-through-them.md) | done | 01 |
+| [03 - The daemon's files read and write through them](task-03-the-daemons-files-read-and-write-through-them.md) | done | 01 |
+| [04 - Computer's owner file reads and writes through them](task-04-computers-owner-file-reads-and-writes-through-them.md) | done | 01, host 59 task 05 |
+| [05 - The memory session store keeps one row per session](task-05-the-memory-session-store-keeps-one-row-per-session.md) | done | - |
+| [06 - The file session store reads and writes the row](task-06-the-file-session-store-reads-and-writes-the-row.md) | done | 01, 05 |
 
 ## Risks and tradeoffs
 
@@ -107,14 +107,14 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-one-json-file-reader-and-one-atomic-writer.md](task-01-one-json-file-reader-and-one-atomic-writer.md), after host 58 is built; task 05 is independent of 01.
+- **Done so far:** tasks 01-06 done; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `daemon.ts`'s sweeper reads the temp name, so the writer's name is exactly `<file>.<pid>.tmp`; `memorySessions` is exported and used directly by tests and embedders, so its methods keep their names and answers; `prune` today walks every map's keys, and after task 05 it walks `rows.keys()`, which must be the same set.
 
 ## Final verification checklist
 
-- [ ] `rg -n "renameSync" packages/sdk/src packages/server/src packages/computer/src` finds only `jsonfile.ts`, `daemon.ts`'s log rotation and `sessions.ts`'s migration rename.
-- [ ] `memorySessions` declares one `Map`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `rg -n "renameSync" packages/sdk/src packages/server/src packages/computer/src` finds only `jsonfile.ts`, `daemon.ts`'s log rotation and `sessions.ts`'s migration rename.
+- [x] `memorySessions` declares one `Map`.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

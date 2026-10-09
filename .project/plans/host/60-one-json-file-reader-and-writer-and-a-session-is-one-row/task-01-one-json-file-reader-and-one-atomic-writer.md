@@ -1,6 +1,6 @@
 ---
 title: One JSON file reader and one atomic writer
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -34,3 +34,10 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk/test/jsonfile.test.ts`.
 
 ## Resume
+
+Implemented 2026-10-09 in the `build/agents/61968c74` worktree, test-first.
+
+- `packages/sdk/src/jsonfile.ts` exports `JsonRead`, `JsonObjectRead`, `readJson`, `readJsonObject`, `JsonWriteOptions` and `writeJsonAtomic`; `packages/sdk/src/index.ts` exports the three functions and the three types, each on its own line, so host 59's exports land beside them.
+- `packages/sdk/test/jsonfile.test.ts`, 15 cases: the five outcomes (a value that is an object and one that is a list, `missing`, a directory as `unreadable` with `EISDIR`, `nope` and an empty file as `not-json`), the object reader refusing `[]`, `null` and three leaves, the write's two-space body with a trailing newline and no scratch behind, `0o600` by default, `0o644` where a caller names it, the folder made first and at a `dirMode`, and the pid form proved by putting a directory at the temp's own name.
+- Step 3 does not name the `rmSync` the writer makes before it writes. It is there because `mode` is applied when a file is created and not when one is opened: a temp left at 0644 by an earlier process that held this pid would keep it, and the rename would put that on the file. `is owner-only even when a readable temp at its own name was left behind` pins it.
+- Nothing calls the helper yet, as the objective says.

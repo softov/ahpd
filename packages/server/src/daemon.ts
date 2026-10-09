@@ -1,8 +1,9 @@
 /** Starting one of these in the background, and finding it again. */
 
 import { spawn } from 'node:child_process';
-import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { readJson, writeJsonAtomic } from '@ahpd/sdk';
 import { daemonLog, daemonPath, ensureConfigDir } from './config.js';
 
 /** What a detached daemon records about itself. */
@@ -88,10 +89,13 @@ const present = (pid: number): boolean => {
  * `connectUrl` carries the secret and belongs on no line.
  */
 export function running(): Running | undefined {
-  let text: string;
-  try { text = readFileSync(daemonPath(), 'utf8'); }
-  catch { return undefined; }
-  const found = recordIn(text);
+  const read = readJson(daemonPath());
+  // A file that is not there, and one that could not be opened, are both a
+  // daemon with no record: neither is a file anybody may clear.
+  if (!read.ok && read.kind !== 'not-json') return undefined;
+  // Text that is not JSON is a file that was read and held no record, which is
+  // the same thing as one that holds `null`, and is cleared below.
+  const found = read.ok ? recordIn(read.value) : undefined;
   if (found === undefined) {
     // Not a record at all, so nobody's: it goes whatever it holds.
     try { unlinkSync(daemonPath()); }
@@ -106,19 +110,16 @@ export function running(): Running | undefined {
   return found;
 }
 
-/** The record in that text: a JSON object with a numeric pid, or nothing. */
-const recordIn = (text: string): Running | undefined => {
-  let parsed: unknown;
-  try { parsed = JSON.parse(text) as unknown; }
-  catch { return undefined; }
+/** The record in that value: a JSON object with a numeric pid, or nothing. */
+const recordIn = (parsed: unknown): Running | undefined => {
   if (typeof parsed !== 'object' || parsed === null || typeof (parsed as { pid?: unknown }).pid !== 'number') return undefined;
   return parsed as Running;
 };
 
 /** The record as the file holds it, alive or not; nothing when there is none or it is not a record. */
 const recorded = (): Running | undefined => {
-  try { return recordIn(readFileSync(daemonPath(), 'utf8')); }
-  catch { return undefined; }
+  const read = readJson(daemonPath());
+  return read.ok ? recordIn(read.value) : undefined;
 };
 
 /**
@@ -410,10 +411,9 @@ export function claim(record: Running, replacing?: number): Running | undefined 
   const already = recorded();
   if (already !== undefined && already.pid !== replacing && alive(already.pid)) return already;
   sweepTemps([daemonPath()]);
-  // Written whole beside it and renamed over it, so a reader never sees half a record.
-  const written = `${daemonPath()}.${String(process.pid)}.tmp`;
-  writeFileSync(written, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-  renameSync(written, daemonPath());
+  // Owner-only: the record holds `connectUrl`, which is the origin with the
+  // token in it.
+  writeJsonAtomic(daemonPath(), record, { mode: 0o600 });
   return undefined;
 }
 

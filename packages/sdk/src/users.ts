@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { readJson, writeJsonAtomic } from './jsonfile.js';
 import { same } from './listen.js';
 import { issuerFrom } from './issuers.js';
 import { covers, membership } from './scopes.js';
@@ -561,16 +561,29 @@ export function fileUsers(options: FileUserOptions): Users {
 
   /** What the file says, and whether it said nothing because it is broken. */
   const read = (): { file: UserFile; broken: boolean } => {
-    let text: string;
-    try {
-      text = readFileSync(options.path, 'utf8');
+    const outcome = readJson(options.path);
+    /*
+     * Not there, or there and unopenable, is nobody: a host that has never been
+     * set up, and a path the directory's own account cannot open. Neither is a
+     * broken file, which is what says a change may still be written over it.
+     */
+    if (!outcome.ok && outcome.kind !== 'not-json') return { file: {}, broken: false };
+    if (!outcome.ok) {
+      /*
+       * An empty file is a user file nobody has written to yet, and the reader
+       * answers it as it answers one that will not parse - `JSON.parse` refuses
+       * both the same way, and emptiness is not one of its outcomes. So the
+       * file itself is looked at here before the refusal below.
+       */
+      let text = '';
+      try { text = readFileSync(options.path, 'utf8'); }
+      catch { /* it went between the two reads, which leaves nobody */ }
+      if (text.trim() === '') return { file: {}, broken: false };
+      told(`${options.path} is not a user file (${outcome.error instanceof Error ? outcome.error.message : String(outcome.error)}); nobody can sign in`);
+      return { file: {}, broken: true };
     }
-    catch {
-      return { file: {}, broken: false };
-    }
-    if (text.trim() === '') return { file: {}, broken: false };
     try {
-      const parsed = JSON.parse(text) as unknown;
+      const parsed = outcome.value;
       if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object');
       const held = parsed as UserFile;
       // No prototype, so a role the file names `__proto__` is an own key: on a
@@ -693,28 +706,16 @@ export function fileUsers(options: FileUserOptions): Users {
   /** Replace the file, atomically, refusing to clobber one that will not parse. */
   const write = (file: UserFile): void => {
     if (read().broken) throw new Error(`${options.path} is not a user file; fix it before changing who is in it`);
-    mkdirSync(dirname(options.path), { recursive: true });
-    // Named by the writer's own pid, so two processes writing at once do not
-    // share one scratch file and rename each other's half-written bytes into
-    // place. The same form every other writer here uses, and the one the
-    // daemon's temp sweeper knows.
-    const loose = `${options.path}.${String(process.pid)}.tmp`;
-    // Removed before it is written, because `mode` is applied when a file is
-    // *created*: a temp this pid left readable - one of ours killed between the
-    // write and the rename, and this process given its pid back - would keep its
-    // 0644, and the rename would put that on the real file.
-    rmSync(loose, { force: true });
-    // 0600: the file holds hashes rather than secrets, and who may read it is
-    // still nobody but the account the daemon runs as.
-    writeFileSync(loose, `${JSON.stringify({
+    // Owner-only: the file holds hashes rather than secrets, and who may read
+    // it is still nobody but the account the daemon runs as.
+    writeJsonAtomic(options.path, {
       roles: file.roles ?? {},
       // The teams and the projects, as they were read: the file is the whole of
       // the state, and dropping either would lose every membership naming one.
       ...(file.teams === undefined ? {} : { teams: file.teams }),
       ...(file.projects === undefined ? {} : { projects: file.projects }),
       users: file.users ?? [],
-    }, null, 2)}\n`, { mode: 0o600 });
-    renameSync(loose, options.path);
+    });
   };
 
   /** What a set of role names holds, saying so once per name that answered nothing. */

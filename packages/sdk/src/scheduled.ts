@@ -1,8 +1,7 @@
 /** Automations that fire on their own: a clock, and a file they survive in. */
 
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
 import { memoryAutomations } from './automations.js';
+import { readJson, writeJsonAtomic } from './jsonfile.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationEntry, AutomationStore } from './types/automations.js';
 import type { Bag } from './types/common.js';
@@ -183,20 +182,10 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       }),
     };
     try {
-      mkdirSync(dirname(file), { recursive: true });
-      // Written beside and moved into place, so a daemon killed mid-write
-      // leaves the last good file rather than half of this one.
-      const temporary = `${file}.${process.pid}.tmp`;
-      // Removed before it is written, because `mode` is applied when a file is
-      // *created*: a temp this pid left readable - one of ours killed between
-      // the write and the rename, and this process given its pid back - would
-      // keep its 0644, and the rename would put that on the real file.
-      rmSync(temporary, { force: true });
-      // 0600, as the daemon's own records are: this names whose work an
+      // Owner-only, as the daemon's own records are: this names whose work an
       // automation is, and that is not everybody's business on a host with
       // more than one person on it.
-      writeFileSync(temporary, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
-      renameSync(temporary, file);
+      writeJsonAtomic(file, held);
     }
     catch (error) {
       told(`Could not write ${file}: ${error instanceof Error ? error.message : String(error)}`);
@@ -273,15 +262,16 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
 
   /** Read what was written, if anything was. */
   const load = (): { resource: string; nextRunAt?: string }[] => {
-    let text: string;
-    try { text = readFileSync(file, 'utf8'); }
-    catch { return []; }
-    let held: Saved;
-    try { held = JSON.parse(text) as Saved; }
-    catch (error) {
-      told(`Could not read ${file}: ${error instanceof Error ? error.message : String(error)}`);
+    const read = readJson(file);
+    // Nothing to read is nothing to catch up on, and nothing is said about it:
+    // a daemon's first start, and a file that could not be opened, are both a
+    // store with no automations in it.
+    if (!read.ok && read.kind !== 'not-json') return [];
+    if (!read.ok) {
+      told(`Could not read ${file}: ${read.error instanceof Error ? read.error.message : String(read.error)}`);
       return [];
     }
+    const held = read.value as Saved;
     if (held.version !== 1 || !Array.isArray(held.automations)) {
       told(`${file} is not something this version understands, and was left alone`);
       return [];

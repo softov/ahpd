@@ -1,5 +1,5 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { readJsonObject, writeJsonAtomic } from '@ahpd/sdk';
 import type { Owner } from '@ahpd/sdk';
 import type { Probe } from './devcontainer.js';
 import { ownerSaid } from './runtime.js';
@@ -131,30 +131,21 @@ const entry = (said: unknown): Entry | undefined => {
  * to know which it has.
  */
 const read = (configDir: string, log: (line: string) => void): Record<string, Entry> | undefined => {
-  let text: string;
-  try { text = readFileSync(at(configDir), 'utf8'); }
-  catch (error) {
-    // No file is a file with no entries, which is every host that has not
-    // written one yet.
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {};
+  const outcome = readJsonObject(at(configDir));
+  // No file is a file with no entries, which is every host that has not
+  // written one yet.
+  if (!outcome.ok && outcome.kind === 'missing') return {};
+  if (!outcome.ok) {
     // Said rather than thrown: a file that is missing, unreadable or is not
     // JSON leaves no owner to name, and a meter that stopped over it would
     // lose the stretches of every machine it still has.
-    complain(log, 'could not read', error);
-    return undefined;
-  }
-  let parsed: unknown;
-  try { parsed = JSON.parse(text) as unknown; }
-  catch (error) {
-    complain(log, 'could not read', error);
-    return undefined;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    complain(log, 'could not read', new Error('the top of it is not an object of machines'));
+    complain(log, 'could not read', outcome.kind === 'not-object'
+      ? new Error('the top of it is not an object of machines')
+      : outcome.error);
     return undefined;
   }
   return Object.fromEntries(
-    Object.entries(parsed as Record<string, unknown>)
+    Object.entries(outcome.value)
       .flatMap(([id, one]) => {
         const held = entry(one);
         return held === undefined ? [] : [[id, held] as const];
@@ -188,18 +179,10 @@ const writable = (configDir: string, log: (line: string) => void): Record<string
 const write = (configDir: string, held: Record<string, Entry>, log: (line: string) => void): void => {
   const path = at(configDir);
   try {
-    mkdirSync(configDir, { recursive: true });
     // 0600, as the daemon's own records are: who owns a machine is not
     // everybody's business on a host with more than one person on it, and a
     // probed environment is what a user's shell was holding.
-    const scratch = `${path}.${String(process.pid)}.tmp`;
-    // Removed before it is written, because `mode` is applied when a file is
-    // *created*: a scratch this pid left readable - one of ours killed between
-    // the write and the rename, and this process given its pid back - would
-    // keep its 0644, and the rename would put that on the real file.
-    rmSync(scratch, { force: true });
-    writeFileSync(scratch, `${JSON.stringify(held, null, 2)}\n`, { mode: 0o600 });
-    renameSync(scratch, path);
+    writeJsonAtomic(path, held, { mode: 0o600 });
   }
   catch (error) {
     complain(log, 'could not write', error);

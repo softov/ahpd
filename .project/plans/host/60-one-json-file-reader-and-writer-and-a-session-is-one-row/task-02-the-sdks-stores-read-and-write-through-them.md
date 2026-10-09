@@ -1,6 +1,6 @@
 ---
 title: The sdk's stores read and write through them
-status: todo
+status: done
 depends: [task-01-one-json-file-reader-and-one-atomic-writer.md]
 layer: "sdk"
 refs:
@@ -31,3 +31,10 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk`.
 
 ## Resume
+
+Implemented 2026-10-09 in the `build/agents/61968c74` worktree, test-first.
+
+- `policies.ts`, `scheduled.ts` and `users.ts` read through `readJson` and write through `writeJsonAtomic`, keeping every sentence they said before: policies says `Could not read ${file}: <message>` for one that could not be opened and `${file} is not JSON; this host starts with no policies.` for one that will not parse, scheduled says nothing about a read that answered `missing` or `unreadable` and keeps its parse refusal, and users keeps its `${path} is not a user file (...); nobody can sign in` and its refusal to write over a broken file.
+- None of the three passes an option, so they take the writer's `0o600` default, which is what host 58 gave them, and a folder they make takes the umask as it did. Only `sessions.ts` names a `dirMode`.
+- `users.ts` keeps its empty-file check, which the reader answers as `not-json` as it answers a file that will not parse: it reads the file's text again on that path only, so an empty file is still `{}` and a broken one is still refused and said. It imports `readFileSync` for that and nothing else.
+- No test changed. `policies.test.ts`, `scheduled.test.ts`, `users.test.ts` and host 58's mode and temp-name cases stay green as they are.

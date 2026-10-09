@@ -1,6 +1,6 @@
 ---
 title: The daemon's files read and write through them
-status: todo
+status: done
 depends: [task-01-one-json-file-reader-and-one-atomic-writer.md]
 layer: "server"
 refs:
@@ -36,3 +36,11 @@ The vault, the daemon record and a configuration entry are read with the shared 
 - `pnpm exec tsc --noEmit`, `pnpm test packages/server`.
 
 ## Resume
+
+Implemented 2026-10-09 in the `build/agents/61968c74` worktree, test-first.
+
+- `vault.ts` reads with `readJson`: `missing` is `{ version: 1, secrets: {} }`, `unreadable` throws `${file} could not be read as a vault: ${read.code ?? 'the file could not be opened'}`, `not-json` throws `${file} is not a vault: it is not JSON`. The outcome's `error` is never passed into a sentence, on purpose: the parser's message quotes the source it choked on, and in that file the source is a secret. `writeSaved` is `writeJsonAtomic(file, body, { mode: OWNER_ONLY })` with `OWNER_ONLY` and its comment as they were.
+- `daemon.ts` reads the record with `readJson` in `running()` and `recorded()` and writes it with `writeJsonAtomic(daemonPath(), record, { mode: 0o600 })` in `claim`, after the sweep. A file that is not there and one that could not be opened are both a daemon with no record, and neither is touched; a file that is not JSON is still one nobody may clear, so it is unlinked as before. `TEMP`, `sweepTemps` and the log rotation's `renameSync` are untouched.
+- `install.ts` reads an entry with `readJsonObject`: `missing` is `{}`, `not-object` throws `${path} is not a JSON object.`, anything else throws `${path} could not be read: <message>`. `writeEntry` is `writeJsonAtomic(path, held, { mode: 0o600 })`, so that write is atomic where it wrote in place before, at the mode it had.
+- `packages/server/test/vault-file.test.ts` gains `says nothing about the secret a file that is not JSON was in the middle of holding`: a file holding `{"secrets": {"a": "hunter2"` refuses with `${file} is not a vault: it is not JSON`, the refusal does not contain `hunter2`, and the file is left exactly as it was.
+- No other test changed. `vault-port.test.ts`, `vault-command.test.ts`, `daemon.test.ts` and `plugin-install.test.ts` stay green as they are.

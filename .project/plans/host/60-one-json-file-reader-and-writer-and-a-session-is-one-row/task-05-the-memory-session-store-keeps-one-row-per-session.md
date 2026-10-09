@@ -1,6 +1,6 @@
 ---
 title: The memory session store keeps one row per session
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -33,3 +33,10 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk/test/sessions.test.ts`.
 
 ## Resume
+
+Implemented 2026-10-09 in the `build/agents/61968c74` worktree, test-first.
+
+- `memorySessions` holds `rows = new Map<string, Row>()`; every getter is `rows.get(id)?.field`, every setter patches through one `patch(id, change)` that spreads the row it had and deletes it once `empty(row)` holds, `forget` is `rows.delete(id)`, `prune` walks `[...rows.keys()]`, and `nestedSessions` walks the rows that have a nested record, which is the same set the nine maps answered for.
+- `Row` is declared beside `Saved`, each optional field as `field?: T | undefined` so `Partial<Row>` takes an explicit `undefined`; `Saved` keeps the shape the file has always had and is now written down as `Row` as the file holds it. `Held` gains `rowOf(id)`, which answers the row in the canonical field order or nothing, and still has the eleven setters the port names - `setFlags`, `setConfig`, `setScope`, `setOwner`, `setSender`, `setProvider`, `setArtifacts`, `setPullRequests`, `setChatTitle`, `setParent` and `setNested` - each now one `patch`. The doc comment on `Held` is untouched.
+- Steps 1 to 3 as written: a field left at its setter's empty value drops out of the row (flags `0`, scope, owner, provider and a removed sender or chat title as `undefined`, artifacts as `[]`), so `prune` sees only ids with something set; `config` and `pullRequests` are set as given and never cleared by value; `sendersOf` and `chatTitlesOf` answer `Object.fromEntries` of the row's map, or `undefined` when the row has none.
+- `packages/sdk/test/sessions.test.ts` gains two cases: `keeps no row for a session whose every field was set back to nothing` (flags set and then `0`, a sender set and then removed, `prune` with an always-true predicate calls back for nothing) and `forgets a session entirely, whatever was set on it` (six fields set, `forget`, every getter answers as unset). Every existing case is unchanged.

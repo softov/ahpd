@@ -112,6 +112,20 @@ it('never says what a broken file held, because the parser would quote it', asyn
   expect(readFileSync(file, 'utf8')).toBe(held);
 });
 
+it('says nothing about the secret a file that is not JSON was in the middle of holding', async () => {
+  // The reader answers a file it could not parse with the parser's own error,
+  // and that error quotes the source it choked on - here, a token cut in half.
+  // What a caller is told instead is the vault's fixed sentence.
+  const held = '{"secrets": {"a": "hunter2"';
+  writeFileSync(file, held);
+  const vault = fileVault({ file });
+
+  const said = await vault.get('a').then(() => 'it resolved', (error: Error) => error.message);
+  expect(said).toBe(`${file} is not a vault: it is not JSON`);
+  expect(said).not.toContain('hunter2');
+  expect(readFileSync(file, 'utf8')).toBe(held);
+});
+
 it('says only the code when a file could not be read at all', async () => {
   // A directory is the case a system call refuses with a message, and that
   // message is about the path rather than the content; only the code is kept so
