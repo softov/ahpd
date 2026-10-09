@@ -1,10 +1,10 @@
 ---
 title: The sdk's tools live in one folder
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-07
-revalidated: 2026-10-07
+revalidated: 2026-10-09
 requires: []
 changes: []
 creates: []
@@ -64,7 +64,7 @@ packages/sdk/src/tools/*.ts -> packages/sdk/src/index.ts -> @ahpd/sdk -> every b
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The six files move into tools](task-01-the-six-files-move-into-tools.md) | implemented | - |
+| [01 - The six files move into tools](task-01-the-six-files-move-into-tools.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,8 +72,8 @@ packages/sdk/src/tools/*.ts -> packages/sdk/src/index.ts -> @ahpd/sdk -> every b
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-10-09. The six files are in `packages/sdk/src/tools/`. Every importer, comment and ref that named an old path is repointed. The gates pass. Nothing is committed: Softov reads the diff first. See [implemented.md](implemented.md).
-- **Next action:** Softov reviews the diff; the plan closes when task 01 passes it.
+- **Done so far:** task 01, 2026-10-09. The six files are in `packages/sdk/src/tools/`. Every importer, comment and ref that named an old path is repointed. The gates pass. Merged 2026-10-09 as 79a3541. See [implemented.md](implemented.md).
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** the six files are renames, so their history follows them; do not put a file back at the top of `packages/sdk/src`.
 
