@@ -1,6 +1,6 @@
 ---
 title: The server README lists every command and flag
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:

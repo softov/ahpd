@@ -1,6 +1,6 @@
 ---
 title: Each agent README explains every option
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:
