@@ -17,17 +17,18 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** 8 commits on main ahead of `origin/main`.
-- **Restart owed:** Softov restarts his daemon to wire in host/73, usage/06, usage/07 (01-03, 05), daemon/09 task 12 and the new `@ahpd/bot` plugin package.
+- **Unpushed:** main is ahead of `origin/main` by the daemon/09 merge (`f1acaba`) and its closure.
+- **Restart:** Softov restarts his daemon now, which wires in host/73, usage/06, usage/07 (01-03, 05), daemon/09 (task 12 and `--force`) and the `@ahpd/bot` package as of tasks 01 and 03. plugin/37 tasks 02, 04 and 05 need a later restart, after they merge.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Building:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 02, 04 and 05, session `c7421e55`; [daemon/09](../plans/daemon/09-a-plugin-update-moves-every-plugin-together/plan.md) tasks 01 and 04 (`--force`), session `666bc42b`.
+- **Reviewed, waiting on Softov's merge approval:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 02, 04 and 05 in worktree `/github/ahpd.worktrees/build-agents-c7421e55` (session `c7421e55`), uncommitted. The review applied Softov's two answers, recorded at the end of its `implemented.md`: an absent `prompt` opens a silent session, and a named bot `workspace` has to be under the plugin's `root`. Gates were green before the `root` fix (4428 tests) and were rerun after it. Merge: commit in the worktree, rebase on main, rerun the gates, fast-forward, then close tasks 02, 04, 05 and the plan.
 
 ## Next, buildable now
 
-1. [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md), approved, after plugin/37 merges.
+1. [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md), approved, after plugin/37 merges. Its watch-out: freeze the principal that `write` and `remove` get, and the new `sessionOwner` answer.
 2. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
 3. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
 4. A short plan for revising the package READMEs: how to use the code, its ahpd config and CLI commands, each option explained.
+5. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
 [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.
@@ -48,3 +49,6 @@ Doc drift found by documentation/03 and left for a decision: AHP.md marks `autom
 
 - CI runs `pnpm test` before `pnpm build`, so the suite must pass with no `packages/*/dist`.
 - `pnpm test` generates `tools/ahp.strict.schema.json` first; running vitest alone in a fresh checkout fails the acp ports tests for want of it.
+- The gates as one line, run in a worktree: `pnpm install && node tools/schema.mjs && pnpm build && pnpm typecheck && pnpm boundary && npx vitest run --maxWorkers=2 --testTimeout=10000`. The suite takes about ten minutes; two at once roughly double it.
+- Every suite run rewrites `packages/sdk/test/fixtures/wire.jsonl` with this box's endpoints; `git checkout --` it before committing.
+- A build session is started with `node /github/ahpc/dist/src/main.js --host ws://127.0.0.1:37537 session new --agent claude-deepseek-build --cwd /github/ahpd --set permissionMode=dontAsk --set effortLevel=high --set isolation=worktree --set branch=main --set worktreeBranchPrefix=build/`, then `prompt <uri> "<text>"`; `session list` and `session history <uri>` watch it. A builder sometimes ends its turn waiting on a watcher that never wakes it, so read its worktree, not only its report.

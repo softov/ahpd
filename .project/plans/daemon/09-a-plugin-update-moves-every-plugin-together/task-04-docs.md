@@ -1,6 +1,6 @@
 ---
 title: Docs say how to upgrade the plugins
-status: implemented
+status: done
 depends: [task-01-plugin-update.md, task-02-a-refused-install-names-the-blocker.md, task-06-the-plugin-keeps-npms-sdk.md, task-08-the-daemon-pins-the-sdk.md]
 layer: "docs"
 refs:

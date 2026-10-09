@@ -1,6 +1,6 @@
 ---
 title: "`ahpd plugin update` moves every installed plugin together"
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

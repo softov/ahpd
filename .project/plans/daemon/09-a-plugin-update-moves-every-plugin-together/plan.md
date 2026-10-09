@@ -74,10 +74,10 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - `ahpd plugin update`](task-01-plugin-update.md) | implemented | - |
+| [01 - `ahpd plugin update`](task-01-plugin-update.md) | done | - |
 | [02 - A refused install names what blocks it](task-02-a-refused-install-names-the-blocker.md) | done | - |
 | [03 - A missing plugin name is said as one](task-03-a-missing-name-is-said.md) | done | cofold commands/03 released |
-| [04 - Docs](task-04-docs.md) | implemented | 01, 02, 06, 08 |
+| [04 - Docs](task-04-docs.md) | done | 01, 02, 06, 08 |
 | [05 - A plugin loads the daemon's sdk](task-05-a-plugin-loads-the-daemons-sdk.md) | dropped | - |
 | [06 - A plugin keeps the sdk npm installs](task-06-the-plugin-keeps-npms-sdk.md) | done | - |
 | [07 - Updating named plugins is refused while another is behind](task-07-update-one-refuses-a-plugin-behind.md) | dropped | 06 |
@@ -98,7 +98,7 @@ npm i -g @ahpd/server (0.8.0) -> ahpd plugin install @ahpd/agent-claude ... -> n
 - **Done 2026-10-08:** task 12 implemented: one `pluginRoot` for install, update and remove, an sdk move answered in `moved`, and the registry asked in parallel.
 - **Reviewed and merged 2026-10-08:** task 12 (e5134da); tasks 02, 06 and 08-12 done.
 - **Done 2026-10-08:** tasks 01 and 04 implemented for `--force`, the last two open: `updatePlugins` takes `force`, each package its own npm call, and every task in this plan is now implemented or dropped.
-- **Next action:** none; the plan is finished and waits on Softov's review. The checklist's two by-hand runs need a real npm against a registry, which this box has no egress for; the cases behind them are in the test files named in [implemented.md](implemented.md).
+- **Next action:** none. Reviewed and merged 2026-10-08 (f1acaba). The checklist's two by-hand runs need a real npm against a registry.
 - **Watch out for:** the npm runner is faked in tests through `Runner`; `plugin.ts` serialises writes with `oneAtATime`, and `update` joins it. The `--force` path ends on its `NpmFailure` before the restart line is said.
 
 ## Final verification checklist
