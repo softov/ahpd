@@ -1,6 +1,6 @@
 ---
 title: The commit message is read as ahpd.commit, and as ahp.commit until ahpapp moves
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -17,17 +17,16 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), their closures and the documentation/04 plan.
+- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), their closures and the documentation/04 plan.
 - **Restart:** plugin/37 tasks 02, 04 and 05 are merged and need a daemon restart: a bot made with no session now starts one, and `PluginHost.startSession` and `sessionOwner` are wired.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
 - **Building:** [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) tasks 01-06, session `96331c3f`, worktree `/github/ahpd.worktrees/build-agents-96331c3f`, started 2026-10-08 from `77aa94a`.
-- **Building:** [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01 only, session `d1ffbc3d`, worktree `/github/ahpd.worktrees/build-agents-d1ffbc3d`, started 2026-10-08 from `ecec31c`.
 
 ## Next, buildable now
 
-1. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, after plugin/38 and host/43 p4 task 01 merge, because it moves files.
+1. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, after plugin/38 merges, because it moves files.
 2. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08; two open questions for Softov in its Resume state (a README-vs-schema test, and `LICENSE` files for bot and agent-cofold).
-3. host/43 p4 tasks 02-05 wait on ahpapp and ahpc reading both names.
+3. host/43 p4 task 01 is merged; tasks 02-05 wait on ahpapp and ahpc reading both names.
 4. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
