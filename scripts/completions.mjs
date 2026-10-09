@@ -8,12 +8,12 @@
  * See docs/PROXY.md for what each answer should be.
  *
  *   AHPD_TOKEN=<token> node scripts/completions.mjs
- *   node scripts/completions.mjs --base http://127.0.0.1:37537 --model local/default --token <token>
+ *   node scripts/completions.mjs --base http://127.0.0.1:9187 --model local/default --token <token>
  *   node scripts/completions.mjs --only chat --prompt 'Say PONG'
  *   node scripts/completions.mjs --fake-upstream --scope backend
  *
  * Options:
- *   --base <url>       the listener that serves /v1, default http://127.0.0.1:37537
+ *   --base <url>       the listener that serves /v1, default http://127.0.0.1:9187
  *   --token <secret>   the ahpd token, default AHPD_TOKEN
  *   --model <name>     a <maker>/<name>, default the first one /v1/models lists
  *   --prompt <text>    what to ask, default a one-word answer
@@ -36,7 +36,7 @@ const arg = (name, fallback) => {
 };
 const all = (name) => argv.flatMap((one, at) => (one === `--${name}` && argv[at + 1] !== undefined ? [argv[at + 1]] : []));
 
-const base = arg('base', 'http://127.0.0.1:37537').replace(/\/+$/, '');
+const base = arg('base', 'http://127.0.0.1:9187').replace(/\/+$/, '');
 const token = arg('token', process.env.AHPD_TOKEN);
 const prompt = arg('prompt', 'Reply with exactly the word PONG and nothing else.');
 const scope = arg('scope');

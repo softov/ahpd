@@ -22,7 +22,7 @@ With `http.port` it moves with `/api` to the API's own port. With `http` off, `/
 | An OpenAI SDK | `http://127.0.0.1:<port>/v1` | `OPENAI_API_KEY=<ahpd token>`, sent as `Authorization: Bearer` |
 
 ```bash
-ANTHROPIC_BASE_URL=http://127.0.0.1:37537 ANTHROPIC_API_KEY=$AHPD_TOKEN claude
+ANTHROPIC_BASE_URL=http://127.0.0.1:9187 ANTHROPIC_API_KEY=$AHPD_TOKEN claude
 ```
 
 | Path | Read as |
