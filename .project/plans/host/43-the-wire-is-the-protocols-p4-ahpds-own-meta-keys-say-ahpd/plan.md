@@ -83,9 +83,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The commit message is read as ahpd.commit too](task-01-the-commit-message-is-read-as-ahpd-commit.md) | done | - |
-| [02 - Owner, sender and staging are sent as ahpd keys](task-02-owner-sender-and-staging-are-ahpd-keys.md) | todo | ahpapp reading both names |
-| [03 - A Claude session's model and a skill's hint are ahpd keys](task-03-claudes-model-and-skill-hint-are-ahpd-keys.md) | todo | ahpc reading both names |
-| [04 - Usage extensions are ahpd keys in every backend](task-04-usage-extensions-are-ahpd-keys.md) | todo | ahpapp reading both names |
+| [02 - Owner, sender and staging are sent as ahpd keys](task-02-owner-sender-and-staging-are-ahpd-keys.md) | todo | ahpapp reading both names (ahpapp host/05, a66f582) |
+| [03 - A Claude session's model and a skill's hint are ahpd keys](task-03-claudes-model-and-skill-hint-are-ahpd-keys.md) | todo | ahpc reading both names (ahpc ahp/07, a13ec65) |
+| [04 - Usage extensions are ahpd keys in every backend](task-04-usage-extensions-are-ahpd-keys.md) | todo | ahpapp reading both names (ahpapp host/05, a66f582) |
 | [05 - The old names are gone](task-05-the-old-names-are-gone.md) | todo | 01-04, and ahpapp sending `ahpd.commit` |
 
 ## Risks and tradeoffs
@@ -96,7 +96,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 ## Resume state
 
 - **Done so far:** task 01, merged 2026-10-08 (85b0dc4). The `commit` operation reads `_meta['ahpd.commit']` and falls back to `_meta['ahp.commit']`, with the comment naming task 05 as where the old key goes. Three cases in `packages/sdk/test/commit.test.ts` cover the new key, the old one, and the new one winning when both are sent, and `docs/AHP.md` says the same.
-- **Next action:** [task-02-owner-sender-and-staging-are-ahpd-keys.md](task-02-owner-sender-and-staging-are-ahpd-keys.md), which lands only after ahpapp reads both names; hand the clients the list in the session's scratch `client-changes-for-protocol.md`.
+- **Next action:** tasks 02-04. ahpapp reads both names since host/05 (a66f582), and sends `ahpd.commit`; ahpc reads `ahpd.model` since ahp/07 (a13ec65). Task 05 waits until the ahpapp build people run sends `ahpd.commit`.
 - **Answered:** the tool-call timing keys are prefixed too, as `ahpd.startedAt`, `ahpd.endedAt`, `ahpd.durationMs`: Softov, 2026-10-03, asked "Does \"Rename all + clients\" also cover the tool-call timing keys?": "We will prefix all.. then after I will see about that to remove the prefixes.. So its not a decision to rule.. Its to organize all that is not ahp protocol and to avoid breaking the protocol." The prefix marks what is not the protocol's, for now; it is not a standing rule. The decision `a-tool-calls-times-are-stamped-by-its-plugin` is superseded for the names only by [`a-tool-calls-times-are-stamped-as-ahpd-keys`](../../../decisions/a-tool-calls-times-are-stamped-as-ahpd-keys.md), and plugin/29 is amended to stamp the prefixed names, cofold's restored calls included (p5).
 - **Requires:** [host/44 p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md), which moves ahpd to the 1.0.0 package.
 - **Watch out for:** `argumentHint` is renamed on a skill customization only, never on a completion item; and `_meta.cost` must not come back as a number in dollars, which would read as credits in the reference.
