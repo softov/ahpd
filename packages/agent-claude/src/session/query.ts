@@ -516,15 +516,30 @@ export function createQuery(ctx: SessionContext): Query {
           const task = str(message.task_id);
           if (id !== undefined) ctx.background.add(id);
           if (id !== undefined && task !== undefined && !ctx.ended.has(id)) ctx.tasks.set(id, task);
+          ctx.noteTask(message);
+          continue;
+        }
+        /*
+         * Every task the harness is running, after a change to that set.
+         *
+         * The whole set, not the change: an id that left it has stopped, an id
+         * that joined it has started, and either way this is what the chat
+         * lists as its background work.
+         */
+        if (type === 'system' && str(message.subtype) === 'background_tasks_changed') {
+          ctx.noteLive(message);
           continue;
         }
         if (type === 'system' && str(message.subtype) === 'task_notification') {
           const id = str(message.tool_use_id);
+          const task = str(message.task_id);
           const status = str(message.status);
-          if (id !== undefined && ctx.background.has(id)
-            && (status === 'completed' || status === 'failed' || status === 'stopped')) {
-            ctx.endWorker(id, status === 'completed' ? 'complete' : status === 'stopped' ? 'cancelled' : 'error',
-              status === 'failed' ? str(message.summary) : undefined);
+          if (status === 'completed' || status === 'failed' || status === 'stopped') {
+            if (task !== undefined) ctx.dropTask(task);
+            if (id !== undefined && ctx.background.has(id)) {
+              ctx.endWorker(id, status === 'completed' ? 'complete' : status === 'stopped' ? 'cancelled' : 'error',
+                status === 'failed' ? str(message.summary) : undefined);
+            }
           }
           continue;
         }

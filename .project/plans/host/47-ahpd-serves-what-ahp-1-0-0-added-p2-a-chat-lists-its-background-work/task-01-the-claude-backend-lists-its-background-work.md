@@ -1,6 +1,6 @@
 ---
 title: The Claude backend lists its background shells and subagents
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -41,3 +41,13 @@ While a Claude session runs, each chat's `backgroundWork` is the live, non-ambie
 - `pnpm exec vitest run packages/agent-claude/test` passes, the existing subagent cases unchanged.
 
 ## Resume
+
+## Outcome
+
+The work sits in the three files the `claude/18` split left in place of `packages/agent-claude/src/session.ts`, which is now a barrel of 289 lines. `session/workers.ts` holds the state. `taskInfo` is a task id to `{ type, toolUseId, description, startedAt }`. `live` is the last level's non-ambient ids, and `told` is a chat URI to the entries that chat was told. `reconcileWork()` builds the entries, compares them with `told` per chat and emits only the difference, through `emitOn(scopeOfCall(toolUseId))`. `noteTask`, `noteLive` and `dropTask` are the three frames' entry points, and `backgroundWork(chatUri)` answers what one chat was told. `session/query.ts` reads `task_started`, `background_tasks_changed` and a terminal `task_notification`, and `session.ts` merges the lead chat's list into `chatState()` and clears the three maps in `close()`. The `## Files` line stands as written.
+
+The plan's step 6 says a subagent entry's `chat` is `spawning.get(toolUseId)?.chat`. That is undefined at `task_started`, because the worker chat opens at the spawning call's `tool_result` or at the worker's first frame. That timing is `claude/17`'s and stays as it is. So `workerChatOf` answers the open chat when there is one, and `subagentChatUri(ctx.options.uri, toolCallId)` when there is not. The entry is listed at its `task_started`, under the name the worker is handed when it opens. That needed one line in `packages/sdk/src/index.ts` re-exporting `subagentChatUri`, a function of `packages/sdk/src/host/channels.ts` that the package did not publish, and a file no task names. `ctx.options.uri` is the session URI the host builds the worker's chat name from, so both sides derive the same string. With no subagent seam the call has no session URI and no chat, and the subagent is not listed.
+
+A `shell` entry carries the `Bash` call's `input.command` when that is a string and the description otherwise, and no `terminal`. `startedAt` is `new Date().toISOString()` read when the frame arrives, because the SDK sends no start time. A removal for a chat is emitted before a set for it, and a level that repeats the same entries emits nothing. A task whose type is neither `local_bash` nor `local_agent`, and a task whose call no scope holds, is passed over.
+
+`packages/agent-claude/test/agent-claude-background-work.test.ts` has the nine cases of Validation, the first replaying `claude-subagent-background.jsonl` frame by frame and the rest synthetic. It checks a listed subagent's `chat` against the URI the seam really hands that worker, so a name built wrongly fails the case. `docs/AHP.md` gained the two action rows and its `chat/*` count moved to 31 of 32.

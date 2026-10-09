@@ -1,7 +1,7 @@
 ---
 title: A chat lists the shells and subagents running in its background
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -64,7 +64,7 @@ SDK background_tasks_changed / task_started / task_notification
 | An entry's `id` is `shell:<task_id>` or `subagent:<task_id>`, its `label` the task's `description`, its `startedAt` when `task_started` arrived | (defaulted: VS Code's ids, and the SDK gives no start time) | 01 |
 | A shell entry carries no `terminal` and neither kind carries `_meta` | (defaulted: no ahpd terminal carries a Claude `Bash` call's output, and VS Code's `_meta` keys are Copilot's own) | 01 |
 | An `ambient` task is never listed, and a task with no `task_started` seen is not listed until one arrives | Claude Agent SDK `ambient`: "hosts should exclude them from activity indicators"; (defaulted: an entry needs the call to know its chat) | 01 |
-| A subagent entry's `chat` is the worker chat the spawning call opened; with no worker chat (a host with no subagent seam) the subagent is not listed | AHP 1.0.0 `BackgroundSubagentWork.chat`: "the same chat the spawning tool call's `ToolResultSubagentContent.resource` points to" | 01 |
+| A subagent entry is listed at its `task_started`, and its `chat` is the URI its worker chat has, built from the spawning call's id as `subagentChatUri` builds it; the worker chat still opens when claude/17 says; with no subagent seam the subagent is not listed | AHP 1.0.0 `BackgroundSubagentWork.chat`: "the same chat the spawning tool call's `ToolResultSubagentContent.resource` points to"; Softov, 2026-10-09, asked how the entry is made when the worker chat opens one message after `task_started`: "Now, link by call id"; VS Code `copilotAgentSession.ts#L2056-L2064` builds the chat from `task.toolCallId` | 01 |
 | Work is published whenever the SDK says so, not only while a client watches | (defaulted: the SDK pushes; VS Code's watch exists because Copilot's runtime is polled) | 01 |
 | Sent to a 0.9.0 connection too, and no grant beyond reading the chat (`session:read` today, `chat:read` after host/46) | AHP 1.0.0 `ACTION_INTRODUCED_IN`: both actions `0.9.0`; both are host-emitted, not client-dispatchable | 01, 02 |
 
@@ -79,8 +79,8 @@ SDK background_tasks_changed / task_started / task_notification
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The Claude backend lists its background shells and subagents](task-01-the-claude-backend-lists-its-background-work.md) | todo | - |
-| [02 - A client reads a chat's background work through the host](task-02-a-client-reads-a-chats-background-work.md) | todo | 01 |
+| [01 - The Claude backend lists its background shells and subagents](task-01-the-claude-backend-lists-its-background-work.md) | done | - |
+| [02 - A client reads a chat's background work through the host](task-02-a-client-reads-a-chats-background-work.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -89,13 +89,13 @@ SDK background_tasks_changed / task_started / task_notification
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-claude-backend-lists-its-background-work.md](task-01-the-claude-backend-lists-its-background-work.md).
+- **Done so far:** tasks 01 and 02, reviewed and gated on main.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** `background` in `session.ts` holds every call `task_started` named, foreground ones included, for ending workers; it is not the background-work list and must not become it.
+- **Watch out for:** `background` in `session.ts` holds every call `task_started` named, foreground ones included, for ending workers; it is not the background-work list and must not become it. A subagent entry's `chat` is built with `subagentChatUri`, so a change to that name moves the entry with it.
 
 ## Final verification checklist
 
-- [ ] A backgrounded subagent in the capture is listed on the lead chat from its `task_started` to the empty level, and gone after.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] A backgrounded subagent in the capture is listed on the lead chat from its `task_started` to the empty level, and gone after.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

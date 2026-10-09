@@ -228,7 +228,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
 | `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
 
-### `chat/*` — 29 of 30
+### `chat/*` — 31 of 32
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -262,6 +262,8 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
 | `chat/truncated` | client | ✅ | Drops the turns after a named one - the edit-and-resend flow, and nothing to do with the harness compacting its own context. Served as a rewind, because dropping them from the screen alone would leave the agent answering the message that was edited away: the CLI is started again resumed at the kept turn's *last* chain entry, the turns up to there are handed over as the seed, and the session id is kept so a later resume reaches the truncated conversation rather than the one this dropped. Two things it will not do. A turn read back off a transcript has no rewind point - the backend's names for what it did are recorded only while this process watches it run - and truncating to one is refused rather than half-done. And the action's `turnId` is optional, meaning "clear everything", which as a rewind is a cut before the first prompt and names no entry at all; that form is refused too. Compaction *is* handled and is a different thing: the harness announces it as `compact_boundary`, and this host turns it into a `systemNotification` response part saying how many tokens went where - the turns it compacted are all still in the transcript, so dropping them would be untrue. |
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. The action declares no `_meta` of its own, so who sent each turn rides on the turn's message - `turn.message._meta['ahpd.sender']` - and a page of older turns reads the same as the tail window that came before it. |
+| `chat/backgroundWorkSet` | host | ✅ | Upserts one entry by its `id`, which is `shell:<task_id>` or `subagent:<task_id>` off the harness's own task id. Only the Claude backend has anything to report: its `background_tasks_changed` is the whole live set and its `task_started` says what each one is, so one task is said once and again only when what it is changes. A `shell` carries the command of the `Bash` call that started it; a `subagent` carries the worker chat's URI, which is the same chat the spawning call links. A chat running nothing has no `backgroundWork` key rather than an empty one. |
+| `chat/backgroundWorkRemoved` | host | ✅ | One entry that stopped running, by the same `id`, and a no-op for an id this chat was never told about. A task the harness is no longer running leaves the level, and a terminal notification ends one whatever the level says; `ambient` tasks are never listed at all. |
 
 ### `terminal/*` — 11 of 11 🧩
 

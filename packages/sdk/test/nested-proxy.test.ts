@@ -324,6 +324,40 @@ it('a tool call that asks for confirmation is confirmed from outside', async () 
   session.close();
 });
 
+it('a chat\'s background work goes out on the outer chat, and comes back off it', async () => {
+  const work = {
+    kind: 'shell', id: 'shell:t-sleep', label: 'sleep 100', startedAt: '2026-01-01T00:00:00.000Z', command: 'sleep 100',
+  };
+  let inside: Start | undefined;
+  const { agent } = scriptedAgent((session) => {
+    inside = session;
+    session.emit('chat', { type: 'chat/backgroundWorkSet', work });
+  });
+  const inner = innerHost(agent);
+  const { seen, emit } = recorder();
+  const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
+
+  session.begin('t1', 'run it in the background');
+  await until(() => seen.some(({ action }) => action.type === 'chat/backgroundWorkSet'));
+  /*
+   * A background action names no chat of its own, so what says which chat it
+   * is about is the one it comes out on: the session's own chat, which is the
+   * outer chat and not the chat the inner session kept.
+   */
+  expect(seen.find(({ action }) => action.type === 'chat/backgroundWorkSet')).toEqual({
+    channel: 'chat',
+    action: { type: 'chat/backgroundWorkSet', work },
+  });
+  expect(session.chatState().resource).toBe('ahp-chat:/outer');
+  // Between the two, a window opening outside lists what the shell is running.
+  expect(session.chatState().backgroundWork).toEqual([work]);
+
+  inside?.emit('chat', { type: 'chat/backgroundWorkRemoved', id: 'shell:t-sleep' });
+  await until(() => seen.some(({ action }) => action.type === 'chat/backgroundWorkRemoved'));
+  expect(session.chatState().backgroundWork).toEqual([]);
+  session.close();
+});
+
 it('a question the inner agent asks is answered from outside', async () => {
   const { agent, told } = scriptedAgent((session, turnId) => {
     session.emit('chat', {

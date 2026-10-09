@@ -1,7 +1,8 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import {
-  changesetReducer, chatReducer, rootReducer, sessionReducer, terminalReducer,
+  changesetReducer, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer, terminalReducer,
 } from '@microsoft/agent-host-protocol';
+import type { StateAction } from '@microsoft/agent-host-protocol';
 import type { ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -341,6 +342,51 @@ it('reduces a turn that failed', async () => {
   // 0.9.0 took `error` off `Turn` and gave the reason a response part, so what
   // went wrong is in the turn rather than beside it.
   expect(chat.turns[0]?.responseParts.some((one) => one.kind === 'error')).toBe(true);
+});
+
+it('reduces a chat\'s background work, and shows it to a client arriving after', async () => {
+  const { client, peer: p, chatUri, opened } = await running();
+  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  await settle();
+  /*
+   * A shell the agent left running. The level is the whole set of tasks after
+   * the change and `task_started` says what one of them is, which is the order
+   * the harness sends them in.
+   */
+  await said(
+    { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 100', run_in_background: true } }] } },
+    { type: 'system', subtype: 'task_started', task_id: 't-sleep', tool_use_id: 'toolu_bg', description: 'sleep 100', task_type: 'local_bash' },
+    { type: 'system', subtype: 'background_tasks_changed', tasks: [{ task_id: 't-sleep', task_type: 'local_bash', description: 'sleep 100' }] },
+  );
+
+  const entry = {
+    kind: 'shell', id: 'shell:t-sleep', label: 'sleep 100', startedAt: expect.any(String), command: 'sleep 100',
+  };
+  expect((held(p, opened)[chatUri] as { backgroundWork?: unknown[] }).backgroundWork).toEqual([entry]);
+
+  // A client that subscribes now reads the same list from the snapshot, so a
+  // window opening late is not a window that shows the agent idle.
+  const later = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { backgroundWork?: unknown[] } };
+  };
+  expect(later.snapshot.state.backgroundWork).toEqual([entry]);
+
+  // The shell exited: the level no longer names it, and it is gone.
+  await said({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
+  expect((held(p, opened)[chatUri] as { backgroundWork?: unknown[] }).backgroundWork).toEqual([]);
+});
+
+it('sends the background actions to a 0.9.0 connection', () => {
+  /*
+   * Both were introduced in 0.9.0, so a client that only knows that version
+   * has to be sent them rather than left with a chat that never lists what
+   * its agent is running.
+   */
+  const work = { kind: 'shell', id: 'shell:t-sleep', label: 'sleep 100', startedAt: 'now', command: 'sleep 100' };
+  // The action's type is spelled as the string it is, which is how the host's
+  // own emitters spell these actions, so the shape is cast rather than built.
+  expect(isActionKnownToVersion({ type: 'chat/backgroundWorkSet', work } as unknown as StateAction, '0.9.0')).toBe(true);
+  expect(isActionKnownToVersion({ type: 'chat/backgroundWorkRemoved', id: work.id } as unknown as StateAction, '0.9.0')).toBe(true);
 });
 
 it('reduces a terminal, from the bytes a shell wrote', async () => {

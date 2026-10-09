@@ -1,3 +1,4 @@
+import { subagentChatUri } from '@ahpd/sdk';
 import type { Bag, SubagentChat } from '@ahpd/sdk';
 import type { ClaudeSessionOptions, Scope, SessionContext } from './context.js';
 import { bag, list, str } from './common.js';
@@ -36,6 +37,20 @@ export interface Spawning {
   foreground: boolean;
 }
 
+/**
+ * What one `task_started` said about a task, by the task id.
+ *
+ * The harness's live level names a task by id alone, so the kind, the call that
+ * runs it and the sentence describing it are only ever here. `startedAt` is
+ * when this frame was read, because nothing else in the stream dates a task.
+ */
+export interface TaskInfo {
+  type?: string;
+  toolUseId?: string;
+  description?: string;
+  startedAt: string;
+}
+
 /** What this area offers the rest of the session, and its `Session` methods. */
 export interface Workers {
   /** Open parts, keyed by message and index; tool calls by their own id. */
@@ -56,6 +71,20 @@ export interface Workers {
   byAgent: Map<string, Scope>;
   /** The spawning calls whose worker has ended, one id each. */
   ended: Set<string>;
+  /** What each `task_started` said about a task, by the task id. */
+  taskInfo: Map<string, TaskInfo>;
+  /** The tasks the last live level named, which is every task running now. */
+  live: Set<string>;
+  /** What each chat has been told it is running, by chat URI. */
+  told: Map<string, Bag[]>;
+  /** Record what one `task_started` said, and publish whatever that changes. */
+  noteTask: (message: Bag) => void;
+  /** Take one live level as the whole set of tasks running now. */
+  noteLive: (message: Bag) => void;
+  /** Forget one task the harness said has ended. */
+  dropTask: (taskId: string) => void;
+  /** What one chat is running, or nothing while it is running nothing. */
+  backgroundWork: (chatUri: string) => Bag[] | undefined;
   /**
    * The scope for a `parent_tool_use_id`, opening a worker's chat on first sight.
    */
@@ -125,6 +154,27 @@ export function createWorkers(ctx: SessionContext): Workers {
    * the worker a second time.
    */
   const ended = new Set<string>();
+
+  /** What each `task_started` said about a task, by the task id. */
+  const taskInfo = new Map<string, TaskInfo>();
+
+  /**
+   * The tasks the last live level named, one id each.
+   *
+   * The harness sends the level as the whole set of tasks running after a
+   * change, so this is replaced rather than patched, and an id that leaves it
+   * has stopped running.
+   */
+  const live = new Set<string>();
+
+  /**
+   * What each chat has been told it is running, by chat URI.
+   *
+   * Kept so that only a difference is said: a level that changed nothing must
+   * emit nothing, and a client that subscribes afterwards reads the same list
+   * from the chat's own snapshot.
+   */
+  const told = new Map<string, Bag[]>();
 
   /** The chat a frame for an ended worker is written to, which is nowhere. */
   const dropped: SubagentChat = { uri: '', turnId: '', emit: () => {}, end: () => {} };
@@ -307,6 +357,189 @@ export function createWorkers(ctx: SessionContext): Workers {
   };
 
   /**
+   * The chat one scope's background work is listed on, or nothing meanwhile.
+   *
+   * The session's own chat is named by the options, because a frame with no
+   * parent is in the lead scope and `emitOn` writes it to the lead chat. A
+   * worker's is its own chat, which does not exist yet while the scope holds.
+   */
+  const workChatOf = (scope: Scope): string | undefined => {
+    if (scope === mainScope) return ctx.options.chatUri;
+    const chat = scope.chat?.uri;
+    return chat === undefined || chat === '' ? undefined : chat;
+  };
+
+  /** The scope that writes to one chat, for a removal that names only the chat. */
+  const scopeOfChat = (chat: string): Scope | undefined => {
+    if (chat === ctx.options.chatUri) return mainScope;
+    for (const scope of scopes.values()) {
+      if (scope.chat !== undefined && scope.chat.uri === chat) return scope;
+    }
+    return undefined;
+  };
+
+  /**
+   * One background shell, as the protocol's shell entry.
+   *
+   * The command is what the call asked the shell to run, which is the only
+   * place it is written down: the harness describes a task in prose and never
+   * repeats the line. A call whose input is not a command falls back to the
+   * description, so the field is always a sentence a client can draw.
+   */
+  const shellWork = (id: string, info: TaskInfo, scope: Scope): Bag => {
+    const call = info.toolUseId === undefined ? undefined : scope.parts.get(info.toolUseId)?.toolCall;
+    const command = call === undefined ? undefined : str(bag(call).toolInput);
+    return {
+      kind: 'shell',
+      id: `shell:${id}`,
+      label: info.description ?? '',
+      startedAt: info.startedAt,
+      command: command ?? info.description ?? '',
+    };
+  };
+
+  /**
+   * The chat one spawning call's worker has, whether or not it is open yet.
+   *
+   * The host names a worker chat from the session and the call id alone, so the
+   * name is known before the chat is. The harness reports a background task and
+   * the worker it runs speaks later, or its call's result arrives first, so a
+   * chat that is waited for before the task is listed is a task listed late.
+   *
+   * A host with no seam to open one has no worker chat at all, and a call it
+   * spawned is not listed: an entry whose `chat` pointed nowhere would be a row
+   * a client draws and cannot open.
+   */
+  const workerChatOf = (toolCallId: string): string | undefined => {
+    const opened = spawning.get(toolCallId)?.chat;
+    if (opened !== undefined) return opened;
+    return ctx.options.subagent === undefined ? undefined : subagentChatUri(ctx.options.uri, toolCallId);
+  };
+
+  /** One running subagent, as the protocol's subagent entry. */
+  const subagentWork = (id: string, info: TaskInfo): Bag | undefined => {
+    const chat = info.toolUseId === undefined ? undefined : workerChatOf(info.toolUseId);
+    if (chat === undefined) return undefined;
+    return {
+      kind: 'subagent',
+      id: `subagent:${id}`,
+      label: info.description ?? '',
+      startedAt: info.startedAt,
+      chat,
+    };
+  };
+
+  /** One task as a background-work entry, or nothing for a kind not listed. */
+  const workEntry = (id: string, info: TaskInfo, scope: Scope): Bag | undefined => {
+    if (info.type === 'local_bash') return shellWork(id, info, scope);
+    if (info.type === 'local_agent') return subagentWork(id, info);
+    return undefined;
+  };
+
+  /**
+   * Publish the difference between what each chat is running and what it was told.
+   *
+   * The live level and the per-task frames arrive in no fixed order, so what a
+   * chat has is a function of both rather than of whichever landed last: the
+   * level says which tasks are live and `task_started` says what each one is.
+   * An entry is told once, when it appears or changes, and taken back once, when
+   * it stops being live. Removals go first, so a client applying them in order
+   * never holds a removed entry beside the one that replaced it.
+   */
+  const reconcileWork = (): void => {
+    const wanted = new Map<string, { scope: Scope; entries: Bag[] }>();
+    for (const id of live) {
+      const info = taskInfo.get(id);
+      const call = info?.toolUseId;
+      const scope = call === undefined ? undefined : scopeOfCall(call);
+      if (info === undefined || scope === undefined) continue;
+      const chat = workChatOf(scope);
+      if (chat === undefined) continue;
+      const entry = workEntry(id, info, scope);
+      if (entry === undefined) continue;
+      const at = wanted.get(chat) ?? { scope, entries: [] };
+      at.entries.push(entry);
+      wanted.set(chat, at);
+    }
+    for (const chat of new Set([...told.keys(), ...wanted.keys()])) {
+      const before = told.get(chat) ?? [];
+      const now = wanted.get(chat);
+      const next = now?.entries ?? [];
+      const scope = now?.scope ?? scopeOfChat(chat);
+      if (scope !== undefined) {
+        for (const one of before) {
+          if (!next.some((two) => two.id === one.id)) emitOn(scope, { type: 'chat/backgroundWorkRemoved', id: one.id });
+        }
+        for (const one of next) {
+          const was = before.find((two) => two.id === one.id);
+          if (was === undefined || JSON.stringify(was) !== JSON.stringify(one)) {
+            emitOn(scope, { type: 'chat/backgroundWorkSet', work: one });
+          }
+        }
+      }
+      if (next.length === 0) told.delete(chat);
+      else told.set(chat, next);
+    }
+  };
+
+  /**
+   * Record what one `task_started` said, and publish whatever that changes.
+   *
+   * The record is replaced when the harness names the same task again, because
+   * the frame is the only account of it and a later one is the better account.
+   */
+  const noteTask = (message: Bag): void => {
+    const id = str(message.task_id);
+    if (id === undefined) return;
+    const type = str(message.task_type);
+    const call = str(message.tool_use_id);
+    const description = str(message.description);
+    taskInfo.set(id, {
+      ...(type !== undefined ? { type } : {}),
+      ...(call !== undefined ? { toolUseId: call } : {}),
+      ...(description !== undefined ? { description } : {}),
+      startedAt: new Date().toISOString(),
+    });
+    reconcileWork();
+  };
+
+  /**
+   * Take one live level as the whole set of tasks running now.
+   *
+   * Replace semantics, as the harness asks for. Pairing the set's own edges
+   * instead would need every one of them to arrive, and a level that is the
+   * whole truth makes one missed bookend harmless. An `ambient` task is
+   * something the harness runs for itself, so it is never listed.
+   */
+  const noteLive = (message: Bag): void => {
+    live.clear();
+    for (const one of list(message.tasks) as Bag[]) {
+      const id = str(one.task_id);
+      if (id !== undefined && one.ambient !== true) live.add(id);
+    }
+    reconcileWork();
+  };
+
+  /**
+   * Forget one task the harness said has ended.
+   *
+   * The terminal notification is an edge of the same set, read on its own
+   * because it can arrive with no level after it. The record goes with the id:
+   * a task that has ended has no description worth keeping.
+   */
+  const dropTask = (taskId: string): void => {
+    live.delete(taskId);
+    taskInfo.delete(taskId);
+    reconcileWork();
+  };
+
+  /** What one chat is running, or nothing while it is running nothing. */
+  const backgroundWork = (chatUri: string): Bag[] | undefined => {
+    const entries = told.get(chatUri);
+    return entries === undefined || entries.length === 0 ? undefined : entries;
+  };
+
+  /**
    * A turn's tool calls that never reached an end, ended the way the
    * protocol's reducer ends them when the turn ends: `cancelled`, with reason
    * `skipped`, and only the fields a cancelled call keeps.
@@ -417,8 +650,9 @@ export function createWorkers(ctx: SessionContext): Workers {
 
   return {
     parts, calling, mainScope, scopes, spawning, background, tasks, byAgent, ended,
+    taskInfo, live, told,
     scopeFor, releaseHeld, recordSpawn, scopeOfCall, emitOn, settleOpen, endWorker,
-    workerBlock,
+    workerBlock, noteTask, noteLive, dropTask, backgroundWork,
     methods: { stopWorker },
   };
 }

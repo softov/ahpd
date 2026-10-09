@@ -24,6 +24,7 @@
  */
 
 export { createHost, HOST_CLOSE_WAIT_MS, ROOT, refusalReason } from './host.js';
+export { subagentChatUri } from './host/channels.js';
 export { foldHostOptions, pluginHost, raise, routeOf, routePrefix, AGENT_CLASH, ROUTE_ROOT } from './plugins.js';
 export { frozenCopy, deepFreeze } from './frozen.js';
 export { readJson, readJsonObject, writeJsonAtomic } from './jsonfile.js';
