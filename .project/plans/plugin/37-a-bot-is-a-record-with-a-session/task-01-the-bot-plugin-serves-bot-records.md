@@ -1,6 +1,6 @@
 ---
 title: The bot plugin serves bot: records a person makes, edits and deletes
-status: implemented
+status: done
 depends: []
 layer: "bot"
 refs:

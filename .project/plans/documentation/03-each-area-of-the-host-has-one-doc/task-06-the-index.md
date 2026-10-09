@@ -1,6 +1,6 @@
 ---
 title: The docs folder has an index
-status: implemented
+status: done
 depends: [task-01-authentication.md, task-02-host-and-automations.md, task-03-sessions-and-chats.md, task-04-terminals-and-tools.md, task-05-resources-and-usage.md]
 layer: "docs"
 refs:

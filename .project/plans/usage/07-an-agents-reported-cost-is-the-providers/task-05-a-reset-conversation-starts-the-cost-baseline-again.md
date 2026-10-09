@@ -1,6 +1,6 @@
 ---
 title: A reset conversation starts Claude's cost baseline again
-status: implemented
+status: done
 depends: [task-02-claude-sends-no-cost-for-nothing-spent.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Sessions and chats have their own docs
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A bot is a record a person makes, with a session to talk to it in
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-10-07
 revalidated: 2026-10-07
@@ -98,9 +98,9 @@ client resourceRead bot:/motion -> bot provider read -> record JSON
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The bot plugin serves bot: records a person makes, edits and deletes](task-01-the-bot-plugin-serves-bot-records.md) | implemented | - |
+| [01 - The bot plugin serves bot: records a person makes, edits and deletes](task-01-the-bot-plugin-serves-bot-records.md) | done | - |
 | [02 - A bot links a session its owner has](task-02-a-bot-links-a-session-its-owner-has.md) | todo | 01 |
-| [03 - A plugin starts a session as an owner](task-03-a-plugin-starts-a-session-as-an-owner.md) | implemented | - |
+| [03 - A plugin starts a session as an owner](task-03-a-plugin-starts-a-session-as-an-owner.md) | done | - |
 | [04 - Making a bot with no session starts one](task-04-making-a-bot-starts-its-session.md) | todo | 01, 03 |
 | [05 - Docs](task-05-docs.md) | todo | 04 |
 
@@ -112,7 +112,7 @@ client resourceRead bot:/motion -> bot provider read -> record JSON
 
 ## Resume state
 
-- **Done so far:** task 01 and task 03, both implemented 2026-10-08. `packages/bot` is a new plugin package, `@ahpd/bot`. Its provider serves `bot:` records, keeps one JSON file per bot under its `root`, and leaves a tombstone file for each deleted slug. A make with no `workspace` gets the folder `<root>/<slug>`, and an owner reads their own bot without holding `bot:get`. A write naming a `team:` or `project:` owner is checked against the writer's memberships, with the read road's `covers` rule. Both roads that change a bot ask who the writer is. An edit and a delete are for the owner, a member of its team or project, an admin (`*:*`) and the host. A holder of the grant that makes a bot touches no other. That took one host change: `write` and `remove` now take the reader their provider needs, as `read` already did. In the sdk, a plugin's `startSession` and the `pluginStarts` live binding are in. The steps a run takes to start a session moved into one `beginSession` that both roads call.
+- **Done so far:** task 01 and task 03, merged 2026-10-08 (1a3ee7a). `packages/bot` is a new plugin package, `@ahpd/bot`. Its provider serves `bot:` records, keeps one JSON file per bot under its `root`, and leaves a tombstone file for each deleted slug. A make with no `workspace` gets the folder `<root>/<slug>`, and an owner reads their own bot without holding `bot:get`. A write naming a `team:` or `project:` owner is checked against the writer's memberships, with the read road's `covers` rule. Both roads that change a bot ask who the writer is. An edit and a delete are for the owner, a member of its team or project, an admin (`*:*`) and the host. A holder of the grant that makes a bot touches no other. That took one host change: `write` and `remove` now take the reader their provider needs, as `read` already did. In the sdk, a plugin's `startSession` and the `pluginStarts` live binding are in. The steps a run takes to start a session moved into one `beginSession` that both roads call.
 - **Next action:** [task-02-a-bot-links-a-session-its-owner-has.md](task-02-a-bot-links-a-session-its-owner-has.md). `session` is on the record already and nothing writes it yet, which is the whole of that task.
 - **Open questions:**
   1. Which ahpc and ahpapp screens make a bot? - proposed: a plan in each client after this one, drawn from the scheme's `manifest`.

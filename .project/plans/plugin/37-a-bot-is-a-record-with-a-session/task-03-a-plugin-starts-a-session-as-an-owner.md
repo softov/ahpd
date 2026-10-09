@@ -1,6 +1,6 @@
 ---
 title: A plugin starts a session as an owner
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

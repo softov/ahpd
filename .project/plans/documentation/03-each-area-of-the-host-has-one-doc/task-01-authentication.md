@@ -1,6 +1,6 @@
 ---
 title: Authentication has its own doc
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:

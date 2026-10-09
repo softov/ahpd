@@ -1,6 +1,6 @@
 ---
 title: Terminals and tools have their own docs
-status: implemented
+status: done
 depends: []
 layer: "docs"
 refs:
