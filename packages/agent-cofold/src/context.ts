@@ -1,4 +1,4 @@
-import type { Store, Agent as CofoldAgent, RunHandle } from '@cofold/agents';
+import type { Store, RunHandle } from '@cofold/agents';
 import type { Bag, BoundTool, Start } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
@@ -51,30 +51,17 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
    */
   offered: BoundTool[];
   active: Bag | undefined;
-  /** The run behind `active`, so a cancel has something to stop. */
+  /**
+   * The run behind `active`, so a cancel, an answer and a steer have something
+   * to reach.
+   *
+   * One handle serves a turn from its start to its last `run.finished`,
+   * including the pauses in between: a paused run keeps the handle that
+   * started it, and that handle is what takes the answer.
+   */
   handle: RunHandle | undefined;
-  /** The agent the active run was built from, so a rejoin continues on the same one. */
-  liveAgent: CofoldAgent | undefined;
   /** The active turn's mapping, so an answer can settle the entries it opened. */
   activeMapping: TurnMapping | undefined;
-  /**
-   * Where the run stopped waiting, when it is paused rather than finished.
-   *
-   * A paused run closes the handle that started it, so the answer has to
-   * rejoin the run from this sequence rather than submit to a handle with
-   * nothing left to receive it.
-   */
-  paused: { runId: string; seq: number } | undefined;
-  /**
-   * The pause a live run owes once it has announced a request, until the run
-   * says how it ended.
-   *
-   * cofold announces a request before it records the run as waiting, and the
-   * handle of a run that has not paused takes no answer, so an answer or a
-   * stop that arrives in between waits on `settled`: true once the run has
-   * paused, false when it ended any other way.
-   */
-  pausing: { settled: Promise<boolean>; resolve: (didPause: boolean) => void } | undefined;
   /** Whether a client asked to stop, read by the mapping when the run ends. */
   cancelRequested: boolean;
   /** What the last turn failed with, or nothing. Cleared when a turn starts. */

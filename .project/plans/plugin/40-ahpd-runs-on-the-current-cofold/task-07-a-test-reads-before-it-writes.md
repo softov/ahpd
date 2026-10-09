@@ -1,6 +1,6 @@
 ---
 title: A test reads a file before it writes it
-status: todo
+status: done
 depends: [task-02-a-paused-run-is-answered-on-its-own-handle.md]
 layer: "agent-cofold"
 refs:
@@ -35,4 +35,13 @@ This task replaces plugin 22 task 04.
 
 ## Resume
 
-- The parked worktree `build-agents-cofold-uptake` has the fix for L324-335.
+- Two cases failed on the refusal: the `onFileEdit` case and the mode table's edit row.
+- Both scripts now read `a.txt` before the edit, through one `READ_A` fixture in the test file.
+- The ordering case edits that same file, so it reads first too, and now asserts the edit landed.
+- It compared the report against the first `chat/toolCallStart`; the read starts one, so it uses the last.
+- The mode table's `Row` gained an optional `first` call, which is what a row reads before it writes.
+- A new case holds the refusal: an edit of an unread file fails with `read it with read_file first`.
+- It also holds the pair: `before` and `after` are reported for a call that changed nothing.
+- A read is needed only where the file is already there, so a `write_file` of a new file still reads nothing.
+- No other test file writes a file that exists: the rest are host tools or new files.
+- The suite is 15 files and 209 cases, all passing.

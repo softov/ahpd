@@ -80,11 +80,13 @@ const usageOf = (usage: Usage): WireUsage => {
 /**
  * What a call asks the model to say, in one line.
  *
- * The live mapping draws this from what the call runs on until an approval
- * supplies a better sentence, so a transcript read back says the same thing.
+ * The live mapping draws this from the subject the call was proposed with
+ * until an approval supplies a better sentence, so a transcript read back says
+ * the same thing. The subject comes off the run's own `tool.proposed` events,
+ * which is where the live turn read it.
  */
-const invocationOf = (call: ToolCallPart, waiting: Waiting | undefined): string =>
-  waiting?.prompt ?? describe(call.name, call.input);
+const invocationOf = (call: ToolCallPart, waiting: Waiting | undefined, subject: string | undefined): string =>
+  waiting?.prompt ?? describe(call.name, subject);
 
 /** The call's arguments as the wire carries them, which is the JSON the model produced. */
 const inputOf = (call: ToolCallPart): string | undefined => {
@@ -121,14 +123,19 @@ const timesOf = (timing: Timing | undefined): Bag => {
  * stopped for a reason nobody recorded. A call a paused run is waiting on is
  * `pending-confirmation`, which is what a client draws a question from.
  */
-const callPartOf = (call: ToolCallPart, timing: Timing | undefined, waiting: Waiting | undefined): Bag => {
+const callPartOf = (
+  call: ToolCallPart,
+  timing: Timing | undefined,
+  waiting: Waiting | undefined,
+  subject: string | undefined,
+): Bag => {
   const written = inputOf(call);
   const meta: Bag = { ...toolMetaOf(call.name), ...timesOf(timing) };
   const held: Bag = {
     toolCallId: call.callId,
     toolName: call.name,
     displayName: call.name,
-    invocationMessage: invocationOf(call, waiting),
+    invocationMessage: invocationOf(call, waiting, subject),
     ...(written !== undefined ? { toolInput: written } : {}),
     /*
      * AHP's tool-call states have no field for when a call ran or how long it
@@ -193,6 +200,14 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
 
   /** When each call ran, by call id, gathered once from every run's events. */
   const timing = new Map<string, Timing>();
+  /**
+   * What each call acts on, by call id, from the `tool.proposed` that named it.
+   *
+   * The row is titled by this, exactly as the live turn titled it. A
+   * `tool.proposed` that carries no `subject` names nothing, and its row is
+   * titled by the tool's name.
+   */
+  const subject = new Map<string, string>();
   /** The request a paused run is waiting on, by the call it is about. */
   const waiting = new Map<string, Waiting>();
   /**
@@ -234,6 +249,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
     const started = new Map<string, string>();
     for (const event of events) {
       if (event.type === 'tool.started') started.set(event.callId, event.at);
+      if (event.type === 'tool.proposed' && event.subject !== undefined) subject.set(event.callId, event.subject);
       if (event.type === 'context.compacted') {
         compacted.set(event.messageId, { before: event.estimatedTokens, after: event.afterTokens });
       }
@@ -342,11 +358,11 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
         } else if (part.type === 'reasoning') {
           live.parts.push({ id, kind: 'reasoning', content: part.text });
         } else if (part.type === 'toolCall') {
-          const held = callPartOf(part, timing.get(part.callId), waiting.get(part.callId));
+          const held = callPartOf(part, timing.get(part.callId), waiting.get(part.callId), subject.get(part.callId));
           // Registered before the part is pushed, so the result that follows
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
-          live.said.set(part.callId, describe(part.name, part.input));
+          live.said.set(part.callId, describe(part.name, subject.get(part.callId)));
           live.parts.push({ id: part.callId, kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*

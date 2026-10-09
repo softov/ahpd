@@ -12,20 +12,22 @@
  */
 
 export {
-  EFFORT_LEVELS,
   PERMISSION_LABELS,
-  PERMISSION_MODES,
   cofoldAgent,
   defaultStoreRoot,
-  effortOf,
   modelOf,
   resourceOf,
   storeOf,
 } from './agent.js';
 export type { CofoldOptions } from './agent.js';
-export { DEFAULT_TOOLS, capabilitiesOf, toolsOf } from './capabilities.js';
-export type { SearchConfig, ToolsConfig } from './capabilities.js';
-export { harnessConfig, harnessConfigPath, splitModel } from './config.js';
+// The mode list, the effort levels and the configuration types are cofold's
+// own: this package re-exports them, so an embedder imports them from one
+// place.
+export { EFFORT_LEVELS, PERMISSION_MODES, effortOf } from '@cofold/agents';
+export { DEFAULT_TOOLS, toolsOf } from './capabilities.js';
+export type { SearchConfig, ToolsConfig } from '@cofold/tools';
+export { harnessConfig, harnessConfigPath } from './config.js';
+export { splitModel } from '@cofold/model-openai-compat';
 export type { HarnessConfig, HarnessProvider } from './config.js';
 export { cofoldSession, sessionIdOf } from './session.js';
 export { compactionNotice, mapTurn } from './mapping.js';

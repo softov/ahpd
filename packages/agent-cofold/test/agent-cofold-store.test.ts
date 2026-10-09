@@ -102,8 +102,25 @@ const place = (): { root: string; sweep: string } => {
 };
 
 /** One backend over a file store, with a model scripted and the policy the test wants. */
+const backendOf = (make: typeof cofoldAgent, root: string, model: ModelAdapter, policy?: Partial<Policy>): Agent =>
+  make({ adapter: model, store: root, ...(policy !== undefined ? { policy } : {}) });
+
 const backend = (root: string, model: ModelAdapter, policy?: Partial<Policy>): Agent =>
-  cofoldAgent({ adapter: model, store: root, ...(policy !== undefined ? { policy } : {}) });
+  backendOf(cofoldAgent, root, model, policy);
+
+/**
+ * The backend a restarted process builds.
+ *
+ * cofold holds a run's live handle in a module-level set, so a `resume()` in
+ * the same module graph as the paused run is refused `writer_busy`. A new
+ * process starts with that set empty, and a fresh module load is what makes
+ * one here: everything from this import down - cofold, the sdk and the store -
+ * is a second copy, so the two halves share nothing but the directory.
+ */
+const restart = async (): Promise<typeof cofoldAgent> => {
+  vi.resetModules();
+  return (await import('../src/index.js')).cofoldAgent;
+};
 
 /** Open one session on a backend, with everything the harness would have handed it. */
 function open(
@@ -325,28 +342,66 @@ const stub = (name: string): BoundTool => ({
   run: () => 'ran',
 });
 
+/*
+ * A host tool is titled by its own name, even under a cofold tool's name.
+ *
+ * A row is titled by the subject the run resolved for the call, and a subject
+ * is the tool's own answer for what it acts on. This host's tools are the
+ * daemon's and a client's, so none of them declares one - which is what keeps
+ * a host `read_file` from being drawn as whichever argument happens to look
+ * like a path.
+ */
 it.each([
-  ['shell_exec', { command: 'ls' }, 'ls'],
-  ['read_file', { path: 'a.ts' }, 'a.ts'],
-  ['write_file', { path: 'b.ts', content: '' }, 'b.ts'],
-  ['edit_file', { path: 'c.ts', edits: [] }, 'c.ts'],
-  ['memory_write', { path: 'notes.md', content: '' }, 'notes.md'],
-  ['search_files', { pattern: 'TODO' }, 'TODO'],
-  ['list_files', { pattern: '*.ts' }, '*.ts'],
-  ['web_fetch', { url: 'https://example.com/' }, 'https://example.com/'],
-  ['web_search', { query: 'cofold' }, 'cofold'],
-  ['lookup', { query: 'x' }, 'lookup'],
-])('draws a %s call by what it runs on, live and read back', async (name, input, described) => {
+  ['shell_exec', { command: 'ls' }],
+  ['read_file', { path: 'a.ts' }],
+  ['write_file', { path: 'b.ts', content: '' }],
+  ['edit_file', { path: 'c.ts', edits: [] }],
+  ['memory_write', { path: 'notes.md', content: '' }],
+  ['search_files', { pattern: 'TODO' }],
+  ['list_files', { pattern: '*.ts' }],
+  ['web_fetch', { url: 'https://example.com/' }],
+  ['web_search', { query: 'cofold' }],
+  ['lookup', { query: 'x' }],
+])('draws a host tool named %s by that name, live and read back', async (name, input) => {
   const { said, live, read } = await played([
     { deltas: [], parts: [{ type: 'toolCall', callId: 'c1', name, input, raw: JSON.stringify(input) }] },
     { deltas: [{ type: 'text.delta', text: 'done' }], parts: [{ type: 'text', text: 'done' }] },
   ], [stub(name)]);
-  expect(said.find((action) => action.type === 'chat/toolCallReady')?.invocationMessage).toBe(described);
-  expect((said.find((action) => action.type === 'chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(described);
+  expect(said.find((action) => action.type === 'chat/toolCallReady')?.invocationMessage).toBe(name);
+  expect((said.find((action) => action.type === 'chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(name);
   const drew = live.find((part) => part.kind === 'toolCall')?.toolCall as Bag;
   const readBack = read.find((part) => part.kind === 'toolCall')?.toolCall as Bag;
-  expect(drew).toMatchObject({ invocationMessage: described, pastTenseMessage: described });
-  expect(readBack).toMatchObject({ invocationMessage: described, pastTenseMessage: described });
+  expect(drew).toMatchObject({ invocationMessage: name, pastTenseMessage: name });
+  expect(readBack).toMatchObject({ invocationMessage: name, pastTenseMessage: name });
+});
+
+/*
+ * A cofold tool's call is titled by the subject the run sent.
+ *
+ * The capability resolved it from the input the call runs with, and the store
+ * keeps it on the run's `tool.proposed`, which is what a transcript titles the
+ * row from - so a session read back draws the call the way the live one did.
+ */
+it('titles a call by the subject the run sent, live and read back', async () => {
+  const { root, sweep } = place();
+  mkdirSync(sweep, { recursive: true });
+  writeFileSync(join(sweep, 'a.ts'), 'const a = 1;\n');
+  const agent = backend(root, scripted([
+    { deltas: [], parts: [{ type: 'toolCall', callId: 'c1', name: 'read_file', input: { path: 'a.ts' }, raw: '{"path":"a.ts"}' }] },
+    { deltas: [{ type: 'text.delta', text: 'done' }], parts: [{ type: 'text', text: 'done' }] },
+  ]), allowAll());
+  const one = open(agent, 'one', sweep);
+  one.session.begin('t1', 'read it');
+  await until(() => ended(one.view));
+  one.session.close();
+  const turns = await agent.transcript?.('one');
+
+  /** The one call's part, as the live chat drew it and as the transcript read it. */
+  const callOf = (parts: Bag[]): Bag => parts.find((part) => part.kind === 'toolCall')?.toolCall as Bag;
+  const said = one.view.notes.filter((held) => held.channel === 'chat').map((held) => held.action);
+  expect(said.find((action) => action.type === 'chat/toolCallReady')?.invocationMessage).toBe('a.ts');
+  expect(callOf(drawn(one.view))).toMatchObject({ invocationMessage: 'a.ts', pastTenseMessage: 'a.ts' });
+  expect(callOf((turns?.[0]?.responseParts ?? []) as Bag[])).toMatchObject({ invocationMessage: 'a.ts', pastTenseMessage: 'a.ts' });
 });
 
 it('shows live the parts its transcript rebuilds, in the order the model wrote them', async () => {
@@ -541,9 +596,9 @@ it('reopens a paused run through start.resume without replaying the input', asyn
    */
   expect(before.view.said('chat', 'chat/toolCallReady')?.confirmationTitle).toBeDefined();
 
-  // The restart: a second backend over the same directory, told to continue
-  // the same cofold session.
-  const second = backend(root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
+  // The restart: a second process's backend, over the same directory, told to
+  // continue the same cofold session.
+  const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
   expect(after.session.agentId()).toBe('one');
   await until(() => after.view.said('session', 'session/inputNeededSet') !== undefined);
@@ -603,7 +658,7 @@ it('answers a request the replay announced before the resumed run had a handle',
   await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
   await pausedRun(root, 'one');
 
-  const second = backend(root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
+  const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
   let answer: (() => void) | undefined;
   const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] }, (channel, action) => {
     if (answer === undefined) return;
@@ -618,6 +673,72 @@ it('answers a request the replay announced before the resumed run had a handle',
   expect(ended(after.view)).toBe(true);
   expect(ran).toEqual(['x']);
   expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
+});
+
+it('answers a pause the resumed run raises after the restart', async () => {
+  /*
+   * The replayed pause is not the only one a resumed handle takes. The model
+   * the restarted process runs on can ask again - a second call of the same
+   * tool here - and that pause is raised after the resume rather than read
+   * back from the store, so a handle that answered only what it replayed would
+   * leave the run waiting for ever.
+   */
+  const { root, sweep } = place();
+  const ran: string[] = [];
+  const asks: Partial<Policy> = {
+    decide: ({ tool }) => (tool.name === 'lookup' ? { behavior: 'ask' } : { behavior: 'allow' }),
+  };
+  const tool = lookup(ran);
+
+  const first = backend(root, createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: { query: 'x' }, callId: 'call-1' }] }],
+    stream: true,
+  }), asks);
+  const before = open(first, 'one', sweep, { tools: [tool] });
+  before.session.begin('t1', 'hi');
+  await until(() => before.view.said('session', 'session/inputNeededSet') !== undefined);
+  await pausedRun(root, 'one');
+
+  // The restarted process's model answers the first call with a second one.
+  const second = backendOf(await restart(), root, createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'lookup', input: { query: 'y' }, callId: 'call-2' }] },
+      { text: 'done' },
+    ],
+    stream: true,
+  }), asks);
+  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
+  await until(() => after.view.said('chat', 'chat/toolCallStart') !== undefined);
+
+  /** The calls the resumed chat has opened, in order. */
+  const calls = (): string[] => after.view.notes
+    .filter((one) => one.channel === 'chat' && one.action.type === 'chat/toolCallStart')
+    .map((one) => String(one.action.toolCallId));
+  /** The entries the session put up, the replayed one first. */
+  const entries = (): number => after.view.types('session').filter((type) => type === 'session/inputNeededSet').length;
+
+  after.session.confirm('call-1', true);
+  /*
+   * The second pause arrives the way the first one did: the chat's actions
+   * first, then the entry that makes it answerable. Waiting on the entry
+   * rather than on the call start is what puts the answer after the request is
+   * held, since a decision for a request still in flight is a decision dropped.
+   */
+  await until(() => entries() >= 2, 4000, () => JSON.stringify(calls()));
+  expect(calls()).toEqual(['call-1', 'call-2']);
+  // The turn is still open: the replay answered one pause, the run raised the
+  // other, and neither ended it.
+  expect(ended(after.view)).toBe(false);
+
+  after.session.confirm('call-2', true);
+  await until(() => ended(after.view), 4000, () => JSON.stringify(calls()));
+
+  expect(ran).toEqual(['x', 'y']);
+  expect(after.view.types('chat').at(-1)).toBe('chat/turnComplete');
+  const reader = createFileStore({ root });
+  const runs = await reader.runs.list({ sessionId: 'one' });
+  expect(runs).toHaveLength(1);
+  expect(runs[0]?.status).toBe('completed');
 });
 
 it('appends a new run under the same session id when a finished session is resumed', async () => {

@@ -1,11 +1,12 @@
-import { resolve } from 'node:path';
-import { createAgent, createAskUserTool, policyOf } from '@cofold/agents';
+import { PERMISSION_MODES, createAgent, createAskUserTool, policyOf } from '@cofold/agents';
 import type { Agent as CofoldAgent, PermissionMode, Tool } from '@cofold/agents';
 import { resolveWithin } from '@cofold/tools';
+import { workspaceSlug } from '@cofold/store-file';
 import { createClientCalls } from '@ahpd/sdk';
 import type { Bag, ClientCallAnswer, Session } from '@ahpd/sdk';
+import { join } from 'node:path';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
-import { PERMISSION_MODES, defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
+import { defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
 import { cofoldTools, describe } from './tools.js';
 import type { ClientToolCall, ClientToolRelay } from './tools.js';
@@ -29,22 +30,33 @@ const insideDirectory = (workspace: string, path: string): boolean =>
   resolveWithin(workspace, path).inside;
 
 /**
- * The tools whose calls change a file, by the names `@cofold/tools` gives them.
+ * Where a session's memory files live, or nothing for a store kept in memory.
  *
- * The two file-writing tools of the files capability. Nothing else reports an
- * edit: a shell writes without naming a file and a memory file lives outside
- * the workspace, so a changeset is only told about the files it can read.
+ * cofold keeps memory under a folder its caller names, one folder per
+ * workspace. This host names the store's own root, so memory goes under
+ * `<store>/memory/<workspace slug>`, beside the sessions, and the store and
+ * its memory are one thing to back up. A store deliberately in memory has no
+ * directory at all, and the memory capability is left out rather than given
+ * one under somebody's home.
  */
-const EDITS = new Set(['write_file', 'edit_file']);
+const memoryDirOf = (options: CofoldOptions, workspace: string): string | undefined =>
+  options.memory === true
+    ? undefined
+    : join(options.store ?? defaultStoreRoot(), 'memory', workspaceSlug({ workspace }));
 
 /**
- * The file a call is about to change, resolved the way the files capability
- * resolves it, or nothing for a tool that does not write a named file.
+ * The file a call is about to change, or nothing for a call that changes none.
+ *
+ * The tool's own `writes` is where a call names the file it changes, resolved
+ * against the directory that tool works in (cofold decision 117), so this host
+ * keeps no list of tool names: a capability's tool and a host tool that
+ * declares one are both read the same way. Only a file inside the workspace is
+ * an edit - a changeset is about the files a session can read, and a shell or
+ * a memory file is not one of them.
  */
 const editPathOf = (workspace: string, tool: Tool<any, any>, input: unknown): string | undefined => {
-  if (tool.effects.writes !== true || !EDITS.has(tool.name)) return undefined;
-  const path = (input as { path?: unknown } | undefined)?.path;
-  return typeof path === 'string' && path !== '' ? resolve(workspace, path) : undefined;
+  const written = tool.writes?.(input);
+  return written !== undefined && insideDirectory(workspace, written) ? written : undefined;
 };
 
 /**
@@ -194,7 +206,9 @@ export const createTurnAgent = (
    *
    * The tool is named as the client announced it - `openFile`, not the
    * `probe__openFile` the model was offered - because that is the name its
-   * failure is reported under.
+   * failure is reported under. Its row is titled by that name: a subject is
+   * the run's own tool declaring what it acts on, and a client's tool is
+   * announced to this host without one.
    */
   const openedCall = (call: ClientToolCall): void => {
     calls.open({
@@ -204,7 +218,7 @@ export const createTurnAgent = (
         toolCallId: call.callId,
         toolName: bareName(call.name, call.owner),
         displayName: call.name,
-        invocationMessage: describe(call.name, call.input),
+        invocationMessage: describe(call.name),
         confirmed: 'not-needed',
         toolInput: JSON.stringify(call.input),
       },
@@ -292,6 +306,7 @@ export const createTurnAgent = (
     const autoCompactTokens = options.autoCompactTokens === undefined
       ? cap
       : Math.min(options.autoCompactTokens, cap);
+    const memoryDir = memoryDirOf(options, where);
     return createAgent({
       id: AGENT_ID,
       instructions: instructionsOf(values),
@@ -304,6 +319,8 @@ export const createTurnAgent = (
       /*
        * The four capabilities cofold runs itself, in cofold's own process.
        *
+       * The `tools` section is cofold's shape, built by cofold's
+       * `standardCapabilities`; what this host adds is where the run is.
        * Memory goes under the store root, beside the sessions; a session whose
        * store is deliberately in memory has no directory to keep memory files
        * in, so it gets the other three rather than files under somebody's home.
@@ -311,16 +328,17 @@ export const createTurnAgent = (
        * run two contributors give one name to.
        */
       capabilities: capabilitiesOf(options.tools ?? DEFAULT_TOOLS, {
-        storeRoot: options.memory === true ? undefined : options.store ?? defaultStoreRoot(),
         workspace: where,
+        ...(memoryDir === undefined ? {} : { memoryDir }),
       }, taken),
       /*
        * The edits a cofold tool makes, on their way to the changeset.
        *
        * The hooks are where a call is known before and after it runs, which is
-       * what the `before`/`after` pair needs: the path is resolved against the
-       * run's workspace the way the files capability resolves it, so the two
-       * halves name one file even when the model wrote a relative path.
+       * what the `before`/`after` pair needs: the tool names the file it writes
+       * and the call carries the input, so the two halves name one file even
+       * when the model wrote a relative path. The pair also lands in the right
+       * order, because cofold runs this hook before it announces the call.
        */
       hooks: {
         beforeTool: ({ call, tool }) => {

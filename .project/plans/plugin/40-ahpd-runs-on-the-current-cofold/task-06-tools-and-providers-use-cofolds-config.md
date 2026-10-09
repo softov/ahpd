@@ -1,6 +1,6 @@
 ---
 title: The tools and providers are configured by cofold's types
-status: todo
+status: done
 depends: [task-01-ahpd-takes-the-cofold-release.md]
 layer: "agent-cofold"
 refs:
@@ -30,6 +30,7 @@ The tool and search configuration, the provider shape and `splitModel` are cofol
 - `UPDATE: packages/agent-cofold/src/agent.ts:209` - import `splitModel` from `@cofold/model-openai-compat`.
 - `UPDATE: packages/agent-cofold/src/turnagent.ts:313-316` - pass `memoryDir` as `join(storeRoot, 'memory', workspaceSlug({ workspace }))`, and none for a store in memory.
 - `UPDATE: packages/agent-cofold/src/plugin.ts:66-82` - the `tools` option is checked against `TOOLS_SCHEMA`, unless the new option `strictTools` is `false`.
+- `UPDATE: packages/agent-cofold/package.json` - adds `@cofold/commands` at `^0.3.0`, whose `check` validates the `tools` option.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-config.test.ts:74-77` - the `splitModel` cases import cofold's.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts:10-16` - the imports.
 
@@ -56,4 +57,18 @@ The tool and search configuration, the provider shape and `splitModel` are cofol
 
 ## Resume
 
+- `capabilitiesOf` keeps its signature, so `turnagent.ts` changed only where it computes `memoryDir`.
+- `standardCapabilities` builds the four capabilities and cofold's own order is the one used.
+- `exclude` carries the host tools' names instead of the old `withoutTaken` list.
+- A session whose store is in memory passes no `memoryDir`, so cofold leaves memory out.
+- `HarnessProvider` is cofold's `ProviderConfig`, and the local `splitModel` is gone.
+- `index.ts` re-exports `splitModel` from `@cofold/model-openai-compat` rather than from `config.ts`.
+- The `tools` option is checked with `check` from `@cofold/commands` against `TOOLS_SCHEMA`.
+- `@cofold/commands` is a new dependency of this package, at the range the plan names.
+- The daemon checks the options schema before `apply`, and that check cannot be conditional.
+- `optionsSchema.properties.tools` therefore stays loose, which is what lets `strictTools: false` bypass the check.
+- The strict check runs inside `optionsOf`, which `strictTools: false` reaches around.
+- The README's options table and the options test both gained the `strictTools` row.
+- `toolsOf`'s doc now says it is the loose reading that `strictTools: false` asks for.
+- The two remaining failures are task 07's read-before-write cases, not this task's.
 - `providersOf`, `providerFor` and `PROVIDER_SCHEMA` are not taken; the plan's certification says why.

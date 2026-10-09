@@ -1,5 +1,4 @@
-import { resume } from '@cofold/agents';
-import type { RunCommand, RunHandle } from '@cofold/agents';
+import type { RunCommand } from '@cofold/agents';
 import type { Bag, Session } from '@ahpd/sdk';
 import type { SessionContext } from './context.js';
 
@@ -40,68 +39,27 @@ const answersOf = (answers: Bag): Record<string, string | string[]> => {
   return said;
 };
 
-/** What a paused run's answers and stops offer the other areas. */
+/** What a stopped turn offers the other areas. */
 export interface Pauses {
-  owePause: () => void;
-  payPause: (didPause: boolean) => void;
   stop: (reason: string) => void;
 }
 
 export const createPauses = (
   ctx: SessionContext,
 ): Pauses & { methods: Pick<Session, 'confirm' | 'answer'> } => {
-  const { start, sessionId, pending } = ctx;
-
-  /** Start owing a pause, unless one is already owed. */
-  const owePause = (): void => {
-    if (ctx.pausing !== undefined) return;
-    let resolve: (didPause: boolean) => void = () => {};
-    const settled = new Promise<boolean>((done) => { resolve = done; });
-    ctx.pausing = { settled, resolve };
-  };
-
-  /** Settle the owed pause, if there is one, with whether the run paused. */
-  const payPause = (didPause: boolean): void => {
-    const owed = ctx.pausing;
-    ctx.pausing = undefined;
-    owed?.resolve(didPause);
-  };
-
-  /**
-   * Rejoin a run this process paused, so it can take a command again.
-   *
-   * cofold's `run()` returns a handle with no command channel; only `resume()`
-   * installs one. The sequence the pause ended at is passed so the rejoined
-   * stream carries what happens next rather than everything the client has
-   * already seen.
-   */
-  const rejoin = (): RunHandle | undefined => {
-    const waiting = ctx.paused;
-    const agent = ctx.liveAgent;
-    if (waiting === undefined || agent === undefined) return undefined;
-    ctx.paused = undefined;
-    const rejoined = resume({ agent, sessionId, runId: waiting.runId, afterSeq: waiting.seq });
-    ctx.handle = rejoined;
-    if (ctx.activeMapping !== undefined) ctx.read(rejoined, ctx.activeMapping, ctx.active === undefined ? waiting.runId : String(ctx.active.id));
-    return rejoined;
-  };
+  const { start, pending } = ctx;
 
   /**
    * Send a decision back into the run that is waiting on it.
    *
-   * A run that has not paused still holds a live handle and takes the command
-   * directly; one that paused is rejoined first, and one that has announced a
-   * request but not yet paused is waited for and then rejoined. The answer is
-   * fire and forget, the way a steer is: whether it was taken is known here,
-   * and a refusal is cofold's to log rather than a turn to fail.
+   * The handle a run was started or resumed with stays open across its own
+   * pause and takes the answer, so there is one place a decision goes: the
+   * handle this process holds. The answer is fire and forget, the way a steer
+   * is: whether a turn was waiting is known here, and a refusal is cofold's to
+   * log rather than a turn to fail - a closed handle throws `not_running`.
    */
   const route = (command: RunCommand): void => {
-    const owed = ctx.pausing;
-    if (owed !== undefined && ctx.paused === undefined) {
-      void owed.settled.then((didPause) => { if (didPause) route(command); });
-      return;
-    }
-    const live = ctx.paused === undefined ? ctx.handle : rejoin();
+    const live = ctx.handle;
     if (live !== undefined) {
       void live.submit(command).catch(() => {});
       return;
@@ -110,8 +68,7 @@ export const createPauses = (
      * An answer can arrive while a resume is still opening.
      *
      * The replay a `start.resume` does announces the request the run is waiting
-     * on before it attaches the handle that takes commands - the awaiting
-     * `run.finished` it reads is history, not a live pause - so a person
+     * on before it attaches the handle that takes commands, so a person
      * answering the moment the form appears would have the decision dropped and
      * the run left waiting for ever. The answer waits for the same opening
      * every turn waits for, then goes to whatever handle that left behind.
@@ -119,7 +76,7 @@ export const createPauses = (
     const waiting = ctx.opening;
     if (waiting === undefined) return;
     void waiting.then(() => {
-      const later = ctx.paused === undefined ? ctx.handle : rejoin();
+      const later = ctx.handle;
       if (later !== undefined) void later.submit(command).catch(() => {});
     }, () => {});
   };
@@ -127,29 +84,18 @@ export const createPauses = (
   /**
    * Stop the run, answering anything it is waiting on.
    *
-   * A paused run has already closed its handle, so stopping it means
-   * rejoining it and cancelling that: cofold's own cancel denies the open
-   * request and ends the run, which is the one path that leaves no promise
-   * nobody can settle. A run that has announced a request but not yet paused
-   * is waited for, and then stopped the same way.
+   * Every held entry is settled first, so the session stops reporting
+   * `InputNeeded` the moment it is stopped rather than when the run's own
+   * resolution arrives. The cancel is what answers an open request - with
+   * "The turn was stopped" - and ends the run cancelled, whether the run was
+   * working or waiting on a person: one handle serves both.
    */
-  /** The half of `stop` that needs a handle, once the opening has settled. */
   const stopNow = (reason: string): void => {
-    const owed = ctx.pausing;
-    if (owed !== undefined && ctx.paused === undefined) {
-      void owed.settled.then((didPause) => { if (didPause) stopNow(reason); });
-      return;
+    for (const held of [...pending.values()]) {
+      const removal = ctx.activeMapping?.settle(held.requestId);
+      if (removal !== undefined) start.emit('session', removal);
     }
-    if (ctx.paused !== undefined) {
-      for (const held of [...pending.values()]) {
-        const removal = ctx.activeMapping?.settle(held.requestId);
-        if (removal !== undefined) start.emit('session', removal);
-      }
-      pending.clear();
-      const rejoined = rejoin();
-      rejoined?.cancel({ reason });
-      return;
-    }
+    pending.clear();
     ctx.handle?.cancel({ reason });
   };
 
@@ -165,9 +111,9 @@ export const createPauses = (
      * A stop can arrive while a resume is still opening.
      *
      * `active` is rebuilt by the replay before the handle that takes a cancel
-     * exists, so a stop in that window would find neither a paused run nor a
-     * handle and quietly do nothing. It waits for the same opening every turn
-     * waits for and then stops whatever handle that left behind.
+     * exists, so a stop in that window would find no handle and quietly do
+     * nothing. It waits for the same opening every turn waits for and then
+     * stops whatever handle that left behind.
      */
     const waiting = ctx.opening;
     if (waiting !== undefined) {
@@ -178,8 +124,6 @@ export const createPauses = (
   };
 
   return {
-    owePause,
-    payPause,
     stop,
     methods: {
       /**

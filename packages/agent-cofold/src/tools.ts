@@ -170,23 +170,31 @@ export const contributorOf = (owner: string | undefined): Bag =>
  * renderer. `shell_exec` is the one cofold tool that needs it: a shell run
  * through the harness is a command with output, not a generic tool, and a
  * command a person typed (`!...`) is stamped on its own path in `session.ts`.
- * A tool the table does not name is left unstamped, so the generic renderer
+ * A tool that is not a command is left unstamped, so the generic renderer
  * draws it rather than a guess.
  */
 export const toolMetaOf = (name: string): Bag | undefined =>
   (name === 'shell_exec' ? { toolKind: 'terminal' } : undefined);
 
 /**
+ * The subject a call was proposed with, when it named one.
+ *
+ * cofold resolves a tool's subject from the input the call will run with and
+ * sends it on `tool.proposed` (cofold decision 117). An empty string is not a
+ * subject: the tool answered that it acts on nothing.
+ */
+const subjectIn = (subject: string | undefined): string | undefined =>
+  (subject === undefined || subject === '' ? undefined : subject);
+
+/**
  * What a call intends, in the one line a client draws above the input.
  *
  * The command a shell is about to run, so a terminal row reads as the command
- * rather than as the tool's name. Nothing for a tool whose input speaks for
- * itself: an absent intention leaves the client to draw the name.
+ * rather than as the tool's name. Nothing for every other tool: their row says
+ * what they run on, and an absent intention leaves the client to draw the name.
  */
-export const intentionOf = (name: string, input: unknown): string | undefined => {
-  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
-  return name === 'shell_exec' && typeof held.command === 'string' ? held.command : undefined;
-};
+export const intentionOf = (name: string, subject?: string): string | undefined =>
+  (name === 'shell_exec' ? subjectIn(subject) : undefined);
 
 /**
  * What a call's input is on the wire.
@@ -196,32 +204,24 @@ export const intentionOf = (name: string, input: unknown): string | undefined =>
  * JSON text of the input for every other call, which is what a client reads as
  * the arguments.
  */
-export const toolInputOf = (name: string, input: unknown): string | undefined => {
+export const toolInputOf = (name: string, input: unknown, subject?: string): string | undefined => {
+  const command = name === 'shell_exec' ? subjectIn(subject) : undefined;
+  if (command !== undefined) return command;
   if (input === undefined) return undefined;
   if (typeof input === 'string') return input;
-  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : undefined;
-  if (name === 'shell_exec' && typeof held?.command === 'string') return held.command;
   return JSON.stringify(input);
 };
 
 /**
- * What a call runs on, as its row is titled: the command of `shell_exec`, the
- * path of `read_file`, `write_file`, `edit_file` and `memory_write`, the
- * pattern of `search_files` and `list_files`, the URL of `web_fetch` and the
- * query of `web_search`. Any other tool, or one missing the argument, is
- * titled by its name.
+ * What a call runs on, as its row is titled.
+ *
+ * The subject is cofold's: the tool itself resolved it from the input the call
+ * will run with, so it is the file, the command or the query the row is about
+ * rather than the argument the model happened to spell (cofold decision 117).
+ * A tool that declares no subject - every tool of this host's own - is titled
+ * by its name.
  */
-export const describe = (name: string, input: unknown): string => {
-  const held = typeof input === 'object' && input !== null ? input as Record<string, unknown> : {};
-  const field = name === 'shell_exec' ? 'command'
-    : name === 'read_file' || name === 'write_file' || name === 'edit_file' || name === 'memory_write' ? 'path'
-      : name === 'search_files' || name === 'list_files' ? 'pattern'
-        : name === 'web_fetch' ? 'url'
-          : name === 'web_search' ? 'query'
-            : undefined;
-  const value = field === undefined ? undefined : held[field];
-  return typeof value === 'string' && value !== '' ? value : name;
-};
+export const describe = (name: string, subject?: string): string => subjectIn(subject) ?? name;
 
 /**
  * The response part a tool call holds in a snapshot.
@@ -283,13 +283,20 @@ export const toolStartAction = (
  * Without it the reducer parks every call in `pending-confirmation` and
  * draws a question nobody asked.
  */
-export const toolReadyAction = (turnId: string, callId: string, name: string, input: unknown, owner?: string): Bag => {
-  const written = toolInputOf(name, input);
+export const toolReadyAction = (
+  turnId: string,
+  callId: string,
+  name: string,
+  input: unknown,
+  owner?: string,
+  subject?: string,
+): Bag => {
+  const written = toolInputOf(name, input, subject);
   return {
     type: 'chat/toolCallReady',
     turnId,
     toolCallId: callId,
-    invocationMessage: describe(name, input),
+    invocationMessage: describe(name, subject),
     confirmed: 'not-needed',
     ...contributorOf(owner),
     ...(written !== undefined ? { toolInput: written } : {}),
@@ -311,7 +318,7 @@ export const toolCompleteAction = (
   name: string,
   content: string,
   isError: boolean,
-  input?: unknown,
+  subject?: string,
   meta?: Bag,
 ): Bag => ({
   type: 'chat/toolCallComplete',
@@ -319,7 +326,7 @@ export const toolCompleteAction = (
   toolCallId: callId,
   result: {
     success: !isError,
-    pastTenseMessage: describe(name, input),
+    pastTenseMessage: describe(name, subject),
     ...(content !== '' ? { content: [{ type: 'text', text: content }] } : {}),
     ...(isError ? { error: { message: content === '' ? 'The tool failed' : content } } : {}),
   },

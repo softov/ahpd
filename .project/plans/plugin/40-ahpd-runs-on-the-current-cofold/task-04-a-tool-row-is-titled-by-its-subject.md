@@ -1,6 +1,6 @@
 ---
 title: A tool row is titled by the subject cofold sends
-status: todo
+status: done
 depends: [task-01-ahpd-takes-the-cofold-release.md]
 layer: "agent-cofold"
 refs:
@@ -55,4 +55,16 @@ ahpd no longer keeps a table of cofold tool names for them; `toolMetaOf` keeps t
 
 ## Resume
 
-- A path tool's subject is relative to the workspace, and absolute outside it; a test that expected the model's spelling changes.
+- The release installed is `@cofold/tools` 0.4.0, where the steps name 0.3.0.
+- Each tool declares the subject the table guessed: a file tool its path, the memory tools their file, a search tool its pattern.
+- The web tools declare their URL or their query.
+- Step 9 says a `memory_read` row with no path shows `index`.
+- cofold's index is `MEMORY.md`, and its subject is that name under the memory folder, so the case asserts `MEMORY.md`.
+- `toolInputOf` and `intentionOf` read the subject for `shell_exec` alone, the one tool whose row shows its input as a command.
+- A shell call a run stored with no subject now sends its input as JSON.
+- `toolCompleteAction` took the call's input only to title it, so that parameter is now the subject.
+- The arity did not change, so no call site moved an argument.
+- The title table in the store suite drew host stubs under cofold tool names, which the per-name table titled by an argument.
+- A host tool declares no subject, so that table is now the case for it.
+- A new case covers a capability call titled by its subject, live and read back.
+- The tools suite gained one case for the three spellings: a relative path, the memory index, and a path outside the workspace.

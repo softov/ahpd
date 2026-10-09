@@ -1,6 +1,6 @@
 ---
 title: An edit is the file the tool says it writes
-status: todo
+status: done
 depends: [task-01-ahpd-takes-the-cofold-release.md]
 layer: "agent-cofold"
 refs:
@@ -40,4 +40,14 @@ ahpd keeps `isEdit` from `effects.writes`, so a host tool still counts as an edi
 
 ## Resume
 
-- Before 0.2, cofold's `acceptEdits` judged `memory_write`'s relative path against the workspace and allowed it; the new row records the fix.
+- `editPathOf` calls `tool.writes` and keeps the path only when `insideDirectory` says it is inside, which is cofold's own resolver over real paths.
+- The `beforeTool` hook already received the tool, so only `editPathOf` changed.
+- `announceEdit` takes the path it computes and `settleEdit` reads the path it stored, so neither needed the tool.
+- The mode table's store root is now its `away` directory rather than the workspace.
+- The memory folder is under the store root, so a store in the workspace put memory files inside it.
+- `acceptEdits` then took the write for an edit of the workspace.
+- `auto` runs a memory write, because cofold's `auto` asks only for a call a tool declares `destructive`.
+- Step 6's case already exists: `keeps memory files under the store root, by workspace, and out of the changeset` sends no `onFileEdit`.
+- It now passes because the file is outside the workspace rather than because a name list left it out.
+- The new ordering case reads the trace for `edit:before` before the call's `chat/toolCallStart`.
+- That order holds because cofold runs the hook before it proposes the call.

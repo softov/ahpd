@@ -1,6 +1,6 @@
 ---
 title: Modes and effort are cofold's lists
-status: todo
+status: done
 depends: [task-01-ahpd-takes-the-cofold-release.md]
 layer: "agent-cofold"
 refs:
@@ -44,4 +44,7 @@ ahpd keeps `PERMISSION_LABELS`, and asks the model for effort without a forced f
 
 ## Resume
 
-- The decision `permission-modes-live-in-the-harness` item 5 keeps its effect: model-openai-compat 0.2.0 turns reasoning on from the param.
+- cofold's six descriptions are word for word ahpd's own, so no line differs and `PERMISSION_DESCRIPTIONS` is the same array built from cofold's record.
+- `agent.ts` re-exports `PERMISSION_MODES`, `EFFORT_LEVELS` and `effortOf` from cofold, so `index.ts` and every importer keep the names they had.
+- The decision `permission-modes-live-in-the-harness` item 5 keeps its effect: model-openai-compat 0.2.0 turns reasoning on from the param. The modes test now pins that the provider is asked for no `features` key.
+- The refs' line numbers in `agent-cofold-modes.test.ts` were stale; the two cases are the advertises case and the level case.

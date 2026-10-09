@@ -58,6 +58,7 @@ Every option below is a key under `options` in the plugin's entry, and the daemo
 | `store` | `$XDG_DATA_HOME/ahpd/cofold` | Where the cofold file store lives |
 | `memory` | `false` | `true` to hold the store in memory, for a test |
 | `tools` | all four on | Which capabilities a session runs, and where `web_search` gets its providers |
+| `strictTools` | `true` | `false` holds `tools` to the loose check, so a key cofold does not know is dropped rather than refused |
 | `apiKey` | the cofold file's | The daemon's own key. `{ "$secret": "host:<name>" }` reads it from the vault; an embedder may pass a function asked once per request |
 | `resource` | the endpoint's origin when it is `https` | The protected resource a client authenticates against |
 | `adapter` | the HTTP one | A cofold `ModelAdapter` used instead of the HTTP one, for an embedder or a test |
@@ -70,10 +71,10 @@ An absent key is on, and `false` turns that capability off.
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `files` | `true` | `read_file`, `write_file`, `edit_file`, `list_files` and `search_files` |
-| `shell` | `true` | `shell_exec`, one command at a time through the platform's shell |
-| `memory` | `true` | `memory_read` and `memory_write`, under `<store>/memory/<workspace slug>/` |
-| `web` | `true` | `true` is `web_fetch` alone; an object adds `web_search` over the providers in its `search` |
+| `files` | `true` | `read_file`, `write_file` and `edit_file`, titled by the file; `list_files` and `search_files`, titled by the pattern |
+| `shell` | `true` | `shell_exec`, titled by its command, one command at a time through the platform's shell |
+| `memory` | `true` | `memory_read` and `memory_write`, titled by the memory file, under `<store>/memory/<workspace slug>/` |
+| `web` | `true` | `web_fetch`, titled by the URL; an object adds `web_search`, titled by the query, over the providers in its `search` |
 
 ### `tools.web.search`
 
@@ -118,6 +119,8 @@ await listen({ port: 9187 }, (peer) => host.accept(peer));
 A session gets `@cofold/tools`' four capabilities by default, so it can read, search, edit and write files, run one command, fetch a page and search the web when a provider is configured, and keep memory. The permission mode is what confines them rather than the workspace, and `default` asks before a write, a command, a web fetch and a read outside the workspace. A session that names no mode gets `auto`, where a read, inside or outside, and a web fetch run and only a write or a command asks. An approval offers Allow once, Allow the tool for this session, and Deny; the session choice is sent as `alwaysApprove`, and cofold does not ask about that tool again in the session.
 
 The workspace check resolves symlinks with cofold's own resolver, including a link whose target does not exist yet, so a write through a link that leaves the workspace is outside it. `web_fetch` refuses loopback, private and link-local addresses on every hop, though not the machine's public address, and a name that answers with a different address at the connection is not caught.
+
+A write or an edit needs the file to have been read in this session, and cofold refuses one it has not seen. A file that changed since it was read is refused too. What a session read is held in the process, so a restart means reading it again. `"files": { "requireRead": false }` turns the rule off for the session, and the rule stays on when the key is absent.
 
 Memory is per workspace and shared by the sessions in it, under `<store>/memory/<workspace slug>/`. A session opened with no working directory keeps its tools and works in the daemon's current directory. A shell call is drawn as a terminal with its bare command, and a turn with no model configured fails with a sentence that says to add `"model"` to the cofold configuration file.
 

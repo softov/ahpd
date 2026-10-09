@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { cofoldAgent, harnessConfig, harnessConfigPath, modelOf, resourceOf, splitModel } from '../src/index.js';
+import { splitModel } from '@cofold/model-openai-compat';
+import { cofoldAgent, harnessConfig, harnessConfigPath, modelOf, resourceOf } from '../src/index.js';
 
 /*
  * The harness's own configuration, read by the backend.
@@ -71,6 +72,8 @@ it('answers nothing rather than failing when the file is absent or partly wrong'
 });
 
 it('splits a model reference on the first slash, never the last', () => {
+  // cofold's own splitter, which is the one this backend resolves a reference
+  // with: the cases are here to hold the two answers together.
   expect(splitModel('open_router/~deepseek/deepseek-chat')).toEqual({ provider: 'open_router', modelId: '~deepseek/deepseek-chat' });
   expect(splitModel('deepseek-chat')).toBeUndefined();
   expect(splitModel('/model')).toBeUndefined();

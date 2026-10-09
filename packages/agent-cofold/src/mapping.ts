@@ -149,6 +149,14 @@ const bag = (value: unknown): Bag => (typeof value === 'object' && value !== nul
 interface OpenCall {
   name: string;
   input: unknown;
+  /**
+   * What the call acts on, as cofold resolved it.
+   *
+   * The tool's own answer for the input the call runs with, which is what the
+   * row is titled by. A tool that declares no subject leaves this undefined,
+   * and the row is titled by the tool's name.
+   */
+  subject: string | undefined;
   /** The client that runs it, when one does; undefined for a host tool. */
   owner: string | undefined;
   /** Whether `chat/toolCallReady` has gone out yet. */
@@ -443,10 +451,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * client watching the stream see the same row.
            */
           const meta = toolMetaOf(event.name);
-          const intention = intentionOf(event.name, event.input);
+          const intention = intentionOf(event.name, event.subject);
           const held: OpenCall = {
             name: event.name,
             input: event.input,
+            subject: event.subject,
             owner,
             readied: false,
             awaited: false,
@@ -472,7 +481,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const held = open.get(event.callId);
           const owner = held?.owner ?? options.ownerOf(event.name);
           const meta = toolMetaOf(event.name);
-          const intention = intentionOf(event.name, event.input);
+          // The ask carries the input but not the subject, so the one the
+          // proposal resolved is what the row keeps, as the live title does.
+          const subject = held?.subject;
+          const intention = intentionOf(event.name, subject);
           const call: Bag = held === undefined
             ? {
                 toolCallId: event.callId,
@@ -498,7 +510,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           call.invocationMessage = prompt;
           call.options = choices;
           delete call.confirmed;
-          const written = toolInputOf(event.name, event.input);
+          const written = toolInputOf(event.name, event.input, subject);
           if (written !== undefined) call.toolInput = written;
 
           const actions: Bag[] = [];
@@ -585,9 +597,9 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           held.readied = true;
           const call = held.part.toolCall as Bag;
           call.status = 'running';
-          call.invocationMessage = held.invocation ?? describe(held.name, held.input);
+          call.invocationMessage = held.invocation ?? describe(held.name, held.subject);
           call.confirmed = held.awaited ? 'user-action' : 'not-needed';
-          const written = toolInputOf(held.name, held.input);
+          const written = toolInputOf(held.name, held.input, held.subject);
           if (written !== undefined) call.toolInput = written;
           /*
            * The call starts when cofold says it started, which for a call a
@@ -604,7 +616,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             type: 'chat/toolCallReady',
             turnId,
             toolCallId: event.callId,
-            invocationMessage: held.invocation ?? describe(held.name, held.input),
+            invocationMessage: held.invocation ?? describe(held.name, held.subject),
             confirmed: held.awaited ? 'user-action' : 'not-needed',
             ...contributorOf(held.owner),
             ...(written !== undefined ? { toolInput: written } : {}),
@@ -620,13 +632,13 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             const call = held.part.toolCall as Bag;
             call.status = 'completed';
             call.success = !event.isError;
-            call.pastTenseMessage = describe(held.name, held.input);
+            call.pastTenseMessage = describe(held.name, held.subject);
             if (event.content !== '') call.content = [{ type: 'text', text: event.content }];
             if (event.isError) call.error = { message: event.content === '' ? 'The tool failed' : event.content };
             call._meta = withCallTimes(bag(call._meta), callTimes(startOf(call._meta) ?? event.at, event.at, event.durationMs));
             meta = bag(call._meta);
           }
-          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.input, meta)]);
+          return only([toolCompleteAction(turnId, event.callId, event.name, event.content, event.isError, held?.subject, meta)]);
         }
 
         /*
@@ -647,14 +659,14 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           const call = held.part.toolCall as Bag;
           call.status = 'completed';
           call.success = false;
-          call.pastTenseMessage = describe(held.name, held.input);
+          call.pastTenseMessage = describe(held.name, held.subject);
           call.error = { message: event.reason };
           // A refusal can land before the call ever reached `running`; the
           // ready action is what moves it there so the completion applies.
           const actions: Bag[] = held.readied
             ? []
-            : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner)];
-          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.input));
+            : [toolReadyAction(turnId, event.callId, event.name, held.input, held.owner, held.subject)];
+          actions.push(toolCompleteAction(turnId, event.callId, event.name, event.reason, true, held.subject));
           return only(actions);
         }
 

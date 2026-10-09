@@ -22,5 +22,15 @@ export default defineConfig({
   },
   test: {
     globalSetup: ['./tools/test-tmpdir.ts'],
+    /*
+     * cofold's packages, through this runner rather than node's own loader.
+     *
+     * An externalized dependency keeps node's module cache, which `vi.resetModules()`
+     * cannot clear, so a fresh module load would hand back the same instance and
+     * the same process-wide state. A case that restarts a cofold run needs a
+     * second copy of that state, and only a module this runner owns can be
+     * reset. The packages are built `dist`, so inlining costs a transform.
+     */
+    server: { deps: { inline: [/@cofold\//] } },
   },
 });

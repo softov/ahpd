@@ -637,3 +637,146 @@ it('runs a host tool that says nothing about itself', async () => {
   expect(needed(p, uri, 'toolConfirmation')).toBeUndefined();
   expect(ran).toEqual(['plain']);
 });
+
+/*
+ * One handle from a turn's start to its last `run.finished`.
+ *
+ * A pause is a span inside that read rather than the end of it, so the cases
+ * below ask what else can reach a run that is waiting, and what the run does
+ * with it afterwards: a steer sent into the pause, a second pause on the same
+ * run, a stop, and a decision that arrives after the turn is over.
+ */
+
+/** The call the newest confirmation entry is about. */
+const latestCall = (p: ReturnType<typeof peer>, uri: string): string | undefined => actions(p, uri)
+  .filter((e) => e.action.type === 'session/inputNeededSet' && (e.action.request as { kind?: string }).kind === 'toolConfirmation')
+  .map((e) => (e.action.request as { toolCall?: { toolCallId?: string } }).toolCall?.toolCallId)
+  .at(-1);
+
+/** Answer the confirmation the run is waiting on, by the call it names. */
+const answerCall = async (
+  client: Awaited<ReturnType<typeof talking>>['client'],
+  chatUri: string,
+  toolCallId: string,
+  approved: boolean,
+): Promise<void> => {
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId, approved, confirmed: 'user-action' } },
+  });
+};
+
+it('lands a steer sent during a pause after the answer', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+
+  // A person corrects the run while it waits. The handle answers this pause
+  // and keeps reading, so the message is held rather than refused.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 'steer-1', message: { text: 'make it short' } } },
+  });
+  await settle();
+
+  await answerCall(client, chatUri, 'call-a', true);
+  await until(() => ended(p, chatUri));
+
+  // The answer continued the run, and the steer reached the model on the way
+  // out: the tool ran once and the next request carries the correction.
+  expect(ran).toEqual(['hi']);
+  expect(JSON.stringify(model.requests[0]?.messages)).not.toContain('make it short');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('make it short');
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});
+
+it('answers a second pause on the same run', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({
+    script: [
+      { toolCalls: [{ name: 'write', input: { text: 'one' }, callId: 'call-a' }] },
+      { toolCalls: [{ name: 'write', input: { text: 'two' }, callId: 'call-b' }] },
+      { text: 'done' },
+    ],
+    stream: true,
+  });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write twice');
+  await until(() => latestCall(p, uri) !== undefined);
+  expect(latestCall(p, uri)).toBe('call-a');
+
+  await answerCall(client, chatUri, 'call-a', true);
+
+  // The run carries on inside the same turn and asks again, which a handle
+  // closed at the first pause could not do.
+  await until(() => asked(p, uri) >= 2);
+  expect(latestCall(p, uri)).toBe('call-b');
+  await settle();
+  expect(ended(p, chatUri)).toBe(false);
+
+  await answerCall(client, chatUri, 'call-b', true);
+  await until(() => ended(p, chatUri));
+
+  expect(ran).toEqual(['one', 'two']);
+  expect(types(p, chatUri).filter((type) => type === 'chat/turnComplete')).toHaveLength(1);
+  expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
+});
+
+it('stops a paused run, settles its entry and ends the turn cancelled', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+  const entry = needed(p, uri, 'toolConfirmation') as { id: string };
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  await until(() => ended(p, chatUri));
+
+  // The entry came down with the run rather than staying up for a person who
+  // can no longer answer it, and the tool never ran.
+  expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
+  expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
+  expect(ran).toEqual([]);
+  // One cancelled turn: the run's own finish, not one the stop made up.
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnCancelled');
+  expect(types(p, chatUri).filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
+});
+
+it('takes a decision for a turn that already ended, and says nothing', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+  await answerCall(client, chatUri, 'call-a', true);
+  await until(() => ended(p, chatUri));
+  const said = types(p, chatUri).length;
+
+  /*
+   * The call is over and its entry is gone, so this is a click on a row that
+   * is no longer there - on a slow client, an ordinary one. It must be
+   * dropped rather than thrown: the handle is closed, and a `not_running` out
+   * of a dispatch would be an error a person could not act on.
+   */
+  const refused = await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: false, reason: 'too late' } },
+  }) as { error?: unknown } | undefined;
+  await settle();
+
+  expect(refused?.error).toBeUndefined();
+  expect(types(p, chatUri)).toHaveLength(said);
+  expect(reduced(p, uri, chatUri).session.inputNeeded).toBeUndefined();
+  expect(ran).toEqual(['hi']);
+  expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+});

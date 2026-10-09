@@ -1,7 +1,7 @@
 ---
 title: ahpd runs on the current cofold release, and keeps no copy of what cofold now ships
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -29,9 +29,9 @@ refs:
   - "[code://packages/agent-cofold/src/transcript.ts#L80-L87](../../../../packages/agent-cofold/src/transcript.ts#L80-L87) - `invocationOf`, the same title read back from the store"
   - "[code://packages/agent-cofold/src/index.ts#L14-L29](../../../../packages/agent-cofold/src/index.ts#L14-L29) - the public names this plan moves to cofold"
   - npm://@cofold/agents@^0.2.1 - the run handle answers its own pause, modes and effort as data, `tool.proposed.subject`, `Tool.writes`, `Capability.exclude`, steer parts
-  - npm://@cofold/tools@^0.3.0 - every tool's `subject`, the file tools' `writes`, `standardCapabilities`, `TOOLS_SCHEMA`, and a write refused until the file is read
+  - npm://@cofold/tools@^0.4.0 - every tool's `subject`, the file tools' `writes`, `standardCapabilities`, `TOOLS_SCHEMA`, and a write refused until the file is read
   - npm://@cofold/model-openai-compat@^0.2.0 - a reasoning param turns reasoning on, `ProviderConfig`, `splitModel`, `providersOf`, `providerFor`, `PROVIDER_SCHEMA`
-  - npm://@cofold/store-file@^0.2.0 - `SessionRecord.activeWriterPid`
+  - npm://@cofold/store-file@^0.2.1 - `SessionRecord.activeWriterPid`
   - git://release-2026-10-06..release-2026-10-09 - the cofold range this plan certifies, read in `/github/cofold`
   - file:///github/cofold/.project/plans/agent/05-a-run-answers-its-own-pause/deferred.md - the ahpd work agent 05 left: drop the pause workaround
   - file:///github/cofold/.project/plans/agent/06-modes-and-effort-are-library-data/deferred.md - the ahpd work agent 06 left: drop the mode and effort copies
@@ -42,7 +42,7 @@ refs:
 
 ## Goal
 
-ahpd takes the current cofold release: agents 0.2.1, tools 0.3.0, model-openai-compat 0.2.0 and store-file 0.2.0.
+ahpd takes the current cofold release: agents 0.2.1, tools 0.4.0, model-openai-compat 0.2.0 and store-file 0.2.1.
 Every cofold change in that range is either used by ahpd or recorded here with the reason ahpd needs nothing.
 The code ahpd wrote while cofold lacked a feature goes, and ahpd uses cofold's version.
 A person sees the same sessions, approvals, questions and tool rows as before, with the small differences the certification lists.
@@ -82,7 +82,7 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 | The handle synthesizes a `run.finished` when the run published none | agent 05 | task 02 removes the fallback in `read` |
 | `handle.outcome` resolves once, at the real end | agent 05 | task 02 |
 | A run can pause more than once on one handle | agent 05 | task 02, a test |
-| A paused run stays in `liveRuns`, so a same-process `resume()` is refused `writer_busy` | agent 05 | task 02 removes `rejoin`, which would now fail |
+| A paused run stays in `liveRuns`, so a same-process `resume()` is refused `writer_busy` | agent 05 | task 02 removes `rejoin`, which would now fail; a restart case loads a fresh module graph |
 | `cancel()` on a paused handle denies the request "The turn was stopped" and ends `cancelled` | agent 05, decision 120 | task 02: `stop` cancels the handle, paused or not |
 | `submit` on a closed handle throws `not_running` | agent 05 | task 02: `route` and `steer` keep their `catch` |
 | A steer sent during a pause waits in the queue and lands after the answer | agent 05 | task 02, a test; before, the closed handle dropped it |
@@ -169,6 +169,7 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 | Drop `owePause`, `payPause`, `rejoin` and `route`'s waits, and `runs.ts`'s pause bookkeeping and synthesized `run.finished` | cofold agent 05 `deferred.md` | 02 |
 | A stop cancels the handle, which denies an open request and ends the run `cancelled` | cofold decision 120; the stop already settled every held entry first | 02 |
 | `reopen` keeps `resume()`, for a run a restart left paused | `resume()` is still the only way into a run from a new process | 02 |
+| The three restart cases fake a second process with a fresh module load: `vi.resetModules()` and a dynamic import of the sdk and the backend, with cofold's packages inlined in `vitest.config.ts` so the reset reaches them | Softov, 2026-10-09, asked "plugin/40: how should the 3 restart tests fake a second process?": "Fresh module load" | 02 |
 | Use cofold's `PERMISSION_MODES`, `PERMISSION_MODE_DESCRIPTIONS`, `EFFORT_LEVELS` and `effortOf`; keep `PERMISSION_LABELS`; drop the forced `features.reasoning` | cofold agent 06 `deferred.md`: "ahpd keeps its own labels" | 03 |
 | `describe`, `intentionOf` and `toolInputOf` read `subject` from `tool.proposed`; `toolMetaOf` stays | cofold tools 02 `deferred.md`; cofold sends no tool kind, so the terminal kind stays ahpd's | 04 |
 | `editPathOf` becomes `tool.writes(input)`, kept only when it is inside the workspace | cofold tools 02 `deferred.md`; `EDITS`'s own note: "a changeset is only told about the files it can read" | 05 |
@@ -177,6 +178,7 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 | `capabilitiesOf` becomes `standardCapabilities`; ahpd passes `memoryDir` itself, and none for a store in memory | cofold tools 03 `deferred.md` | 06 |
 | `HarnessProvider`, `SearchConfig`, `ToolsConfig` and `splitModel` come from cofold; `harnessConfig` and `harnessConfigPath` stay | cofold tools 03 `deferred.md` | 06 |
 | The `tools` option checks against `TOOLS_SCHEMA`; `strictTools: false` keeps today's loose check and `toolsOf` | Softov, 2026-10-09, asked "Adopt the strict TOOLS_SCHEMA?": "strict with option to bypass" | 06 |
+| `@ahpd/agent-cofold` takes `@cofold/commands@^0.3.0` as a dependency, for the `check` the strict `tools` option needs | Softov, 2026-10-09, asked "plugin/40: may agent-cofold depend on @cofold/commands ^0.3.0 for the strict tools check?": "Allow it" | 06 |
 | A run stored before 0.2, which has no `subject`, titles its rows by the tool name | Softov, 2026-10-09, asked how old runs are titled: "By tool name" | 04 |
 | Plugin 36 is its own build, right after this plan, and requires it | Softov, 2026-10-09: "Separate, right after" | - |
 | A `tools` option `files: { requireRead: false }` turns off the read-first rule; it is on by default | Softov, 2026-10-09, asked "Should cofold's file tools get an opt-out for the read-before-write rule?": "Opt-out, on by default" | 09 |
@@ -195,15 +197,15 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahpd takes the cofold release](task-01-ahpd-takes-the-cofold-release.md) | todo | - |
-| [02 - A paused run is answered and stopped on its own handle](task-02-a-paused-run-is-answered-on-its-own-handle.md) | todo | 01 |
-| [03 - Modes and effort are cofold's lists](task-03-modes-and-effort-are-cofolds-lists.md) | todo | 01 |
-| [04 - A tool row is titled by the subject cofold sends](task-04-a-tool-row-is-titled-by-its-subject.md) | todo | 01 |
-| [05 - An edit is the file the tool says it writes](task-05-an-edit-is-the-file-the-tool-writes.md) | todo | 01 |
-| [06 - The tools and providers are configured by cofold's types](task-06-tools-and-providers-use-cofolds-config.md) | todo | 01 |
-| [07 - A test reads a file before it writes it](task-07-a-test-reads-before-it-writes.md) | todo | 02 |
-| [08 - The package exports and documents what it now takes from cofold](task-08-exports-and-docs.md) | todo | 03, 04, 05, 06 |
-| [09 - The tools option can turn off the read-first rule](task-09-a-harness-can-turn-off-read-first.md) | todo | 06, 07, 08, cofold tools 04 release |
+| [01 - ahpd takes the cofold release](task-01-ahpd-takes-the-cofold-release.md) | done | - |
+| [02 - A paused run is answered and stopped on its own handle](task-02-a-paused-run-is-answered-on-its-own-handle.md) | done | 01 |
+| [03 - Modes and effort are cofold's lists](task-03-modes-and-effort-are-cofolds-lists.md) | done | 01 |
+| [04 - A tool row is titled by the subject cofold sends](task-04-a-tool-row-is-titled-by-its-subject.md) | done | 01 |
+| [05 - An edit is the file the tool says it writes](task-05-an-edit-is-the-file-the-tool-writes.md) | done | 01 |
+| [06 - The tools and providers are configured by cofold's types](task-06-tools-and-providers-use-cofolds-config.md) | done | 01 |
+| [07 - A test reads a file before it writes it](task-07-a-test-reads-before-it-writes.md) | done | 02 |
+| [08 - The package exports and documents what it now takes from cofold](task-08-exports-and-docs.md) | done | 03, 04, 05, 06 |
+| [09 - The tools option can turn off the read-first rule](task-09-a-harness-can-turn-off-read-first.md) | done | 06, 07, 08, cofold tools 04 release |
 
 ## Risks and tradeoffs
 
@@ -218,17 +220,16 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-09.
-- **Next action:** [task-01-ahpd-takes-the-cofold-release.md](task-01-ahpd-takes-the-cofold-release.md), with `@cofold/tools` and `@cofold/store-file` installed from packed tarballs of `b904cd1`; the tarball install is not committed.
-- **Open questions:** none.
-- **Watch out for:** a pause no longer ends the stream, so nothing may treat `run.finished{awaiting}` as the end of a read. `apply` still records no `endPoint` for it. Run `node tools/schema.mjs` before the suite.
+- **Done so far:** tasks 01 to 09, which is the whole release and the read-first off-switch. Every gate passes, and the agent-cofold suite is 15 files and 212 cases with no failures, down from 25.
+- **Next action:** none; see [implemented.md](implemented.md).
+- **Watch out for:** a pause no longer ends the stream, so nothing may treat `run.finished{awaiting}` as the end of a read. `apply` still records no `endPoint` for it. Task 06 kept the daemon's `tools` schema loose, so `strictTools: false` can bypass the strict check.
 
 ## Final verification checklist
 
-- [ ] Every row of "What cofold changed" names a task that is `done`, or says why ahpd needs nothing.
-- [ ] Each of the 25 tests above passes, and none was deleted to get there.
-- [ ] `rg "owePause|payPause|rejoin|pausing|liveAgent|EDITS|searchProviders|withoutTaken" packages/agent-cofold/src` finds nothing.
-- [ ] `pnpm install && node tools/schema.mjs && pnpm build && pnpm typecheck && pnpm boundary && npx vitest run --maxWorkers=2 --testTimeout=10000` pass.
-- [ ] [plugin 22](../22-a-cofold-write-lands-where-it-was-allowed/plan.md) task 04 is `dropped` and points here.
-- [ ] An edit of an unread file succeeds with `files: { requireRead: false }`.
-- [ ] `plans/index.md` updated.
+- [x] Every row of "What cofold changed" names a task that is `done`, or says why ahpd needs nothing.
+- [x] Each of the 25 tests above passes, and none was deleted to get there.
+- [x] `rg "owePause|payPause|rejoin|pausing|liveAgent|EDITS|searchProviders|withoutTaken" packages/agent-cofold/src` finds nothing.
+- [x] `pnpm install && node tools/schema.mjs && pnpm build && pnpm typecheck && pnpm boundary && npx vitest run --maxWorkers=2 --testTimeout=10000` pass.
+- [x] [plugin 22](../22-a-cofold-write-lands-where-it-was-allowed/plan.md) task 04 is `dropped` and points here.
+- [x] An edit of an unread file succeeds with `files: { requireRead: false }`.
+- [x] `plans/index.md` updated.

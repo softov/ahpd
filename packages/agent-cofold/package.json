@@ -63,10 +63,11 @@
     "@ahpd/sdk": "workspace:*"
   },
   "dependencies": {
-    "@cofold/agents": "^0.1.2",
-    "@cofold/model-openai-compat": "^0.1.1",
-    "@cofold/store-file": "^0.1.1",
-    "@cofold/tools": "^0.1.1"
+    "@cofold/agents": "^0.2.1",
+    "@cofold/commands": "^0.3.0",
+    "@cofold/model-openai-compat": "^0.2.0",
+    "@cofold/store-file": "^0.2.1",
+    "@cofold/tools": "^0.4.0"
   },
   "ahpd": {
     "entry": "./dist/index.js",

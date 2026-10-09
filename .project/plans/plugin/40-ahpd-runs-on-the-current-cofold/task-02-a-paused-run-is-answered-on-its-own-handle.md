@@ -1,6 +1,6 @@
 ---
 title: A paused run is answered and stopped on its own handle
-status: todo
+status: done
 depends: [task-01-ahpd-takes-the-cofold-release.md]
 layer: "agent-cofold"
 refs:
@@ -37,6 +37,7 @@ ahpd reads one handle to its last `run.finished` and keeps no pause bookkeeping 
 - `UPDATE: packages/agent-cofold/test/agent-cofold-plugin.test.ts` - the paused-run case passes.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-store.test.ts` - the two `reopen` cases pass, and a resumed run answers a second pause.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts` - the three in-emit cases and the nine timeout cases pass.
+- `UPDATE: vitest.config.ts` - cofold's packages are inlined, so `vi.resetModules()` reaches them and a restart case gets a second copy of cofold's own state.
 
 ## Steps
 
@@ -58,11 +59,14 @@ ahpd reads one handle to its last `run.finished` and keeps no pause bookkeeping 
 
 ## Validation
 
-- `rg "owePause|payPause|rejoin|pausing|liveAgent|\.paused" packages/agent-cofold/src` finds nothing.
+- `rg "owePause|payPause|rejoin|pausing|liveAgent|ctx\.paused" packages/agent-cofold/src` finds nothing.
 - Every case in the plan's test table, except the `ENOENT` one, passes.
 - The five new cases pass.
 - `pnpm typecheck` and `pnpm boundary` pass.
 
 ## Resume
 
-- A paused run is now in cofold's `liveRuns`, so any `resume()` in the same process fails `writer_busy`.
+- Steps 1 to 15 are in. `pauses.ts` routes to `ctx.handle` and cancels it. `runs.ts` keeps no pause bookkeeping and reads one handle to its last `run.finished`. The context lost `liveAgent`, `paused` and `pausing`.
+- The suffix is `ctx\.paused`: a bare `\.paused` also matches cofold's own `run.paused`, which `mapping.ts` maps and keeps.
+- The three restart cases load a fresh module graph, so the second host's cofold copy starts with an empty `liveRuns`. That needs cofold's packages inlined in `vitest.config.ts`, because node's own module cache is not resettable.
+- The agent-cofold suite is down from 25 failures to 2, both task 07's read-before-write.

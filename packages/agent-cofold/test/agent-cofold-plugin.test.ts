@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import { createFileStore } from '@cofold/store-file';
 import type { Policy } from '@cofold/agents';
@@ -81,6 +81,31 @@ const base = (): HostOptions => ({
 
 const load = (specs: PluginSpec[], over: Partial<HostOptions> = {}) =>
   loadPlugins(specs, { base: { ...base(), ...over }, configDir: REPO, cwd: REPO, log: () => {} });
+
+/**
+ * The loader and the host a restarted daemon builds.
+ *
+ * A restart is a new process, and a new process starts with cofold's
+ * module-level set of live runs empty, so a run the first daemon left paused
+ * can be resumed. `vi.resetModules()` and these imports are what make that
+ * second life here: the loader, the sdk, the host and the plugin the loader
+ * imports are all fresh copies, and they share nothing with the first host but
+ * the store directory.
+ */
+const restarted = async (): Promise<{
+  load: (specs: PluginSpec[], over?: Partial<HostOptions>) => ReturnType<typeof load>;
+  host: typeof createHost;
+}> => {
+  vi.resetModules();
+  const loader = await import('../../server/src/plugins.js');
+  const sdk = await import('../../sdk/src/host.js');
+  return {
+    load: (specs, over = {}) => loader.loadPlugins(specs, {
+      base: { ...base(), ...over }, configDir: REPO, cwd: REPO, log: () => {},
+    }),
+    host: sdk.createHost,
+  };
+};
 
 const initialize = async (client: ReturnType<ReturnType<typeof createHost>['accept']>) => await client.handle({
   method: 'initialize',
@@ -219,6 +244,33 @@ it('refuses an autoCompactTokens the loader\'s options check rejects', async () 
   expect(fine.loaded).toHaveLength(1);
 });
 
+/*
+ * The `tools` option is held to the schema the harness validates its own
+ * configuration file against, so a key cofold does not know is a person who
+ * meant something else and is told so rather than quietly given the default.
+ * `strictTools: false` is the way back: the loose reading drops what it cannot
+ * use, which is what a configuration written for a later cofold needs.
+ */
+it('refuses a tools option the harness schema does not know, unless strictTools is false', async () => {
+  const model = createFakeModel({ script: [{ text: 'hi' }], stream: true });
+
+  const strict = await load([{ name: SOURCE, options: { adapter: model, memory: true, tools: { filse: true } } }]);
+  expect(strict.loaded).toEqual([]);
+  expect(strict.problems).toHaveLength(1);
+  expect(strict.problems[0]).toContain('tools.filse');
+
+  const loose = await load([{
+    name: SOURCE,
+    options: { adapter: model, memory: true, strictTools: false, tools: { filse: true, shell: false } },
+  }]);
+  expect(loose.problems).toEqual([]);
+  expect(loose.loaded).toHaveLength(1);
+
+  const fine = await load([{ name: SOURCE, options: { adapter: model, memory: true, tools: { shell: false } } }]);
+  expect(fine.problems).toEqual([]);
+  expect(fine.loaded).toHaveLength(1);
+});
+
 it('refuses the package when its @ahpd/sdk peer range is not satisfied', async () => {
   /*
    * A temporary copy of the manifest, not of the sources: the range check runs
@@ -297,10 +349,11 @@ it('resumes a paused run and shows the open turn once to a client that subscribe
 
   // The second process, over the same store, resumes the run when a client
   // says something on the session the catalogue listed.
-  const second = await load([{ name: SOURCE, options: {
+  const again = await restarted();
+  const second = await again.load([{ name: SOURCE, options: {
     adapter: createFakeModel({ script: [{ text: 'done' }], stream: true }), store: root, policy: asks,
   } }], { path: where, tools: [writer] });
-  const after = createHost(second.options);
+  const after = again.host(second.options);
   const p = peer();
   const client = after.accept(p);
   await initialize(client);

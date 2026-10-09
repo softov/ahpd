@@ -1,11 +1,11 @@
 ---
 title: The ahpd tools option can turn off the rule that a write needs a read first
-status: todo
+status: done
 depends: [task-06-tools-and-providers-use-cofolds-config.md, task-07-a-test-reads-before-it-writes.md, task-08-exports-and-docs.md]
 layer: "agent-cofold"
 refs:
-  - "[code://packages/agent-cofold/src/capabilities.ts#L120-L172](../../../../packages/agent-cofold/src/capabilities.ts#L120-L172) - `toolsOf`, the loose reader of the `tools` option"
-  - "[code://packages/agent-cofold/src/plugin.ts#L66-L82](../../../../packages/agent-cofold/src/plugin.ts#L66-L82) - the `tools` option's schema"
+  - "[code://packages/agent-cofold/src/capabilities.ts#L82-L111](../../../../packages/agent-cofold/src/capabilities.ts#L82-L111) - `toolsOf`, the loose reader of the `tools` option"
+  - "[code://packages/agent-cofold/src/plugin.ts#L68-L88](../../../../packages/agent-cofold/src/plugin.ts#L68-L88) - the `tools` option's schema"
   - npm://@cofold/tools - the release Softov makes with `files: { requireRead: false }`; its range is set then
   - file:///github/cofold/.project/plans/tools/04-a-harness-can-turn-off-read-before-write/plan.md - the cofold plan that adds the option
 ---
@@ -17,12 +17,12 @@ The rule stays on when the key is absent.
 
 ## Files
 
-- `UPDATE: package.json:34-36` - the `@cofold/tools` range to the release Softov makes.
-- `UPDATE: packages/agent-cofold/package.json:66-69` - the `@cofold/tools` range to the release Softov makes.
-- `UPDATE: pnpm-lock.yaml` - the resolved version.
-- `UPDATE: packages/agent-cofold/src/capabilities.ts:120-172` - `toolsOf` reads `files` as a boolean or `{ requireRead }`, for `strictTools: false`.
-- `UPDATE: packages/agent-cofold/src/plugin.ts:66-82` - the loose schema takes the object form of `files`.
+- `UPDATE: pnpm-workspace.yaml` - the two `overrides` entries for the packed tarballs go, and the supply-chain policy already names 0.4.0 and 0.2.1.
+- `UPDATE: pnpm-lock.yaml` - the two versions resolved from the registry, with their integrals.
+- `UPDATE: packages/agent-cofold/src/capabilities.ts:82-111` - `toolsOf` reads `files` as a boolean or `{ requireRead }`, for `strictTools: false`.
+- `UPDATE: packages/agent-cofold/src/plugin.ts:68-88` - the loose schema takes the object form of `files`.
 - `UPDATE: packages/agent-cofold/test/agent-cofold-tools.test.ts` - the cases for the option.
+- `UPDATE: packages/agent-cofold/test/agent-cofold-options.test.ts` - the object form on both checks.
 - `UPDATE: packages/agent-cofold/README.md` - the `requireRead` key in the tools table.
 
 ## Steps
@@ -42,4 +42,19 @@ The rule stays on when the key is absent.
 
 ## Resume
 
-- Tasks 01-08 run on tools 0.3.0, and cofold tests its change against them.
+- `@cofold/tools` 0.4.0 and `@cofold/store-file` 0.2.1 are published, and the ranges were already `^0.4.0` and `^0.2.1`.
+- The two `overrides` entries in `pnpm-workspace.yaml` are gone, so the lockfile resolves both from the registry.
+- `pnpm install` rewrote `pnpm-lock.yaml` with the published integrals, and the `.cofold-pack` directory is deleted.
+- The published 0.4.0 carries `requireRead`, which the installed `dist/files.js` and `dist/standard.js` show.
+- The root `package.json` needed no change: task 01 had already set store-file to `^0.2.1`, and the root declares no `@cofold/tools`.
+- `toolsOf` takes the object form of `files`, keeping a `requireRead` that is a boolean and dropping one that is not.
+- A dropped `requireRead` is the rule on, because cofold's default for an absent key is `true`.
+- `plugin.ts`'s loose `tools.files` is `['boolean', 'object']` with `requireRead`, like the `web` switch beside it.
+- The `tools` option's description now names the read-first rule among what it decides.
+- A case opens a session with `files: { requireRead: false }` and an edit of an unread file, which runs and reports `before` and `after`.
+- The `requireRead`-absent refusal is task 07's own case, so step 6 needed no new one.
+- A case in the options test loads the object form under both checks and refuses a `requireRead` that is not a boolean.
+- The README says the key turns the rule off, and that the rule stays on when the key is absent.
+- The agent-cofold suite is 15 files and 212 cases, all passing.
+- The two intent-to-add index entries for the deleted tarballs stay, because `git reset` is denied in this mode; Softov clears them.
+- Nothing is committed.

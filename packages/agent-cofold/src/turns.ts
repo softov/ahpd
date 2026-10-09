@@ -116,7 +116,6 @@ export const createTurns = (
     let live: ReturnType<typeof run>;
     try {
       const agent = ctx.agentOf(opened.values);
-      ctx.liveAgent = agent;
       live = run({
         agent,
         session: sessionId,
@@ -127,7 +126,7 @@ export const createTurns = (
       });
     }
     catch (error) {
-      void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error), false);
+      void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
       return;
     }
     ctx.handle = live;
@@ -173,7 +172,7 @@ export const createTurns = (
   ): void => {
     const opened = openTurn(turnId, text, model, from, queuedMessageId);
     if (opened === undefined) return;
-    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why), false);
+    void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
   };
 
   /**

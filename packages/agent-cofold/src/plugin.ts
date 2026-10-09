@@ -15,6 +15,8 @@
  * a client sends.
  */
 
+import { check } from '@cofold/commands';
+import { TOOLS_SCHEMA } from '@cofold/tools';
 import type { PluginHost } from '@ahpd/sdk';
 import { cofoldAgent } from './agent.js';
 import type { CofoldOptions } from './agent.js';
@@ -66,7 +68,10 @@ export const optionsSchema = {
     tools: {
       type: 'object',
       properties: {
-        files: { type: 'boolean' },
+        files: {
+          type: ['boolean', 'object'],
+          properties: { requireRead: { type: 'boolean' } },
+        },
         shell: { type: 'boolean' },
         memory: { type: 'boolean' },
         web: {
@@ -79,7 +84,11 @@ export const optionsSchema = {
           },
         },
       },
-      description: 'Which capabilities a session runs, and where web_search gets its providers.',
+      description: 'Which capabilities a session runs, where web_search gets its providers, and whether a write needs the file read first.',
+    },
+    strictTools: {
+      type: 'boolean',
+      description: 'false holds the tools option to the loose check, so a key the harness does not know is dropped rather than refused.',
     },
     apiKey: { type: 'string', writeOnly: true, description: "The daemon's own key." },
     resource: { type: 'string', description: 'The protected resource a client authenticates against.' },
@@ -93,8 +102,23 @@ export const optionsSchema = {
   },
 };
 
-/** The package's own options, out of values `optionsSchema` has checked. */
-const optionsOf = (values: Record<string, unknown>): CofoldOptions => values as CofoldOptions;
+/**
+ * The package's own options, out of values `optionsSchema` has checked.
+ *
+ * The `tools` option is held to cofold's own `TOOLS_SCHEMA`, which is the
+ * schema the harness validates its configuration file against: a key cofold
+ * does not know, or a value of the wrong type, is a person who meant something
+ * else, and a session that quietly ran the default in its place would be one
+ * that did not do what the file said. `strictTools: false` is the way back, for
+ * a configuration written for a later cofold - the loose reading `toolsOf`
+ * takes then drops what it cannot use.
+ */
+const optionsOf = (values: Record<string, unknown>): CofoldOptions => {
+  if (values.strictTools !== false && values.tools !== undefined) {
+    check(values.tools, TOOLS_SCHEMA, 'tools');
+  }
+  return values as CofoldOptions;
+};
 
 /**
  * Register provider `cofold` from the plugin's own options.

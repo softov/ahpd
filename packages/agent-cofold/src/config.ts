@@ -17,18 +17,17 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import type { ProviderConfig } from '@cofold/model-openai-compat';
 
-/** One provider as the harness configuration names it. */
-export interface HarnessProvider {
-  /** The id a model is written in front of, e.g. `open_router`. */
-  id: string;
-  /** An OpenAI-compatible base URL. */
-  baseUrl: string;
-  /** The key for it, when the file carries one. */
-  apiKey?: string;
-  /** Extra headers the endpoint needs. */
-  headers?: Record<string, string>;
-}
+/**
+ * One provider as the harness configuration names it.
+ *
+ * The shape is cofold's own `ProviderConfig`, which is what its `providers`
+ * section validates against: the id a model is written in front of, an
+ * OpenAI-compatible base URL, the key for it and any headers the endpoint
+ * needs. Reading it is what keeps a key from being lent or repeated.
+ */
+export type HarnessProvider = ProviderConfig;
 
 /** What this backend reads out of the harness configuration. */
 export interface HarnessConfig {
@@ -111,19 +110,4 @@ export const harnessConfig = (env: NodeJS.ProcessEnv = process.env, home: string
     ...(model === undefined ? {} : { model }),
     ...(instructions === undefined ? {} : { instructions }),
   };
-};
-
-/**
- * `<provider>/<model>` as its two halves, on the first slash.
- *
- * The model id may itself carry slashes - `open_router/~deepseek/deepseek-chat`
- * names provider `open_router` and model `~deepseek/deepseek-chat` - so the
- * split is at the first one and never at the last. Nothing is returned when
- * there is no slash or nothing on one side of it, because that is a model id
- * rather than a reference.
- */
-export const splitModel = (ref: string): { provider: string; modelId: string } | undefined => {
-  const at = ref.indexOf('/');
-  if (at <= 0 || at === ref.length - 1) return undefined;
-  return { provider: ref.slice(0, at), modelId: ref.slice(at + 1) };
 };

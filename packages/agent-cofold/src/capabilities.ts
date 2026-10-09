@@ -1,120 +1,53 @@
 /**
  * The four `@cofold/tools` capabilities a cofold session runs itself.
  *
- * `files`, `shell`, `web` and `memory` are built here, out of the package that
- * ships them, and handed to the cofold agent a turn runs on. cofold executes
- * them in this process, against the machine it runs on - the way the Claude
- * backend's tools run in the Claude CLI - so ahpd reports the calls, asks
- * through the policy and reports the edits rather than running anything
- * (decision `cofold-runs-its-own-tools-in-its-process`).
+ * `files`, `shell`, `web` and `memory` are built by `standardCapabilities` out
+ * of the `tools` section a configuration writes, and handed to the cofold agent
+ * a turn runs on. cofold executes them in this process, against the machine it
+ * runs on - the way the Claude backend's tools run in the Claude CLI - so ahpd
+ * reports the calls, asks through the policy and reports the edits rather than
+ * running anything (decision `cofold-runs-its-own-tools-in-its-process`).
  *
- * `@cofold/tools` is what builds them rather than a copy of its tools: the
- * search providers, the path rules and the memory layout stay the harness's,
- * and this file only decides which of the four are on and where memory goes.
+ * The section's shape, the search providers and the memory layout are cofold's
+ * (cofold decision 123), so this file only places the run: which directory the
+ * tools work in - which cofold reads from the run itself - and where memory
+ * goes. A tool a host already offers keeps its name, which is what `exclude`
+ * is for.
  */
 
-import { join } from 'node:path';
-import type { Capability, Tool } from '@cofold/agents';
-import { workspaceSlug } from '@cofold/store-file';
-import type { SearchProvider } from '@cofold/tools';
-import { brave, duckduckgo, files, memory, shell, tavily, web } from '@cofold/tools';
+import type { Capability } from '@cofold/agents';
+import { standardCapabilities } from '@cofold/tools';
+import type { SearchConfig, ToolsConfig } from '@cofold/tools';
 
-/**
- * The search backends `web_search` may ask, in the order the configuration
- * lists them.
- *
- * Brave and Tavily are keyed services, DuckDuckGo is its results page scraped.
- * A backend `web()` was not given is simply not offered, which is why
- * `web_search` exists only when at least one of these is configured.
- */
-export interface SearchConfig {
-  /** Brave Search, with a subscription token. */
-  brave?: { apiKey: string };
-  /** Tavily, with an API key. */
-  tavily?: { apiKey: string };
-  /** The HTML results page, scraped; no key. */
-  duckduckgo?: boolean;
-}
-
-/**
- * Which of the four capabilities a session gets.
- *
- * An absent key is on and `false` turns one off, so all four are on by default
- * and a configuration that names one turns only that one off:
- *
- * ```json
- * { "tools": { "shell": false, "web": { "search": { "duckduckgo": true } } } }
- * ```
- */
-export interface ToolsConfig {
-  /** `read_file`, `write_file`, `edit_file`, `list_files` and `search_files`. */
-  files?: boolean;
-  /** `shell_exec`, one command at a time through the platform's shell. */
-  shell?: boolean;
-  /** `true` is `web_fetch` alone; an object adds `web_search` over its providers. */
-  web?: boolean | { search?: SearchConfig };
-  /** `memory_read` and `memory_write`, under `<store root>/memory/<workspace slug>/`. */
-  memory?: boolean;
-}
+export type { SearchConfig, ToolsConfig } from '@cofold/tools';
 
 /** All four on, which is what a session whose options name no `tools` gets. */
 export const DEFAULT_TOOLS: ToolsConfig = { files: true, shell: true, web: true, memory: true };
 
-/** The providers `web_search` is offered over, in the order the configuration lists them. */
-const searchProviders = (search: SearchConfig | undefined): SearchProvider[] => {
-  const providers: SearchProvider[] = [];
-  if (search === undefined) return providers;
-  for (const name of Object.keys(search) as (keyof SearchConfig)[]) {
-    if (name === 'brave' && search.brave !== undefined) providers.push(brave({ apiKey: search.brave.apiKey }));
-    else if (name === 'tavily' && search.tavily !== undefined) providers.push(tavily({ apiKey: search.tavily.apiKey }));
-    else if (name === 'duckduckgo' && search.duckduckgo === true) providers.push(duckduckgo());
-  }
-  return providers;
-};
-
 /**
- * A capability with the tools some other contributor already offers left out.
+ * The capabilities a session gets, in cofold's own order: files, shell, web and
+ * memory, each one on unless the configuration turned it off.
  *
- * cofold refuses a run whose capabilities contribute a duplicate tool name, so
- * one name has to map to one tool. The host's tool is the more specific
- * contribution - it was named for this deployment, and the plugin's options
- * are defaults - so it wins the name and the capability's tool is dropped.
- * A host that offers `write_file` still gets the capability's other four.
- */
-const withoutTaken = (capability: Capability, taken: Set<string>): Capability => {
-  const build = capability.tools;
-  if (build === undefined) return capability;
-  return {
-    ...capability,
-    tools: async (args) => (await build(args)).filter((tool: Tool<any, any>) => !taken.has(tool.name)),
-  };
-};
-
-/**
- * The capabilities a session gets, always in the order files, shell, web, memory.
- *
- * `storeRoot` is where the file store lives, so memory becomes
- * `<storeRoot>/memory/<workspace slug>/`; it is absent for a session whose
- * store is deliberately in memory, which has no directory to keep memory
- * files in, and the memory capability is left out rather than given one.
- * `taken` names the tools the host already offers, which win their names.
+ * `memoryDir` is where memory files go; cofold leaves the memory capability out
+ * when it is absent, which is what a session whose store is deliberately in
+ * memory gets, rather than a folder under somebody's home. `taken` names the
+ * tools the host already offers, which win their names: cofold refuses a run
+ * two contributors give one name to, and the host's tool is the more specific
+ * contribution - it was named for this deployment, and these are defaults - so
+ * the capability's tool of that name is left out. A host that offers
+ * `write_file` still gets the capability's other four.
  */
 export function capabilitiesOf(
   tools: ToolsConfig,
-  args: { storeRoot: string | undefined; workspace: string },
+  args: { workspace: string; memoryDir?: string },
   taken: Iterable<string> = [],
 ): Capability[] {
-  const search = typeof tools.web === 'object' && tools.web !== null ? searchProviders(tools.web.search) : [];
-  const built: Capability[] = [
-    ...(tools.files !== false ? [files()] : []),
-    ...(tools.shell !== false ? [shell()] : []),
-    ...(tools.web !== false ? [web({ search })] : []),
-    ...(tools.memory !== false && args.storeRoot !== undefined
-      ? [memory({ dir: join(args.storeRoot, 'memory', workspaceSlug({ workspace: args.workspace })) })]
-      : []),
-  ];
-  const names = new Set(taken);
-  return names.size === 0 ? built : built.map((capability) => withoutTaken(capability, names));
+  const built = standardCapabilities(tools, {
+    workspace: args.workspace,
+    ...(args.memoryDir === undefined ? {} : { memoryDir: args.memoryDir }),
+  });
+  const names = [...taken];
+  return names.length === 0 ? built : built.map((capability) => ({ ...capability, exclude: names }));
 }
 
 /** One value that is a plain object, or nothing for anything else. */
@@ -149,18 +82,24 @@ const searchOf = (value: unknown): SearchConfig | undefined => {
 /**
  * The `tools` option, out of whatever a configuration named.
  *
- * Every key is taken only when it has the type `ToolsConfig` declares for it,
- * so a value the configuration misspelled is dropped rather than thrown over:
- * the plugin must not fail over an option it does not understand. Nothing for
- * a value that is not a plain object, and a web value that is neither a
- * boolean nor an object with a usable `search` is left out so the default
- * stands.
+ * This is the loose reading, which `strictTools: false` asks for: every key is
+ * taken only when it has the type `ToolsConfig` declares for it, so a value the
+ * configuration misspelled is dropped rather than thrown over. Nothing for a
+ * value that is not a plain object, and a web value that is neither a boolean
+ * nor an object with a usable `search` is left out so the default stands.
+ *
+ * `files` is a boolean or an object carrying `requireRead`, and a `requireRead`
+ * that is not a boolean is dropped, which leaves the rule on, as its default is.
  */
 export const toolsOf = (value: unknown): ToolsConfig | undefined => {
   const held = bag(value);
   if (held === undefined) return undefined;
   const tools: ToolsConfig = {};
   if (typeof held.files === 'boolean') tools.files = held.files;
+  else if (bag(held.files) !== undefined) {
+    const requireRead = bag(held.files)?.requireRead;
+    tools.files = typeof requireRead === 'boolean' ? { requireRead } : {};
+  }
   if (typeof held.shell === 'boolean') tools.shell = held.shell;
   if (typeof held.memory === 'boolean') tools.memory = held.memory;
   if (typeof held.web === 'boolean') tools.web = held.web;

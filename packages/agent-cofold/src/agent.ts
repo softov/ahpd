@@ -13,13 +13,13 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { createMemoryStore, textOf } from '@cofold/agents';
-import type { ModelAdapter, ModelInfo, ModelProvider, Policy, ReasoningEffort, SessionRecord, Store } from '@cofold/agents';
-import { openaiCompat, openaiCompatProvider } from '@cofold/model-openai-compat';
+import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMemoryStore, effortOf, textOf } from '@cofold/agents';
+import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
+import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
 import { uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
-import { harnessConfig, harnessConfigPath, splitModel } from './config.js';
+import { harnessConfig, harnessConfigPath } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
 import type { ToolsConfig } from './capabilities.js';
 import { cofoldSession } from './session.js';
@@ -124,14 +124,15 @@ const titleOf = (said: string, fallback: string): string => {
 export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-cofold';
 
 /**
- * The approvals modes a session may be put in, in the window's own order.
+ * The approvals modes a session may be put in, in the harness's own order.
  *
- * The same six the Claude backend advertises, because the labels are what a
- * person reads and the harness owns the meanings: `policyOf` in
- * `@cofold/agents` is what a mode becomes. `auto` is cofold's own default, so
- * that is what a session that chooses none starts on.
+ * The list and the meanings are cofold's: `policyOf` in `@cofold/agents` is
+ * what a mode becomes, and the six words are the ones every host that offers a
+ * mode offers. `auto` is cofold's own default, so that is what a session that
+ * chooses none starts on. ahpd keeps only the labels, which are what a person
+ * reads.
  */
-export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk'] as const;
+export { PERMISSION_MODES, EFFORT_LEVELS, effortOf };
 
 /** What each mode is called where a person reads it. */
 export const PERMISSION_LABELS = [
@@ -143,29 +144,9 @@ export const PERMISSION_LABELS = [
   "Don't Ask",
 ] as const;
 
-/** One line about what each mode does, in this backend's words rather than the Claude SDK's. */
-export const PERMISSION_DESCRIPTIONS = [
-  'Asks before writing, going online or destroying anything.',
-  'Writes inside the working directory without asking, and asks for other tools.',
-  'Reads only: anything that writes or destroys is refused.',
-  'Asks only when a tool says it is destructive.',
-  'Runs every tool without asking.',
-  'Refuses anything that would have needed approval, without asking.',
-] as const;
-
-/** The thinking levels a turn may be given, `off` first. */
-export const EFFORT_LEVELS = ['off', 'low', 'medium', 'high'] as const;
-
-/**
- * The reasoning effort a session's setting names.
- *
- * `off`, a missing value and anything unrecognised all send nothing: an
- * endpoint is not troubled with a field for a model that was not asked to
- * think, which is also the only form the adapter's `features.reasoning` lets
- * through until a level is actually chosen.
- */
-export const effortOf = (value: unknown): ReasoningEffort | undefined =>
-  value === 'low' || value === 'medium' || value === 'high' ? value : undefined;
+/** One line about what each mode does, in cofold's words, in cofold's order. */
+export const PERMISSION_DESCRIPTIONS: readonly string[] =
+  PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]);
 
 /**
  * The protected resource a token for this backend belongs to.
@@ -369,11 +350,12 @@ export const modelOf = (
   const connection = connectionOf(options, settings, credentials, harness, true);
   const effort = effortOf(settings.effortLevel);
   /*
-   * A chosen level turns reasoning on for the request, because the adapter
-   * sends nothing while `features.reasoning` is false - its default - and
-   * off, missing or unrecognised sends nothing at all.
+   * A chosen level is a request param and nothing more. The adapter turns
+   * reasoning on from it, so a host that also set the feature would be saying
+   * the same thing twice - and `features: { reasoning: false }` is the one way
+   * to say a model cannot think, which the param must not overrule.
    */
-  const chosen = effort === undefined ? {} : { params: { reasoning: { effort } }, features: { reasoning: true } };
+  const chosen = effort === undefined ? {} : { params: { reasoning: { effort } } };
   if (held !== undefined) {
     /*
      * The listed price, read from the cache and not waited for: the first turns

@@ -59,6 +59,7 @@ it.each<[string, unknown]>([
   ['store', 5],
   ['memory', 'yes'],
   ['tools', 'all'],
+  ['strictTools', 'yes'],
   ['apiKey', 5],
   ['resource', 5],
   ['adapter', 'x'],
@@ -73,6 +74,30 @@ it.each<[string, unknown]>([
 it('reports a tools switch of the wrong type by its full key', async () => {
   const { problems } = await load({ tools: { files: 'no' } });
   expect(problems).toEqual([`plugin ${NAME} skipped: plugins.${NAME}.options.tools.files must be true or false`]);
+});
+
+/*
+ * The files switch is an object as well as a boolean, on either check.
+ *
+ * `strictTools: false` holds the option to the loose reading instead of
+ * cofold's schema, and `files: { requireRead: false }` is a value both of them
+ * take: `requireRead` is a boolean, so the loose reading keeps it.
+ */
+it('takes the files switch as an object, with and without the strict check', async () => {
+  for (const strictTools of [undefined, false]) {
+    const { loaded, problems } = await load({
+      tools: { files: { requireRead: false } },
+      ...(strictTools === undefined ? {} : { strictTools }),
+    });
+    expect(problems).toEqual([]);
+    expect(loaded).toHaveLength(1);
+  }
+});
+
+it('refuses a requireRead that is not a boolean', async () => {
+  const { loaded, problems } = await load({ tools: { files: { requireRead: 'no' } } });
+  expect(loaded).toEqual([]);
+  expect(problems).toEqual([`plugin ${NAME} skipped: plugins.${NAME}.options.tools.files.requireRead must be true or false`]);
 });
 
 it('takes computerConfigDir as a directory and as false', async () => {

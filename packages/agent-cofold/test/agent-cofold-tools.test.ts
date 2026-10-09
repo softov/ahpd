@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createFakeModel } from '@cofold/agents/testing';
 import type { RunEvent } from '@cofold/agents';
 import { createFileStore } from '@cofold/store-file';
-import type { Bag, Session, Start } from '@ahpd/sdk';
+import type { Bag, BoundTool, Session, Start } from '@ahpd/sdk';
 import {
   DEFAULT_TOOLS,
   PERMISSION_MODES,
@@ -111,6 +111,8 @@ async function open(args: {
   workspace: string | undefined;
   store?: string;
   tools?: ToolsConfig;
+  /** The tools the host offers this session, which win a name a capability's tool shares. */
+  hostTools?: BoundTool[];
   settings?: Record<string, unknown>;
   /** An ordered log of the actions emitted and the edits reported, for the order cases. */
   trace?: string[];
@@ -133,7 +135,7 @@ async function open(args: {
     workingDirectory: args.workspace,
     schema: () => agent.schema(),
     emit: v.emit,
-    tools: [],
+    tools: args.hostTools ?? [],
     onFileEdit: (turnId: string, path: string, phase: 'before' | 'after') => {
       edits.push({ turnId, path, phase });
       args.trace?.push(`edit:${phase}`);
@@ -150,6 +152,16 @@ const place = (): string => {
 };
 
 const call = (name: string, input: unknown) => ({ name, input, callId: 'c1' });
+
+/*
+ * The read a model must make before it changes a file that already exists.
+ *
+ * cofold refuses a write to a file the session never read, and to one that
+ * moved since it read it, so every case that edits or overwrites `a.txt` reads
+ * it first. Its call id is its own, so the case can still find the write's
+ * result.
+ */
+const READ_A = { name: 'read_file', input: { path: 'a.txt' }, callId: 'c0' };
 
 /** The names the model was offered on its first step. */
 const offeredNames = (model: ReturnType<typeof createFakeModel>): string[] =>
@@ -195,6 +207,61 @@ it('turns one capability off with the tools option, and leaves the other three o
   expect(names).toContain('read_file');
   expect(names).toContain('web_fetch');
   expect(names).toContain('memory_write');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A session whose store is deliberately in memory has nowhere to keep memory.
+ *
+ * Memory lives under the store's root, one folder per workspace, so a store
+ * that is not a directory is a session with no memory folder rather than one
+ * whose notes land under somebody's home. The other three are untouched.
+ */
+it('offers no memory tools for a session whose store is in memory', async () => {
+  const dir = place();
+  const { model, session, v } = await open({ script: [{ text: 'ok' }], workspace: dir });
+  session.begin('t1', 'hello');
+  await when(() => ended(v));
+
+  const names = offeredNames(model);
+  expect(names).not.toContain('memory_read');
+  expect(names).not.toContain('memory_write');
+  expect(names).toContain('read_file');
+  expect(names).toContain('shell_exec');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A tool the host offers keeps a name one of cofold's own would take.
+ *
+ * cofold refuses a run two contributors give one name to, so the capability's
+ * tool of that name is left out instead - `exclude` is where that is said. The
+ * host's tool is the more specific contribution, because it was named for this
+ * deployment and the capabilities are defaults, and the capability keeps its
+ * other tools.
+ */
+it('lets a host tool keep the name it shares with a capability\'s', async () => {
+  const dir = place();
+  const mine: BoundTool = {
+    definition: { name: 'web_fetch', description: 'The host\'s own fetch.', inputSchema: { type: 'object' } },
+    run: () => 'the host fetched it',
+  };
+  const { model, session, v } = await open({
+    script: [{ text: 'ok' }],
+    workspace: dir,
+    store: dir,
+    hostTools: [mine],
+  });
+  session.begin('t1', 'hello');
+  await when(() => ended(v));
+
+  const offered = model.requests[0]?.tools ?? [];
+  const fetchers = offered.filter((one) => one.name === 'web_fetch');
+  expect(fetchers).toHaveLength(1);
+  expect(fetchers[0]?.description).toBe('The host\'s own fetch.');
+  // The capability's other tools are still there, so the run did not fail on
+  // the clash either.
+  expect(offeredNames(model)).toContain('read_file');
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -262,6 +329,12 @@ it('takes the tools option out of whatever a configuration named', () => {
   expect(toolsOf(undefined)).toBeUndefined();
   expect(toolsOf('nope')).toBeUndefined();
   expect(toolsOf({ files: false, shell: 'no', memory: true })).toEqual({ files: false, memory: true });
+  // The files switch is a boolean or an object, and the object carries the one
+  // key the read-first rule is turned off by.
+  expect(toolsOf({ files: { requireRead: false } })).toEqual({ files: { requireRead: false } });
+  expect(toolsOf({ files: { requireRead: true } })).toEqual({ files: { requireRead: true } });
+  // A `requireRead` of another type is dropped, which leaves the rule on.
+  expect(toolsOf({ files: { requireRead: 'no' } })).toEqual({ files: {} });
   expect(toolsOf({ web: false })).toEqual({ web: false });
   expect(toolsOf({ web: { search: { brave: { apiKey: 'b' }, tavily: { apiKey: 't' }, duckduckgo: true } } }))
     .toEqual({ web: { search: { brave: { apiKey: 'b' }, tavily: { apiKey: 't' }, duckduckgo: true } } });
@@ -323,10 +396,41 @@ it('refuses to fetch an internal address, without reaching it', async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+it('reports an edit before the row that runs it', async () => {
+  const dir = place();
+  const trace: string[] = [];
+  const { session, v } = await open({
+    script: [
+      { toolCalls: [READ_A] },
+      { toolCalls: [call('edit_file', { path: 'a.txt', old: 'world', new: 'there' })] },
+      { text: 'done' },
+    ],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+    trace,
+  });
+  session.begin('t1', 'edit it');
+  await when(() => ended(v));
+
+  // The file is announced as changing before the client is told a call began,
+  // because cofold runs the hook before it proposes the call. The read started
+  // a call of its own first, so the start to compare against is the last one.
+  expect(trace.indexOf('edit:before')).toBeGreaterThan(-1);
+  expect(trace.indexOf('edit:before')).toBeLessThan(trace.lastIndexOf('action:chat/toolCallStart'));
+  // The row is the one that ran the edit, so the read is what the write needed.
+  expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('hello there\n');
+  rmSync(dir, { recursive: true, force: true });
+});
+
 it('reports a file edit through onFileEdit, before and after, on the resolved path', async () => {
   const dir = place();
   const { session, v, edits } = await open({
-    script: [{ toolCalls: [call('edit_file', { path: 'a.txt', old: 'world', new: 'there' })] }, { text: 'done' }],
+    script: [
+      { toolCalls: [READ_A] },
+      { toolCalls: [call('edit_file', { path: 'a.txt', old: 'world', new: 'there' })] },
+      { text: 'done' },
+    ],
     workspace: dir,
     store: dir,
     settings: { permissionMode: 'acceptEdits' },
@@ -338,6 +442,61 @@ it('reports a file edit through onFileEdit, before and after, on the resolved pa
     { turnId: 't1', path: join(dir, 'a.txt'), phase: 'before' },
     { turnId: 't1', path: join(dir, 'a.txt'), phase: 'after' },
   ]);
+  expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('hello there\n');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A file the session never read is not a file it may change.
+ *
+ * cofold keeps what a session has read in its own process memory, so a model
+ * that edits a file it never opened is refused rather than trusted, and the
+ * file on disk stays as it was. The call is still reported to the changeset
+ * before and after, which is the pair of states a row is drawn from whether or
+ * not the tool changed anything.
+ */
+it('refuses an edit of a file the session never read, and leaves it as it was', async () => {
+  const dir = place();
+  const { session, v, edits } = await open({
+    script: [{ toolCalls: [call('edit_file', { path: 'a.txt', old: 'world', new: 'there' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'edit it');
+  await when(() => ended(v));
+
+  const refused = completeFor(v, 'c1')?.result as Bag;
+  expect(refused.success).toBe(false);
+  expect((refused.error as Bag).message).toContain('read it with read_file first');
+  expect(edits.map((one) => one.phase)).toEqual(['before', 'after']);
+  expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('hello world\n');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/*
+ * A configuration can turn the read-first rule off, and then the same edit runs.
+ *
+ * `files: { requireRead: false }` is the one key of that switch. The file
+ * capability is still built with the key there, so the tools offered are the
+ * same ones, and the call the case above is refused reaches `onFileEdit` and
+ * changes the file.
+ */
+it('runs an edit of an unread file when the configuration turns the rule off', async () => {
+  const dir = place();
+  const { model, session, v, edits } = await open({
+    script: [{ toolCalls: [call('edit_file', { path: 'a.txt', old: 'world', new: 'there' })] }, { text: 'done' }],
+    workspace: dir,
+    store: dir,
+    tools: { files: { requireRead: false } },
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'edit it');
+  await when(() => ended(v));
+
+  expect(completeFor(v, 'c1')?.result).toMatchObject({ success: true });
+  expect(offeredNames(model)).toContain('edit_file');
+  expect(edits.map((one) => one.phase)).toEqual(['before', 'after']);
   expect(readFileSync(join(dir, 'a.txt'), 'utf8')).toBe('hello there\n');
   rmSync(dir, { recursive: true, force: true });
 });
@@ -464,6 +623,36 @@ it('takes a cancel given inside the emit that asks, and ends the turn cancelled'
   expect(opened.edits.map((one) => one.phase)).toEqual(['before', 'after']);
   expect(readdirSync(dir)).not.toContain('b.txt');
   rmSync(dir, { recursive: true, force: true });
+});
+
+it('titles a row by the subject cofold sent rather than the model spelling', async () => {
+  const dir = place();
+  const away = mkdtempSync(join(tmpdir(), 'ahpd-cofold-away-'));
+  writeFileSync(join(away, 'secret'), 'secret\n');
+  const { session, v } = await open({
+    script: [
+      { toolCalls: [call('read_file', { path: join(dir, 'a.txt') })] },
+      { toolCalls: [{ name: 'memory_read', input: {}, callId: 'c2' }] },
+      { toolCalls: [{ name: 'read_file', input: { path: join(away, 'secret') }, callId: 'c3' }] },
+      { text: 'done' },
+    ],
+    workspace: dir,
+    store: dir,
+    settings: { permissionMode: 'bypassPermissions' },
+  });
+  session.begin('t1', 'read them');
+  await when(() => ended(v));
+
+  const titled = (callId: string): unknown =>
+    v.of('chat', 'chat/toolCallReady').find((action) => action.toolCallId === callId)?.invocationMessage;
+  // The file the model named absolutely, as the workspace spells it.
+  expect(titled('c1')).toBe('a.txt');
+  // The memory index is the file a call with no path acts on.
+  expect(titled('c2')).toBe('MEMORY.md');
+  // A path outside the workspace has no name relative to it, so it stays whole.
+  expect(titled('c3')).toBe(join(away, 'secret'));
+  rmSync(dir, { recursive: true, force: true });
+  rmSync(away, { recursive: true, force: true });
 });
 
 it('draws a shell call as a terminal, with its command as the intention', async () => {
@@ -710,6 +899,8 @@ type Outcome = 'run' | 'ask' | 'deny';
 
 interface Row {
   what: string;
+  /** A call the row makes before its own, which an edit of an existing file needs. */
+  first?: { name: string; input: unknown; callId: string };
   call(at: { workspace: string; away: string }): { name: string; input: unknown; callId: string };
   expect: Record<Mode, Outcome>;
 }
@@ -729,7 +920,11 @@ const ROWS: Row[] = [
     expect: { default: 'ask', acceptEdits: 'ask', plan: 'ask', auto: 'run', bypassPermissions: 'run', dontAsk: 'deny' },
   },
   {
+    // `edit_file` changes a file that is already there, so the row reads it
+    // first: a mode decides about the edit, and cofold refuses an unread file
+    // before the mode's answer could be seen.
     what: 'an edit inside the workspace',
+    first: READ_A,
     call: () => call('edit_file', { path: 'a.txt', old: 'world', new: 'there' }),
     expect: { default: 'ask', acceptEdits: 'run', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
   },
@@ -765,6 +960,18 @@ const ROWS: Row[] = [
     expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
   },
   {
+    /*
+     * The memory folder is under the store root and not under the workspace,
+     * so `acceptEdits` does not take this write for an edit of the files it is
+     * about: cofold reads the file from the tool's own `writes`, and this one
+     * is somewhere else. `auto` runs it, because the tool declares a write and
+     * not a destructive call.
+     */
+    what: 'a memory write',
+    call: () => call('memory_write', { path: 'MEMORY.md', content: '- a fact' }),
+    expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'run', bypassPermissions: 'run', dontAsk: 'deny' },
+  },
+  {
     what: 'a shell command',
     call: () => call('shell_exec', { command: 'true' }),
     expect: { default: 'ask', acceptEdits: 'ask', plan: 'deny', auto: 'ask', bypassPermissions: 'run', dontAsk: 'deny' },
@@ -779,12 +986,20 @@ const ROWS: Row[] = [
 /** What one mode does with one call: does it run, does it ask, or is it refused. */
 async function outcomeOf(mode: Mode, row: Row): Promise<Outcome> {
   const workspace = place();
+  /*
+   * The store, and so the memory folder, lives outside the workspace: a memory
+   * write is the one call whose file a mode has to judge by where it really
+   * is rather than by the directory the session works in.
+   */
   const away = mkdtempSync(join(tmpdir(), 'ahpd-cofold-away-'));
   const toolCall = row.call({ workspace, away });
+  const script: Script = row.first === undefined
+    ? [{ toolCalls: [toolCall] }, { text: 'done' }]
+    : [{ toolCalls: [row.first] }, { toolCalls: [toolCall] }, { text: 'done' }];
   const { session, v } = await open({
-    script: [{ toolCalls: [toolCall] }, { text: 'done' }],
+    script,
     workspace,
-    store: workspace,
+    store: away,
     settings: { permissionMode: mode },
   });
   session.begin('t1', 'go');
@@ -797,7 +1012,7 @@ async function outcomeOf(mode: Mode, row: Row): Promise<Outcome> {
   // A paused run is stopped rather than left waiting on a person who is not there.
   if (paused) {
     session.close();
-    expect(await settled(workspace), `${row.what} under ${mode}`).toEqual(['cancelled']);
+    expect(await settled(away), `${row.what} under ${mode}`).toEqual(['cancelled']);
   }
   rmSync(workspace, { recursive: true, force: true });
   rmSync(away, { recursive: true, force: true });

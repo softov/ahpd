@@ -2,10 +2,12 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
+import { PERMISSION_MODE_DESCRIPTIONS } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
-import type { ModelAdapter } from '@cofold/agents';
+import type { ModelAdapter, ModelProvider } from '@cofold/agents';
 import type { Agent, Bag, BoundTool, Session, Start } from '@ahpd/sdk';
-import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, modelOf } from '../src/index.js';
+import { EFFORT_LEVELS, PERMISSION_MODES, effortOf, cofoldAgent, harnessConfig, modelOf } from '../src/index.js';
+import type { Held } from '../src/agent.js';
 
 /*
  * The two controls a window draws beyond the text fields.
@@ -108,7 +110,9 @@ it('advertises an approvals mode and a thinking level, in the window own names',
   expect(props.permissionMode).toMatchObject({ scope: 'session', sessionMutable: true, default: 'auto' });
   expect(props.permissionMode?.enum).toEqual([...PERMISSION_MODES]);
   expect((props.permissionMode?.enumLabels as string[]).length).toBe(PERMISSION_MODES.length);
-  expect((props.permissionMode?.enumDescriptions as string[]).length).toBe(PERMISSION_MODES.length);
+  // cofold's own sentences, in cofold's own order: what a mode means is the
+  // library's to say, and a host that wrote its own would drift from it.
+  expect(props.permissionMode?.enumDescriptions).toEqual(PERMISSION_MODES.map((mode) => PERMISSION_MODE_DESCRIPTIONS[mode]));
   expect(props.effortLevel).toMatchObject({ scope: 'chat', sessionMutable: true, default: 'off' });
   expect(props.effortLevel?.enum).toEqual([...EFFORT_LEVELS]);
 });
@@ -217,4 +221,42 @@ it('puts the chosen thinking level in the request and nothing for off', async ()
   expect((await sent({ effortLevel: 'high' })).reasoning_effort).toBe('high');
   expect('reasoning_effort' in await sent({ effortLevel: 'off' })).toBe(false);
   expect('reasoning_effort' in await sent({})).toBe(false);
+});
+
+/** What the provider was asked to build for a session with these settings. */
+const builtFor = (settings: Record<string, unknown>): Record<string, unknown> => {
+  mkdirSync(join(home, 'cofold'), { recursive: true });
+  writeFileSync(join(home, 'cofold', 'config.json'), JSON.stringify({
+    providers: [{ id: 'open_router', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'k' }],
+    model: 'open_router/deepseek/deepseek-chat',
+  }));
+  const built: Record<string, unknown>[] = [];
+  const held: Held = {
+    providerOf: (): ModelProvider => ({
+      id: 'open_router',
+      listModels: async () => [],
+      model: (args) => {
+        built.push(args as unknown as Record<string, unknown>);
+        return { id: 'stub', modelId: 'stub', features: {} } as unknown as ModelAdapter;
+      },
+    }),
+    infoOf: () => undefined,
+  };
+  modelOf({}, settings, {}, harnessConfig(), held);
+  return built[0] ?? {};
+};
+
+it('asks for the level with the request param alone', () => {
+  /*
+   * The adapter turns reasoning on from the param, so a level must not arrive
+   * as a feature of the model as well: `features.reasoning` is where a model
+   * that cannot think says so, and the same key set true here would overrule
+   * it. `toEqual` is exact, so a `features` key would fail this.
+   */
+  expect(builtFor({ effortLevel: 'high' })).toEqual({
+    id: 'deepseek/deepseek-chat',
+    params: { reasoning: { effort: 'high' } },
+  });
+  expect(builtFor({ effortLevel: 'off' })).not.toHaveProperty('features');
+  expect(builtFor({ effortLevel: 'off' })).not.toHaveProperty('params');
 });

@@ -4,7 +4,6 @@ import { Status } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
-import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
@@ -15,7 +14,7 @@ export interface Runs {
   cut: () => Promise<void>;
   doing: (said: string | undefined) => void;
   status: () => number;
-  apply: (mapping: TurnMapping, turnId: string, event: RunEvent, replaying: boolean) => Promise<boolean>;
+  apply: (mapping: TurnMapping, turnId: string, event: RunEvent) => Promise<void>;
   read: (live: RunHandle, mapping: TurnMapping, turnId: string) => void;
   reopen: () => Promise<void>;
 }
@@ -84,10 +83,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
     turns.push(turn);
     ctx.active = undefined;
     ctx.handle = undefined;
-    ctx.liveAgent = undefined;
     ctx.activeMapping = undefined;
-    ctx.paused = undefined;
-    ctx.payPause(false);
     // An ending turn cannot still be waiting on an answer; a request left
     // here would keep the session reporting `InputNeeded` over nothing.
     pending.clear();
@@ -113,12 +109,11 @@ export const createRuns = (ctx: SessionContext): Runs => {
   /**
    * One event's actions, through the mapping, and what it did to the session.
    *
-   * `replaying` is for a run history read back on a resume: the awaiting
-   * `run.finished` that ends it is not a pause to rejoin, because the rejoin
-   * is what is reading it and its handle is still open. Answers whether this
-   * run has now said how it ended.
+   * The same call serves a live stream and a run history read back on a
+   * resume, so a request reaches the client by the path that put it there the
+   * first time rather than by a second path written for the replay.
    */
-  const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent, replaying: boolean): Promise<boolean> => {
+  const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent): Promise<void> => {
     if (event.type === 'run.finished') doing(undefined);
     /*
      * A call that will never have a result still owes its `after`.
@@ -142,17 +137,14 @@ export const createRuns = (ctx: SessionContext): Runs => {
     if (event.type === 'run.finished' && event.outcome.status !== 'awaiting') {
       await rememberPoints(turnId, event.runId);
     }
-    let settled = false;
     const mapped = mapping.actions(event);
     /*
      * A request is held before it is announced, so a client that answers
-     * inside the emit that carries it finds it; a live run that announced one
-     * owes the pause its answer waits for.
+     * inside the emit that carries it finds it.
      */
     const hold = (): void => {
       if (mapped.opened === undefined) return;
       pending.set(mapped.opened.requestId, mapped.opened);
-      if (!replaying) ctx.owePause();
     };
     for (const action of mapped.actions) {
       const type = str(action.type) ?? '';
@@ -169,7 +161,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
        * catalogue alone still learns somebody is being asked.
        */
       start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
-      if (ending !== undefined) settled = true;
       // Somebody stopping a turn is stopping this conversation; a queued
       // message behind it is the opposite of what they asked for. After the
       // ending, so the next turn starts after the last one ended.
@@ -177,53 +168,19 @@ export const createRuns = (ctx: SessionContext): Runs => {
     }
     hold();
     if (mapped.settled !== undefined) pending.delete(mapped.settled);
-    /*
-     * The awaiting outcome is a pause, not an ending: the handle is closed
-     * and the turn stays open until somebody answers. This read is over, so
-     * the fallback below must not report the pause as a turn that ended, and
-     * the sequence is kept so the answer rejoins rather than replays.
-     */
-    if (!replaying && event.type === 'run.finished' && event.outcome.status === 'awaiting') {
-      settled = true;
-      ctx.paused = { runId: event.runId, seq: event.seq };
-    }
-    if (!replaying && event.type === 'run.finished') ctx.payPause(event.outcome.status === 'awaiting');
-    return settled;
   };
 
   /**
-   * Read a run to its end.
+   * Read a run to its last `run.finished`.
    *
    * Every action comes from `mapping.ts`, including the one that ends the
-   * turn. A pause is not an ending: the awaiting outcome leaves the turn open
-   * and records where the run stopped, so an answer can rejoin it.
+   * turn. A pause does not end the stream: the awaiting outcome leaves the
+   * turn open and the handle keeps reading, so the answer, the resolution and
+   * everything after them arrive the same way the events before them did.
    */
   const read = (live: RunHandle, mapping: TurnMapping, turnId: string): void => {
-    /** Whether this run has already said how it ended. */
-    let settled = false;
     void (async () => {
-      for await (const event of live.events) {
-        if (await apply(mapping, turnId, event, false)) settled = true;
-      }
-      /*
-       * A run that failed before it could publish anything ends its stream
-       * with the handle's outcome and no `run.finished`. The turn is still
-       * open, so the outcome is mapped as the event the stream should have
-       * carried. That goes through `mapping.ts` with every other event, so
-       * the decision about what it means stays in one place.
-       */
-      if (!settled) {
-        const outcome = await live.outcome;
-        await apply(mapping, turnId, {
-          seq: 0,
-          runId: live.runId,
-          sessionId: live.sessionId,
-          agentId: AGENT_ID,
-          at: new Date().toISOString(),
-          type: 'run.finished',
-          outcome,
-        }, false);
-      }
+      for await (const event of live.events) await apply(mapping, turnId, event);
     })();
   };
 
@@ -250,7 +207,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
     if (newest === undefined || newest.status !== 'awaiting' || newest.pendingRequestId === undefined) return;
 
     const agent = ctx.agentOf(ctx.settings);
-    ctx.liveAgent = agent;
     const messages = await store.sessions.listMessages({ sessionId });
     const input = messages.find((one) => one.id === newest.inputMessageId);
     const turnId = input?.id ?? newest.runId;
@@ -300,7 +256,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
      */
     const events = await store.runs.listEvents({ sessionId, runId: newest.runId });
     const lastSeq = events.length > 0 ? events[events.length - 1]!.seq : 0;
-    for (const event of events) await apply(mapping, turnId, event, true);
+    for (const event of events) await apply(mapping, turnId, event);
 
     // Everything up to `lastSeq` has just been replayed, so the live stream
     // carries only what happens next rather than the conversation again.
