@@ -1,7 +1,7 @@
 ---
 title: A plugin installs at the newest version whose sdk range admits the daemon
 domain: daemon
-status: planned
+status: built
 priority: high
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -76,10 +76,10 @@ No decision file: every row below is Softov's answer or a choice anyone would ma
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The version that fits the daemon's sdk is chosen from the registry](task-01-the-version-that-fits-is-chosen.md) | implemented | - |
-| [02 - Install asks npm for the version that fits](task-02-install-asks-for-the-version-that-fits.md) | implemented | 01 |
-| [03 - Update moves every plugin to the version that fits](task-03-update-moves-to-the-version-that-fits.md) | implemented | 01 |
-| [04 - The docs say a plugin installs at the version that fits](task-04-docs.md) | implemented | 02, 03 |
+| [01 - The version that fits the daemon's sdk is chosen from the registry](task-01-the-version-that-fits-is-chosen.md) | done | - |
+| [02 - Install asks npm for the version that fits](task-02-install-asks-for-the-version-that-fits.md) | done | 01 |
+| [03 - Update moves every plugin to the version that fits](task-03-update-moves-to-the-version-that-fits.md) | done | 01 |
+| [04 - The docs say a plugin installs at the version that fits](task-04-docs.md) | done | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -89,7 +89,7 @@ No decision file: every row below is Softov's answer or a choice anyone would ma
 ## Resume state
 
 - **Done so far:** every task, 01 to 04. `fittingVersion` chooses a registry package's version from its `@ahpd/sdk` peer range; install and update use it; the docs say the rule.
-- **Next action:** none. The work is built and the gates pass; no commit was made.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `daemonsSdk` still uses `pinned` for `@ahpd/sdk`; that pin is correct and stays. `commands/configure.ts` installs its backends through `installPlugins`, so it follows the same rule, and `packages/server/test/server-configure.test.ts` now holds a packument for `@ahpd/agent-claude`.
 

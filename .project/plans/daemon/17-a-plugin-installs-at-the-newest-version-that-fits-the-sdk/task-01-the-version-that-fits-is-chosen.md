@@ -1,6 +1,6 @@
 ---
 title: The version that fits the daemon's sdk is chosen from the registry
-status: implemented
+status: done
 depends: []
 layer: "server"
 refs:

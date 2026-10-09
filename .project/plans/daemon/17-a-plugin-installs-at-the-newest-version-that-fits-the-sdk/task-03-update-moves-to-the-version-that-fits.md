@@ -1,6 +1,6 @@
 ---
 title: Update moves every plugin to the version that fits
-status: implemented
+status: done
 depends: [task-01-the-version-that-fits-is-chosen.md]
 layer: "server"
 refs:

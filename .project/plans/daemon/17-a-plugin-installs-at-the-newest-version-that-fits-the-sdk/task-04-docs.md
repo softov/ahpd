@@ -1,6 +1,6 @@
 ---
 title: The docs say a plugin installs at the version that fits
-status: implemented
+status: done
 depends: [task-02-install-asks-for-the-version-that-fits.md, task-03-update-moves-to-the-version-that-fits.md]
 layer: "docs"
 refs:

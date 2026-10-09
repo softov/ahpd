@@ -17,7 +17,7 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
+- **Waiting on Softov:** see [../review/](../review/).
 - **cofold released:** agents 0.2.1 and tools 0.3.0 (`release-2026-10-09`). ahpd is still on 0.1; moving it broke 25 agent-cofold tests, so [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) takes the whole range and certifies every change. plugin/22 task 04 is dropped into plugin/40 task 07.
 - **cofold tools/04** (planned in cofold): `files: { requireRead: false }` turns off the read-first rule. Its release and version are Softov's; plugin/40 task 09 takes it after.
 - **claude/19:** merged in `fbb24bf`. Its `answer` in `agent-cofold/src/pauses.ts` returns a boolean; plugin/40 task 02 keeps that.
@@ -48,8 +48,7 @@ Doc drift found by documentation/03 and left for a decision: AHP.md marks `autom
 
 ## Waiting on Softov
 
-- host/56 task 05: his measurement with the probes in `/github/ahpapp/.scratch/org/`.
-- host/30 task 05: his VS Code test by hand.
+- One file per item in [../review/](../review/), with his steps and a Reply section; a file is deleted once its item is finished.
 - Flaky tests: `computer-devcontainer.test.ts` under full load, `ENOTEMPTY` in afterEach cleanup, and once a `computer-needs.test.ts` vault restart case. A problem file or a fix plan was offered, with no answer yet.
 
 ## Carried from 2026-10-03, not rechecked since
