@@ -21,11 +21,12 @@ Never push; Softov pushes.
 - **Restart:** plugin/37 tasks 02, 04 and 05, host/43 p4 task 01 and plugin/38 are merged and need a daemon restart. A bot made with no session now starts one, and a commit message is read as `ahpd.commit` too. Every value a plugin is handed is a frozen copy, and registration closes after `apply`.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
 - **Building:** [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md) task 01, alone because it moves files, session `d5e57f69`, worktree `/github/ahpd.worktrees/build-agents-d5e57f69`, started 2026-10-09 from `9f3798c`.
+- **Building in the clients, for host/43 p4:** ahpapp host/05 (read both names, send `ahpd.commit`), session `3f620a26`; ahpc ahp/07 (read `ahpd.model` too), session `efbbda45`. Once both merge, host/43 p4 tasks 02-04 can build.
 
 ## Next, buildable now
 
 1. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08, open questions answered 2026-10-09; builds after host/74 merges.
-2. host/43 p4 task 01 is merged; tasks 02-05 wait on ahpapp and ahpc reading both names.
+2. host/43 p4 tasks 02-04, after the two client builds merge; task 05 after a client release that sends `ahpd.commit`.
 3. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
