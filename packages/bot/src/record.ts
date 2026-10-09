@@ -156,6 +156,22 @@ const among = <T extends string>(said: unknown, list: readonly T[], missing: str
   return said as T;
 };
 
+/**
+ * The session a body links a bot to, or the link a body takes away.
+ *
+ * Three things a body may say and they are three different answers: naming a
+ * session is the link, `null` is the link taken away, and leaving the key out
+ * is the link left as it was - which is what makes an edit of the name not an
+ * edit of this. A blank string is nothing said, the same as `null`.
+ */
+const link = (said: unknown, existing?: string): string | undefined => {
+  if (said === undefined) return existing;
+  if (said === null) return undefined;
+  if (typeof said !== 'string') throw new RpcError(INVALID_PARAMS, 'session is a session URI, or null to unlink one');
+  const held = said.trim();
+  return held === '' ? undefined : held;
+};
+
 /** A body at random, which is what a make that named none is drawn with. */
 const drawn = (): BotBody => BOT_BODIES[Math.floor(Math.random() * BOT_BODIES.length)] ?? BOT_BODIES[0];
 
@@ -210,6 +226,6 @@ export function checkRecord(slug: string, said: unknown, existing?: BotRecord): 
     model: line('model', body['model']) ?? existing?.model,
     preset: line('preset', body['preset']) ?? existing?.preset,
     computer: line('computer', body['computer']) ?? existing?.computer,
-    session: line('session', body['session']) ?? existing?.session,
+    session: link(body['session'], existing?.session),
   };
 }

@@ -63,10 +63,15 @@ export interface PluginTriggers {
  *
  * The subset of `StartSession` a plugin has any business naming. What is left
  * out is left out on purpose: an `origin` is an automation's run, and a session
- * a plugin starts is not one; the host decides the backend's own bookkeeping
- * and the model. What a plugin knows is whose the work is, what it is for, and
- * the first thing to say - which is `prompt` and not `text`, because a plugin
- * is asking for a conversation to begin rather than recording a run.
+ * a plugin starts is not one. What a plugin knows is whose the work is, what it
+ * is for, and the first thing to say - which is `prompt` and not `text`,
+ * because a plugin is asking for a conversation to begin rather than recording
+ * a run.
+ *
+ * The model and the name are the plugin's to name where its own record holds
+ * one, and the backend's own default where it does not: a bot made with a model
+ * runs its first turn on that model, and a bot called Motion opens a session
+ * called Motion rather than one a catalogue names after its first turn.
  */
 export interface SessionRequest {
   /**
@@ -85,8 +90,18 @@ export interface SessionRequest {
   workingDirectory?: string;
   /** Config values for the new session, as a client's `createSession` gives. */
   config?: Record<string, unknown>;
-  /** The first thing said in it, which is what a session with nothing said is not. */
-  prompt: string;
+  /** The model it asks for, as the protocol's `ModelSelection`, or the backend's own. */
+  model?: unknown;
+  /** What it is called, where the plugin already has a name for it. */
+  title?: string;
+  /**
+   * The first thing said in it, where the plugin has something to say.
+   *
+   * Absent is a session that opens with nobody speaking, which is what a bot
+   * with no instructions asks for. Present and blank is a mistake rather than
+   * a quiet session, the same way a name written as spaces is not a name.
+   */
+  prompt?: string;
 }
 
 /**
@@ -335,6 +350,21 @@ export interface PluginHost extends PluginContext {
    * answers `false` for all of them, and adopts nothing.
    */
   sessionKept(uri: string): Promise<boolean>;
+  /**
+   * Whose a session this host has is, or nothing where it has none.
+   *
+   * A plugin that adopts a session somebody else started - a bot linking one
+   * its owner already has - has to know whose it is before it can say the link
+   * is theirs to make, and the store that knows is the host's own. A URI this
+   * host has never opened answers nothing, which is a different answer from a
+   * session of the host's own that nobody owns.
+   *
+   * Read the way `sessionKept` is, and for the same reason: the store is named
+   * by the fold that runs after every plugin has applied, so a plugin asking
+   * while the later ones are still loading waits rather than being told there
+   * is nobody. A host that keeps no sessions answers nothing for all of them.
+   */
+  sessionOwner(uri: string): Promise<Owner | undefined>;
   /**
    * Start a session for somebody, and answer its URI.
    *

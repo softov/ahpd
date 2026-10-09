@@ -588,6 +588,16 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       return sessions.provider(idOf(uri)) === schemeOf(uri);
     },
     /*
+     * Whose a session is, asked of the same store `sessionKept` reads and
+     * awaited for the same reason. Nothing where this host keeps no sessions
+     * and nothing where it has never opened this one, which are the two
+     * answers a plugin linking somebody else's session has to tell apart.
+     */
+    sessionOwner: async (uri) => {
+      const sessions = await options.sessions?.();
+      return sessions?.owner(idOf(uri));
+    },
+    /*
      * Checked here and started there.
      *
      * A plugin's request is the one value on this road that has not been

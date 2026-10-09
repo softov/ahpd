@@ -411,6 +411,27 @@ nothing behaves exactly as it did before the field existed.
 
 `problem(line)` is how a plugin that handles many items says which one it could not register: `ahpd start` and `ahpd restart` print each line as `skipped: <line>` before the line that says the daemon is up, beside the problems the loader found itself. Saying one costs the item and not the plugin, which keeps the rest of your contribution and does not fail the load. Unlike the two above it is on `PluginHost` and not on the event context, because an item is dropped while `apply` runs.
 
+### Starting a session as an owner
+
+A plugin that needs a session of its own - a bot, a machine that has to be talked to - has nobody at the keyboard to be, so `host.startSession(wanted)` starts one for an owner it names and answers its URI. It is the same road a client's `createSession` takes rather than a second one: the tree is isolated, the owner's grants and policies are asked about, the machine the config names is made, and the session lands in the catalogue as that owner's, which is where the person finds it afterwards.
+
+```ts
+const uri = await host.startSession({
+  owner: 'user:soft',
+  provider: 'claude',
+  workingDirectory: '/srv/bots/motion',
+  model: { id: 'claude-sonnet-5' },
+  prompt: 'You review pull requests. Say what would break, in one paragraph.',
+  title: 'Motion',
+});
+```
+
+The owner's own `session:create` is asked first, and a refusal reads exactly as it does at the door - `soft may not session:create here` - so a plugin cannot start work the person it names could not have started themselves. A host with no users directory gates nothing, here as anywhere else. The call answers a URI or refuses, and nothing in between, so ask before you keep the answer: a record saved over a start that failed would claim a session it has not got.
+
+`SessionRequest` carries what a `createSession` does, under the owner's name, and `owner` is the only field a caller must give. `provider` is a backend the host has and `workingDirectory` is where it works, both falling back to what a session with nothing said uses. `config` is the session's own settings and `model` is the protocol's `ModelSelection`, `{ id: 'claude-sonnet-5' }`, which rides on the session's first turn because a session has no model until a turn does. `title` is what the session is called where the plugin already knows, and a session with none is named after its first turn. `prompt` is that first turn, and leaving it out is a session that opens with nobody speaking, which is what a plugin whose new thing has nothing to open with asks for - an automation's empty message, by contrast, is an automation that does nothing. A `prompt` that is there and blank is a mistake rather than a quiet session, the same way a name written as spaces is not a name.
+
+Two reads go with it. `host.sessionKept(uri)` answers whether this host keeps the session at a URI, which is how a plugin decides whether a leftover machine is one of its own to adopt. `host.sessionOwner(uri)` answers whose that session is, or nothing where this host has none, which is how a plugin adopts a session somebody else started - a bot linking one its owner already has - without putting work into a place its writer has no business being. Both are promises read from the host's own store when they are called, because the plugin that registers that store may load after yours.
+
 ### Writing a usage record
 
 `host.recordUsage(entry)` keeps one `UsageEntry` in the host's `usage` port: a model call (`kind: 'model'`) or a stretch a computer was up (`kind: 'computer'`). It is how a plugin says what its work cost, and the store is the host's own, so every record a daemon keeps lands in one place whichever plugin wrote it.

@@ -540,8 +540,13 @@ export function createAutomations(ctx: HostContext): Automations {
    * The turn is sent by whoever made the automation, whoever pressed the button
    * or whose clock came round - and by nobody at all where the automation names
    * no owner, which is the absence this host already knows how to answer for.
+   *
+   * Nothing at all where there is nothing to say: a plugin may ask for a
+   * session that opens silent, which is what a bot with no instructions gets,
+   * and a turn with no text in it is an empty bubble rather than no turn.
    */
   const beginIn = (session: string, wanted: StartSession): void => {
+    if (wanted.text.trim() === '') return;
     const turnId = crypto.randomUUID();
     if (wanted.owner !== undefined) senders.set(turnId, wanted.owner);
     byChat.get(chatUriFor(session))?.chat.begin(turnId, wanted.text, modelIn(wanted.model), { origin: { kind: 'automation' } });
@@ -639,7 +644,10 @@ export function createAutomations(ctx: HostContext): Automations {
       wanted.origin,
       undefined,
       undefined,
-      undefined,
+      // Named before it is announced where whoever asked had a name for it: a
+      // bot called Motion opens a session called Motion, rather than a row a
+      // catalogue names after the turn it was asked to say.
+      wanted.title,
       forWhom(wanted.owner),
     );
     fireRun(wanted);

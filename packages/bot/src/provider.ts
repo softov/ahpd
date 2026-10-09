@@ -1,12 +1,15 @@
+import { mkdirSync } from 'node:fs';
+import { resolve, sep } from 'node:path';
 import { RpcError } from '@ahpd/sdk';
 import { covers } from '@ahpd/sdk';
 import {
   BOT_BODIES, BOT_COLORS, checkRecord, isSlug,
 } from './record.js';
+import { sessionFor } from './start.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
 import type {
-  Entry, Metadata, Owner, Principal, Read, ResourceProvider, SchemeDescription, Write,
+  Bag, Entry, Metadata, Owner, Principal, Read, ResourceProvider, SchemeDescription, SessionRequest, Write,
 } from '@ahpd/sdk';
 
 /**
@@ -38,12 +41,28 @@ import type {
  * writer belongs to, so a bot is never made for a team its maker is outside of.
  */
 
+/**
+ * The sessions this host keeps, as much of them as a bot is about.
+ *
+ * Read through the host rather than held here, the way `store` lives beside the
+ * daemon: a bot links a session the host already has, and a link is kept only
+ * where the host opened that session for the bot's own owner.
+ */
+export interface BotSessions {
+  /** Whose the session at this URI is, or nothing where this host has none. */
+  owner(uri: string): Promise<Owner | undefined>;
+  /** Start a session for the owner the request names, and answer its URI. */
+  start(wanted: SessionRequest): Promise<string>;
+}
+
 /** What the provider was configured with. */
 export interface BotOptions {
   /** The folder a bot's own workspace is under, as `<root>/<slug>`. */
   root: string;
   /** Where the records are kept. */
   store: BotStore;
+  /** The host's sessions, for the link a record may make to one. */
+  sessions: BotSessions;
   /**
    * What this host is called, for a bot made by work nobody is a person for.
    *
@@ -147,8 +166,10 @@ const MANIFEST = {
     harness: { type: 'string', description: 'The backend a session of it runs on.' },
     model: { type: 'string', description: 'The model it asks for.' },
     preset: { type: 'string', description: 'The session preset it starts from.' },
-    workspace: { type: 'string', description: 'The folder it works in. Its own, and never moved.' },
+    workspace: { type: 'string', description: 'The folder it works in, under the plugin root. Its own, and never moved.' },
     computer: { type: 'string', description: 'The machine it runs in.' },
+    session: { type: 'string', description: 'The session it is linked to, one this host has for its owner.' },
+    owner: { type: 'string', description: "Whose it is, as user:<id>, team:<team> or project:<team>:<project>. The maker where a body names none, and a team or project has to be one the maker belongs to." },
   },
   additionalProperties: false,
 } as const;
@@ -234,9 +255,32 @@ export function botProvider(options: BotOptions): BotProvider {
     throw new RpcError(-32009, `${writer} may not make a bot of ${asked} here`);
   };
 
+  /**
+   * Whether a body may link this bot to this session, or the refusal it is owed.
+   *
+   * A bot is talked to in its session and its instructions are what that
+   * session is asked to be, so a link to somebody else's session would be this
+   * bot's work in a conversation that is not the writer's to put it in. The
+   * session has to be one this host has, opened for the bot's own owner.
+   *
+   * Two refusals that read differently because they are different mistakes: a
+   * URI this host has no session for is a body that cannot be, and one that is
+   * somebody else's is the writer reaching past what is theirs.
+   */
+  const mayLink = async (session: string, whose: Owner): Promise<void> => {
+    const held = await options.sessions.owner(session);
+    if (held === undefined) throw new RpcError(-32602, `${session} is not a session this host has`);
+    if (held !== whose) throw new RpcError(-32009, `${session} is not a session of ${whose}`);
+  };
+
   /** The folder a bot works in, or the refusal a folder another bot has is owed. */
   const workspaceFor = (slug: string, asked: string | undefined, existing?: BotRecord): string => {
     const workspace = asked ?? existing?.workspace ?? `${root}/${slug}`;
+    // A named folder is one under `root`: the plugin makes it, and a maker
+    // names folders only where the plugin's own are kept.
+    if (asked !== undefined && existing === undefined && !resolve(asked).startsWith(`${resolve(root)}${sep}`)) {
+      throw new RpcError(-32602, `${asked} is not under ${root}; a bot's folder is one there`);
+    }
     const clash = store.all().find((one) => one.id !== slug && one.workspace === workspace);
     if (clash !== undefined) {
       throw new RpcError(-32602, `${workspace} is where ${clash.id} works; a bot's folder is its own`);
@@ -341,7 +385,14 @@ export function botProvider(options: BotOptions): BotProvider {
         throw new RpcError(-32011, `${slug} is not the bot that was read; read it again`);
       }
 
-      const draft = checkRecord(slug, parsed(uri, content), existing);
+      const said = parsed(uri, content);
+      const draft = checkRecord(slug, said, existing);
+      const whose = ownerFor(draft.owner, owner, reader, existing);
+      // Asked only where the body named a session: a link a write carried over
+      // from the record is one an earlier write already had checked, and an
+      // edit of the name is not an edit of this.
+      const named = (said as Bag)['session'];
+      if (typeof named === 'string' && named.trim() !== '') await mayLink(draft.session as string, whose);
       const now = new Date().toISOString();
       const record: BotRecord = {
         id: slug,
@@ -357,10 +408,24 @@ export function botProvider(options: BotOptions): BotProvider {
         workspace: workspaceFor(slug, draft.workspace, existing),
         ...(draft.computer === undefined ? {} : { computer: draft.computer }),
         ...(draft.session === undefined ? {} : { session: draft.session }),
-        owner: ownerFor(draft.owner, owner, reader, existing),
+        owner: whose,
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
+      /*
+       * A bot made with no session gets one, and it is the maker's.
+       *
+       * The folder is made first, because the session runs in it: on this host
+       * that is a directory to make, and in a computer the folder rides along
+       * as the working directory and the machine makes it. The host is asked
+       * before the record is saved and its refusal is the make's, so a start
+       * that did not happen leaves no bot behind claiming a session it has not
+       * got.
+       */
+      if (existing === undefined && record.session === undefined) {
+        if (record.computer === undefined) mkdirSync(record.workspace, { recursive: true });
+        record.session = await options.sessions.start(sessionFor(record));
+      }
       store.put(record);
     },
 

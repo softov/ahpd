@@ -35,5 +35,13 @@ export const apply: Plugin['apply'] = (host, options) => {
   const asked = options.root as string | undefined;
   const root = expandHome(asked === undefined || asked.trim() === '' ? defaults.root : asked);
   const store = botStore(host.configDir, (line) => { host.problem(`${name}: ${line}`); });
-  host.registerResourceProvider('bot', botProvider({ root, store, hostName: host.hostName }));
+  host.registerResourceProvider('bot', botProvider({
+    root,
+    store,
+    hostName: host.hostName,
+    sessions: {
+      owner: (uri) => host.sessionOwner(uri),
+      start: (wanted) => host.startSession(wanted),
+    },
+  }));
 };

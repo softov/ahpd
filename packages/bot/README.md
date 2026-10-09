@@ -33,7 +33,7 @@ A bot is addressed by its slug, which is the URI path and the record's own `id`:
 
 A slug is lowercase letters, digits and dashes, one to forty of them, starting with a letter. Anything else is refused `-32602`: the slug is a folder name and a URI path at once.
 
-A body may carry `name`, `labels`, `description`, `body`, `color`, `instructions`, `harness`, `model`, `preset`, `workspace` and `computer`. `id`, `owner`, `createdAt` and `updatedAt` are read but never obeyed - what they name is the host's, and a write that names another `id` or another owner is refused rather than followed.
+A body may carry `name`, `labels`, `description`, `body`, `color`, `instructions`, `harness`, `model`, `preset`, `workspace`, `computer` and `session`. `id`, `createdAt` and `updatedAt` are read but never obeyed - what they name is the host's, and a write that names another `id` is refused rather than followed. `owner` may be named by a make, as the maker or a team or project the maker belongs to; a write naming anybody else is refused `-32009`, and an edit may not move it.
 
 A bot is drawn in one of fifteen bodies and one of eleven colours. A make that names neither gets a body at random and the first colour.
 
@@ -42,16 +42,25 @@ A bot is drawn in one of fifteen bodies and one of eleven colours. A make that n
 | Who | What they may do |
 | --- | --- |
 | The owner | Read, edit, delete |
-| A member of the owning team or project | Read |
+| A member of the owning team or project | Read, edit, delete |
 | `bot:get` | Read any bot |
 | `bot:list` | List every bot |
 | `bot:put` | Make a bot in the scheme, edit their own |
+| `*:*`, or a root connection | Any of it, on any bot |
 
-A listing shows what a read would allow: a list that showed a bot the reader cannot open would be a list of names they cannot use.
+A listing shows what a read would allow: a list that showed a bot the reader cannot open would be a list of names they cannot use. Making a bot also needs the maker's `session:create` where a session is started for it, because that session is theirs.
 
 ### The workspace
 
-A bot works in a folder of its own, `<root>/<slug>` unless the body named one. No two bots share a folder, and an edit never moves one: two bots in one tree would be two sessions working over each other.
+A bot works in a folder of its own, `<root>/<slug>` unless the body named one, and a named one has to be under `root`. No two bots share a folder, and an edit never moves one: two bots in one tree would be two sessions working over each other. The folder is made when the bot is made, before its session starts, since that is where the session works.
+
+### The session
+
+A bot is talked to in its session. A body may link one its owner already has by naming it in `session`, and the link is kept only where the host has that session and it belongs to the bot's owner: a URI this host has no session for is refused `-32602`, and one that belongs to somebody else is refused `-32009`.
+
+A bot made with no `session` is given one. The host starts it as the bot's owner, which is the same session that person could have made themselves: the owner's own `session:create` is asked first, and a refusal reads exactly as it does at the door. It runs the bot's `preset`, or its `harness` and `model`, in the bot's workspace, or in the `computer` the record names; its first turn is the bot's `instructions`, and its title is the bot's `name`. A bot with no instructions asks for a session that opens with nobody speaking. The host is asked before the record is saved, so a start the owner may not make leaves no bot behind.
+
+An edit that sets `session` to `null` unlinks it, and an edit that says nothing about `session` leaves the link as it was.
 
 ### The tombstone
 
@@ -73,6 +82,7 @@ The records themselves are kept beside the daemon's own configuration, in `<conf
 
 | | |
 | --- | --- |
+| [BOTS.md](https://github.com/softov/ahpd/blob/main/docs/BOTS.md) | The `bot:` scheme, the record and the session |
 | [PLUGINS.md](https://github.com/softov/ahpd/blob/main/docs/PLUGINS.md) | Writing and loading a plugin |
 | [DAEMON.md](https://github.com/softov/ahpd/blob/main/docs/DAEMON.md) | Running the daemon |
 

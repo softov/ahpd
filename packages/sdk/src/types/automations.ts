@@ -114,7 +114,22 @@ export interface StartSession {
   config?: Record<string, unknown>;
   /** The model the session template names, as the protocol's `ModelSelection`. */
   model?: unknown;
-  /** The first message, which is what the automation is *for*. */
+  /**
+   * What the session is called, where whoever started it already knows.
+   *
+   * Written down before the session is announced, so a row that appears as
+   * "New session" and is renamed a moment later is one row to a client that
+   * lists once. Absent lets the catalogue name the session after its first
+   * turn.
+   */
+  title?: string;
+  /**
+   * The first message, which is what the automation is *for*.
+   *
+   * Empty where a session is asked for with nothing to open with, which only a
+   * plugin does: an automation with no message is an automation that does
+   * nothing, while a bot with no instructions is a bot whose session waits.
+   */
   text: string;
   /**
    * Whose work this session is, which is the automation's owner.

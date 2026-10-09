@@ -243,17 +243,19 @@ const OWNER = /^(?:user|team|project|root):.+$/;
  * the plugin and the member the way every other one here does. What comes back
  * is a `StartSession`, so nothing downstream has to know there are two shapes.
  *
- * `prompt` is required and is not allowed to be whitespace. A session started
- * with nothing said in it is a session that does nothing, which is the whole
- * reason a plugin asks for one - so an empty prompt is a mistake and not a
- * quiet session.
+ * A request may carry no `prompt`, which asks for a session that opens with
+ * nobody speaking: a bot with no instructions is talked to rather than told
+ * anything, and that is an ask a plugin is allowed to make. A `prompt` that is
+ * there and is whitespace is the other thing - nothing said, written out - and
+ * is refused, the same way a name made of spaces is not a name.
  */
 export const checkSessionRequest = (value: unknown, by: string): StartSession => {
   const object = asObject(value, by, 'startSession', 'a session request');
-  const prompt = typeof object.prompt === 'string' ? object.prompt.trim() : '';
-  if (prompt === '') {
-    throw new Error(miss(by, 'startSession', 'prompt', 'the first message, as a line of text'));
+  const said = object.prompt;
+  if (said !== undefined && (typeof said !== 'string' || said.trim() === '')) {
+    throw new Error(miss(by, 'startSession', 'prompt', 'the first message, as a line of text, or nothing for a session that opens silent'));
   }
+  const prompt = typeof said === 'string' ? said.trim() : '';
   const owner = object.owner;
   if (typeof owner !== 'string' || !OWNER.test(owner)) {
     throw new Error(miss(by, 'startSession', String(owner), 'an owner: user:, team:, project: or root:'));
@@ -270,12 +272,25 @@ export const checkSessionRequest = (value: unknown, by: string): StartSession =>
   if (config !== undefined && !right(config, 'object')) {
     throw new Error(miss(by, 'startSession', 'config', 'an object of session config, or nothing'));
   }
+  // The protocol's own `ModelSelection`, reached by the same road a client's
+  // `createSession` sends one: checked for being an object and read no further
+  // here, since what a model id must be is the backend's to say.
+  const model = object.model;
+  if (model !== undefined && !right(model, 'object')) {
+    throw new Error(miss(by, 'startSession', 'model', "the protocol's ModelSelection, or nothing for the backend's own"));
+  }
+  const title = object.title;
+  if (title !== undefined && !right(title, 'string')) {
+    throw new Error(miss(by, 'startSession', 'title', 'a string, or nothing'));
+  }
   return {
     text: prompt,
     owner: owner as Owner,
     ...(provider === undefined ? {} : { provider: provider as string }),
     ...(workingDirectory === undefined ? {} : { workingDirectory: workingDirectory as string }),
     ...(config === undefined ? {} : { config: config as Record<string, unknown> }),
+    ...(model === undefined ? {} : { model }),
+    ...(title === undefined ? {} : { title: title as string }),
   };
 };
 

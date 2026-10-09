@@ -9,6 +9,7 @@ One file per area of the host. Each says what is true today and links the decisi
 | [AHP.md](AHP.md) | The surface: every command, action and well-known key this host serves, with the row that says why |
 | [AUTHENTICATION.md](AUTHENTICATION.md) | Proving who a client is: the door, the tokens, `authenticate`, the issuer and what is readable before signing in |
 | [AUTOMATIONS.md](AUTOMATIONS.md) | Automations: their triggers, the runs they make and the catalogue they live on |
+| [BOTS.md](BOTS.md) | Bots: the `bot:` scheme, the record a bot is, and the session it is talked to in |
 | [CHATS.md](CHATS.md) | One conversation inside a session: its turns, its parts and the chat URI |
 | [COMPUTER.md](COMPUTER.md) | `@ahpd/computer`: making a machine, running a session inside it, and the profiles that decide what it is |
 | [CONTAINERS.md](CONTAINERS.md) | A session inside a folder's dev container, with a host of its own running in there |

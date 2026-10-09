@@ -65,6 +65,28 @@ it('answers whether it keeps a session, from the store and by the id in the URI'
   expect(await pluginHost('fixture', context).host.sessionKept('echo:/one')).toBe(false);
 });
 
+it('answers whose a session is, from the store and by the id in the URI', async () => {
+  const store = memorySessions();
+  store.setOwner('one', 'user:soft');
+  const context: PluginContext = {
+    path: '/tmp/plugin-host',
+    paths: ['/tmp/plugin-host'],
+    version: '0.0.0',
+    hostName: 'host',
+    configDir: '/tmp/plugin-host',
+    log: () => {},
+    say: () => {},
+  };
+
+  // Keyed by the id inside the URI, the way the store is: a plugin holding a
+  // URI a client gave it is asking about the session that URI names.
+  expect(await pluginHost('fixture', context, { sessions: () => store }).host.sessionOwner('echo:/one')).toBe('user:soft');
+  // A session this host has never opened, and a host that keeps none, are the
+  // same answer here - nothing - which is what a link checks against.
+  expect(await pluginHost('fixture', context, { sessions: () => store }).host.sessionOwner('echo:/two')).toBeUndefined();
+  expect(await pluginHost('fixture', context).host.sessionOwner('echo:/one')).toBeUndefined();
+});
+
 it('records the plugin that registered each agent, by the spec it was named with', async () => {
   const context: PluginContext = {
     path: '/tmp/plugin-host',

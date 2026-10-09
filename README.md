@@ -13,6 +13,7 @@
 [![@ahpd/agent-acp](https://img.shields.io/npm/v/%40ahpd%2Fagent-acp?label=%40ahpd%2Fagent-acp)](https://www.npmjs.com/package/@ahpd/agent-acp)
 [![@ahpd/agent-pi](https://img.shields.io/npm/v/%40ahpd%2Fagent-pi?label=%40ahpd%2Fagent-pi)](https://www.npmjs.com/package/@ahpd/agent-pi)
 [![@ahpd/computer](https://img.shields.io/npm/v/%40ahpd%2Fcomputer?label=%40ahpd%2Fcomputer)](https://www.npmjs.com/package/@ahpd/computer)
+[![@ahpd/bot](https://img.shields.io/npm/v/%40ahpd%2Fbot?label=%40ahpd%2Fbot)](https://www.npmjs.com/package/@ahpd/bot)
 [![@ahpd/tunnel-devtunnel](https://img.shields.io/npm/v/%40ahpd%2Ftunnel-devtunnel?label=%40ahpd%2Ftunnel-devtunnel)](https://www.npmjs.com/package/@ahpd/tunnel-devtunnel)
 
 An [Agent Host Protocol](https://microsoft.github.io/agent-host-protocol/) server, SDK and Plugins.
@@ -282,6 +283,7 @@ This repository is a pnpm workspace containing the AHP host, SDK, agent integrat
 | [`@ahpd/server`](packages/server/) | [npm](https://www.npmjs.com/package/@ahpd/server) | The `ahpd` daemon |
 | [`@ahpd/sdk`](packages/sdk/) | [npm](https://www.npmjs.com/package/@ahpd/sdk) | The AHP host library |
 | [`@ahpd/computer`](packages/computer/) | [npm](https://www.npmjs.com/package/@ahpd/computer) | Disposable Docker machines |
+| [`@ahpd/bot`](packages/bot/) | [npm](https://www.npmjs.com/package/@ahpd/bot) | Bots: records with a folder and a session of their own |
 | [`@ahpd/tunnel-devtunnel`](packages/tunnel-devtunnel/) | [npm](https://www.npmjs.com/package/@ahpd/tunnel-devtunnel) | A Dev Tunnel to the daemon's port |
 
 ---
