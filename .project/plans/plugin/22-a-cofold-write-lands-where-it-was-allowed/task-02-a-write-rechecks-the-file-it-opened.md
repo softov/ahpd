@@ -1,6 +1,6 @@
 ---
 title: A write re-checks the file it opened
-status: todo
+status: done
 depends: [task-01-the-approach-is-chosen.md]
 layer: "cofold tools"
 refs:

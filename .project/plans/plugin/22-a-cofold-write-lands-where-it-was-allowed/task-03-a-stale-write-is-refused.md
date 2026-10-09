@@ -1,6 +1,6 @@
 ---
 title: A stale write is refused
-status: todo
+status: done
 depends: [task-01-the-approach-is-chosen.md]
 layer: "cofold tools"
 refs:
