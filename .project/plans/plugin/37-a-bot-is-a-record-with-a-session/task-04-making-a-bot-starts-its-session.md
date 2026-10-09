@@ -1,6 +1,6 @@
 ---
 title: Making a bot with no session starts one
-status: implemented
+status: done
 depends: [task-01-the-bot-plugin-serves-bot-records.md, task-03-a-plugin-starts-a-session-as-an-owner.md]
 layer: "bot"
 refs:

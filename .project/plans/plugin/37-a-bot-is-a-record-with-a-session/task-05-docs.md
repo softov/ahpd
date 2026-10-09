@@ -1,6 +1,6 @@
 ---
 title: Docs
-status: implemented
+status: done
 depends: [task-04-making-a-bot-starts-its-session.md]
 layer: "docs"
 refs:

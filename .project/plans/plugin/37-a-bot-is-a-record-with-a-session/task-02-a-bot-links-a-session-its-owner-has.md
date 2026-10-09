@@ -1,6 +1,6 @@
 ---
 title: A bot links a session its owner has
-status: implemented
+status: done
 depends: [task-01-the-bot-plugin-serves-bot-records.md]
 layer: "bot"
 refs:
