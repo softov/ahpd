@@ -1,6 +1,6 @@
 ---
 title: The commit message is read as ahpd.commit, and as ahp.commit until ahpapp moves
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -31,3 +31,8 @@ A `commit` invocation takes its message from `_meta['ahpd.commit']`, and from `_
 - `pnpm test` passes.
 
 ## Resume
+
+Implemented 2026-10-08, in the `build/agents/d1ffbc3d` worktree.
+`invoke`'s `commit` branch in `packages/sdk/src/changes.ts` reads `meta['ahpd.commit']` and falls back to `meta['ahp.commit']` when the new key is absent. The comment beside it names task 05 as the task that drops the fallback, once ahpapp sends the new name. Nothing else reads or writes either key: the census in `packages/sdk/test/wire.test.ts` leaves `ahpd.commit` to its `ahpd.` prefix, and its traffic sends no commit.
+Failing first: `takes the message from ahpd.commit, this host's own name for it` and `lets ahpd.commit win when a client sends both` in `packages/sdk/test/commit.test.ts` saw the session title, since only `ahp.commit` was read.
+`docs/AHP.md` names `_meta['ahpd.commit']` and says `ahp.commit` is read while a client still sends it.

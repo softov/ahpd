@@ -281,6 +281,32 @@ describe('committing what is staged', () => {
   });
 });
 
+describe('the key a commit message arrives under', () => {
+  /** What the commit on top of `main` went in with. */
+  const subjectOf = (dir: string): string => git(dir, 'log', '-1', '--format=%s');
+
+  it('takes the message from `ahpd.commit`, this host\'s own name for it', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    await invoke(dir, { 'ahpd.commit': { message: 'Under my own name' } });
+    expect(subjectOf(dir)).toBe('Under my own name');
+  });
+
+  it('still takes it from `ahp.commit`, the name it had before the prefix', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    await invoke(dir, { 'ahp.commit': { message: 'Under the old name' } });
+    expect(subjectOf(dir)).toBe('Under the old name');
+  });
+
+  it('lets `ahpd.commit` win when a client sends both', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    await invoke(dir, { 'ahpd.commit': { message: 'The new name' }, 'ahp.commit': { message: 'The old name' } });
+    expect(subjectOf(dir)).toBe('The new name');
+  });
+});
+
 describe('what a resource target may name', () => {
   /**
    * A repository with `top.txt` and `sub/inside.txt` committed and then

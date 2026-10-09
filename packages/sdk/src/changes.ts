@@ -1074,9 +1074,14 @@ export function gitChanges(): ChangesetSource {
          * the reference client already puts a pull request's arguments in.
          * `message` replaces the session title a client did not get to write;
          * with neither, the commit keeps the sentence this host always used.
+         *
+         * `ahp.commit` is the name this key had before this host's own keys
+         * were prefixed, and is read only while a client still sends it: task
+         * 05 of plan 43 drops the fallback once ahpapp sends `ahpd.commit`.
          */
-        const asked = typeof meta?.['ahp.commit'] === 'object' && meta['ahp.commit'] !== null
-          ? meta['ahp.commit'] as Record<string, unknown>
+        const sent = meta?.['ahpd.commit'] ?? meta?.['ahp.commit'];
+        const asked = typeof sent === 'object' && sent !== null
+          ? sent as Record<string, unknown>
           : undefined;
         const typed = typeof asked?.message === 'string' ? asked.message.trim() : '';
         // The session's own title, which is the sentence somebody already wrote

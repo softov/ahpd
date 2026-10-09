@@ -1,0 +1,35 @@
+---
+title: Every _meta key ahpd invents is named ahpd.<name> - task 01 implemented
+date: 2026-10-08
+refs:
+  - "[code://packages/sdk/src/changes.ts#L1078-L1086](../../../../packages/sdk/src/changes.ts#L1078-L1086) - the `commit` branch reads `ahpd.commit`, then `ahp.commit`"
+  - "[code://packages/sdk/test/commit.test.ts](../../../../packages/sdk/test/commit.test.ts) - the three cases over the two key names"
+  - "[code://docs/AHP.md#L679](../../../../docs/AHP.md#L679) - the key is `ahpd.commit`, and `ahp.commit` is read while a client sends it"
+  - "[code://packages/sdk/test/wire.test.ts#L243-L273](../../../../packages/sdk/test/wire.test.ts#L243-L273) - `PREFIXED` already allows `ahpd.`, so the census is unchanged"
+  - "file:///github/ahpapp/src/changeset-ops.ts - line 207, the only sender of `ahp.commit`, which task 05 waits on"
+---
+
+Task 01 of plan 43 p4. A `commit` invocation now takes its message from `_meta['ahpd.commit']`, and still from `_meta['ahp.commit']` while a client sends that name. The task needs no client, so it lands ahead of the three that do.
+
+## What was built
+
+- [`code://packages/sdk/src/changes.ts`](../../../../packages/sdk/src/changes.ts) - `invoke`'s `commit` branch takes `meta['ahpd.commit']`, falling back to `meta['ahp.commit']` only when the new key is absent, through one `sent` binding the two reads share. The comment beside it says what `ahp.commit` was and names task 05 as the task that drops the fallback. Nothing else in the branch changed, and no other `_meta` key was touched.
+- [`code://packages/sdk/test/commit.test.ts`](../../../../packages/sdk/test/commit.test.ts) - `the key a commit message arrives under`, three cases on a real repository: the message under `ahpd.commit` is the commit's subject; the same message under `ahp.commit` still is; and with both sent, `ahpd.commit` wins.
+- [`code://docs/AHP.md`](../../../../docs/AHP.md) - the `commit` paragraph names `_meta['ahpd.commit']` and says `ahp.commit` is read in its place while a client still sends it, and goes when none does.
+
+## Verified
+
+- `packages/sdk/test/commit.test.ts`: run against the old read, the two cases on the new name fail and no others - `takes the message from ahpd.commit` with `expected 'Changes from an agent session' to be 'Under my own name'`, and `lets ahpd.commit win when a client sends both` with `expected 'The old name' to be 'The new name'`, 2 failed and 24 passed. With the two reads in place the file is 26 passed, the five pre-existing cases that send `ahp.commit` included.
+- `packages/sdk/test/wire.test.ts` passes untouched. It sends no commit, and `ahpd.commit` would be announced by the `ahpd.` prefix in `PREFIXED` even if it did, so the census and its `PENDING` list are unchanged by this task.
+- `node tools/schema.mjs` prints 508 definitions and 633 closed objects. `pnpm build`, `pnpm typecheck` and `pnpm boundary` are clean, every package reporting "declared, none undeclared".
+- `npx vitest run --maxWorkers=2 --testTimeout=10000` from the root: 254 files, 4419 tests pass. The run rewrote `packages/sdk/test/fixtures/wire.jsonl` with this box's endpoint, which was restored to HEAD afterwards, so the fixture is not in the diff.
+
+## Departures from the plan
+
+- None. The read site moved from the plan's line 1068 to 1078 with the file, and the doc line from 675 to 679, both as the plan warned.
+
+## Left for later
+
+- The `ahp.commit` fallback stands until task 05, which drops it once ahpapp sends `ahpd.commit`. ahpapp is the only sender (`file:///github/ahpapp/src/changeset-ops.ts`, line 207).
+- Tasks 02, 03 and 04 wait on ahpapp and ahpc reading both names for their keys. Only `ahp.commit` travels client to host, so task 01 is the one of the five that needs no client release first.
+- No commit was made, so this file carries no `git://` ref; the work is the working tree of `build/agents/d1ffbc3d`.

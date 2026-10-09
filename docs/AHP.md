@@ -676,10 +676,11 @@ such as ahpapp, and `git add` in a terminal or VS Code's Source Control work
 too. A target above the session's folder is refused, for every resource-scoped
 operation and not only these two.
 
-`commit` also takes an optional `_meta['ahp.commit']`. `message` is the sentence
+`commit` also takes an optional `_meta['ahpd.commit']`. `message` is the sentence
 the commit goes in with, replacing the session title this host would otherwise
 use. The protocol has no field for it, so it travels in the bag the reference
-client already uses for an operation's arguments.
+client already uses for an operation's arguments. `ahp.commit` is read in its
+place while a client still sends that name, and goes when none does.
 
 The uncommitted changeset follows the tree between turns. It is re-read when git's
 `index` or `HEAD` moves, when a tool call completes, when a client writes a file
