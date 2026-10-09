@@ -18,8 +18,7 @@ Never push; Softov pushes.
 ## In flight
 
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Merged, not pushed:** ahpd usage/08 (`9e38af1`) and ahpapp host/07 (`9a5d1f2`).
-- **Building:** ahpapp usage/04 (names, Range tab, grouping ticks) in `/github/ahpapp.worktrees/build-agents-usage-04`.
+- **Merged, not pushed:** ahpd usage/08 (`9e38af1`), ahpapp host/07 (`9a5d1f2`) and ahpapp usage/04 (`28d701e`). usage/04 waits on Softov's try of the Range tab and the ticks.
 - **VS Code 1.141 hosts:** ahpc ahp/08 (`356852c`) and ahpapp host/06 (`2b63956`) offer `0.10.0` after `1.0.0`. Merged and pushed, not yet tried against a live 1.141 host.
 - **Clients ready for host/43 p4:** ahpapp host/05 (`a66f582`) reads both names and sends `ahpd.commit`; ahpc ahp/07 (`a13ec65`) reads `ahpd.model` too. Both are merged and pushed.
 
