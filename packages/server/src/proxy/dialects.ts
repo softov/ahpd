@@ -9,7 +9,7 @@
  * dialect, and the listener asks this file rather than knowing either API.
  */
 
-import type { Cost } from '@ahpd/sdk';
+import { isRecord, type Cost } from '@ahpd/sdk';
 import type { Dialect } from './providers.js';
 
 /** The path a caller posts to, by the dialect it is read as. */
@@ -130,9 +130,6 @@ export const JSON_HELD = 4 * 1024 * 1024;
 /** How long one SSE line may be before it is dropped unread. */
 export const LINE_HELD = 1024 * 1024;
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** A count, when the value is one. */
 const count = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
@@ -160,7 +157,7 @@ const setCache = (into: Tokens, key: 'read' | 'write', value: unknown): void => 
 const openaiUsage: UsageMerge = (into, usage) => {
   const prompt = count(usage['prompt_tokens']);
   const details = usage['prompt_tokens_details'];
-  const cached = isObject(details) ? count(details['cached_tokens']) : undefined;
+  const cached = isRecord(details) ? count(details['cached_tokens']) : undefined;
   if (prompt !== undefined) into.input = Math.max(0, prompt - (cached ?? 0));
   if (cached !== undefined && cached > 0) setCache(into, 'read', cached);
   set(into, 'output', usage['completion_tokens']);
@@ -176,16 +173,16 @@ const anthropicUsage: UsageMerge = (into, usage) => {
 
 /** The usage one parsed SSE event or JSON answer carries, by dialect. */
 const usageIn = (dialect: Dialect, value: unknown): Record<string, unknown> | undefined => {
-  if (!isObject(value)) return undefined;
-  if (dialect === 'openai-chat') return isObject(value['usage']) ? value['usage'] : undefined;
+  if (!isRecord(value)) return undefined;
+  if (dialect === 'openai-chat') return isRecord(value['usage']) ? value['usage'] : undefined;
   // Anthropic's stream says the input in `message_start`'s message and the
   // output in each `message_delta`, the last of which is the total; a JSON
   // answer is the message itself.
-  if (value['type'] === 'message_start' && isObject(value['message'])) {
+  if (value['type'] === 'message_start' && isRecord(value['message'])) {
     const usage = value['message']['usage'];
-    return isObject(usage) ? usage : undefined;
+    return isRecord(usage) ? usage : undefined;
   }
-  return isObject(value['usage']) ? value['usage'] : undefined;
+  return isRecord(value['usage']) ? value['usage'] : undefined;
 };
 
 /**
@@ -202,8 +199,8 @@ const costIn = (usage: Record<string, unknown>): Cost | undefined => {
   const amount = count(usage['cost']);
   if (amount === undefined) return undefined;
   const details = usage['cost_details'];
-  const input = isObject(details) ? count(details['upstream_inference_prompt_cost']) : undefined;
-  const output = isObject(details) ? count(details['upstream_inference_completions_cost']) : undefined;
+  const input = isRecord(details) ? count(details['upstream_inference_prompt_cost']) : undefined;
+  const output = isRecord(details) ? count(details['upstream_inference_completions_cost']) : undefined;
   return {
     amount,
     currency: 'usd',

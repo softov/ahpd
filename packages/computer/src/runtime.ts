@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createWriteStream, lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
-import { gitArgv, partTarget } from '@ahpd/sdk';
+import { gitArgv, ownerOf, partTarget } from '@ahpd/sdk';
 import type { BroughtBack, Owner, ResolvedSeed } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
@@ -932,9 +932,13 @@ export const MACHINE_SESSION = 'ahpd.session';
  */
 export const MACHINE_HOST = 'ahpd.host';
 
-/** A typed reference a label held, or nothing when it names no kind. */
-export const ownerSaid = (value: unknown): Owner | undefined =>
-  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
+/**
+ * A typed reference a label held, or nothing when it names no kind.
+ *
+ * The shared reader under this file's own word for it: a machine's label said
+ * whose it is, and a label saying something else belongs to nobody.
+ */
+export const ownerSaid = ownerOf;
 
 /**
  * Whose a machine is and what its work is charged under, from its own labels.

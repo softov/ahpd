@@ -6,7 +6,7 @@ import { memoryAutomations } from './automations.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationEntry, AutomationStore } from './types/automations.js';
 import type { Bag } from './types/common.js';
-import type { Owner } from './types/usage.js';
+import { bag, ownerOf } from './values.js';
 
 /** How this store is built, and what a test replaces. */
 export interface ScheduledOptions {
@@ -47,16 +47,6 @@ interface Saved {
   }[];
 }
 
-/**
- * A typed reference as the file wrote it, or nothing when it is not one.
- *
- * The four kinds `Owner` names, and an id after the colon, the same reading the
- * session store gives its own field: a row that names no owner, or one that
- * names something which is not one, is an automation nobody owns.
- */
-const owned = (value: unknown): Owner | undefined =>
-  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
-
 /** `setTimeout` will not wait longer than this, so a longer wait is done in instalments. */
 const MAX_DELAY = 2_147_483_647;
 
@@ -68,8 +58,6 @@ interface Schedule {
   /** Whether a missed occurrence is caught up. `runOnce` is the protocol's default. */
   catchUp: boolean;
 }
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /**
  * A host that fires its own automations.
@@ -184,7 +172,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
         const at = nextAt.get(one.resource);
         // The inner store answers the entry a client reads, which carries the
         // owner in `_meta` rather than under its own name.
-        const owner = owned(one._meta?.['ahpd.owner']);
+        const owner = ownerOf(one._meta?.['ahpd.owner']);
         return {
           resource: one.resource,
           definition: one.definition,
@@ -301,7 +289,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
     const back: { resource: string; nextRunAt?: string }[] = [];
     for (const one of held.automations) {
       if (typeof one.resource !== 'string') continue;
-      inner.create(one.resource, bag(one.definition), owned(one.owner));
+      inner.create(one.resource, bag(one.definition), ownerOf(one.owner));
       stamps.set(one.resource, {
         createdAt: String(one.createdAt ?? now().toISOString()),
         modifiedAt: String(one.modifiedAt ?? now().toISOString()),

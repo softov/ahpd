@@ -17,56 +17,25 @@
  * from the `Users` port, which has never returned the hash and does not now.
  */
 
+import { line, lines, recordsProvider, type Records, type RecordsProvider } from './records.js';
 import { RpcError } from './rpc.js';
 import { grantProblem } from './users.js';
-import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from './types/resources.js';
 import type { Grant, Named, Users } from './types/users.js';
 
 /** The four, in the order a client's screen would draw them. */
 const SCHEMES = ['user', 'team', 'project', 'role'] as const;
 
-/**
- * What one of the four providers implements.
- *
- * Narrower than `ResourceProvider`, whose members are all but `read` optional:
- * each of these four has all of them, so a caller holding one should not have
- * to test for what is always there.
- */
-export interface PeopleProvider extends ResourceProvider {
-  list(uri: string): Promise<Entry[]>;
-  resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
-  read(uri: string, wanted?: string): Promise<Read>;
-  write(uri: string, content: Write): Promise<void>;
-  remove(uri: string, recursive?: boolean): Promise<void>;
-  describe(): SchemeDescription;
-}
-
 /** One of the four schemes, which is also its grant subject. */
 type Scheme = typeof SCHEMES[number];
 
 /**
- * One scheme's records, as five questions about them.
+ * What one of the four providers implements.
  *
- * Every scheme answers the same five, so nothing below the interface has to
- * know which one it is serving: the URI and the body are read once, and what a
- * record is made of is the scheme's own business.
+ * The provider itself is `records.ts`'s, over whichever store a scheme is:
+ * these four are four `Records`, and what a client sees of them is the shared
+ * one's rules.
  */
-interface Records {
-  /** What the scheme is called on screen. */
-  readonly title: string;
-  /** One line about what a record is. */
-  readonly description: string;
-  /** The body a write to the scheme's root makes something from. */
-  readonly manifest: Record<string, unknown>;
-  /** Every record's id, in the order the file lists them. */
-  ids(): Promise<string[]>;
-  /** One record as it stands, or nothing when the directory holds none. */
-  find(id: string): Promise<Record<string, unknown> | undefined>;
-  /** Name one, or edit the one already there. */
-  put(id: string, body: Record<string, unknown>): Promise<void>;
-  /** Take one out. `true` when one was there. */
-  drop(id: string): Promise<boolean>;
-}
+export type PeopleProvider = RecordsProvider;
 
 /**
  * A refusal the directory made, said as the call's own.
@@ -77,27 +46,6 @@ interface Records {
  */
 const said = (error: unknown): never => {
   throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
-};
-
-/**
- * A write's body, decoded and parsed, or a refusal saying what a body is.
- *
- * An empty body is an empty object rather than a refusal, so a client that
- * writes nothing to name a team means exactly that.
- */
-const bodyOf = (content: Write, scheme: string): Record<string, unknown> => {
-  const text = content.encoding === 'base64' ? Buffer.from(content.data, 'base64').toString('utf8') : content.data;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text === '' ? '{}' : text);
-  }
-  catch {
-    throw new RpcError(-32602, `A ${scheme} is made from a JSON object; that body is not one`);
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new RpcError(-32602, `A ${scheme} is made from a JSON object, and that body is not one`);
-  }
-  return parsed as Record<string, unknown>;
 };
 
 /** One field of text, or nothing when the body said nothing usable. */
@@ -115,27 +63,6 @@ const listOf = (held: Record<string, unknown>, key: string, scheme: string): str
   }
   return (value as string[]).map((one) => one.trim()).filter((one) => one !== '');
 };
-
-/** A record as a client reads it: its JSON, indented, as every other scheme writes one. */
-const asFile = (data: string): Read =>
-  ({ data, encoding: 'utf-8', contentType: 'application/json' });
-
-/**
- * When a record was made, which this directory does not keep.
- *
- * The file holds no timestamp for a person, a team or a role, and inventing one
- * - the time of this read - would be a client told a record changed when
- * nothing did. The epoch is the answer every store without a clock gives.
- */
-const moment = '1970-01-01T00:00:00.000Z';
-
-/** One manifest field that is a line of text. */
-const line = (title: string, description: string): Record<string, unknown> =>
-  ({ type: 'string', title, description });
-
-/** One manifest field that is a list of text. */
-const lines = (title: string, description: string): Record<string, unknown> =>
-  ({ type: 'array', title, description, items: { type: 'string' } });
 
 /**
  * `user:`: a person, and the whole of what the file holds about them.
@@ -296,106 +223,11 @@ const roles = (directory: Users): Records => ({
   drop: async (id) => directory.removeRole(id).catch(said),
 });
 
-/** A URI, split into the record it names and the leaf under it. */
-interface At {
-  /** The record's id, empty at the root. */
-  id: string;
-  /** Empty for every record here, because nothing is under one. */
-  leaf: string;
-}
-
-const providerFor = (directory: Users, what: Scheme): PeopleProvider => {
-  const records: Records = what === 'user' ? people(directory)
+/** Which of the four stores a scheme is read from. */
+const recordsFor = (directory: Users, what: Scheme): Records =>
+  (what === 'user' ? people(directory)
     : what === 'role' ? roles(directory)
-      : named(directory, what);
-
-  const split = (uri: string): At => {
-    const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-    if (match === null || match[1] !== what) throw new RpcError(-32602, `${uri} is not a ${what}: URI`);
-    const rest = match[2] ?? '';
-    const slash = rest.indexOf('/');
-    return slash === -1 ? { id: rest, leaf: '' } : { id: rest.slice(0, slash), leaf: rest.slice(slash + 1) };
-  };
-  const absent = (uri: string): RpcError => new RpcError(-32008, `No ${what} resource at ${uri}`);
-  const description: SchemeDescription = {
-    title: records.title,
-    description: records.description,
-    manifest: records.manifest,
-  };
-
-  return {
-    describe: () => description,
-
-    list: async (uri) => {
-      const at = split(uri);
-      if (at.leaf !== '') throw absent(uri);
-      if (at.id !== '') throw new RpcError(-32008, `${uri} is a ${what}; list ${what}://`);
-      return (await records.ids()).map((one): Entry => ({ name: one, type: 'file' }));
-    },
-
-    resolve: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') return { uri, type: 'directory', mtime: moment, ctime: moment } as Metadata;
-      if (at.leaf !== '') throw absent(uri);
-      const body = JSON.stringify(await records.find(at.id), null, 2);
-      /*
-       * `size` is the body that was there, or the body that would be: a URI
-       * naming no record still has the shape of one, which is what a client
-       * drawing a form before it asks for anything needs to know.
-       */
-      return {
-        uri,
-        type: 'file',
-        size: Buffer.byteLength(body ?? '', 'utf8'),
-        // No etag. `ifMatch` would then be a validator nothing computed, and a
-        // stale one is worse than none for a record whose whole value is a read.
-        mtime: moment,
-        ctime: moment,
-      } as Metadata;
-    },
-
-    read: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') throw new RpcError(-32008, `${uri} is the ${what} directory; read ${what}://<id>`);
-      if (at.leaf !== '') throw absent(uri);
-      const held = await records.find(at.id);
-      if (held === undefined) throw absent(uri);
-      return asFile(JSON.stringify(held, null, 2));
-    },
-
-    /**
-     * A record is made or edited here, and the URI is its id.
-     *
-     * The same body either way, because a person and a team are written whole:
-     * a field the body does not name is the one the record already had, and a
-     * client that read a record and wrote it back has changed nothing.
-     */
-    write: async (uri, content) => {
-      const at = split(uri);
-      if (at.id === '') throw new RpcError(-32602, `${uri} is not a name for a new ${what}; write to ${what}://<id>`);
-      if (at.leaf !== '') throw new RpcError(-32602, `${uri} is not something to write; a ${what} is written whole, at ${what}://<id>`);
-      // `createOnly` is the protocol's own word for refusing one that is there.
-      if (content.createOnly === true && (await records.find(at.id)) !== undefined) {
-        throw new RpcError(-32010, `${at.id} is already a ${what}; edit it or choose another id`);
-      }
-      await records.put(at.id, bodyOf(content, what));
-    },
-
-    /**
-     * A record is taken out here.
-     *
-     * Refused while something still names it - a membership naming a team, a
-     * record holding a role - and it says who, which is the refusal the command
-     * of the same name makes.
-     */
-    remove: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') throw new RpcError(-32602, `${uri} is the ${what} directory; remove ${what}://<id>`);
-      if (at.leaf !== '') throw absent(uri);
-      if (!await records.drop(at.id)) throw absent(uri);
-    },
-  };
-};
+      : named(directory, what));
 
 /**
  * The four providers, by scheme, for a host that has a users directory.
@@ -405,4 +237,4 @@ const providerFor = (directory: Users, what: Scheme): PeopleProvider => {
  * with no people in it.
  */
 export const peopleProviders = (directory: Users): Record<string, PeopleProvider> =>
-  Object.fromEntries(SCHEMES.map((what) => [what, providerFor(directory, what)]));
+  Object.fromEntries(SCHEMES.map((what) => [what, recordsProvider(what, recordsFor(directory, what))]));

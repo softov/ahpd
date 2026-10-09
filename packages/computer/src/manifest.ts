@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { RpcError } from '@ahpd/sdk';
-import { partTarget, resolveNeeds } from '@ahpd/sdk';
+import { bodyText, partTarget, resolveNeeds } from '@ahpd/sdk';
 import { hasDefinition } from './devcontainer.js';
 import { withRequires } from './parts.js';
 import type { SessionTree } from './gitdir.js';
@@ -659,16 +659,16 @@ const oneNeedEach = (resolved: ResolvedNeed[]): ResolvedNeed[] => {
   return kept;
 };
 
-/**
- * A write body as text, whatever encoding it arrived in.
- *
- * The one decoder both kinds of write share: a manifest is this parsed as
- * JSON, and a state is this as a word.
- */
-export const bodyText = (content: Write): string =>
-  (content.encoding === 'base64' ? Buffer.from(content.data, 'base64').toString('utf8') : content.data);
+/** A write body as text, whatever encoding it arrived in, re-exported for `provider.ts`. */
+export { bodyText };
 
-/** The body, decoded and parsed, or a refusal saying what a body is. */
+/**
+ * The body, decoded and parsed, or a refusal saying what a body is.
+ *
+ * The first refusal is this file's own: a manifest is five named fields, so a
+ * body that is not JSON is told what one would have been rather than only that
+ * it is not one.
+ */
 const bodyOf = (content: Write): Record<string, unknown> => {
   const text = bodyText(content);
   let parsed: unknown;

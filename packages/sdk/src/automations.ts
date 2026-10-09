@@ -9,6 +9,7 @@ import type { Automation, AutomationEntry, AutomationRun, AutomationStore, Start
 import type { Bag } from './types/common.js';
 import type { PluginTriggers } from './types/plugin.js';
 import type { SessionEventKind } from './types/triggers.js';
+import { bag } from './values.js';
 
 /**
  * The automations of a host that does not schedule.
@@ -29,10 +30,6 @@ const now = (): string => new Date().toISOString();
 /** How many runs a summary list carries before it needs a cursor. */
 const PAGE = 20;
 
-/** The value as a keyed object, or an empty one where it is not. */
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value)
-  ? value as Bag
-  : {});
 
 /**
  * The eight things a session does that a rule may wake on.

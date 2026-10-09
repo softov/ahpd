@@ -5,6 +5,7 @@ import { join, sep } from 'node:path';
 import type { Scope } from './scopes.js';
 import type { NestedRecord, PullRequestBaseline, SessionStore } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
+import { ownerOf } from './values.js';
 
 /**
  * What the file store needs beyond the port.
@@ -125,15 +126,6 @@ export interface FileSessionOptions {
   /** Somewhere to say that it could not be read or written. */
   onProblem?(message: string): void;
 }
-
-/**
- * A typed reference as the file wrote it, or nothing when it is not one.
- *
- * The four kinds `Owner` names, and an id after the colon. Anything else is
- * ignored rather than guessed at, the way every other field here is.
- */
-const ownerOf = (value: unknown): Owner | undefined =>
-  typeof value === 'string' && /^(?:user|team|project|root):.+$/.test(value) ? value as Owner : undefined;
 
 /**
  * A nested session's record as the file wrote it, or nothing when it is not

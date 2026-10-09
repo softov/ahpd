@@ -10,6 +10,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { refusalReason } from './host.js';
+import { absentResource, asFile, EPOCH, splitResource, type At as Split } from './records.js';
 import { RpcError } from './rpc.js';
 import { mayRead, membership } from './scopes.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription } from './types/resources.js';
@@ -489,23 +490,22 @@ const KEYS: readonly UsageKey[] = ['user', 'team', 'project'];
  * The pool is one encoded path segment because a pool name holds colons:
  * `usage://project%3Abackend%3Asearch` is the pool `project:backend:search` and
  * not an authority called `project`, which is the reading the plan settled on.
+ * A URI of another scheme and a pool that does not decode are both nothing
+ * here, and `at` is what turns either into a refusal.
  */
 const split = (uri: string): At | undefined => {
-  const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-  if (match === null || match[1] !== 'usage') return undefined;
-  const rest = match[2] ?? '';
-  const mark = rest.indexOf('?');
-  const path = mark === -1 ? rest : rest.slice(0, mark);
-  const asked = new URLSearchParams(mark === -1 ? '' : rest.slice(mark + 1));
-  const slash = path.indexOf('/');
-  const one = slash === -1 ? path : path.slice(0, slash);
-  const leaf = slash === -1 ? '' : path.slice(slash + 1);
-  try { return { pool: decodeURIComponent(one), leaf: decodeURIComponent(leaf), asked }; }
+  let held: Split;
+  try { held = splitResource(uri, 'usage'); }
+  catch { return undefined; }
+  try {
+    return {
+      pool: decodeURIComponent(held.id),
+      leaf: decodeURIComponent(held.leaf),
+      asked: new URLSearchParams(held.query),
+    };
+  }
   catch { return undefined; }
 };
-
-const absent = (uri: string): RpcError =>
-  new RpcError(-32008, `No usage resource at ${uri}`);
 
 const at = (uri: string): At => {
   const held = split(uri);
@@ -743,17 +743,8 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       const [from, until] = spansOf(now)[held.leaf];
       return JSON.stringify(await store.total(held.pool, from, until), null, 2);
     }
-    throw absent(`usage://${encodeURIComponent(held.pool)}/${held.leaf}`);
+    throw absentResource('usage', `usage://${encodeURIComponent(held.pool)}/${held.leaf}`);
   };
-
-  /*
-   * Usage has no creation time.
-   *
-   * A pool is not made, it is charged, and a pool nothing has been charged to
-   * has no moment at all - so every answer says the epoch rather than claiming
-   * a date out of the record it happens to hold.
-   */
-  const moment = new Date(0).toISOString();
 
   return {
     describe: (): SchemeDescription => ({
@@ -780,11 +771,11 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
 
     list: async (uri, reader) => {
       const held = at(uri);
-      if (held.leaf !== '') throw absent(uri);
+      if (held.leaf !== '') throw absentResource('usage', uri);
       if (held.pool === '') {
         return (await visible(reader)).map((one) => ({ name: one, type: 'directory' as const }));
       }
-      if (held.pool === GROUPS) throw absent(uri);
+      if (held.pool === GROUPS) throw absentResource('usage', uri);
       notYours(reader, held.pool);
       return LEAVES.map((name) => ({ name, type: 'file' as const }));
     },
@@ -796,20 +787,20 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
           uri,
           type: 'file',
           size: Buffer.byteLength(await groupsBody(held, undefined), 'utf8'),
-          mtime: moment,
-          ctime: moment,
+          mtime: EPOCH,
+          ctime: EPOCH,
         };
       }
       if (held.leaf === '') {
-        return { uri, type: 'directory', mtime: moment, ctime: moment };
+        return { uri, type: 'directory', mtime: EPOCH, ctime: EPOCH };
       }
-      if (!LEAVES.some((one) => one === held.leaf)) throw absent(uri);
+      if (!LEAVES.some((one) => one === held.leaf)) throw absentResource('usage', uri);
       return {
         uri,
         type: 'file',
         size: Buffer.byteLength(await body(held), 'utf8'),
-        mtime: moment,
-        ctime: moment,
+        mtime: EPOCH,
+        ctime: EPOCH,
       };
     },
 
@@ -819,10 +810,10 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
         throw new RpcError(-32008, `${uri} is the usage directory; read usage://<pool>`);
       }
       if (held.pool === GROUPS && held.leaf === '') {
-        return { data: await groupsBody(held, reader), encoding: 'utf-8', contentType: 'application/json' };
+        return asFile(await groupsBody(held, reader));
       }
       notYours(reader, held.pool);
-      return { data: await body(held), encoding: 'utf-8', contentType: 'application/json' };
+      return asFile(await body(held));
     },
   };
 }

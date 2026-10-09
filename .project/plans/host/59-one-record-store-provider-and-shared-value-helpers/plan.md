@@ -1,7 +1,7 @@
 ---
 title: People and policy are served by one record-store provider, and the value readers are one sdk module
 domain: host
-status: planned
+status: active
 priority: medium
 created: 2026-10-05
 revalidated: 2026-10-05
@@ -98,12 +98,12 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The value readers are one sdk module](task-01-the-value-readers-are-one-sdk-module.md) | todo | - |
-| [02 - The record-store provider is its own file, and people uses it](task-02-the-record-store-provider-is-its-own-file.md) | todo | 01 |
-| [03 - Policy is a Records over the Policies port](task-03-policy-is-a-records-over-the-policies-port.md) | todo | 02 |
-| [04 - Usage and the host's resource read use the shared parts](task-04-usage-and-the-hosts-resource-read-use-the-shared-parts.md) | todo | 02 |
-| [05 - The plugins' sdk peer range names the sdk that exports the helpers](task-05-the-plugins-sdk-peer-range-names-the-sdk-that-exports-the-helpers.md) | todo | 01, 02 |
-| [06 - Computer uses the shared parts and value readers](task-06-computer-uses-the-shared-parts-and-value-readers.md) | todo | 05 |
+| [01 - The value readers are one sdk module](task-01-the-value-readers-are-one-sdk-module.md) | done | - |
+| [02 - The record-store provider is its own file, and people uses it](task-02-the-record-store-provider-is-its-own-file.md) | done | 01 |
+| [03 - Policy is a Records over the Policies port](task-03-policy-is-a-records-over-the-policies-port.md) | done | 02 |
+| [04 - Usage and the host's resource read use the shared parts](task-04-usage-and-the-hosts-resource-read-use-the-shared-parts.md) | done | 02 |
+| [05 - The plugins' sdk peer range names the sdk that exports the helpers](task-05-the-plugins-sdk-peer-range-names-the-sdk-that-exports-the-helpers.md) | done | 01, 02 |
+| [06 - Computer uses the shared parts and value readers](task-06-computer-uses-the-shared-parts-and-value-readers.md) | done | 05 |
 | [07 - The agent packages use the shared value readers](task-07-the-agent-packages-use-the-shared-value-readers.md) | todo | 05 |
 
 ## Risks and tradeoffs
@@ -117,15 +117,15 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-value-readers-are-one-sdk-module.md](task-01-the-value-readers-are-one-sdk-module.md), after host 58 is built.
-- **Open questions:** none.
-- **Watch out for:** people's `put` already merges inside each `Records`, policy's merges in the provider today; moving policy's merge into its `Records.put` keeps `createOnly` checked in the provider before `put`; `said` in people (`-32602` with the port's sentence) stays people's, because policy's port throws its own `RpcError`.
+- **Done so far:** tasks 01-06 done - `values.ts` and `records.ts` exist and are exported, people and policy are `Records`, usage and computer take the shared parts, the five peer ranges are pinned by a case in `plugin-compat.test.ts`, and `plans/index.md` names all of it.
+- **Next action:** [task-07-the-agent-packages-use-the-shared-value-readers.md](task-07-the-agent-packages-use-the-shared-value-readers.md), which was not started: its Files name `packages/agent-cofold/src/session.ts`, `runs.ts` and `pauses.ts`, and plugin/40 holds those three. Build it after plugin/40 merges.
+- **Open questions:** none. Open question 1 (the version the peer range names) is settled as 0.10.0, which is what the five ranges already read.
+- **Watch out for:** people's `put` already merges inside each `Records`, policy's merges in the provider today; moving policy's merge into its `Records.put` keeps `createOnly` checked in the provider before `put`; `said` in people (`-32602` with the port's sentence) stays people's, because policy's port throws its own `RpcError`. Built: `packages/bot/src/provider.ts` still writes its own `split`, `absent` and `moment`, because no task here names bot.
 
 ## Final verification checklist
 
-- [ ] `rg -n "^const (bag|bagOf|str|isRecord|isObject) =" packages/*/src` finds only `values.ts`.
-- [ ] `policy.ts` and `people.ts` hold no `split`, `asFile`, `moment` or `providerFor` of their own.
-- [ ] Every plugin package that imports from `values.ts` or `records.ts` has the new peer range, and `pnpm boundary` passes.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [ ] `rg -n "^const (bag|bagOf|str|isRecord|isObject) =" packages/*/src` finds only `values.ts`. Not yet: the four agent packages still hold theirs, which is task 07's sweep.
+- [x] `policy.ts` and `people.ts` hold no `split`, `asFile`, `moment` or `providerFor` of their own.
+- [x] Every plugin package that imports from `values.ts` or `records.ts` has the new peer range, and `pnpm boundary` passes.
+- [x] `pnpm exec tsc --noEmit`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

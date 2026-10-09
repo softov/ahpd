@@ -6,7 +6,7 @@ import { isIPv6 } from 'node:net';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { resolveConfig, type ResolvedConfig } from '@cofold/config';
-import { issuerKind, type McpServer, type PluginSpec } from '@ahpd/sdk';
+import { issuerKind, reason, type McpServer, type PluginSpec } from '@ahpd/sdk';
 import type { ProxySetting } from './proxy/providers.js';
 
 /**
@@ -313,7 +313,7 @@ const readIn = (file: string): string | undefined => {
   }
   catch (error) {
     if (isMissing(error)) return undefined;
-    throw new Error(`${file} cannot be read, so this daemon cannot tell which machines are its own: ${why(error)}. Fix or move that file`);
+    throw new Error(`${file} cannot be read, so this daemon cannot tell which machines are its own: ${reason(error)}. Fix or move that file`);
   }
 };
 
@@ -338,7 +338,7 @@ const made = (file: string): string => {
       if (theirs !== undefined && HOST_ID.test(theirs)) return theirs;
       throw new Error(`${file} was taken by another daemon starting at the same time, and does not hold an id this one can use: fix or move that file`);
     }
-    throw new Error(`${file} cannot be written, so this daemon has no id of its own: ${why(error)}`);
+    throw new Error(`${file} cannot be written, so this daemon has no id of its own: ${reason(error)}`);
   }
 };
 
@@ -348,7 +348,6 @@ const isMissing = (error: unknown): boolean => code(error) === 'ENOENT';
 const isTaken = (error: unknown): boolean => code(error) === 'EEXIST';
 const code = (error: unknown): string | undefined =>
   typeof error === 'object' && error !== null ? (error as { code?: unknown }).code as string | undefined : undefined;
-const why = (error: unknown): string => error instanceof Error ? error.message : String(error);
 
 /**
  * Where a detached daemon's output goes.

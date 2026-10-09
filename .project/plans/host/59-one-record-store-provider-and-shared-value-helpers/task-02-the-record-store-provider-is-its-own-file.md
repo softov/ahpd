@@ -1,6 +1,6 @@
 ---
 title: The record-store provider is its own file, and people uses it
-status: todo
+status: done
 depends: [task-01-the-value-readers-are-one-sdk-module.md]
 layer: "sdk"
 refs:
@@ -38,3 +38,14 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk`.
 
 ## Resume
+
+`packages/sdk/src/records.ts` holds `RecordsProvider` (people's `PeopleProvider`, which people now aliases), `Records` with `put(id, body, was?)`, `At`, `splitResource`, `absentResource`, `asFile`, `bodyText`, `jsonBody` and `EPOCH`, and `recordsProvider(scheme, records)`, which is people's `providerFor` moved word for word with `what` renamed `scheme`. `packages/sdk/test/records.test.ts` is the new file's cases (8): the split's four shapes and its two refusals, `jsonBody` for an object, an empty body, a base64 body, a list and `nope`, and `asFile`'s shape.
+
+`people.ts` is 248 lines: the four `Records` (`people`, `named`, `roles`), `textOf`, `listOf`, `said`, `line`, `lines` and `SCHEMES` stay, and `peopleProviders` maps each scheme through `recordsFor(directory, what)` into `recordsProvider`. `PeopleProvider` is now `export type PeopleProvider = RecordsProvider`. Gone from the file: the old `Records` interface, `PeopleProvider`'s member list, `bodyOf`, `asFile`, `moment`, `At` and `providerFor`, and with them the `types/resources.js` import. `index.ts` exports `absentResource`, `asFile`, `bodyText` and `splitResource` beside the value readers; `Records` and `recordsProvider` stay unexported, as the task says.
+
+Two things worth knowing for the tasks after this one:
+
+- `splitResource` reads the query out of every URI, so a `user://ana?x=1` that used to be an id of `ana?x=1` and answered `-32008` now reads the record `ana` and ignores what it asked. No test covers that URI and step 2 asks for the query to be split out, so it is the step's decision rather than a silence; people and policy read nothing from `query`.
+- `write` reads the row once into `was`, checks `createOnly` against it and hands it to `put`. People's three `Records` still read the row again inside their own `put`, which is what they did before - the third argument is for policy, which merges the row it is handed.
+
+Gates: `pnpm exec tsc -p packages/sdk --noEmit` clean, `npx vitest run packages/sdk --maxWorkers=2 --testTimeout=10000` 124 files and 2421 tests passed, `people.test.ts` unchanged and green, every sentence included.

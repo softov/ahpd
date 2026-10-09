@@ -1,5 +1,7 @@
 import { RpcError, METHOD_NOT_FOUND } from '../rpc.js';
 
+export { reason } from '../values.js';
+
 /**
  * A port this host was not given.
  *
@@ -13,8 +15,6 @@ export const need = <T>(port: T | undefined, method: string): T => {
     throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
   return port;
 };
-
-export const reason = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /** What a request that would start something is refused with once the host is closing. */
 export const CLOSING = 'This host is closing, so nothing new starts on it';

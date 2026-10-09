@@ -38,3 +38,7 @@ No agent package defines `bag`, `bagOf`, `str` or an error-message reader of its
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`.
 
 ## Resume
+
+Not started, and it cannot be: this task's Files name `packages/agent-cofold/src/session.ts`, `runs.ts` and `pauses.ts`, and the build's own rule is that those three (and `context.ts`) are being changed by another build right now - "if a task needs them, stop and report". Three of the eight `agent-cofold` files it would edit are those, and the task is one sweep whose validation (`rg -n "^(export )?const (bag|bagOf|str) =" packages/agent-*/src` finding nothing) only holds when all of it is done, so a partial pass over the other three packages would leave the sweep half-applied rather than closer.
+
+The status stays `todo`. What is left is exactly what the task says: the four agent packages' `bag`, `bagOf`, `str` and error-message copies, replaced by imports from `@ahpd/sdk`, with the three array-refusing `bagOf` (agent-acp `plugin.ts:94`, agent-claude `options.ts:241` and `plugin.ts:107`) keeping their refusal. The `rg` agrees with the task's scope: it matches `bag`/`bagOf`/`str` definitions only under `packages/agent-claude`, `packages/agent-acp`, `packages/agent-pi` and `packages/agent-cofold`, so nothing outside those four is left over from task 01.

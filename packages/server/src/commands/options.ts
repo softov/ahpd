@@ -17,7 +17,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ArgumentError, CofoldError, check, type Field, type JsonSchema, type OptionSpec } from '@cofold/commands';
-import { secretRef } from '@ahpd/sdk';
+import { isRecord, secretRef } from '@ahpd/sdk';
 import type { McpServer, PluginSpec } from '@ahpd/sdk';
 import type { Config, HttpSetting } from '../config.js';
 import { asSpec, configPath, loadConfig } from '../config.js';
@@ -218,9 +218,6 @@ export const mcpServerSchema: Record<string, unknown> = {
   required: ['type'],
 };
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /**
  * A `--plugin-option` as it was written up to its `=`: the path, and nothing
  * of the value after it.
@@ -287,14 +284,14 @@ const setAt = (options: Record<string, unknown> | undefined, path: readonly stri
   }
   const where = path.slice(0, path.length - rest.length).join('.');
   const held = Object.hasOwn(here, key) ? here[key] : undefined;
-  if (held !== undefined && !isObject(held)) {
+  if (held !== undefined && !isRecord(held)) {
     stop(`--plugin-option sets ${spelled}, and ${where} holds ${kindOf(held)}, which is not an object the rest of the path could be set in.`);
   }
   const named = secretRef(held);
   if (named !== undefined) {
     stop(`--plugin-option sets ${spelled}, and ${where} is a reference to the secret ${named}: a key set inside it would leave the reference behind, so it is set as a whole or not at all.`);
   }
-  here[key] = setAt(isObject(held) ? held : undefined, rest, value, spelled);
+  here[key] = setAt(isRecord(held) ? held : undefined, rest, value, spelled);
   return here;
 };
 
@@ -316,7 +313,7 @@ export const mcpServers = (
 ): { servers: Record<string, McpServer>; warnings: string[] } => {
   const servers: Record<string, McpServer> = {};
   const warnings: string[] = [];
-  for (const [name, entry] of Object.entries(isObject(held) ? held : {})) {
+  for (const [name, entry] of Object.entries(isRecord(held) ? held : {})) {
     const label = `${source('mcpServers')}: mcpServers.${name}`;
     let refused: string | undefined;
     try { check(entry, mcpServerSchema as JsonSchema, label); }

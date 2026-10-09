@@ -1,6 +1,7 @@
 import { idOf } from '../catalog.js';
 import { localPath } from '../fileuri.js';
 import { frozenCopy } from '../frozen.js';
+import { bodyText } from '../records.js';
 import { ROOT, chatUriFor } from './channels.js';
 import { need } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -397,7 +398,7 @@ export function createTooling(ctx: HostContext): Tooling {
         data?: unknown; encoding?: unknown;
       };
       const data = String(held.data ?? '');
-      return held.encoding === 'base64' ? Buffer.from(data, 'base64').toString('utf8') : data;
+      return bodyText({ data, encoding: held.encoding === 'base64' ? 'base64' : 'utf-8' });
     },
   });
 

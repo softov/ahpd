@@ -15,6 +15,7 @@
  */
 
 import { check, type JsonSchema } from '@cofold/commands';
+import { isRecord } from '@ahpd/sdk';
 
 /** The APIs a provider can be called in, as the name the file writes. */
 export const DIALECTS = ['anthropic-messages', 'openai-chat'] as const;
@@ -173,9 +174,6 @@ export const proxySchema: JsonSchema = {
 /** A model name as one rule: a maker and a name, each holding no slash. */
 const MODEL_NAME = /^[^/\s]+\/[^/\s]+$/u;
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** One value held to a schema, its sentence kept rather than thrown. */
 const held = (value: unknown, schema: JsonSchema, label: string, into: string[]): void => {
   try { check(value, schema, label); }
@@ -198,8 +196,8 @@ export const proxyProblems = (setting: unknown): string[] => {
   if (setting === undefined) return problems;
   held(setting, proxySchema, 'proxy', problems);
 
-  const given = isObject(setting) && isObject(setting['providers']) ? setting['providers'] : {};
-  const named = isObject(setting) && isObject(setting['models']) ? setting['models'] : {};
+  const given = isRecord(setting) && isRecord(setting['providers']) ? setting['providers'] : {};
+  const named = isRecord(setting) && isRecord(setting['models']) ? setting['models'] : {};
   for (const [id, provider] of Object.entries(given)) {
     held(provider, providerSchema, `proxy.providers.${id}`, problems);
   }

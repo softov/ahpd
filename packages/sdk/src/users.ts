@@ -5,6 +5,7 @@ import { same } from './listen.js';
 import { issuerFrom } from './issuers.js';
 import { covers, membership } from './scopes.js';
 import type { Grant, Issuer, Named, Principal, UserFile, UserRecord, Users } from './types/users.js';
+import { strings } from './values.js';
 
 /**
  * The user directory, in a file.
@@ -388,10 +389,6 @@ export interface FileUserOptions {
 /** The stored form of a secret. Opaque and 256 bits, so a hash is enough. */
 const hashOf = (token: string): string =>
   `sha256:${createHash('sha256').update(token, 'utf8').digest('hex')}`;
-
-/** The strings in an array, whatever else found its way in there. */
-const strings = (value: unknown): string[] =>
-  (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : []);
 
 export function fileUsers(options: FileUserOptions): Users {
   const told = (message: string): void => { options.onProblem?.(message); };

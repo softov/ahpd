@@ -15,57 +15,19 @@
  */
 
 import { checkPolicy, EFFECTS, KINDS, LIMIT_POOLS, MATCHES, MEASURES, PERIODS } from './policies.js';
-import { RpcError } from './rpc.js';
-import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from './types/resources.js';
+import { line, lines, recordsProvider, type Records, type RecordsProvider } from './records.js';
 import type { Policies } from './types/policies.js';
 
 /** The scheme, which is also its grant subject. */
 const SCHEMES = ['policy'] as const;
 
-/** What this provider implements: all of `ResourceProvider`'s members but nothing optional. */
-export interface PolicyProvider extends ResourceProvider {
-  list(uri: string): Promise<Entry[]>;
-  resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
-  read(uri: string, wanted?: string): Promise<Read>;
-  write(uri: string, content: Write): Promise<void>;
-  remove(uri: string, recursive?: boolean): Promise<void>;
-  describe(): SchemeDescription;
-}
-
-/** A URI, split into the row it names and the leaf under it. */
-interface At {
-  /** The row's id, empty at the root. */
-  id: string;
-  /** Empty for every row here, because nothing is under one. */
-  leaf: string;
-}
-
-const splitFor = (scheme: Scheme) => (uri: string): At => {
-  const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-  if (match === null || match[1] !== scheme) throw new RpcError(-32602, `${uri} is not a ${scheme}: URI`);
-  const rest = match[2] ?? '';
-  const slash = rest.indexOf('/');
-  return slash === -1 ? { id: rest, leaf: '' } : { id: rest.slice(0, slash), leaf: rest.slice(slash + 1) };
-};
-
-/** One of the schemes, which is also its grant subject. */
-type Scheme = typeof SCHEMES[number];
-
 /**
- * When a row was written, which this directory does not keep.
+ * What this provider implements.
  *
- * The store holds no timestamp for a policy, and inventing one would be a
- * client told a row changed when nothing did.
+ * The provider itself is `records.ts`'s, over the store: these are this
+ * scheme's `Records`, and what a client sees of them is the shared one's rules.
  */
-const moment = '1970-01-01T00:00:00.000Z';
-
-/** One manifest field that is a line of text. */
-const line = (title: string, description: string): Record<string, unknown> =>
-  ({ type: 'string', title, description });
-
-/** One manifest field that is a list of text. */
-const lines = (title: string, description: string): Record<string, unknown> =>
-  ({ type: 'array', title, description, items: { type: 'string' } });
+export type PolicyProvider = RecordsProvider;
 
 /** The values a field may take, as the schema keyword that says so. */
 const enums = (values: readonly string[]): Record<string, unknown> => ({ enum: [...values] });
@@ -101,10 +63,6 @@ const narrowed = KINDS.map((kind) => ({
     },
   },
 }));
-
-/** The row a read answers with: its JSON, indented, as every other scheme writes one. */
-const asFile = (data: string): Read =>
-  ({ data, encoding: 'utf-8', contentType: 'application/json' });
 
 const TITLE = 'Policies';
 const ABOUT = 'Who may use which agent, model and computer, and how much.';
@@ -149,106 +107,39 @@ const manifest: Record<string, unknown> = {
   allOf: narrowed,
 };
 
-const description: SchemeDescription = { title: TITLE, description: ABOUT, manifest };
-
-/** The provider for one store, under one scheme. */
-const providerFor = (store: Policies, scheme: Scheme): PolicyProvider => {
-  const split = splitFor(scheme);
-  const absent = (uri: string): RpcError => new RpcError(-32008, `No ${scheme} resource at ${uri}`);
-
-  return {
-    describe: () => description,
-
-    list: async (uri) => {
-      const at = split(uri);
-      if (at.leaf !== '') throw absent(uri);
-      // A row is written whole, so there is nothing under one to list.
-      if (at.id !== '') throw new RpcError(-32008, `${uri} is a ${scheme}; list ${scheme}://`);
-      return (await store.list()).map((one): Entry => ({ name: one.id, type: 'file' }));
-    },
-
-    resolve: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') return { uri, type: 'directory', mtime: moment, ctime: moment } as Metadata;
-      if (at.leaf !== '') throw absent(uri);
-      /*
-       * `size` is the body that is there, or the body that would be: a URI
-       * naming no row still has the shape of one, which is what a client
-       * drawing a form before it asks for anything needs to know. No etag -
-       * `people.ts` says why.
-       */
-      const body = JSON.stringify(await store.get(at.id), null, 2);
-      return {
-        uri,
-        type: 'file',
-        size: Buffer.byteLength(body ?? '', 'utf8'),
-        mtime: moment,
-        ctime: moment,
-      } as Metadata;
-    },
-
-    read: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') throw new RpcError(-32008, `${uri} is the ${scheme} directory; read ${scheme}://<id>`);
-      if (at.leaf !== '') throw absent(uri);
-      const held = await store.get(at.id);
-      if (held === undefined) throw absent(uri);
-      return asFile(JSON.stringify(held, null, 2));
-    },
-
-    write: async (uri, content) => {
-      const at = split(uri);
-      // The URI is the id, so a write to the root names nothing.
-      if (at.id === '') throw new RpcError(-32602, `${uri} is not a name for a new ${scheme}; write to ${scheme}://<id>`);
-      if (at.leaf !== '') throw new RpcError(-32602, `${uri} is not something to write; a ${scheme} is written whole, at ${scheme}://<id>`);
-      const was = await store.get(at.id);
-      // `createOnly` is the protocol's own word for refusing one that is there.
-      if (content.createOnly === true && was !== undefined) {
-        throw new RpcError(-32010, `${at.id} is already a ${scheme}; edit it or choose another id`);
-      }
-      /*
-       * A field the body does not name is the one the row already had, and the
-       * id is the address rather than anything the body says.
-       *
-       * A client that read a row and drew a form from it sends back what it
-       * changed, not the whole row, and a write that dropped what it left out
-       * would make every edit a rewrite.
-       */
-      await store.put(checkPolicy({ ...(was ?? {}), ...bodyOf(content), id: at.id }));
-    },
-
-    remove: async (uri) => {
-      const at = split(uri);
-      if (at.id === '') throw new RpcError(-32602, `${uri} is the ${scheme} directory; remove ${scheme}://<id>`);
-      if (at.leaf !== '') throw absent(uri);
-      // Nothing refuses a removal here: no membership and no record names a
-      // policy, so an id nothing holds is the only way this fails.
-      if (!await store.remove(at.id)) throw absent(uri);
-    },
-  };
-};
-
 /**
- * A write's body, decoded and parsed, or a refusal saying what a body is.
+ * The `policy:` records, over the store.
  *
- * An empty body is an empty object rather than a refusal, so a client writing
- * nothing to an id that is not there means exactly that - and the port refuses
- * it as the row it is not.
+ * `checkPolicy` is the port's own check, so a body the store would refuse is
+ * refused here in the same words, and what a client reads back is the row the
+ * store holds rather than the body it sent.
  */
-function bodyOf(content: Write): Record<string, unknown> {
-  const text = content.encoding === 'base64' ? Buffer.from(content.data, 'base64').toString('utf8') : content.data;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text === '' ? '{}' : text);
-  }
-  catch {
-    throw new RpcError(-32602, 'A policy is made from a JSON object; that body is not one');
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new RpcError(-32602, 'A policy is made from a JSON object, and that body is not one');
-  }
-  return parsed as Record<string, unknown>;
-}
+const records = (store: Policies): Records => ({
+  title: TITLE,
+  description: ABOUT,
+  manifest,
+  ids: async () => (await store.list()).map((one) => one.id),
+  find: async (id) => {
+    const held = await store.get(id);
+    return held === undefined ? undefined : { ...held } as Record<string, unknown>;
+  },
+  put: async (id, body, was) => {
+    /*
+     * A field the body does not name is the one the row already had, and the id
+     * is the address rather than anything the body says.
+     *
+     * A client that read a row and drew a form from it sends back what it
+     * changed, not the whole row, and a write that dropped what it left out
+     * would make every edit a rewrite. An empty body is an empty object rather
+     * than a refusal, so a client writing nothing to an id that is not there
+     * means exactly that - and the port refuses it as the row it is not.
+     */
+    await store.put(checkPolicy({ ...(was ?? {}), ...body, id }));
+  },
+  // Nothing refuses a removal here: no membership and no record names a policy,
+  // so an id nothing holds is the only way this fails.
+  drop: async (id) => store.remove(id),
+});
 
 /**
  * The `policy:` provider, over a store.
@@ -258,4 +149,4 @@ function bodyOf(content: Write): Record<string, unknown> {
  * them rather than in a second spread.
  */
 export const policyProviders = (store: Policies): Record<string, PolicyProvider> =>
-  Object.fromEntries(SCHEMES.map((what) => [what, providerFor(store, what)]));
+  Object.fromEntries(SCHEMES.map((what) => [what, recordsProvider(what, records(store))]));

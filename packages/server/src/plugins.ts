@@ -27,7 +27,7 @@ import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
-import { foldHostOptions, frozenCopy, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
+import { foldHostOptions, frozenCopy, isRecord, pluginHost, readSecret, reason, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
 import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginContext, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
@@ -228,13 +228,6 @@ export function resolvePlugin(spec: PluginSpec, options: { configDir: string; cw
   };
 }
 
-/** One error, as the one line a person reads. */
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
-
-/** Whether a value is a plain object, which is what a schema and its `properties` are. */
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /** What a plugin's own `package.json` says, read without judging it. */
 export interface Manifest {
   /** The `package.json` it was read from, for every message about it. */
@@ -274,7 +267,7 @@ export const readManifest = (packageDir: string): Manifest => {
     value = found as Record<string, unknown>;
   }
   catch (error) {
-    return { path, problem: `${path} could not be read: ${messageOf(error)}` };
+    return { path, problem: `${path} could not be read: ${reason(error)}` };
   }
 
   const ahpd = value.ahpd;
@@ -471,7 +464,7 @@ function locate(resolved: Resolved, version: string): Located | { refused: strin
         // An unreadable range is refused rather than passed, which is the
         // difference between a plugin that must be spelled differently and one
         // that loads unchecked.
-        why = ` (${messageOf(error)})`;
+        why = ` (${reason(error)})`;
       }
       if (!satisfied) {
         return { refused: `plugin ${manifest.name ?? said} needs @ahpd/sdk ${manifest.sdkRange}, this is ${version}${why}` };
@@ -620,7 +613,7 @@ const resolveSecrets = async (
       secret = await readSecret(vault, ref, {});
     }
     catch (error) {
-      throw new Error(`${label}.${path} names ${ref}: ${messageOf(error)}`);
+      throw new Error(`${label}.${path} names ${ref}: ${reason(error)}`);
     }
     // What is checked is what the plugin is given, so a value the schema
     // refuses is refused here rather than reaching `apply`.
@@ -678,7 +671,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     module = await import(url);
   }
   catch (error) {
-    return { problems: [...problems, `plugin ${provisional} could not be imported from ${target ?? url}${took()}: ${messageOf(error)}`] };
+    return { problems: [...problems, `plugin ${provisional} could not be imported from ${target ?? url}${took()}: ${reason(error)}`] };
   }
 
   const wrong = checkShape(module, target ?? url);
@@ -712,7 +705,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     unwrapped = await resolveSecrets(optionsSchema ?? {}, written, options.vault?.(), '', label);
   }
   catch (error) {
-    return { problems: [...problems, `plugin ${name} skipped: ${messageOf(error)}`] };
+    return { problems: [...problems, `plugin ${name} skipped: ${reason(error)}`] };
   }
   const values = unwrapped.forApply as Record<string, unknown>;
   if (optionsSchema !== undefined) {
@@ -720,7 +713,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
       check(unwrapped.forCheck, optionsSchema as JsonSchema, label);
     }
     catch (error) {
-      return { problems: [...problems, `plugin ${name} skipped: ${messageOf(error)}`] };
+      return { problems: [...problems, `plugin ${name} skipped: ${reason(error)}`] };
     }
     const known = isRecord(optionsSchema.properties) ? optionsSchema.properties : {};
     for (const key of Object.keys(named ?? {})) {
@@ -784,7 +777,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
   catch (error) {
     // One failure path: whatever the registration check or the plugin itself
     // threw, the whole contribution is discarded and the plugin costs a line.
-    return { problems: [...problems, ...told, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
+    return { problems: [...problems, ...told, `plugin ${name} failed${took()}: ${reason(error)}`] };
   }
   /*
    * Registration is over: the fold takes the host's own copies of what this
@@ -960,7 +953,7 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
       resolved = resolvePlugin(spec, { configDir: options.configDir, cwd: options.cwd });
     }
     catch (error) {
-      problems.push(messageOf(error));
+      problems.push(reason(error));
       continue;
     }
     const one = await loadOne(resolved, {
@@ -1075,7 +1068,7 @@ export async function describePlugin(
     resolved = resolvePlugin(spec, options);
   }
   catch (error) {
-    return { spec, name, state: 'missing', problem: messageOf(error) };
+    return { spec, name, state: 'missing', problem: reason(error) };
   }
 
   const row: PluginRow = { spec, name, state: 'ready', url: resolved.url };
@@ -1101,7 +1094,7 @@ export async function describePlugin(
       satisfied = satisfies(version, manifest.sdkRange);
     }
     catch (error) {
-      why = messageOf(error);
+      why = reason(error);
     }
     if (!satisfied) return { ...row, state: 'incompatible', problem: why };
   }

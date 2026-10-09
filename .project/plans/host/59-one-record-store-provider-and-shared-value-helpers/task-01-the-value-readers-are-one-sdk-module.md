@@ -1,6 +1,6 @@
 ---
 title: The value readers are one sdk module
-status: todo
+status: done
 depends: []
 layer: "sdk, server"
 refs:
@@ -46,3 +46,13 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test packages/sdk packages/server`.
 
 ## Resume
+
+`packages/sdk/src/values.ts` holds the six: `isRecord`, `bag` (an object only, `{}` for an array), `str`, `strings`, `reason` and `ownerOf`, each over the definition the copies already agreed on. `packages/sdk/src/index.ts` exports them beside `secretRef`, `packages/sdk/src/host/common.ts` re-exports `reason` from `../values.js` so `host.ts` and `host/vscodemethods.ts` keep their import path, and `packages/sdk/test/values.test.ts` is the new file's cases (13).
+
+Replaced, in this order: `host/common.ts` (`reason`), `scheduled.ts` (`owned` and `bag`, `owned` renamed `ownerOf` at its two call sites and the now-unused `Owner` type import dropped), `sessions.ts` (`ownerOf`), `users.ts` (`strings`); `server/src/plugins.ts` (`messageOf` and `isRecord`, `messageOf` renamed `reason` at its ten call sites), `server/src/proxy/providers.ts` and `server/src/commands/options.ts` (`isObject` renamed `isRecord`), `server/src/config.ts` (`why` renamed `reason`).
+
+Four more definitions are inside `packages/*/src` and the plan's own final checklist names them (`rg -n "^const (bag|bagOf|str|isRecord|isObject) =" packages/*/src` finds only `values.ts`), but no task's Files list does, so this is the one judgment call in the task: step 7 says "replace the sdk and server definitions" and the checklist says only `values.ts` may hold one, so they went too. `packages/sdk/src/automations.ts`, `packages/sdk/src/host/automations.ts` and `packages/sdk/src/attachments.ts` take `bag` from `./values.js` and `../values.js`, and `packages/server/src/proxy/dialects.ts` takes `isRecord` from `@ahpd/sdk`. The first two already refused arrays, so their behaviour is unchanged; `attachments.ts`'s copy admitted one, and every call site there was read first: `partOf`, `referenceFor`, `typeFor`, `isSnapshot` and `selectionOf` all read named fields off the answer (`one.type`, `one._meta`, `one.selection`), where an array answered `undefined` before and answers `undefined` now, so no site expects a list and none needed `strings`. `packages/sdk/src/host/automations.ts:82` keeps a local `ownerOf`, which is not this reader: it takes an `AutomationEntry` and reads `_meta`, so a task that wants it folded in has to say which call site takes the shared one.
+
+No call site of the copies this task replaced expects a list either: `scheduled.ts` reads `trigger.kind`, `trigger.schedule`, `trigger.id` and `one.definition`, and the server's four read named fields and schema keys, so nothing changed to a `strings` read.
+
+Gates: `pnpm build` clean, `pnpm typecheck` clean, `pnpm boundary` clean (9 packages, none undeclared), `npx vitest run packages/sdk packages/server` 161 files and 3190 tests passed, `pnpm install` reused the store unchanged. The final checklist's grep now matches only the four agent packages, which is task 07's.

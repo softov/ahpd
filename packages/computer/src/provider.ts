@@ -1,4 +1,4 @@
-import { RpcError } from '@ahpd/sdk';
+import { absentResource, asFile, RpcError, splitResource } from '@ahpd/sdk';
 import type {
   Entry, MachineNeed, Metadata, Owner, PluginHost, Read, ResourceProvider, SchemeDescription, SecretRef,
   SecretWork, Write,
@@ -99,18 +99,16 @@ interface At {
   leaf: string;
 }
 
+/**
+ * Where a `computer:` URI points, or nothing when it is another scheme's.
+ *
+ * The shared reader answers a wrong scheme with a refusal, and this answers
+ * nothing, because `at` below is the one place that says so out loud.
+ */
 const split = (uri: string): At | undefined => {
-  const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-  if (match === null || match[1] !== 'computer') return undefined;
-  const rest = match[2] ?? '';
-  const slash = rest.indexOf('/');
-  return slash === -1
-    ? { id: rest, leaf: '' }
-    : { id: rest.slice(0, slash), leaf: rest.slice(slash + 1) };
+  try { return splitResource(uri, 'computer'); }
+  catch { return undefined; }
 };
-
-const absent = (uri: string): RpcError =>
-  new RpcError(-32008, `No computer resource at ${uri}`);
 
 /** A machine's directory, or the file under it. */
 const isDirectory = (at: At): boolean => at.leaf === '';
@@ -214,9 +212,6 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
     }, null, 2);
   };
 
-  const asFile = (data: string): Read =>
-    ({ data, encoding: 'utf-8', contentType: 'application/json' });
-
   /** One need map with every reference read, a refusal as this write's. */
   const read = async (
     values: Record<string, string | SecretRef> | undefined,
@@ -266,12 +261,12 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
 
     list: async (uri) => {
       const held = at(uri);
-      if (!isDirectory(held)) throw absent(uri);
+      if (!isDirectory(held)) throw absentResource('computer', uri);
       if (held.id === '') {
         return (await runtime.list()).map((one) => ({ name: one.id, type: 'directory' as const }));
       }
       // A machine that is not there is not a directory either.
-      if (await runtime.inspect(held.id) === undefined) throw absent(uri);
+      if (await runtime.inspect(held.id) === undefined) throw absentResource('computer', uri);
       return leaves();
     },
 
@@ -281,12 +276,12 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         return { uri, type: 'directory', mtime: moment(undefined), ctime: moment(undefined) };
       }
       const found = await runtime.inspect(held.id);
-      if (found === undefined) throw absent(uri);
+      if (found === undefined) throw absentResource('computer', uri);
       const created = moment(typeof found.Created === 'string' ? found.Created : undefined);
       if (isDirectory(held)) {
         return { uri, type: 'directory', mtime: created, ctime: created };
       }
-      if (!leaves().some((one) => one.name === held.leaf)) throw absent(uri);
+      if (!leaves().some((one) => one.name === held.leaf)) throw absentResource('computer', uri);
       const body = held.leaf === 'status' ? JSON.stringify(found, null, 2)
         : held.leaf === 'stats' ? await statsOf(held.id, found)
           : held.leaf === 'state' ? `${stateOf(found)}\n`
@@ -306,14 +301,14 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
         throw new RpcError(-32008, `${uri} is a directory; read ${uri}/status`);
       }
       const found = await runtime.inspect(held.id);
-      if (found === undefined) throw absent(uri);
+      if (found === undefined) throw absentResource('computer', uri);
       if (held.leaf === 'status') return asFile(JSON.stringify(found, null, 2));
       if (held.leaf === 'capabilities') return asFile(capabilities());
       if (held.leaf === 'stats') return asFile(await statsOf(held.id, found));
       if (held.leaf === 'state') {
         return { data: `${stateOf(found)}\n`, encoding: 'utf-8', contentType: 'text/plain' };
       }
-      throw absent(uri);
+      throw absentResource('computer', uri);
     },
 
     /**
@@ -339,7 +334,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
        * refused as a bad name, which says nothing about what was asked.
        */
       if (held.leaf === 'state') {
-        if (await runtime.inspect(held.id) === undefined) throw absent(uri);
+        if (await runtime.inspect(held.id) === undefined) throw absentResource('computer', uri);
         const said = bodyText(content).trim().toLowerCase();
         if (!STATES.includes(said as typeof STATES[number])) {
           throw new RpcError(-32602, `A computer's state is one of ${STATES.join(', ')}, and that body says ${said || 'nothing'}`);
@@ -414,7 +409,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       if (held.id === '' || !isDirectory(held)) {
         throw new RpcError(-32602, `${uri} is not a computer to destroy; delete computer://<name>`);
       }
-      if (await runtime.inspect(held.id) === undefined) throw absent(uri);
+      if (await runtime.inspect(held.id) === undefined) throw absentResource('computer', uri);
       try {
         await runtime.remove(held.id);
       }

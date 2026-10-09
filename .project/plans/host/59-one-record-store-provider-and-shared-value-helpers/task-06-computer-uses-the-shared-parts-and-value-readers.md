@@ -1,6 +1,6 @@
 ---
 title: Computer uses the shared parts and value readers
-status: todo
+status: done
 depends: [task-05-the-plugins-sdk-peer-range-names-the-sdk-that-exports-the-helpers.md]
 layer: "computer"
 refs:
@@ -33,3 +33,13 @@ Computer's provider takes the URI split, the absent refusal, `asFile` and `bodyT
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test packages/computer`.
 
 ## Resume
+
+`provider.ts` takes `splitResource`, `absentResource` and `asFile` from `@ahpd/sdk`. Its `split` keeps the local two-field `At` and its `undefined` answer (the shared reader's refusal for a wrong scheme is caught, because `at` is the one place that says so out loud), and its nine `throw absent(uri)` are `throw absentResource('computer', uri)`. The local `absent` and the local `asFile` are gone. Leaves, owner-aware writes, `watch` and `moment` are untouched - `computerProvider` is still not a `recordsProvider`, and `moment` is still a machine's creation date.
+
+`manifest.ts` imports `bodyText` from `@ahpd/sdk` and re-exports it, so `provider.ts`'s `import { bodyText } from './manifest.js'` is unchanged and `bodyOf` still decodes through it. `bodyOf` is otherwise as it was: its own first refusal still names the manifest's five fields. The plan's line numbers are stale throughout this task (host 58 moved them); `bodyText`/`bodyOf` are at 662-685 and the read decode at 396-400 of `provider.ts`'s neighbours.
+
+`runtime.ts`'s `ownerSaid` is now `ownerOf` from `@ahpd/sdk`, exported under this file's own name for it (`export const ownerSaid = ownerOf;`) so the import in `owners.ts` and both call sites are unchanged - a machine's label "says" whose it is, which is computer's word rather than the sdk's. The regex is gone.
+
+`plugin.ts`'s `words` is `Array.isArray(value) ? strings(value) : undefined`: it still answers `undefined` for a value that is not a list, which is what the caller's `=== undefined` checks read, and the filter it wrote by hand is now the shared one.
+
+Gates: `pnpm build` clean, `npx vitest run packages/computer --maxWorkers=2 --testTimeout=10000` 24 files and 403 tests passed, unchanged from before this task.

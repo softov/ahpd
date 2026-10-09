@@ -129,4 +129,28 @@ describe('a plugin that names the oldest sdk it needs', () => {
       expect(satisfies(sdkVersion(), manifest.peerDependencies['@ahpd/sdk'] as string)).toBe(true);
     },
   );
+
+  /*
+   * The five that import a shared helper take an sdk that has it, and 0.9.0 is
+   * not one of those: without the floor, a plugin loaded beside a daemon on the
+   * older sdk would fail at its own import rather than be refused by name.
+   *
+   * `0.10.0` is the release that first ships `values.ts` and `records.ts`. The
+   * tunnel takes none of them, which is why it is not on this list.
+   */
+  const HELPER_SDK = '0.10.0';
+
+  it.each([
+    ['agent-acp'], ['agent-claude'], ['agent-cofold'], ['agent-pi'], ['computer'],
+  ])(
+    'refuses 0.9.0 for @ahpd/%s, which reads a helper 0.9.0 does not export',
+    (name) => {
+      const manifest = JSON.parse(readFileSync(join(here, '../..', name, 'package.json'), 'utf8')) as {
+        peerDependencies: Record<string, string>;
+      };
+      const range = manifest.peerDependencies['@ahpd/sdk'] as string;
+      expect(satisfies('0.9.0', range)).toBe(false);
+      expect(satisfies(HELPER_SDK, range)).toBe(true);
+    },
+  );
 });

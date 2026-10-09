@@ -1,6 +1,7 @@
 import { lstat, open } from 'node:fs/promises';
 import { extname } from 'node:path';
 import { localPath } from './fileuri.js';
+import { bag } from './values.js';
 import type { Bag } from './types/common.js';
 import type { MessageAttachment } from './types/session.js';
 
@@ -273,5 +274,3 @@ const selectionOf = (one: Bag): string => {
 const labelOf = (one: Bag): string =>
   (typeof one.label === 'string' && one.label !== '' ? one.label : 'attachment');
 
-/** One value as an object, for reading fields off something untyped. */
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});

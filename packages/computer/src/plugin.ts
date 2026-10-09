@@ -3,7 +3,7 @@ import { realpathSync } from 'node:fs';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
-import { resolveNeeds, secretRef } from '@ahpd/sdk';
+import { resolveNeeds, secretRef, strings } from '@ahpd/sdk';
 import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
@@ -169,8 +169,15 @@ export const optionsSchema = {
   },
 };
 
+/*
+ * A list of words, or nothing when the value is not a list at all.
+ *
+ * `undefined` rather than an empty list, because a profile that says nothing is
+ * not a profile that says nothing is there: `words(said.mounts) === undefined`
+ * is what leaves the field out of the body below.
+ */
 const words = (value: unknown): string[] | undefined =>
-  (Array.isArray(value) ? value.filter((one): one is string => typeof one === 'string') : undefined);
+  (Array.isArray(value) ? strings(value) : undefined);
 
 const named = (value: unknown): Record<string, string> | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;

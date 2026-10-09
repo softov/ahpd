@@ -5,6 +5,7 @@ import { EVENT_TRIGGERS, pluginTriggerTypes } from '../automations.js';
 import { presetById } from '../triggerpresets.js';
 import { createRuleEngine } from '../triggers.js';
 import { wakeMessage } from '../wakemessage.js';
+import { bag } from '../values.js';
 import { AUTOMATIONS, chatUriFor } from './channels.js';
 import { CLOSING, need } from './common.js';
 import { refusalReason } from './gate.js';
@@ -29,10 +30,6 @@ const OVERLAPS = ['queue', 'steer', 'parallel', 'skip'];
 /** The kinds that end a session's turn, which is when its chat is free again. */
 const ENDING = new Set<SessionEventKind>(['turnCompleted', 'turnFailed', 'turnCancelled']);
 
-/** The value as a keyed object, or an empty one where it is not. */
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value)
-  ? value as Bag
-  : {});
 
 /** The event ids a saved trigger names, in the order the client put them. */
 const eventsOf = (trigger: Bag): string[] => (Array.isArray(trigger.events) ? trigger.events : [])
