@@ -24,7 +24,7 @@ Never push; Softov pushes.
 
 ## Next, buildable now
 
-1. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08; two open questions for Softov in its Resume state (a README-vs-schema test, and `LICENSE` files for bot and agent-cofold).
+1. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08, open questions answered 2026-10-09; builds after host/74 merges.
 2. host/43 p4 task 01 is merged; tasks 02-05 wait on ahpapp and ahpc reading both names.
 3. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 

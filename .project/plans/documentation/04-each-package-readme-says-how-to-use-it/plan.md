@@ -4,7 +4,7 @@ domain: documentation
 status: planned
 priority: medium
 created: 2026-10-08
-revalidated: 2026-10-08
+revalidated: 2026-10-09
 refs:
   - "[code://packages/server/README.md](../../../../packages/server/README.md) - lists 9 commands; `packages/server/src/commands/` has 18 files"
   - "[code://packages/server/src/commands/options.ts](../../../../packages/server/src/commands/options.ts) - the flags each command takes, `programGlobals` among them"
@@ -44,7 +44,6 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 - The Claude README names `computerCli` and `computerCliFallback`; whether `optionsSchema` holds them is unchecked.
 - The acp README names `toolsChanged`; whether `optionsSchema` holds it is unchecked.
 - The handoff of 2026-10-03 noted README and manifest mismatches in computer, tunnel-devtunnel, agent-acp, agent-pi and agent-cofold; this plan checks each one against `optionsSchema`.
-- `packages/bot` and `packages/agent-cofold` have no `LICENSE` file, while their READMEs end with a `License` section.
 
 ## Decisions locked in
 
@@ -58,6 +57,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | `Commands` lists the ahpd commands that act on the package: `plugin install`, `plugin update`, `plugin list`, and `vault` where an option takes `$secret` | (defaulted: plugins add no commands of their own) | 02, 03 |
 | The server README lists every command and every global flag, one line each, and links `docs/DAEMON.md` for the detail | (defaulted) | 01 |
 | A long explanation stays in `docs/`; the README row gives one sentence and links it | (defaulted: documentation/03 gave each area one doc) | 01-04 |
+| No test checks the README rows against `optionsSchema` in this plan | Softov, 2026-10-09, asked "should a test check that every optionsSchema property has a row in its package README?" and answered "No, not now" | - |
+| `packages/bot` and `packages/agent-cofold` get a copy of the root `LICENSE` | Softov, 2026-10-09, asked "Should they get one?" and answered "Yes, copy the root one" | 02, 03 |
 
 ## Proposed architecture
 
@@ -82,9 +83,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 - **Done so far:** nothing.
 - **Next action:** any task; they touch different files and can run in one build.
-- **Open questions:**
-  1. Should a test check that every `optionsSchema` property has a row in its README? - proposed: no, not in this plan.
-  2. Should `packages/bot` and `packages/agent-cofold` get a `LICENSE` file? - proposed: yes, a copy of the root one, in task 03 and task 02.
+- **Open questions:** none.
 - **Watch out for:** `ahpd.options` in `package.json` is not the option list; read `optionsSchema`. No em dashes in the READMEs, and no hard wrap.
 
 ## Final verification checklist

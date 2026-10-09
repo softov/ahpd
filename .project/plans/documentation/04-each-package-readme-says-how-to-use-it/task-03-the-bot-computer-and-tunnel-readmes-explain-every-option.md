@@ -17,6 +17,7 @@ The READMEs of `bot`, `computer` and `tunnel-devtunnel` follow the plan's sectio
 ## Files
 
 - `UPDATE: packages/bot/README.md` - rename `Install` to `In the daemon`, add `Commands` and `In your own host`, check each row against the schema.
+- `CREATE: packages/bot/LICENSE` - a copy of the root `LICENSE`.
 - `UPDATE: packages/computer/README.md` - rename `Install` to `In the daemon`, add `Commands` and `In your own host`, check each row against the schema.
 - `UPDATE: packages/tunnel-devtunnel/README.md` - rename `Install` to `In the daemon`, add `Commands` and `In your own host`, check each row against the schema.
 
@@ -29,6 +30,7 @@ The READMEs of `bot`, `computer` and `tunnel-devtunnel` follow the plan's sectio
 5. Remove each row that names a property the schema does not have.
 6. Add `Commands` with `plugin install`, `plugin update`, `plugin list`, and `vault` where an option takes `$secret`.
 7. Write `In your own host` with the `apply` call the package exports.
+8. Copy the root `LICENSE` to `packages/bot/LICENSE`.
 
 ## Validation
 

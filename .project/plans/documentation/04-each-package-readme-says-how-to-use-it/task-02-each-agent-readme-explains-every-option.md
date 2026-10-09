@@ -21,6 +21,7 @@ The READMEs of `agent-claude`, `agent-acp`, `agent-cofold` and `agent-pi` follow
 - `UPDATE: packages/agent-acp/README.md` - add `Commands`, check each row against the schema, `toolsChanged` first.
 - `UPDATE: packages/agent-cofold/README.md` - add `Commands`, check each row against the schema.
 - `UPDATE: packages/agent-pi/README.md` - add `Commands`, check each row against the schema.
+- `CREATE: packages/agent-cofold/LICENSE` - a copy of the root `LICENSE`.
 
 ## Steps
 
@@ -31,6 +32,7 @@ The READMEs of `agent-claude`, `agent-acp`, `agent-cofold` and `agent-pi` follow
 5. Remove each row that names a property the schema does not have.
 6. Add `Commands` with `plugin install`, `plugin update`, `plugin list`, and `vault` where an option takes `$secret`.
 7. Move each explanation longer than one sentence to the `docs/` file that covers it, and link it.
+8. Copy the root `LICENSE` to `packages/agent-cofold/LICENSE`.
 
 ## Validation
 
