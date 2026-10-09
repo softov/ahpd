@@ -739,12 +739,22 @@ export function piSession(
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.
     const instructions = (start.instructions ?? []).filter((one) => one.trim() !== '');
+    /*
+     * The name this conversation is written under, which the host chose.
+     *
+     * The chat's own id where it has one, and the session's id otherwise: a
+     * peer chat is a conversation of its own, and pi writing it over the
+     * session's file would make the two one transcript with two writers.
+     */
+    const writtenAs = start.chatId ?? idFor(start.uri);
     const backend = await open({
       cwd: where,
       ...(resume !== undefined ? { resume } : {}),
       // Only the first open forks: a rebuild continues the copy it made.
       ...(first && resume !== undefined && start.forkAt !== undefined ? { forkAt: start.forkAt } : {}),
-      ...(first && resume === undefined && isUuid(idFor(start.uri)) ? { id: idFor(start.uri) } : {}),
+      // Only a UUID: pi is handed a name it can write a file by, and a name a
+      // client made up is left to pi, whose own name the host records after.
+      ...(first && resume === undefined && isUuid(writtenAs) ? { id: writtenAs } : {}),
       ...(options.sessionDir !== undefined ? { sessionDir: options.sessionDir } : {}),
       ...(tools.length > 0 ? { tools } : {}),
       ...(instructions.length > 0 ? { instructions } : {}),

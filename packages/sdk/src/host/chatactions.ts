@@ -1,7 +1,7 @@
 import { idOf, Status } from '../catalog.js';
 import { localPath } from '../fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -32,9 +32,9 @@ export function chatAction(
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, connections,
     contributedDefaults, decided, described, dispatch, drafts, fire, first, keepProvider, kept,
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
-    ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat, restart, restartChat, restarting,
-    rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf, storedConfig,
-    summaryMoved, value, waitingFor, wheres,
+    ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, recordedChats, renameChat, restart,
+    restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf,
+    storedConfig, summaryMoved, value, waitingFor, wheres,
   } = ctx;
 
   /** The message an action carries, which its text and its attachments ride on. */
@@ -267,8 +267,81 @@ export function chatAction(
       if (was === null) charged.set(named, undefined);
       else if (was !== undefined) charged.set(named, { scope: was });
       else charge(named, connection.principal, typeof restored.scope === 'string' ? restored.scope : undefined);
-      const session = spawn(owner, named, chatUriFor(named), restored, { resume: id, seed }, ran, undefined, undefined, connection);
+      /*
+       * The chats the store recorded for it, which is which chat it comes back
+       * as and which others it comes back with.
+       *
+       * None for a session inside a machine, as its default chat is not
+       * resumed here: what the store has of it is the inner host's, and the
+       * first turn reaches the machine through the session's own start.
+       */
+      const recorded = kept.nested?.(id) === undefined ? recordedChats(id) : [];
+      const lead = recorded.find((one) => one.default === true);
+      /*
+       * The chat the session starts again as.
+       *
+       * A session's first chat can be gone: one closed under `closedChats:
+       * 'hidden'` keeps its conversation in the backend and its row in the
+       * record, marked closed, while another chat became the session's default.
+       * The store says which, and the session starts as that one - under its
+       * own URI and its own backend id, with the turns of its own conversation
+       * read back. Resuming the closed conversation instead would read turns
+       * nobody is looking at, and leave the chat the client is about to send
+       * to with no process behind it.
+       *
+       * The session's own chat where the store records no default: a row listed
+       * from the backend's disk, which has one by construction, and a session
+       * whose chats are nothing but the one that is the session. That chat's
+       * turns are the session's, and the store's own seed is what a backend
+       * that cannot resume is given.
+       */
+      const other = lead === undefined || lead.uri === chatUriFor(named) ? undefined : lead;
+      const back = other === undefined ? undefined : await owner.transcript?.(other.backendId);
+      const session = spawn(
+        owner,
+        named,
+        lead?.uri ?? chatUriFor(named),
+        other?.backendId ?? chatIdFor(named, chatUriFor(named)),
+        restored,
+        other === undefined
+          ? { resume: lead?.backendId ?? id, seed }
+          : { resume: other.backendId, seed: (back ?? []) as unknown as Bag[] },
+        ran,
+        undefined,
+        undefined,
+        connection,
+      );
       keepProvider(named, owner, session);
+      /*
+       * And every other chat the store recorded for it, each a conversation of
+       * its own.
+       *
+       * The client sent its turn to one of them, and a session resumed with
+       * only its first chat would have nowhere to put it. Each is started the
+       * way a chat restarted on its own is: under its own URI, resumed as its
+       * own conversation, with the turns the backend kept read back for a
+       * backend that cannot resume.
+       */
+      for (const chat of recorded) {
+        if (chat.default === true) continue;
+        const own = await owner.transcript?.(chat.backendId);
+        spawn(
+          owner,
+          named,
+          chat.uri,
+          chat.backendId,
+          restored,
+          { resume: chat.backendId, seed: (own ?? []) as unknown as Bag[] },
+          ran,
+          undefined,
+          undefined,
+          connection,
+        );
+      }
+      // The chat the turn was sent to, which is the one it is answered on: a
+      // client talking to a session's second chat is not talking to its first.
+      const talking = byChat.get(channel)?.chat ?? session;
+      const answerOn = byChat.has(channel) ? channel : chatUriFor(named);
       log(`resumed ${named}`);
       dispatch(named, { type: 'session/ready' });
       summaryMoved(named);
@@ -278,11 +351,11 @@ export function chatAction(
       void fire({
         type: 'message',
         session: named,
-        chat: chatUriFor(named),
+        chat: answerOn,
         turn: String(action.turnId ?? ''),
         text: String(message.text ?? ''),
       });
-      const refused = await beginOrRun(session, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message));
+      const refused = await beginOrRun(talking, owner.provider, String(action.turnId ?? ''), String(message.text ?? ''), modelIn(message.model), messageFrom(message), connection, undefined, messageAttachments(message));
       if (refused !== undefined) refuse(connection.peer, channel, action, origin, refused);
     })();
     return;
@@ -1158,6 +1231,7 @@ export function chatAction(
         owner.agent,
         session.uri,
         session.chatUri,
+        chatIdFor(session.uri, session.chatUri),
         owner.config,
         { resume: started, rewindAt: point, seed: all.slice(0, at + 1) as Bag[] },
         owner.workingDirectory,

@@ -1,7 +1,7 @@
 ---
 title: A peer chat is its own conversation, and survives a restart
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -56,15 +56,23 @@ restart -> resume session -> spawn(chatUriFor(session)) only -> peer chat gone; 
 
 | What | Source | Task |
 | --- | --- | --- |
-| A peer chat's backend id is the uuid of its `ahp-chat:/<uuid>`, handed to the backend as `Start.chatId`; the default chat keeps the session's id | (defaulted: one name for one conversation, and the uuid is already minted for the URI) | 01 |
+| A peer chat is handed the uuid of its `ahp-chat:/<uuid>` as `Start.chatId`; the default chat keeps the session's id | (defaulted: one name for one conversation, and the uuid is already minted for the URI) | 01 |
+| The record holds the id the backend answers with, not the one it was asked for: a fork and a chat whose URI id is not a UUID run under an id the backend minted, which only the record keeps | the defect: `spawn` stored `chatId ?? idOf(uri)` and nothing wrote `agentId()` back, so a later process resumed a conversation that does not exist | 01 |
 | The store records each session's chats: URI, backend id, title, origin, and which is the default | the defect: the store keeps no list of chats, so nothing can rebuild them | 02 |
 | Resume and the in-process restart rebuild every recorded chat with `{ resume: <backend id>, seed: <its transcript> }`, as `restartChat` does | the defect: only the default chat is rebuilt (`lifecycle.ts:321-330`, `chatactions.ts:200`) | 03 |
+| A resume starts the chat the record marks default, with its own backend id, rather than the chat URI the session is named by | the defect: disposing the first chat moves `default` to a peer chat, and the old resume spawned `chatUriFor(named)` with the closed conversation's id | 03 |
+| Closing a chat keeps its conversation in the backend, hidden, unless the daemon is told to delete it | Softov, 2026-10-09: asked "host/50: when a client closes one chat of a session, what happens to that chat's conversation in the backend?" - "configurable with default to keep hidden" - [A closed chat's conversation is hidden by default, and deleted only when the daemon is told to](../../../decisions/a-closed-chat-is-hidden-or-deleted.md) | 03 |
+| What closing a chat does is the daemon root-config key `closedChats`, valued `hidden` (the default) or `delete`, and it applies while the daemon runs | Softov, 2026-10-09: asked "host/50: where does the closed-chat setting (keep hidden or delete) live?" - "Daemon root config" - [What closing a chat does is a daemon key in root config](../../../decisions/the-closed-chat-setting-is-a-daemon-key.md) | 03 |
+| Disposing a session deletes every recorded chat's conversation through `Agent.delete`, as the session's own id is deleted, and each id stays claimed until then | [`code://packages/sdk/src/host/lifecycle.ts#L343-L363`](../../../../packages/sdk/src/host/lifecycle.ts#L343-L363), the `deleted` call a disposed session goes through | 03 |
 | A recorded peer chat's backend id is claimed, so the catalogue does not list it as a session of its own | [`code://packages/sdk/src/host/catalogue.ts#L308-L310`](../../../../packages/sdk/src/host/catalogue.ts#L308-L310), the existing `claimed` skip | 03 |
 | A nested session's chats are recorded and not rebuilt, as its default chat is not resumed today | [`code://packages/sdk/src/nested.ts#L372-L375`](../../../../packages/sdk/src/nested.ts#L372-L375): a fresh inner session each start | 03 |
+| Which session owns a chat the host is not holding is answered by a chat-to-session map, built in one pass when the host starts and kept current as chats are recorded and dropped | Softov, 2026-10-09: asked "when a client asks for a chat of a session that is not loaded, how does ahpd find which session owns that chat?" - "Map built at start" | 03 |
+| The store answers the list that map is built from: `SessionStore.sessions()` names the ids it holds, on every store of the port, so the host reads every session's chats before anything has listed one | Softov, 2026-10-09: asked "host/50: how should ahpd learn which session owns a peer chat after a restart?" - "Add a list, build at start" | 03 |
+| Opening a chat of a session that is not running is read only: the snapshot answers from the stored chat, and the session's agent process starts when somebody sends a turn | Softov, 2026-10-09: asked "when a client opens a chat of a session that is not running, should ahpd start the session's agent process?" - "Read only" | 03 |
 
 ## Proposed architecture
 
-- **Data flow** - `createChat` -> `chatId = uuid of the chat URI` -> `Start.chatId` -> backend runs under it -> store `setChats(session, [...])`; restart -> `chats(session)` -> spawn each with `resume` and `seed` -> claims.
+- **Data flow** - `createChat` -> `chatId = uuid of the chat URI` -> `Start.chatId` -> backend runs under it -> store `setChats(session, [...])`; start -> `sessions()` -> `chats(session)` -> the map; restart -> `chats(session)` -> spawn each with `resume` and `seed` -> claims.
 - **Layer responsibilities** - sdk types: `Start.chatId`, `StoredChat` · sdk store: the list · sdk host: record, rebuild, claim · agent-claude, agent-pi, agent-cofold: use `chatId` · agent-acp, nested: unchanged.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/state.ts`](../../../../packages/sdk/src/host/state.ts), [`code://packages/sdk/src/host/tooling.ts`](../../../../packages/sdk/src/host/tooling.ts), [`code://packages/sdk/src/host/spawn.ts`](../../../../packages/sdk/src/host/spawn.ts), [`code://packages/sdk/src/host/lifecycle.ts`](../../../../packages/sdk/src/host/lifecycle.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/routing.ts`](../../../../packages/sdk/src/host/routing.ts), [`code://packages/sdk/src/host/catalogue.ts`](../../../../packages/sdk/src/host/catalogue.ts), [`code://packages/sdk/src/sessions.ts`](../../../../packages/sdk/src/sessions.ts)
 
@@ -72,9 +80,9 @@ restart -> resume session -> spawn(chatUriFor(session)) only -> peer chat gone; 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A peer chat runs under its own backend id](task-01-a-peer-chat-runs-under-its-own-backend-id.md) | todo | - |
-| [02 - The store records a session's chats](task-02-the-store-records-a-sessions-chats.md) | todo | - |
-| [03 - A restart rebuilds every chat of a session](task-03-a-restart-rebuilds-every-chat.md) | todo | 01, 02 |
+| [01 - A peer chat runs under its own backend id](task-01-a-peer-chat-runs-under-its-own-backend-id.md) | done | - |
+| [02 - The store records a session's chats](task-02-the-store-records-a-sessions-chats.md) | done | - |
+| [03 - A restart rebuilds every chat of a session](task-03-a-restart-rebuilds-every-chat.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -83,14 +91,15 @@ restart -> resume session -> spawn(chatUriFor(session)) only -> peer chat gone; 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-peer-chat-runs-under-its-own-backend-id.md](task-01-a-peer-chat-runs-under-its-own-backend-id.md) and [task-02-the-store-records-a-sessions-chats.md](task-02-the-store-records-a-sessions-chats.md), independent.
-- **Open questions:** none.
-- **Watch out for:** a fork (`source.kind: 'fork'`) already starts with `forkAt` and a new backend id on each backend; it must take `chatId` as that new id rather than minting another.
+- **Done so far:** all three tasks, implemented on `build/agents/830a472f` on 2026-10-09 and left uncommitted, and the review of the same day answered. `Start.chatId` and `chatIdFor` are in the sdk, `spawn` carries it, and Claude, pi and cofold read it. `chatIdOf` writes the backend's own `agentId()` into the record on every rebuild. `StoredChat`, `SessionStore.chats`, `setChats` and `SessionStore.sessions` are in the sdk, kept by both stores. `createChatRecord` builds the chat-to-session map in one pass when the host starts. A resume starts the chat the record marks default, not the URI the session was named by. A closed chat is hidden or deleted by the daemon key `closedChats`. Disposing a session deletes each recorded chat's conversation too.
+- **Next action:** none. The plan is built; see [implemented.md](implemented.md).
+- **Open questions:** none. All are answered in *Decisions locked in*: the map, the list it is built from, the read-only open, and the two on the closed chat.
+- **Watch out for:** a fork already starts with `forkAt` and a new backend id on each backend. The record holds what `agentId()` answers rather than the id that was asked for, and every rebuild passes the recorded one on.
 
 ## Final verification checklist
 
-- [ ] Two chats of one Claude session write two transcripts.
-- [ ] A host restarted over the same store serves a peer chat's URI with its turns.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] Two chats of one Claude session write two transcripts.
+- [x] A host restarted over the same store serves a peer chat's URI with its turns.
+- [x] Closing a chat hides its conversation, and deletes it only when the daemon key says so.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

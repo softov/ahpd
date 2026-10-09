@@ -174,6 +174,16 @@ export interface Config {
    */
   advancedTools?: boolean;
   /**
+   * What closing one chat of a session does to that chat's conversation in the
+   * backend.
+   *
+   * `hidden`, the default, leaves the conversation where it is and keeps the id
+   * it was written under claimed, so it is never listed as a session of its
+   * own. `delete` removes it through the same `Agent.delete` a disposed session
+   * goes through - decision `a-closed-chat-is-hidden-or-deleted`.
+   */
+  closedChats?: 'hidden' | 'delete';
+  /**
    * How long a call a client runs may wait before it is failed.
    *
    * Unset is ten minutes; zero waits for ever, for a deployment whose clients

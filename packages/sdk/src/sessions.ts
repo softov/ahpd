@@ -4,7 +4,7 @@ import { existsSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { readJson, writeJsonAtomic } from './jsonfile.js';
 import type { Scope } from './scopes.js';
-import type { NestedRecord, PullRequestBaseline, SessionStore } from './types/sessions.js';
+import type { NestedRecord, PullRequestBaseline, SessionStore, StoredChat } from './types/sessions.js';
 import type { Owner } from './types/usage.js';
 import { ownerOf } from './values.js';
 
@@ -96,6 +96,13 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, title);
       patch(id, { chatTitles: held.size === 0 ? undefined : held });
     },
+    chats: (id) => rows.get(id)?.chats ?? [],
+    // An empty list is held as that absence, the way an empty artifact list is:
+    // a session with no chat left is a session nothing was recorded for.
+    setChats: (id, list) => { patch(id, { chats: list.length === 0 ? undefined : [...list] }); },
+    // A row is held only while it says something, so this is the sessions
+    // something was recorded for and no id that was merely asked about.
+    sessions: () => [...rows.keys()],
     chatTitlesOf: (id) => {
       const held = rows.get(id)?.chatTitles;
       return held === undefined ? undefined : Object.fromEntries(held);
@@ -121,6 +128,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
         ...(held.nested === undefined ? {} : { nested: held.nested }),
+        ...(held.chats === undefined ? {} : { chats: held.chats }),
       };
     },
     forget: (id) => { rows.delete(id); },
@@ -171,6 +179,37 @@ const nestedOf = (value: unknown): NestedRecord | undefined => {
 };
 
 /**
+ * A session's chats as the file wrote them, or nothing where the field is not
+ * a list of chats at all.
+ *
+ * An entry is kept when it names a URI and a backend id, which are the two
+ * things a rebuild reads; anything else about one is carried only if it has
+ * the shape this version wrote. A field that is not a list is the absence of
+ * one rather than a reason to refuse the row, so a row holding anything else
+ * there loads as a session with no chat recorded.
+ */
+const chatsOf = (value: unknown): StoredChat[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const text = (one: unknown): one is string => typeof one === 'string' && one !== '';
+  return value.flatMap((one): StoredChat[] => {
+    if (typeof one !== 'object' || one === null || Array.isArray(one)) return [];
+    const held = one as Partial<Record<keyof StoredChat, unknown>>;
+    if (!text(held.uri) || typeof held.backendId !== 'string') return [];
+    const origin = held.origin;
+    return [{
+      uri: held.uri,
+      backendId: held.backendId,
+      ...(typeof held.title === 'string' ? { title: held.title } : {}),
+      ...(typeof origin === 'object' && origin !== null && !Array.isArray(origin)
+        ? { origin: origin as Record<string, unknown> }
+        : {}),
+      ...(held.default === true ? { default: true } : {}),
+      ...(held.closed === true ? { closed: true } : {}),
+    }];
+  });
+};
+
+/**
  * Everything a host holds about one session, as the store holds it.
  *
  * A field is absent where nothing was recorded for it, which is the whole of
@@ -194,6 +233,7 @@ interface Row {
   chatTitles?: Map<string, string> | undefined;
   parent?: string | undefined;
   nested?: NestedRecord | undefined;
+  chats?: StoredChat[] | undefined;
 }
 
 /** Whether a row says nothing at all, and so is not one to keep. */
@@ -201,7 +241,7 @@ const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
   && row.owner === undefined && row.senders === undefined && row.provider === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
-  && row.parent === undefined && row.nested === undefined;
+  && row.parent === undefined && row.nested === undefined && row.chats === undefined;
 
 /**
  * What is persisted for one session: a `Row` as the file holds it.
@@ -226,6 +266,8 @@ interface Saved {
   /** The id of the session this one was started from, where one did. */
   parent?: string;
   nested?: NestedRecord;
+  /** The chats of one session, in the order they were opened. */
+  chats?: StoredChat[];
 }
 
 /**
@@ -325,7 +367,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       told(`Could not remove ${folder}: ${error instanceof Error ? error.message : String(error)}`);
     }
   };
-  /** Every id this store has heard of, because the port has no way to list them. */
+  /** Every id this store has heard of: what a prune walks, and what a removal is written for. */
   const heard = new Set<string>();
   /** The ids that moved since the last save, and so the files to write. */
   const dirty = new Set<string>();
@@ -357,6 +399,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
       ...(held.nested === undefined ? {} : { nested: held.nested }),
+      ...(held.chats === undefined ? {} : { chats: held.chats }),
     };
   };
 
@@ -483,6 +526,10 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       if (typeof row.parent === 'string' && row.parent !== '') inner.setParent(row.id, row.parent);
       const nested = nestedOf(row.nested);
       if (nested !== undefined) inner.setNested(row.id, nested);
+      // A row with no list there has no chats recorded, and reads as the empty
+      // one this store answers for a session it knows nothing about.
+      const chats = chatsOf(row.chats);
+      if (chats !== undefined) inner.setChats(row.id, chats);
     }
   };
 
@@ -512,6 +559,11 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setPullRequests: (id, value) => { touched(id, () => { inner.setPullRequests(id, value); }); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
+    chats: (id) => inner.chats(id),
+    setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
+    // What this store holds is what it read at construction, which is the whole
+    // folder, and what it was told since: the composition answers both.
+    sessions: () => inner.sessions(),
     attachmentsDir: attachmentsOf,
     forget: (id) => {
       heard.delete(id);

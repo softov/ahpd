@@ -588,6 +588,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     advancedTools: options.advancedTools,
     /*
+     * What closing one chat of a session does to its conversation.
+     *
+     * Defaulted here rather than left off, because the host's own answer is the
+     * same one and the root config is where an operator changes it: the key is
+     * a daemon setting, not a per-session one.
+     */
+    closedChats: options.closedChats,
+    /*
      * How long a session's client calls may wait, when this deployment said.
      *
      * Left off rather than defaulted here, because the host's own ten minutes
@@ -931,6 +939,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       ? ''
       : `sign-in ${advertisedResource()}${issuer === undefined ? '' : ` (issuer ${issuer.id})`}\n`)
     + (options.advancedTools ? 'advanced tools: offered to every session\n' : '')
+    + (options.closedChats === 'hidden' ? '' : 'closed chats: their conversations are deleted\n')
     + (options.wire === undefined ? '' : `wire to ${options.wire}\n`)
     // What this daemon started without, one line each, so whoever started it
     // reads it here rather than in the log they are not watching. The line

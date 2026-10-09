@@ -404,6 +404,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             retool(uri);
           }
         }
+        /*
+         * And what closing a chat does, which is a key of the host's own option
+         * too, and one the daemon applies while it runs. Nothing is rebuilt and
+         * no session is told: the setting is read where a chat is dropped, so
+         * every chat dropped from here on follows the value that was just set.
+         */
+        const closing = theirs['closedChats'];
+        if ((closing === 'hidden' || closing === 'delete') && closing !== ctx.closedChats) ctx.closedChats = closing;
       });
     }
     if (type === 'changeset/filesReviewChanged') {

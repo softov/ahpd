@@ -35,7 +35,7 @@ export interface Routing {
 }
 
 export function createRouting(ctx: HostContext): Routing {
-  const { agents, claims, sessions, byChat, subagents, owners, names } = ctx;
+  const { agents, claims, sessions, byChat, subagents, owners, names, homeId } = ctx;
 
   /**
    * `spaceOf`, and a scheme that names a provider here is a session's: a
@@ -118,8 +118,24 @@ export function createRouting(ctx: HostContext): Routing {
    * A chat this host is actually holding under that exact name answers for
    * itself - a second chat's URI is the client's own and is not derived from
    * anything. Everything else is a first chat, named either way.
+   *
+   * A chat the store records says whose it is, and so does one this host is
+   * holding: a peer chat's URI names no session of its own, so the recorded
+   * session - not the uuid read as an id - is what its channel belongs to.
    */
-  const sessionFor = (channel: string): string => heldAs(sessionOfChat(channel) ?? channel);
+  const sessionFor = (channel: string): string => {
+    const home = homeId(channel);
+    /*
+     * A recorded chat's session, spelt as this host names it rather than as the
+     * bare id the record holds. Every caller reads the answer as a session's
+     * URI - a snapshot takes its id, a move is looked up under it, a dispatch
+     * is sent to it - and an id is not one: it is a channel no backend owns and
+     * a name no client was ever told.
+     */
+    return home === undefined
+      ? heldAs(sessionOfChat(channel) ?? channel)
+      : heldAs(nameOf(home));
+  };
 
   const chatOf = (uri: string): string => {
     if (byChat.has(uri)) return uri;
@@ -136,6 +152,15 @@ export function createRouting(ctx: HostContext): Routing {
       const named = owning === undefined ? undefined : heldAs(owning);
       return named !== undefined && sessions.has(named) ? subagentChatUri(named, callId) : uri;
     }
+    /*
+     * A chat the store records is its own name, running here or not.
+     *
+     * A peer chat is a conversation of its session and never the session's
+     * default chat, so resolving one to the other would send a client's
+     * actions to a conversation it is not looking at - and this is the name
+     * the host dispatches the chat's own events under.
+     */
+    if (homeId(uri) !== undefined) return uri;
     const session = sessionOfChat(uri);
     if (session === undefined) return uri;
     return sessions.get(heldAs(session))?.defaultChat ?? chatUriFor(session);

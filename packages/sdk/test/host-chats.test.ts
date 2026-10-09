@@ -1,9 +1,16 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  resetSdk, actions, emit, hello, open, peer, sdk, serving,
+  resetSdk, actions, claude, createHost, echo, emit, hello, machine, open, peer, sdk, serving,
   sessionQueries, settle, running,
 } from './support/host.js';
+import { fileSessions } from '../src/sessions.js';
+import { idOf } from '../src/catalog.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
+import type { Agent, HostOptions, Session, Start } from '@ahpd/sdk';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -430,8 +437,8 @@ describe('more than one chat in a session', () => {
      *
      * The chats of one session are peers on one config: a permission mode set
      * on one of them and not the other is a session where two conversations
-     * are allowed different things. This used to be `host.ts` knowing the name
-     * `permissionMode`; it is now the backend's schema saying so.
+     * are allowed different things. Which keys are a session's is the backend's
+     * schema's answer rather than this host's.
      */
     expect(sdk.modesSet.length - before).toBe(2);
 
@@ -480,6 +487,32 @@ describe('more than one chat in a session', () => {
     };
     expect(first_.snapshot.state.turns).toEqual([]);
     expect(first_.snapshot.state.activeTurn).toBeUndefined();
+  });
+
+  it('names each chat\'s own conversation to the backend, and none for the first', async () => {
+    /*
+     * `Start.chatId` is the name a backend keeps a chat's conversation under,
+     * and the id in the chat's URI is that name. A session's first chat is the
+     * session, so it is told none and the backend names it from the session
+     * URI.
+     */
+    const starts: { chatId?: string }[] = [];
+    const base = claude({ paths: ['/home/softov'] });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{ ...base, create: (start) => { starts.push(start); return base.create(start); } }],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/named', provider: 'claude' } });
+    await settle();
+    expect(starts.at(-1)?.chatId).toBeUndefined();
+
+    const chat = 'ahp-chat:/0f8fad5b-d9cb-469f-a165-70867728950e';
+    await client.handle({ method: 'createChat', params: { channel: 'ahp-session:/named', chat } });
+    await settle();
+    expect(starts.at(-1)?.chatId).toBe('0f8fad5b-d9cb-469f-a165-70867728950e');
   });
 
   it('carries the session\'s config into a chat opened later', async () => {
@@ -552,5 +585,430 @@ describe('more than one chat in a session', () => {
       method: 'createChat',
       params: { channel: uri, chat: second, source: { kind: 'fork', chat: 'ahp-chat:/live', turnId: 't1' } },
     })).rejects.toMatchObject({ code: -32602 });
+  });
+
+  /*
+   * A chat of a session is a conversation of its own that outlives the
+   * process, and what makes it one is the store and the backend's transcripts
+   * rather than anything this host holds in memory.
+   *
+   * The backend here is the example, with one change: it names a conversation
+   * by the id it was handed, which is what a backend that keeps several does.
+   * The store is a folder, because what a restart leaves behind is exactly
+   * what was written down.
+   */
+  const DIR = '/home/softov';
+  const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  const PEER = `ahp-chat:/${UUID}`;
+  const LIVE = 'ahp-session:/live';
+
+  const backend = (starts: Start[]): Agent => {
+    const base = echo({ path: DIR, pace: 0 });
+    return {
+      ...base,
+      // A session the host may add a folder to, which is one of the ways a
+      // running session comes back with its chats.
+      multipleDirectories: true,
+      create: (start: Start): Session => {
+        starts.push(start);
+        return base.create(start.chatId === undefined ? start : { ...start, resume: start.chatId });
+      },
+    };
+  };
+
+  /**
+   * A backend that answers with a name of its own for a chat.
+   *
+   * Claude's fork does exactly this: the host asks for a copy under a name it
+   * chose, and the conversation the backend makes runs under one it minted. The
+   * name it answers with is the only one a restart can resume by, so the record
+   * has to be that one rather than the name that was asked for.
+   */
+  const renaming = (starts: Start[]): Agent => {
+    // The example, so the transcript is kept under the id `create` is handed -
+    // which is what makes the minted name the one a restart has to resume by.
+    const base = echo({ path: DIR, pace: 0 });
+    return {
+      ...base,
+      create: (start: Start): Session => {
+        const mine = start.chatId === undefined || start.chatId === idOf(start.uri)
+          ? idOf(start.uri)
+          : `${start.chatId}-minted`;
+        starts.push(start);
+        const session = base.create({ ...start, resume: mine });
+        return { ...session, agentId: () => mine };
+      },
+    };
+  };
+
+  /** A host over one store folder, and a client whose window trusts. */
+  const hostAt = async (dir: string, agent: Agent, over: Partial<HostOptions> = {}) => {
+    const host = createHost({ path: DIR, agents: [agent], ...machine(), sessions: fileSessions({ dir }), ...over });
+    const p = peer();
+    // A folder is untrusted until the window it is in says otherwise, and the
+    // window here is the client. Nothing else in these cases asks it anything.
+    p.request = async () => ({ trusted: true });
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    return { host, client, p };
+  };
+
+  /** What a snapshot says, which is all these cases read. */
+  interface Read {
+    state: {
+      resource: string;
+      defaultChat?: string;
+      chats?: { resource: string }[];
+      turns: { message?: { text?: string } }[];
+    };
+  }
+
+  const opened = async (client: { handle(request: unknown): Promise<unknown> }, channel: string) =>
+    (await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: Read }).snapshot;
+
+  /** What a chat said, as the text each of its turns opened with. */
+  const said = (read: Read): (string | undefined)[] => read.state.turns.map((one) => one.message?.text);
+
+  const send = async (
+    client: { handle(request: unknown): Promise<unknown> },
+    channel: string,
+    turnId: string,
+    text: string,
+  ): Promise<void> => {
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+    });
+    await settle(8);
+  };
+
+  /** What each start was told it was resuming, and what it was seeded with. */
+  const resuming = (starts: Start[]) => starts.map((one) => ({
+    chatId: one.chatId,
+    resume: one.resume,
+    first: (one.seed?.[0] as unknown as { message?: { text?: string } } | undefined)?.message?.text,
+  }));
+
+  it('starts every chat of a session again when the session is restarted', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const { client } = await hostAt(join(root, 'sessions'), backend(starts));
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(client, LIVE, 't1', 'first');
+      await send(client, PEER, 't2', 'second');
+      const before = starts.length;
+
+      // The window adds a folder, which a backend that takes its folders at
+      // startup can only answer by starting again: the in-process restart.
+      void client.handle({
+        method: 'dispatchAction',
+        params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${DIR}/extra` } },
+      });
+      await settle(20);
+
+      /*
+       * The chat that is the session, and then the peer chat resumed as the
+       * conversation of its own that it is.
+       *
+       * Each under the name it was opened with, and each seeded with its own
+       * turns: a chat started on another chat's history would answer as
+       * somebody else, which is the whole of what a restart must not do.
+       */
+      expect(resuming(starts.slice(before))).toEqual([
+        { chatId: undefined, resume: 'live', first: 'first' },
+        { chatId: UUID, resume: UUID, first: 'second' },
+      ]);
+      const session = await opened(client, LIVE);
+      expect(session.state.chats?.map((one) => one.resource)).toEqual([session.state.defaultChat, PEER]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('serves each chat of a session from its own conversation after a restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      // One backend for both hosts, because what a restart leaves behind is
+      // the store and the transcripts rather than the process that wrote them.
+      const agent = backend(starts);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      // The store writes on the tick after the change, so the second host
+      // starts on a folder that has all of it rather than on a race.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, agent);
+      const listed = await second.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      /*
+       * One row, and it is the session's own.
+       *
+       * The peer chat's conversation is what its backend keeps its turns
+       * under, so a listing of that backend offers it - and a row for it would
+       * be a session of its own, opening onto a chat nobody started.
+       */
+      expect(listed.items.map((one) => one.resource)).toEqual(['echo:/live']);
+
+      // The session lists both chats, and opening the peer one answers its own
+      // turns rather than the session's. Read only: nothing is started here.
+      const session = await opened(second.client, 'echo:/live');
+      expect(session.state.chats?.map((one) => one.resource)).toEqual([session.state.defaultChat, PEER]);
+      expect(said(await opened(second.client, PEER))).toEqual(['second']);
+
+      const before = starts.length;
+      await send(second.client, PEER, 't3', 'third');
+      /*
+       * The session comes back with every chat it had, and the turn is
+       * answered on the chat it was sent to rather than on the first one -
+       * which is what a chat being its own conversation means.
+       */
+      expect(resuming(starts.slice(before))).toEqual([
+        { chatId: undefined, resume: 'live', first: 'first' },
+        { chatId: UUID, resume: UUID, first: 'second' },
+      ]);
+      expect(said(await opened(second.client, PEER))).toEqual(['second', 'third']);
+      expect(said(await opened(second.client, session.state.defaultChat as string))).toEqual(['first']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('finds a chat of a session it has never listed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      const agent = backend(starts);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      /*
+       * A second host over the same folder, which lists nothing at all.
+       *
+       * A peer chat's URI carries no session, so which session owns one is
+       * read from what the store recorded - and a host that only learned it
+       * from a listing would read the uuid as a session id here and answer
+       * with a chat of a session nobody has.
+       */
+      const second = await hostAt(dir, agent);
+      const before = starts.length;
+      expect(said(await opened(second.client, PEER))).toEqual(['second']);
+      // Read only: opening it starts no agent.
+      expect(starts.length).toBe(before);
+
+      await send(second.client, PEER, 't3', 'third');
+      // The session comes back with every chat it had, and the turn is
+      // answered on the chat it was sent to.
+      expect(resuming(starts.slice(before))).toEqual([
+        { chatId: undefined, resume: 'live', first: 'first' },
+        { chatId: UUID, resume: UUID, first: 'second' },
+      ]);
+      expect(said(await opened(second.client, PEER))).toEqual(['second', 'third']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not start a chat that was disposed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      // One backend, so the transcript the second host resumes is the one the
+      // first wrote - which is what a restart meets either way.
+      const agent = backend(starts);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(first.client, LIVE, 't1', 'first');
+      await first.client.handle({ method: 'disposeChat', params: { channel: PEER } });
+      await settle();
+      await new Promise((tick) => { setTimeout(tick, 5); });
+      const before = starts.length;
+
+      const second = await hostAt(dir, agent);
+      await send(second.client, 'echo:/live', 't1', 'again');
+      // One start, and it is the chat that is the session: a chat somebody
+      // closed is not one the session comes back with.
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: undefined, resume: 'live', first: 'first' }]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('starts again as the chat that took over when the first one was closed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      const agent = backend(starts);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      const chatUri = (await opened(first.client, LIVE)).state.defaultChat as string;
+      await first.client.handle({ method: 'disposeChat', params: { channel: chatUri } });
+      await settle();
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, agent);
+      /*
+       * The chat that took over, and not the one that was closed.
+       *
+       * Closing the session's first chat moves the default to the chat that is
+       * left, and the store is what says so. A resume that started the closed
+       * conversation instead would read turns nobody is looking at and leave
+       * the chat the turn is sent to with no process behind it.
+       */
+      const before = starts.length;
+      await send(second.client, PEER, 't3', 'third');
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'second' }]);
+      expect(said(await opened(second.client, PEER))).toEqual(['second', 'third']);
+
+      // And the session lists that chat alone: a closed one is not one it has.
+      const session = await opened(second.client, 'echo:/live');
+      expect(session.state.defaultChat).toBe(PEER);
+      expect(session.state.chats?.map((one) => one.resource)).toEqual([PEER]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes a chat under the name its backend answered with, not the one it asked for', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      const agent = renaming(starts);
+      const first = await hostAt(dir, agent);
+      await first.client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await first.client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await settle();
+      await send(first.client, LIVE, 't0', 'first');
+      await send(first.client, PEER, 't1', 'made here');
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      const second = await hostAt(dir, agent);
+      /*
+       * The name the backend answered with is the conversation there is.
+       *
+       * A fork is the road that makes this real: the host asks for a copy under
+       * the chat's own id and the backend makes one under an id it minted, so a
+       * record holding the name that was asked for is a restart that reads a
+       * conversation nobody wrote.
+       */
+      expect(said(await opened(second.client, PEER))).toEqual(['made here']);
+      const before = starts.length;
+      await send(second.client, PEER, 't2', 'said again');
+      expect(resuming(starts.slice(before)).at(-1))
+        .toEqual({ chatId: `${UUID}-minted`, resume: `${UUID}-minted`, first: 'made here' });
+      expect(said(await opened(second.client, PEER))).toEqual(['made here', 'said again']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('deletes a closed chat\'s conversation only when the daemon is told to', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const close = async (dir: string, over: Partial<HostOptions>): Promise<string[]> => {
+        const gone: string[] = [];
+        const agent: Agent = {
+          ...backend([]),
+          delete: async (id: string) => { gone.push(id); },
+        };
+        const { client } = await hostAt(dir, agent, over);
+        await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+        await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+        await settle();
+        await send(client, PEER, 't1', 'over here');
+        await client.handle({ method: 'disposeChat', params: { channel: PEER } });
+        await settle();
+        return gone;
+      };
+      /*
+       * The chat's own conversation, and never the session's: the session is
+       * still there, and its conversation is not one a closed chat takes with
+       * it. Which of the two answers this is comes from the daemon key, and the
+       * default is the one that keeps the conversation.
+       */
+      expect(await close(join(root, 'default'), {})).toEqual([]);
+      expect(await close(join(root, 'deleting'), { closedChats: 'delete' })).toEqual([UUID]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not rebuild the chats of a session inside a machine', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const at = '2026-10-09T00:00:00.000Z';
+      /*
+       * A session this host ran in a machine, as it recorded it.
+       *
+       * Its conversation is the inner host's, in there, and the record beside
+       * it is what this host has. Reading its list as chats of its own would
+       * offer a row that opens onto nothing.
+       */
+      const seeding = fileSessions({ dir });
+      seeding.setNested?.('inner', {
+        provider: 'echo',
+        machine: 'box',
+        inner: 'inner',
+        title: 'In a machine',
+        createdAt: at,
+        modifiedAt: at,
+        workingDirectories: [`file://${DIR}`],
+      });
+      seeding.setChats('inner', [
+        { uri: chatUriFor('echo:/inner'), backendId: 'inner', default: true },
+        { uri: PEER, backendId: UUID },
+      ]);
+      seeding.close?.();
+
+      const { client } = await hostAt(dir, backend([]));
+      const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      expect(listed.items.map((one) => one.resource)).toEqual(['echo:/inner']);
+
+      // Only the chat that is the session: a second one here is a conversation
+      // in a machine, which this host does not serve.
+      const session = await opened(client, 'echo:/inner');
+      expect(session.state.chats?.map((one) => one.resource)).toEqual([session.state.defaultChat]);
+      // And the peer's URI is refused: nothing outside the machine holds a chat
+      // that is inside it.
+      await expect(client.handle({ method: 'subscribe', params: { channel: PEER } }))
+        .rejects.toMatchObject({ code: -32001 });
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

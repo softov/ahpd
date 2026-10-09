@@ -107,6 +107,24 @@ export const chatUriFor = (session: string): string =>
   `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
 
 /**
+ * The name a chat's own conversation is kept under, or nothing for a
+ * session's first chat.
+ *
+ * A chat is a conversation of its own, so a backend that can keep more than
+ * one keeps each under a name of its own - `Start.chatId`, which is the id
+ * inside the chat's URI. The exception is the session's first chat: its
+ * conversation *is* the session, and a backend handed a second name for it
+ * would open a second one beside the transcript everything else reads.
+ *
+ * Read from the URI rather than from `defaultChat`, because a chat that
+ * became the default keeps the name it was opened under: disposing the first
+ * chat moves the default to a peer, and that peer's conversation stays where
+ * it was.
+ */
+export const chatIdFor = (session: string, chatUri: string): string | undefined =>
+  chatUri === chatUriFor(session) ? undefined : idOf(chatUri);
+
+/**
  * How this host names the chat of one tool call's worker.
  *
  * The reference's shape, `ahp-chat://subagent/<session>/<toolCallId>`, and

@@ -566,6 +566,7 @@ export function claude(options: ClaudeOptions): Agent {
       ...(options.workerStop !== undefined ? { workerStop: options.workerStop } : {}),
       uri: start.uri,
       chatUri: start.chatUri,
+      ...(start.chatId === undefined ? {} : { chatId: start.chatId }),
       cwd: workingDirectory(start.workingDirectory),
       /*
        * The MCP servers, declared by this host rather than found by the CLI.

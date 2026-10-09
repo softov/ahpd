@@ -523,7 +523,7 @@ Every flag can be a key instead, spelled without the dashes:
 }
 ```
 
-What each key is, with its values, its default and what changes, is [HOST.md](HOST.md#configuration-keys). Seven of them are about who may connect rather than about how the host behaves - the connection token, `users`, `resource`, `issuer` and `trustToken` - and they are [AUTHENTICATION.md](AUTHENTICATION.md#configuration-keys). `proxy` is [PROXY.md](PROXY.md). The keys `http`, `usage`, `policies`, `mcpServers` and `proxy` have no flag, because each is a property of a deployment rather than of one run.
+What each key is, with its values, its default and what changes, is [HOST.md](HOST.md#configuration-keys). Seven of them are about who may connect rather than about how the host behaves - the connection token, `users`, `resource`, `issuer` and `trustToken` - and they are [AUTHENTICATION.md](AUTHENTICATION.md#configuration-keys). `proxy` is [PROXY.md](PROXY.md). The keys `http`, `usage`, `policies`, `closedChats`, `mcpServers` and `proxy` have no flag, because each is a property of a deployment rather than of one run.
 
 A flag beats the file, because a flag is this run and a file is every run until
 somebody edits it. `paths` and `plugins` are the two exceptions worth knowing: a

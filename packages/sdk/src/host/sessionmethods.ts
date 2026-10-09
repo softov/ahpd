@@ -4,7 +4,7 @@ import { tail, older } from '../paging.js';
 import { namesOf } from '../scopes.js';
 import { localPath, uriOf } from '../fileuri.js';
 import { CLOSING } from './common.js';
-import { named, ROOT } from './channels.js';
+import { chatIdFor, named, ROOT } from './channels.js';
 import { SEEDS } from './sessionconfig.js';
 import type { Bag } from '../types/common.js';
 import type { Claimed, Held } from './state.js';
@@ -34,8 +34,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const { connection } = conn;
   const {
     about, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat, charged, chatOf,
-    chatSummary, claimable, claims, dir, dispatch, drafts, first, flushDeltas, forWhom, heldAs, isolating,
-    isolated, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
+    chatSummary, claimable, claims, dir, dispatch, drafts, dropChat, first, flushDeltas, forWhom, heldAs,
+    isolating, isolated, keepChat, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle, snapshotOf,
     spawn, unheld, waitingFor, watches, withSender,
@@ -722,8 +722,15 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ? asked.filter((one) => one !== held.workingDirectory)
         : held.additional;
       if (asked.length > 0) beside.set(chatUri, peers ?? []);
-      const chat = spawn(held.agent, uri, chatUri, backendsOwn(held.config), made, held.workingDirectory, undefined, peers, connection);
+      /*
+       * What this chat was made from, written down before it is opened.
+       *
+       * The record `spawn` writes takes its origin from here, so the store the
+       * next process reads says what the live summary says rather than learning
+       * it on the next write.
+       */
       if (origin !== undefined) madeFrom.set(chatUri, origin);
+      const chat = spawn(held.agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(held.config), made, held.workingDirectory, undefined, peers, connection);
       log(`opened ${chatUri} in ${uri}`);
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
       // and a chat named any other way arrives as a TypeError inside it.
@@ -763,8 +770,28 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // has gone takes its title with it rather than leaving it for a chat
       // opened under that name years from now.
       kept.setChatTitle(idOf(found.uri), chatUri, '');
+      /*
+       * The name the backend keeps this chat's conversation under, read before
+       * the record goes: a fork and a chat whose URI names no id the backend
+       * took run under an id the record is the only place to hold.
+       */
+      const own = found.chat.agentId() ?? ctx.recordedChat(idOf(found.uri), chatUri)?.backendId;
+      dropChat(found.uri, chatUri);
+      /*
+       * And what the backend holds of it, when a closed chat is deleted rather
+       * than hidden - decision `a-closed-chat-is-hidden-or-deleted`. The chat
+       * is closed either way: a backend that would not remove the conversation
+       * is a line in the log, raised by the delete itself, rather than a client
+       * told its request failed.
+       */
+      if (ctx.closedChats === 'delete' && held !== undefined && own !== undefined && own !== '') {
+        await ctx.deletedChat(own, held.agent, ctx.dirOf(found.uri));
+      }
       if (held && held.defaultChat === chatUri) {
         held.defaultChat = [...held.chats.keys()][0] as string;
+        // The one that takes over is the one a client naming no chat gets, and
+        // one of them must be the chat a session is resumed as.
+        keepChat(found.uri, held.defaultChat, undefined, true);
         dispatch(found.uri, { type: 'session/defaultChatChanged', defaultChat: held.defaultChat });
       }
       log(`closed ${chatUri}`);

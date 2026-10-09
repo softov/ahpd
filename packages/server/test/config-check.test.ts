@@ -203,7 +203,7 @@ describe('a valid file', () => {
   it('leaves the defaults where neither says anything', () => {
     const options = folded({});
     expect(options).toMatchObject({
-      port: 9187, host: '127.0.0.1', open: false, trustToken: false, advancedTools: false,
+      port: 9187, host: '127.0.0.1', open: false, trustToken: false, advancedTools: false, closedChats: 'hidden',
       automations: 'file', sessions: 'file', usagePer: 'turn', plugins: [], updateCheck: true, warnings: [],
     });
   });

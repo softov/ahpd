@@ -20,6 +20,15 @@ import type { Workers } from './workers.js';
  */
 export interface ClaudeSessionOptions extends SessionOptions {
   /**
+   * The name this chat's own conversation is kept under, from `Start.chatId`.
+   *
+   * Absent is the session's own id, which is the chat a session opens with.
+   * Read where the CLI is told which conversation its first query carries, so
+   * a second chat of one session is a transcript of its own rather than a
+   * second writer of the session's.
+   */
+  chatId?: string;
+  /**
    * How long a client has to answer a call of its tool.
    *
    * Resolved by the host before the session is built, so this is a number

@@ -69,6 +69,16 @@ export function createQuery(ctx: SessionContext): Query {
     return out;
   };
 
+  /**
+   * The CLI option that writes a conversation under a name this host chose.
+   *
+   * Only a UUID is handed over: the SDK takes an id of that shape, and a name a
+   * client made up goes to the CLI instead, which invents one the host records
+   * once the CLI says what it is.
+   */
+  const namedUnder = (id: string): { sessionId: string } | Record<string, never> =>
+    UUID.test(id) ? { sessionId: id } : {};
+
   // The input stream. A query with a live stream stays open between turns,
   // which is what makes a session a session rather than a series of them.
   const waiting: SDKUserMessage[] = [];
@@ -238,14 +248,20 @@ export function createQuery(ctx: SessionContext): Query {
        * `No agent for session` for ever - the session was still there and its
        * only name for it was dead.
        *
-       * Only where the client named a UUID, because that is what the SDK will
-       * take. A client that names a session something else keeps what it had.
-       * A rebuild that happens before the CLI has said its own id keeps it
-       * too, for the same reason: nothing has been said under any other name.
+       * Only where the name is a UUID, because that is what the SDK will take.
+       * A client that names a session - or a chat of one - something else keeps
+       * what it had. A rebuild that happens before the CLI has said its own id
+       * keeps it too, for the same reason: nothing has been said under any
+       * other name.
+       *
+       * A chat's own name is asked for first: `Start.chatId` is the conversation
+       * that chat is, and the session's id is the conversation of its first chat
+       * alone. With it, two chats of one session are two transcripts rather than
+       * one written by two CLIs, which is what a peer chat is for.
        */
       ...(first
         ? (ctx.options.resume === undefined
-          ? (UUID.test(idOf(ctx.options.uri)) ? { sessionId: idOf(ctx.options.uri) } : {})
+          ? namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri))
           : {
             // Resumed, not replayed: the agent picks up the context it built -
             // the files it read, the decisions it made - rather than being
@@ -272,7 +288,7 @@ export function createQuery(ctx: SessionContext): Query {
           })
         : (ctx.agentId !== undefined
           ? { resume: ctx.agentId }
-          : (UUID.test(idOf(ctx.options.uri)) ? { sessionId: idOf(ctx.options.uri) } : {}))),
+          : namedUnder(ctx.options.chatId ?? idOf(ctx.options.uri)))),
       /*
        * The agent the main thread runs as, which the CLI reads at startup.
        *

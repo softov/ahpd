@@ -34,6 +34,45 @@ export interface PullRequestBaseline {
 }
 
 /**
+ * One chat of a session, as the store keeps it.
+ *
+ * A session is a container and a chat is a conversation in it, and what makes
+ * a recorded chat rebuildable is the name its backend kept it under: a restart
+ * starts each chat again with `resume` set to that. The URI is the chat's own
+ * name on this host, `default` marks the one a client gets when it names none,
+ * and `origin` is what it was made from, where a client made it out of another.
+ * A chat closed rather than deleted is marked `closed`: its conversation is
+ * still the backend's, and the record is what keeps it out of every list.
+ */
+export interface StoredChat {
+  /** The chat's URI, as this host named it. */
+  uri: string;
+  /**
+   * The id the backend keeps this conversation under.
+   *
+   * The session's own id for its first chat, and the chat's own id for every
+   * other one - which is what `Start.chatId` names. Empty where the backend
+   * has not said one, which is a chat nothing can be resumed from.
+   */
+  backendId: string;
+  /** The title it was given, or nothing where it was never named. */
+  title?: string;
+  /** What it was made from, as `session/chatAdded` carried it. */
+  origin?: Record<string, unknown>;
+  /** Whether this is the chat a client gets when it names none. */
+  default?: boolean;
+  /**
+   * Whether the chat was closed and its conversation left where it is.
+   *
+   * A chat closed under `closedChats: 'hidden'`, which is the default: the
+   * backend keeps the conversation and this host keeps claiming it, so it is
+   * neither listed as a session of its own nor offered as a chat of its
+   * session. The record is what carries the claim across a restart.
+   */
+  closed?: boolean;
+}
+
+/**
  * What a host knows about a session that no backend does.
  *
  * Two things, and they have nothing in common except who owns them. `flags`
@@ -209,6 +248,32 @@ export interface SessionStore {
   chatTitle(id: string, chatUri: string): string | undefined;
   /** Set it. An empty string forgets it, which is a title taken back. */
   setChatTitle(id: string, chatUri: string, title: string): void;
+  /**
+   * The chats this session has, in the order they were opened.
+   *
+   * A session is a container for conversations, and this is what makes a
+   * restart rebuild them rather than only the first: `setChats` is called when
+   * one is opened or closed, and every chat on the list is started again with
+   * the backend id it was written under.
+   *
+   * Empty for a session this store never heard of, as `flags` answers `0`.
+   */
+  chats(id: string): StoredChat[];
+  /** Replace them. Empty forgets them, which is a session with no chat left. */
+  setChats(id: string, list: StoredChat[]): void;
+  /**
+   * The ids of the sessions this store holds.
+   *
+   * Every other question here is about a session the caller can already name,
+   * and a host that is starting cannot: a peer chat's URI carries no session,
+   * so which session owns one is read from what the store recorded - and the
+   * store is what says which sessions there are to read. The order is a
+   * store's own, since every caller here is looking for a chat.
+   *
+   * A session nothing was ever recorded for is not one this store holds, which
+   * is the same answer `flags` gives with `0`.
+   */
+  sessions(): string[];
   /**
    * Forget a session entirely.
    *

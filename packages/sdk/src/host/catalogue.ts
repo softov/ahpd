@@ -45,7 +45,7 @@ export interface Catalogue {
 export function createCatalogue(ctx: HostContext): Catalogue {
   const {
     options, agents, sessions, subagents, owners, kept, names, wheres, births, moves,
-    madeFrom, origins, leadOf, about, browsable,
+    madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackends,
   } = ctx;
 
   /**
@@ -343,6 +343,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return claimed;
   };
   const listing = async (before: Summary[] = []): Promise<Summary[]> => {
+    /*
+     * The ids this host is serving, and the backend ids the chats it recorded
+     * answer to.
+     *
+     * Read after the backends have answered rather than before, because the
+     * second half is what the store says about the sessions *they* offered -
+     * and a peer chat's backend id is a conversation, not a session. A
+     * listing that offered one would offer a session of its own for it, and
+     * the row would open onto the chat's own transcript as though it were a
+     * conversation somebody started.
+     */
     const claimed = claimedIds();
     /**
      * Whether this listing can say what is gone, and where it looked.
@@ -396,12 +407,24 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       spoken.add(agent.provider);
       for (const dir_ of agent.directories?.() ?? []) read.add(dir_);
       for (const row of rows) {
-        if (claimed.has(row.id))
-          continue;
         const both = offered.get(row.id);
         if (both === undefined) offered.set(row.id, [{ agent, row }]);
         else both.push({ agent, row });
       }
+    }
+    /*
+     * What the store records about every row just offered, read before any of
+     * them is filtered.
+     *
+     * Two answers at once. A backend id on one of those lists was a chat's
+     * conversation, so the row a listing has for it is not a session. And a
+     * session recorded since this host started is one the map built at startup
+     * never saw, so reading the store here is also what keeps that map current.
+     */
+    for (const id of offered.keys()) recordedChats(id);
+    for (const own of chatBackends()) claimed.add(own);
+    for (const id of [...offered.keys()]) {
+      if (claimed.has(id)) offered.delete(id);
     }
     const found: Summary[] = [];
     for (const [id, both] of offered) {

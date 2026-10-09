@@ -368,6 +368,17 @@ export interface HostOptions {
    */
   advancedTools?: boolean;
   /**
+   * What closing one chat of a session does to that chat's conversation.
+   *
+   * `hidden`, which is the default, leaves the conversation where the backend
+   * keeps it and keeps the host's claim on its id, so it is never listed as a
+   * session of its own - by this process or by the next, since the store's
+   * record carries the claim. `delete` asks the backend to remove the
+   * conversation instead, through the same `Agent.delete` a disposed session
+   * goes through, and only a backend that has one can.
+   */
+  closedChats?: 'hidden' | 'delete';
+  /**
    * How long a call a client runs may wait before the host calls it failed.
    *
    * A client's tool call blocks the turn that made it, and a client that has

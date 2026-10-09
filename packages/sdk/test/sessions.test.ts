@@ -530,6 +530,9 @@ it('reads a row written before this version whole, and writes it back as it was'
   expect(store.chatTitle('a', 'ahp-chat:/one')).toBe('Kqueue port');
   expect(store.parent?.('a')).toBe('parent-1');
   expect(store.nested?.('a')?.machine).toBe('box');
+  // A row written before the field existed has no list, and reads as the empty
+  // one rather than as a session this store has never heard of.
+  expect(store.chats('a')).toEqual([]);
 
   // A change that leaves the row as it was is still a write of it, and what it
   // writes is the bytes it read: the field order on disk is the file's rather
@@ -589,6 +592,24 @@ it('keeps no row for a session whose every field was set back to nothing', () =>
   expect(store.flags('a')).toBe(0);
 });
 
+it('answers a session\'s chats, in the order they were given, and none for a session it never heard of', () => {
+  const store = memorySessions();
+  // The empty list, not `undefined`: a session with no chats and a session this
+  // store has never heard of are the same answer, as `flags` answers `0`.
+  expect(store.chats('a')).toEqual([]);
+  const held = [
+    { uri: 'ahp-chat:/one', backendId: 'one', default: true },
+    { uri: 'ahp-chat:/peer', backendId: 'peer', origin: { kind: 'sideChat', chat: 'ahp-chat:/one', turnId: 't2' } },
+  ];
+  store.setChats('a', held);
+  expect(store.chats('a')).toEqual(held);
+  // Replaced whole rather than added to, which is what a list set is.
+  store.setChats('a', [held[0]!]);
+  expect(store.chats('a')).toEqual([held[0]]);
+  store.forget('a');
+  expect(store.chats('a')).toEqual([]);
+});
+
 it('forgets a session entirely, whatever was set on it', () => {
   const store = memorySessions();
   store.setFlags('a', ARCHIVED);
@@ -597,6 +618,7 @@ it('forgets a session entirely, whatever was set on it', () => {
   store.setOwner('a', 'user:ana');
   store.setSender('a', 'turn-1', 'user:ana');
   store.setProvider('a', 'claude');
+  store.setChats('a', [{ uri: 'ahp-chat:/one', backendId: 'one', default: true }]);
 
   store.forget('a');
 
@@ -606,6 +628,7 @@ it('forgets a session entirely, whatever was set on it', () => {
   expect(store.owner('a')).toBeUndefined();
   expect(store.sender('a', 'turn-1')).toBeUndefined();
   expect(store.provider('a')).toBeUndefined();
+  expect(store.chats('a')).toEqual([]);
 });
 
 it('keeps the scope a session is charged to across a restart, and forgets it with the session', async () => {
@@ -662,6 +685,57 @@ it('keeps a session\'s pull request baseline across a restart, empty included, a
   const after = fileSessions({ dir });
   expect(after.pullRequests('a')).toBeUndefined();
   expect(after.pullRequests('b')).toEqual(none);
+});
+
+it('keeps a session\'s chats across a restart, in order, and forgets them with the session', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  const first = { uri: 'ahp-chat:/one', backendId: 'one', default: true, title: 'Kqueue port' };
+  const second_ = {
+    uri: 'ahp-chat:/peer',
+    backendId: 'peer',
+    origin: { kind: 'fork', chat: 'ahp-chat:/one', turnId: 't2' },
+  };
+  store.setChats('a', [first, second_]);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', chats: [first, second_] });
+  // Read back by a second store on the same folder, which is what a restart is,
+  // and in the order they were opened rather than the order a map would give.
+  const second = fileSessions({ dir });
+  expect(second.chats('a')).toEqual([first, second_]);
+  expect(second.chats('nobody')).toEqual([]);
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(fileSessions({ dir }).chats('a')).toEqual([]);
+});
+
+it('names every id it holds, on both stores, and no id it was merely asked about', async () => {
+  const dir = join(root, 'sessions');
+  const chat = { uri: 'ahp-chat:/one', backendId: 'one' };
+  const memory = memorySessions();
+  memory.setChats('a', [chat]);
+  expect(memory.sessions()).toEqual(['a']);
+  /*
+   * Asked about is not held.
+   *
+   * What the host builds its chat map from is this list, and a store that
+   * remembered every id anybody looked at would be a map of sessions nobody
+   * has - each one read for a row that is not there.
+   */
+  expect(memory.chats('nobody')).toEqual([]);
+  expect(memory.sessions()).toEqual(['a']);
+
+  const store = fileSessions({ dir });
+  store.setChats('a', [chat]);
+  store.setChats('b', [{ uri: 'ahp-chat:/peer', backendId: 'peer' }]);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(store.sessions().sort()).toEqual(['a', 'b']);
+  // And a second store over the folder answers what the first wrote, which is
+  // what the map of chats is built from before anything has listed a session.
+  const second = fileSessions({ dir });
+  expect(second.sessions().sort()).toEqual(['a', 'b']);
+  expect(second.chats('c')).toEqual([]);
+  expect(second.sessions().sort()).toEqual(['a', 'b']);
 });
 
 it('keeps whose work a session is across a restart, and forgets it with the session', async () => {

@@ -78,17 +78,18 @@ export function cofoldSession(
   /**
    * The cofold session this chat reads and writes.
    *
-   * A fresh session and a plain resume are the id the host named, or the one
-   * the URI spells. A rewind is that same id: AHP keeps the session and drops
-   * a tail. A fork is the one case that does not continue what it was resumed
-   * with - AHP forks a *chat* into another chat of the same session, so
+   * A fresh session and a plain resume are the id the host named - the chat's
+   * own where it has one, and the session's otherwise - or the one the URI
+   * spells. A rewind is that same id: AHP keeps the session and drops a tail.
+   * A fork is the one case that does not continue what it was resumed with -
+   * AHP forks a *chat* into another chat of the same session, so
    * `start.resume` names the conversation to copy from and the target has to
    * be a new one, or the fork would append to the conversation it was told to
    * preserve.
    */
   const sessionId = start.forkAt !== undefined
     ? crypto.randomUUID()
-    : start.resume ?? sessionIdOf(start.uri);
+    : start.resume ?? start.chatId ?? sessionIdOf(start.uri);
   /** The directory the agent works in; the host's when it named one. */
   const where = start.workingDirectory ?? process.cwd();
   /**

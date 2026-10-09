@@ -54,7 +54,8 @@ const ports = {
   sessions: {
     flags: () => {}, setFlags: () => {}, config: () => {}, setConfig: () => {},
     artifacts: () => {}, setArtifacts: () => {}, pullRequests: () => {}, setPullRequests: () => {},
-    chatTitle: () => {}, setChatTitle: () => {}, forget: () => {},
+    chatTitle: () => {}, setChatTitle: () => {}, chats: () => {}, setChats: () => {}, forget: () => {},
+    sessions: () => {},
   },
   diagnostics: {},
   usage: { record: () => {}, total: () => {} },
@@ -62,6 +63,11 @@ const ports = {
 
 const sessionsWithoutChatTitle = (): Record<string, unknown> => {
   const { chatTitle: _chatTitle, setChatTitle: _setChatTitle, ...rest } = ports.sessions;
+  return rest;
+};
+
+const sessionsWithoutASessionList = (): Record<string, unknown> => {
+  const { sessions: _sessions, ...rest } = ports.sessions;
   return rest;
 };
 
@@ -147,6 +153,11 @@ describe('pluginHost', () => {
   it('refuses a sessions store missing chatTitle, which a later interface change added', () => {
     const { host } = pluginHost('alpha', context());
     expect(() => host.registerSessions(sessionsWithoutChatTitle() as never)).toThrow(/chatTitle/);
+  });
+
+  it('refuses a sessions store that cannot list the ids it holds', () => {
+    const { host } = pluginHost('alpha', context());
+    expect(() => host.registerSessions(sessionsWithoutASessionList() as never)).toThrow(/registerSessions.*sessions/);
   });
 
   it('accepts empty diagnostics and an agent with no probe, because both are optional', () => {

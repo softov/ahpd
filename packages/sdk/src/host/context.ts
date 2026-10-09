@@ -10,6 +10,7 @@ import type { CallLinks } from '../calllinks.js';
 import type { Claiming, Claimed, Held, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
+import type { ChatRecord } from './chatrecord.js';
 import type { Routing } from './routing.js';
 import type { Changesets } from './changesets.js';
 import type { Facts } from './facts.js';
@@ -38,7 +39,7 @@ import type { SessionEvents } from './sessionevents.js';
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface HostContext extends Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Automations {
+export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Automations {
   /** The options `createHost` was given. */
   options: HostOptions;
   /** The directory this host serves. */
@@ -145,6 +146,14 @@ export interface HostContext extends Routing, Relay, Changesets, Facts, Telemetr
   drafts: Map<string, Bag>;
   /** Whether the advanced tools are offered, a daemon key that takes hold while the daemon runs. */
   advancedTools: boolean;
+  /**
+   * What closing one chat of a session does to its conversation in the backend.
+   *
+   * `hidden` keeps it and this host's claim on its id, `delete` asks the
+   * backend to remove it. A daemon key that takes hold while the daemon runs,
+   * and read where a chat is dropped rather than held per chat.
+   */
+  closedChats: 'hidden' | 'delete';
   /** Every tool the host was given, before the permission was applied. */
   contributed: readonly HostTool[];
   /** The tools this host contributes, with the permission applied. */

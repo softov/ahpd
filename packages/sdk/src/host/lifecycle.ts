@@ -2,10 +2,10 @@ import { RpcError } from '../rpc.js';
 import { computerId } from '../computers.js';
 import { deleteNested } from '../nested.js';
 import { localPath, uriOf } from '../fileuri.js';
-import { idOf } from '../catalog.js';
+import { idOf, uriFor } from '../catalog.js';
 import { join } from 'node:path';
 import { worktreeFor, worktreesOf } from '../repo/worktrees.js';
-import { ROOT, chatUriFor, named } from './channels.js';
+import { ROOT, chatIdFor, chatUriFor, named } from './channels.js';
 import { BANG, HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -68,6 +68,8 @@ export interface Lifecycle {
   moveSession(uri: string, move: Move): Promise<void>;
   /** Start one chat again, in the directories it now has. */
   restartChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  /** The backend's own copy of one chat's conversation, gone. */
+  deletedChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
   /** What the backend is given: everything except what this host answered. */
   backendsOwn(config: Record<string, unknown>): Record<string, unknown>;
   /** Where a session actually runs, once isolation has been answered. */
@@ -123,7 +125,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
     isolating, charged, senders, sentBy, checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
-    spawn, keepTitle, keepProvider,
+    spawn, keepTitle, keepProvider, forgetChats,
     sessionAdded, forgetSent, activeSessionsMoved,
   } = ctx;
 
@@ -297,6 +299,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     marks.delete(idOf(uri));
     decided.delete(uri);
     charged.delete(uri);
+    // What this host learned about the session's chats goes with the record
+    // they came from: a chat of a session that is gone is reachable by nobody,
+    // and its backend id is the backend's business again.
+    forgetChats(idOf(uri));
     kept.forget(idOf(uri));
     offered.delete(uri);
     owners.delete(uri);
@@ -355,6 +361,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       return error;
     }
   };
+
+  /**
+   * The backend's own copy of one chat's conversation, gone.
+   *
+   * `deleted` names a session by its URI, and a chat's conversation has no URI
+   * on this host: the id the backend keeps it under is all there is. It is the
+   * same question and so the same answer, one log line and one returned
+   * failure included.
+   */
+  const deletedChat = (backendId: string, agent: Agent, directory: string | undefined): Promise<unknown> =>
+    deleted(uriFor(backendId), agent, directory);
 
   /**
    * A nested session's copy inside its machine, gone.
@@ -468,15 +485,32 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * Read before either is let go of, and before the row's directory goes
      * with it: `dirOf` answers out of `sessions` or `wheres`, and this is the
      * only moment at which both still say where the session ran.
+     *
+     * The chats come with the directory, and for the same reason: the teardown
+     * below drops the record they are read from.
      */
     const directory = dirOf(uri);
+    const chats = ctx.heldChats(idOf(uri));
     if (held !== undefined) teardown(held, uri);
     else await deletedInside(uri);
-    const failure = await deleted(uri, agent, directory);
+    let failure = await deleted(uri, agent, directory);
+    /*
+     * And every chat of it, each a conversation of its own that the backend
+     * keeps under an id of its own. Closed ones included: their conversation
+     * is still in the backend, and it is this session's rather than a row of
+     * its own. Each stays claimed until this runs, so nothing lists one
+     * between the session going and its conversation following it.
+     */
+    for (const chat of chats) {
+      if (chat.backendId === '' || chat.backendId === idOf(uri)) continue;
+      const gone = await deletedChat(chat.backendId, agent, directory);
+      if (failure === undefined) failure = gone;
+    }
     if (held === undefined) {
       // Nothing was held, so nothing was torn down and what this host kept
       // about the row is still here: the backend has it, and the host does
       // not need to.
+      forgetChats(idOf(uri));
       kept.forget(idOf(uri));
       owners.delete(uri);
     }
@@ -605,6 +639,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         held.agent,
         uri,
         held.defaultChat,
+        chatIdOf(uri, held.defaultChat, lead?.agentId()),
         backendsOwn(held.config),
         talking,
         to,
@@ -612,6 +647,39 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         keeping?.additional ?? held.additional,
         sender,
       );
+      /*
+       * And every other chat of the session, which comes back with it.
+       *
+       * A peer chat is a conversation of its own, with a transcript of its own
+       * the backend keeps under an id of its own - so the session coming back
+       * is not the whole of what has to come back. Each is respawned the way
+       * `restartChat` respawns one: under its own URI, resumed as its own
+       * conversation, with its own turns when the backend cannot resume.
+       *
+       * Read from `held.chats` rather than from the store, because these are
+       * the chats this process was holding and their turns are in memory: the
+       * record is what a later process reads, and this one still has the
+       * conversation itself. `spawn` writes the record again as it goes.
+       */
+      for (const [chatUri, chat] of held.chats) {
+        if (chatUri === held.defaultChat) continue;
+        const own = chat.agentId();
+        spawn(
+          held.agent,
+          uri,
+          chatUri,
+          // The name the backend answered with, where it minted one: the record
+          // is written again here, and a chat resumed by one name while
+          // recorded under another is one the next start reads as missing.
+          chatIdOf(uri, chatUri, own),
+          backendsOwn(held.config),
+          own === undefined ? undefined : { resume: own, seed: chat.allTurns() },
+          to,
+          credentials,
+          beside.get(chatUri) ?? keeping?.additional ?? held.additional,
+          sender,
+        );
+      }
     }
     catch (error) {
       /*
@@ -735,9 +803,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     const held = sessions.get(uri);
     const chat = held?.chats.get(chatUri);
     if (held === undefined || chat === undefined) return;
-    const talking = chat.agentId() !== undefined
-      ? { resume: chat.agentId() as string, seed: chat.allTurns() }
-      : undefined;
+    // Read before the chat is closed, and kept: the name the backend answered
+    // with is what the record is written under, and what the new process
+    // resumes.
+    const own = chat.agentId();
+    const talking = own !== undefined ? { resume: own, seed: chat.allTurns() } : undefined;
     /*
      * Started again rather than removed, which is what the chat coming back
      * resumed needs: told a removal, a backend running nested in a machine
@@ -751,6 +821,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       held.agent,
       uri,
       chatUri,
+      chatIdOf(uri, chatUri, own),
       backendsOwn(held.config),
       talking,
       held.workingDirectory,
@@ -764,6 +835,17 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /** What the backend is given: everything except what this host answered. */
   const backendsOwn = (config: Record<string, unknown>): Record<string, unknown> =>
     Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
+
+  /**
+   * The name a backend is handed for a chat, on a start that is not the first.
+   *
+   * The chat's own name where the backend minted one, which is what a restart
+   * writes into the record and what the next process resumes; none at all for
+   * the chat that is the session, whose name the backend derives from the
+   * session URI and which is never handed one.
+   */
+  const chatIdOf = (uri: string, chatUri: string, own: string | undefined): string | undefined =>
+    chatUri === chatUriFor(uri) ? undefined : own ?? chatIdFor(uri, chatUri);
 
   /**
    * Where a session actually runs, once isolation has been answered.
@@ -1125,7 +1207,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       if (by.principal !== undefined) principals.set(by.owner, by.principal);
     }
     try {
-      const lead = spawn(agent, uri, chatUriFor(uri), config, undefined, where, credentials, additional, by?.sender);
+      const lead = spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), config, undefined, where, credentials, additional, by?.sender);
       // Named before it is announced, when the maker had a name for it: a
       // row that appears as "New session" and is renamed a moment later is
       // two rows to a client that lists once. Written down for the same
@@ -1172,7 +1254,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, restart, moveSession, restartChat, backendsOwn, isolated,
+    removeSession, restart, moveSession, restartChat, deletedChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
   };
 }

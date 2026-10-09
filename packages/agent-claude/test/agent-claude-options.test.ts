@@ -223,3 +223,38 @@ it('passes no plugins to a session that has none', () => {
   expect(queriedWith()).not.toHaveProperty('plugins');
   expect(queriedWith([])).not.toHaveProperty('plugins');
 });
+
+/*
+ * Which conversation the CLI is told its first query carries.
+ *
+ * A chat is a conversation of its own, so a peer chat names one of its own and
+ * the session's id names the first chat alone. A resume names the conversation
+ * to pick up already, so nothing of this is sent beside it.
+ */
+
+/** The `query()` options one session was built with, given these start fields. */
+const startedWith = (start: Record<string, unknown>): Record<string, unknown> => {
+  cli.options = [];
+  createSession({
+    uri: 'ahp-session:/plugins',
+    chatUri: 'ahp-chat:/plugins',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-chatid-')),
+    emit: () => {},
+    ...start,
+  });
+  const one = cli.options.at(0);
+  if (one === undefined) throw new Error('no query was built');
+  return one;
+};
+
+const SESSION = '11111111-2222-3333-4444-555555555555';
+const CHAT = '99999999-8888-7777-6666-555555555555';
+
+it('names the conversation after the chat, and after the session when the chat names none', () => {
+  expect(startedWith({ uri: `ahp-session:/${SESSION}` })).toMatchObject({ sessionId: SESSION });
+  expect(startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT })).toMatchObject({ sessionId: CHAT });
+});
+
+it('sends no sessionId when the conversation is resumed by name', () => {
+  expect(startedWith({ uri: `ahp-session:/${SESSION}`, chatId: CHAT, resume: SESSION })).not.toHaveProperty('sessionId');
+});

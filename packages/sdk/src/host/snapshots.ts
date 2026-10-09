@@ -8,6 +8,7 @@ import { need } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { Connection } from '../types/host.js';
 import type { WireTurn } from '../types/wire.js';
+import type { StoredChat } from '../types/sessions.js';
 import type { HostContext } from './context.js';
 import type { Turn } from '@microsoft/agent-host-protocol';
 
@@ -23,13 +24,14 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     kept, watches, marksOf, resumedSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
-    heldAs, nameOf, sessionOfChat, sessionChannel,
+    heldAs, nameOf, sessionOfChat, sessionChannel, sessionFor,
     relayed,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig,
     rootState, waitingFor, statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary, activityOf,
     past, restoredSubagents, restoredParentChat, linkedTurns, titles,
+    recordedChats, recordedChat, homeId,
   } = ctx;
 
   /**
@@ -313,9 +315,23 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * Served read-only from its transcript. No agent process is started until
      * somebody sends a turn to it.
      */
-    // A chat URI carries its session; a session URI is one. Either way the
-    // transcript is the session's, and the id is what reads it.
-    const owning = sessionOfChat(channel) ?? channel;
+    /*
+     * A chat URI carries its session; a session URI is one. Either way the
+     * transcript is the session's, and the id is what reads it.
+     *
+     * A recorded peer chat is the exception, and the reason this is not one
+     * expression: its URI carries a uuid rather than a session, so the uuid
+     * read as an id looks for a session nobody has. What the store recorded
+     * says which session the chat was opened in, and that is what is read for
+     * one.
+     *
+     * Every other channel keeps the spelling the client wrote, holding
+     * nothing but the base64 it arrived with. A session renamed to this host's
+     * own name for it would be a second name for one session, and the snapshot
+     * is respelled back into the asked name on the way out - so the chats and
+     * worker links in it would be built from the wrong one.
+     */
+    const owning = homeId(channel) === undefined ? sessionOfChat(channel) ?? channel : sessionFor(channel);
     // Never a session's id read out of a file, a terminal or a watch.
     if (!sessionChannel(owning)) throw new RpcError(-32001, `No agent for session ${channel}`);
     const id = idOf(owning);
@@ -325,6 +341,44 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const owner = owners.get(nameOf(id)) ?? first;
     if (turns) {
       const title = titles.get(id) ?? 'Session';
+      /*
+       * A chat of this session, answered from its own conversation.
+       *
+       * A peer chat is a conversation of its own, and the record says which
+       * backend conversation it was opened as - so the backend is asked for
+       * that one rather than for the session's, which is somebody else's
+       * history. Nothing is started: this record is what answers, and the
+       * process comes up when a turn is sent to the chat.
+       *
+       * Not the chat that is the session, whose turns are the ones already
+       * read above, with the worker chats linked into them. Judged by the
+       * chat's URI and not by which of them is the default: the default chat
+       * is the session's only until the session's first chat is closed, and
+       * the chat that took over from it is a conversation of its own.
+       *
+       * Read only of a session this host is not running inside a machine, as
+       * its default chat is not resumed: a chat there is the inner host's, and
+       * one listed here would be a row that opens onto nothing.
+       */
+      const opened = sessionOfChat(channel) === undefined || kept.nested?.(id) !== undefined
+        ? undefined
+        : recordedChat(id, channel);
+      if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
+        const own = await owner.transcript?.(opened.backendId);
+        return value({
+          resource: channel,
+          state: {
+            resource: channel,
+            title: opened.title ?? title,
+            status: Status.Idle,
+            modifiedAt: moves.get(owning) ?? new Date().toISOString(),
+            ...tail(ctx.withSender(owning, ctx.stampedCalls(owning, (own ?? []) as unknown as Bag[]))),
+            queuedMessages: [],
+            ...(drafts.get(channel) !== undefined ? { draft: drafts.get(channel) } : {}),
+          },
+          fromSeq: ctx.serverSeq,
+        });
+      }
       const workers = await restoredSubagents(id, owner, turns as unknown as WireTurn<Turn>[]);
       /*
        * A worker chat read back out of the backend's own record.
@@ -376,6 +430,14 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           fromSeq: ctx.serverSeq,
         });
       }
+      /*
+       * The chats the store recorded for it, closed ones left out, and which of
+       * them the session would come back as. None for a session inside a
+       * machine, whose chats are the inner host's.
+       */
+      const recorded = kept.nested?.(id) !== undefined ? [] : recordedChats(id);
+      const lead = recorded.find((one) => one.default === true);
+      const stamp = moves.get(nameOf(id)) ?? new Date().toISOString();
       return value({
         resource: channel,
         state: {
@@ -384,18 +446,42 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           title,
           status: Status.Idle | kept.flags(id),
           lifecycle: 'ready',
-          defaultChat: chatUriFor(nameOf(id)),
+          /*
+           * The chat the session would come back as: the recorded default where
+           * the store has one, the session's own chat otherwise - a row listed
+           * from the backend's disk has one by construction, and a session
+           * whose first chat was closed has another chat as its default.
+           */
+          defaultChat: lead?.uri ?? chatUriFor(nameOf(id)),
           // A whole `ChatSummary`, and not a name and a URI: a client reads a
           // chat row's `status` and `modifiedAt` by name, and a live session
           // answers with both.
           chats: [
             {
-              resource: chatUriFor(nameOf(id)),
-              title,
+              resource: lead?.uri ?? chatUriFor(nameOf(id)),
+              title: lead?.title ?? title,
               status: Status.Idle,
-              modifiedAt: moves.get(nameOf(id)) ?? new Date().toISOString(),
-              ...startedBy(nameOf(id)),
+              modifiedAt: stamp,
+              ...startedBy(nameOf(id), lead?.uri),
             },
+            /*
+             * And every other chat the store recorded for it.
+             *
+             * A session's second chat is a conversation of its own that
+             * outlives the process, so a client that opens the session after a
+             * restart reads the chats it had rather than only the first. Each
+             * is idle here: nothing is running, and its turns are read when
+             * somebody opens it.
+             */
+            ...recorded
+              .filter((one) => one.default !== true)
+              .map((one) => ({
+                resource: one.uri,
+                title: one.title ?? title,
+                status: Status.Idle,
+                modifiedAt: stamp,
+                ...startedBy(nameOf(id), one.uri),
+              })),
             // And the workers this session ran, each read-only and linked from
             // the call that spawned it - which is what makes a restored
             // session's subagents openable rather than lost.

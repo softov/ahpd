@@ -156,7 +156,7 @@ against its contract before it is recorded.
 | `registerWorktrees(worktrees)` | set | `repository`, `branches`, `create`, `dirty`, `remove`, and the optional `gitDir` |
 | `registerGithub(pullRequests)` | set | `resource`, `forBranch`, `create` |
 | `registerAutomations(store)` | set | the automation store |
-| `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles |
+| `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles, the chats a session has, and the sessions it holds |
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
 | `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |

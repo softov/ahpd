@@ -19,6 +19,8 @@ A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`. The spec
 
 `default` is a role rather than an identity: it means whichever chat a client gets when it names none, so disposing the chat that holds it moves the name to its successor and tells everyone with `session/defaultChatChanged`. A second chat is named by whoever created it and is derived from nothing.
 
+Closing a chat ends it here and moves `default` if it held it. What the backend keeps of that chat's conversation is the daemon's `closedChats` key: `hidden`, the default, leaves the conversation and the id it was written under, so it is never listed as a session again, and `delete` removes it - decision [A closed chat's conversation is hidden by default, and deleted only when the daemon is told to](../.project/decisions/a-closed-chat-is-hidden-or-deleted.md).
+
 Every chat in a session works in the session's directories or in a subset of them, never in one from outside: a chat naming a directory its session does not have is refused rather than quietly widening the session through the chat. A change to a chat's directories starts that one chat again, resumed.
 
 ## A chat made out of another

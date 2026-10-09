@@ -644,6 +644,40 @@ it('appends a new run under the same session id when a finished session is resum
   expect(await second.transcript?.('one')).toHaveLength(2);
 });
 
+it('keeps two chats of one session in two conversations, each with its own turn', async () => {
+  /*
+   * A chat is a conversation of its own, and `Start.chatId` is the name the
+   * backend writes it under. Without it a peer chat would append to the
+   * session's transcript, so two chats of one session would be one
+   * conversation with two writers rather than two.
+   */
+  const { root, sweep } = place();
+  const model = createFakeModel({ script: [{ text: 'answered one' }, { text: 'answered two' }], stream: true });
+  const agent = backend(root, model, allowAll());
+
+  const one = open(agent, 'shared', sweep, { chatId: 'chat-one' });
+  one.session.begin('t1', 'said in one');
+  await until(() => ended(one.view));
+  one.session.close();
+  const two = open(agent, 'shared', sweep, { chatId: 'chat-two' });
+  two.session.begin('t2', 'said in two');
+  await until(() => ended(two.view));
+  two.session.close();
+
+  // Each chat runs under the name it gave, not under the session's id.
+  expect(one.session.agentId()).toBe('chat-one');
+  expect(two.session.agentId()).toBe('chat-two');
+
+  const first = await agent.transcript?.('chat-one');
+  const second = await agent.transcript?.('chat-two');
+  const texts = (turns: { message: unknown }[] | undefined): unknown[] =>
+    (turns ?? []).map((turn) => (turn.message as Bag).text);
+  // What one chat said is in that chat alone.
+  expect(texts(first)).toEqual(['said in one']);
+  expect(texts(second)).toEqual(['said in two']);
+  expect((await agent.list?.())?.map((row) => row.id).sort()).toEqual(['chat-one', 'chat-two']);
+});
+
 it('rebuilds a turn with the model it ran on, after a restart', async () => {
   const { root, sweep } = place();
   const first = backend(root, createFakeModel({ script: [{ text: 'ok' }], stream: true }), allowAll());

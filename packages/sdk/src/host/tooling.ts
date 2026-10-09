@@ -5,7 +5,7 @@ import { frozenCopy } from '../frozen.js';
 import { readJsonObject } from '../jsonfile.js';
 import { bodyText } from '../records.js';
 import { bag, reason, str } from '../values.js';
-import { ROOT, chatUriFor, schemeOf } from './channels.js';
+import { ROOT, chatIdFor, chatUriFor, schemeOf } from './channels.js';
 import { need } from './common.js';
 import type { Bag } from '../types/common.js';
 import type { ClientPlugins, SyncedPlugin } from '../types/clientplugins.js';
@@ -658,7 +658,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const held = sessions.get(at);
       if (!held) throw new Error(`${session} is not a session this host is running`);
       const chatUri = `ahp-chat:/${crypto.randomUUID()}`;
-      const chat = spawn(held.agent, at, chatUri, backendsOwn(held.config), undefined, held.workingDirectory, undefined, held.additional);
+      const chat = spawn(held.agent, at, chatUri, chatIdFor(at, chatUri), backendsOwn(held.config), undefined, held.workingDirectory, undefined, held.additional);
       log(`opened ${chatUri} in ${at}`);
       if (asked.title !== undefined) { chat.setTitle?.(asked.title); keepTitle(at, chatUri, asked.title); }
       dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });

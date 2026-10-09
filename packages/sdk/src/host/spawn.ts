@@ -66,6 +66,7 @@ export interface Spawn {
     agent: Agent,
     uri: string,
     chatUri: string,
+    chatId: string | undefined,
     config: Record<string, unknown>,
     resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; rewindAt?: string; context?: string },
     workingDirectory?: string,
@@ -348,6 +349,9 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
     const former = formerChatUri(uri, chatUri);
     if (former !== undefined && kept.chatTitle(idOf(uri), former) !== undefined) kept.setChatTitle(idOf(uri), former, '');
+    // And on the session's own list of chats, so a session served read-only
+    // after a restart lists this one under the name it was given.
+    ctx.keepChat(uri, chatUri, undefined, false);
   };
 
   /**
@@ -370,6 +374,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     agent: Agent,
     uri: string,
     chatUri: string,
+    chatId: string | undefined,
     config: Record<string, unknown>,
     resuming?: { resume?: string; seed?: Bag[]; forkAt?: string; rewindAt?: string; context?: string },
     workingDirectory?: string,
@@ -540,6 +545,17 @@ export function createSpawn(ctx: HostContext): Spawn {
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
       ...(additional !== undefined && additional.length > 0 ? { additional: frozenCopy(additional) } : {}),
+      /*
+       * The chat's own name for its conversation, where it has one.
+       *
+       * Handed on every start of that chat - the first, a resume and a restart -
+       * because it is the name the backend keeps it under, and a second start
+       * that named nothing would open the session's transcript instead of this
+       * chat's. A fork is the one place a backend may mint its own: it was asked
+       * for a copy under a name of its own, and the id it answers with is the
+       * one this host records for the chat.
+       */
+      ...(chatId === undefined ? {} : { chatId }),
       ...(resuming?.resume !== undefined ? { resume: resuming.resume } : {}),
       ...(resuming?.seed !== undefined ? { seed: resuming.seed } : {}),
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
@@ -719,10 +735,20 @@ export function createSpawn(ctx: HostContext): Spawn {
          * because `keepProvider` is called before anything is said. Only when
          * the store does not already say it: a row rewritten on every turn is
          * a store written to for nothing.
+         *
+         * And the chat's own record, from the same answer: a chat whose URI
+         * names no id the backend took, and a fork that was asked for a copy
+         * under a name of its own, run under an id this host never chose. What
+         * a restart resumes is read from the record, so a record holding the
+         * name that was asked for instead is a resume of a conversation that
+         * does not exist.
          */
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
           const own = byChat.get(chatUri)?.chat.agentId();
           if (own !== undefined && own !== '' && kept.provider(own) !== agent.provider) kept.setProvider(own, agent.provider);
+          if (own !== undefined && own !== '' && ctx.recordedChat(idOf(uri), chatUri)?.backendId !== own) {
+            ctx.keepChat(uri, chatUri, own, false);
+          }
         }
         /*
          * The session's list of chats, when one of them has moved.
@@ -840,6 +866,17 @@ export function createSpawn(ctx: HostContext): Spawn {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
+    /*
+     * Written down, in the one place every road to a running backend goes
+     * through.
+     *
+     * The store is what knows a session's chats: which session a chat's own
+     * URI belongs to, which of them a client gets when it names none, and what
+     * a restart starts again. The backend id is the one this start was handed,
+     * and the session's own id for the chat that is the session - until the
+     * backend answers with its own, which the chat's own emit records.
+     */
+    ctx.keepChat(uri, chatUri, chatId ?? idOf(uri), held.defaultChat === chatUri);
     /*
      * The name it had before, when it is being created again.
      *

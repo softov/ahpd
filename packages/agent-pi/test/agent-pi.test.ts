@@ -422,6 +422,19 @@ it('renames pi too, so the title survives outside this host', async () => {
   expect(pi.asked.find((one) => one.kind === 'rename')?.title).toBe('Something else');
 });
 
+it('opens pi under the chat\'s own name, so a second chat is a conversation of its own', async () => {
+  /*
+   * The session's id names its first chat alone, so a peer chat hands pi a
+   * name of its own. One file per conversation is what keeps two chats of one
+   * session from becoming one transcript with two writers.
+   */
+  const CHAT = '99999999-8888-7777-6666-555555555555';
+  const { session, pi } = opened({ chatId: CHAT });
+  session.begin('t1', 'hello');
+  await settled();
+  expect(pi.opens[0]?.id).toBe(CHAT);
+});
+
 it('reports the level pi moved to as a value in force', async () => {
   const { session, pi, last } = opened();
   session.begin('t1', 'hello');

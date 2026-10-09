@@ -52,6 +52,7 @@ import { Claiming } from './host/state.js';
 import type { Claimed, Held, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
 import { GREETINGS, UNGATED, PER_CONNECTION, seesConfig, DECLARED, REVERSE } from './host/gate.js';
 import type { Home } from './host/gate.js';
+import { createChatRecord } from './host/chatrecord.js';
 import { createRouting } from './host/routing.js';
 import { createRelay } from './host/relay.js';
 import { createChangesets } from './host/changesets.js';
@@ -850,6 +851,8 @@ export function createHost(options: HostOptions): Host {
   ctx.sessionEvents = createSessionEvents(ctx);
   Object.assign(ctx, createTelemetry(ctx));
   Object.assign(ctx, createAuth(ctx));
+  // Before the routing, because which session a chat URI names is read there.
+  Object.assign(ctx, createChatRecord(ctx));
   Object.assign(ctx, createRouting(ctx));
   Object.assign(ctx, createRelay(ctx));
   Object.assign(ctx, createChangesets(ctx));

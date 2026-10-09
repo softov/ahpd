@@ -132,6 +132,19 @@ export interface Start {
   uri: string;
   /** The chat channel URI beneath it. */
   chatUri: string;
+  /**
+   * The name this chat's own conversation is kept under, where it has one.
+   *
+   * A chat is a conversation of its own, so a backend that can hold more than
+   * one keeps each under a name of its own rather than writing them all over
+   * the session's transcript. The id in the chat's URI is that name, and a
+   * backend asked to resume or fork from it can be asked again by the same one.
+   *
+   * Absent means the session's own id, which is the default chat: the first
+   * conversation of a session is the session, and its name is the one the
+   * backend derives from the session URI.
+   */
+  chatId?: string;
   /** Config values in force, by key: this agent's defaults with the client's on top. */
   settings: Record<string, unknown>;
   /**

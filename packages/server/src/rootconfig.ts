@@ -30,7 +30,7 @@ import { nameOf, optionsSchemaLoaded } from './plugins.js';
  * left out on purpose: a form that could change them would be a form that could
  * take the door off its hinges and leave nothing behind that would open it.
  */
-const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'wire', 'mcpServers'] as const;
+const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTools', 'closedChats', 'wire', 'mcpServers'] as const;
 
 /**
  * The keys this daemon can apply while it runs.
@@ -39,7 +39,7 @@ const DAEMON_KEYS = ['paths', 'port', 'host', 'http', 'updateCheck', 'advancedTo
  * the notice in root state that a setting is not in force yet - decision
  * `a-configuration-change-applies-live-or-on-ahpd-restart`.
  */
-const LIVE = new Set<string>(['advancedTools', 'wire', 'mcpServers']);
+const LIVE = new Set<string>(['advancedTools', 'closedChats', 'wire', 'mcpServers']);
 
 /** A flag as a person types it: `--port`, and `--path` where the field says so. */
 const flagOf = (key: ConfigKey): string => {

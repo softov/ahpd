@@ -61,6 +61,8 @@ export interface Options {
   trustToken: boolean;
   /** Whether a tool that declares `advancedPermission` is offered to sessions. */
   advancedTools: boolean;
+  /** What closing one chat of a session does to that chat's conversation in the backend. */
+  closedChats: 'hidden' | 'delete';
   /** How long a call a client runs may wait, absent when the deployment said nothing. */
   clientToolTimeoutMs?: number;
   /** How long a streamed delta waits in the host before it is sent, absent when the deployment said nothing. */
@@ -410,6 +412,11 @@ export const serverFields = {
     type: 'boolean',
     title: 'Advanced tools',
     description: "Offer the tools that declare they need advanced permission, such as the computer's three.",
+  },
+  closedChats: {
+    type: 'string',
+    enum: ['hidden', 'delete'],
+    description: 'What closing one chat of a session does to its conversation in the backend: hidden keeps it, delete removes it.',
   },
   clientToolTimeoutMs: {
     type: 'integer',
@@ -909,6 +916,7 @@ const noCwd = input['noCwd'] === true;
     ...(issuer === undefined ? {} : { issuer }),
     trustToken: given('trustToken') ?? false,
     advancedTools: given('advancedTools') ?? false,
+    closedChats: given('closedChats') ?? 'hidden',
     ...(clientToolTimeoutMs === undefined ? {} : { clientToolTimeoutMs }),
     ...(deltaWindowMs === undefined ? {} : { deltaWindowMs }),
     automations: given('automations') ?? 'file',

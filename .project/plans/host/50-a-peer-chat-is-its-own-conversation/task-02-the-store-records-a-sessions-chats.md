@@ -1,6 +1,6 @@
 ---
 title: The store records a session's chats
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -31,3 +31,11 @@ refs:
 - `pnpm test` passes.
 
 ## Resume
+
+Built on `build/agents/830a472f` on 2026-10-09 and left uncommitted.
+
+`StoredChat` is in `packages/sdk/src/types/sessions.ts` beside `chatTitle`, with `chats(id)` and `setChats(id, list)` on `SessionStore`. The memory store holds the list as a row field. It holds an empty list as the field's absence, so a session with no chat left is a session nothing was recorded for. The file store writes it as the row's last field, so a row written before this one keeps its bytes. `chatsOf` reads a list back, and keeps each entry that names a URI and a backend id.
+
+`origin` is `Record<string, unknown>`, the shape `madeFrom` already holds and `session/chatAdded` already carries, rather than a second spelling of it. `keepChat` mirrors it into the row from where the host keeps it, because a chat is spawned before its origin is written down. `stored` seeds `madeFrom` back from the row, so a chat listed into the catalogue after a restart still says it was forked.
+
+Two files the Files line does not name. `packages/sdk/src/index.ts` re-exports the type. `packages/sdk/src/validate.ts` lists the required members of a contributed `sessions` port, and `packages/sdk/test/plugin-validate.test.ts` holds the stub those names are checked against.
