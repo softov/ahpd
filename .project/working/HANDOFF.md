@@ -17,18 +17,18 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** main is ahead of `origin/main` by the daemon/09 merge (`f1acaba`) and its closure.
-- **Restart:** Softov restarts his daemon now, which wires in host/73, usage/06, usage/07 (01-03, 05), daemon/09 (task 12 and `--force`) and the `@ahpd/bot` package as of tasks 01 and 03. plugin/37 tasks 02, 04 and 05 need a later restart, after they merge.
+- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), their closures and the documentation/04 plan.
+- **Restart:** plugin/37 tasks 02, 04 and 05 are merged and need a daemon restart: a bot made with no session now starts one, and `PluginHost.startSession` and `sessionOwner` are wired.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Reviewed, waiting on Softov's merge approval:** [plugin/37](../plans/plugin/37-a-bot-is-a-record-with-a-session/plan.md) tasks 02, 04 and 05 in worktree `/github/ahpd.worktrees/build-agents-c7421e55` (session `c7421e55`), uncommitted. The review applied Softov's two answers, recorded at the end of its `implemented.md`: an absent `prompt` opens a silent session, and a named bot `workspace` has to be under the plugin's `root`. Gates are green after the `root` fix: 254 files, 4428 tests. Merge: commit in the worktree, rebase on main, rerun the gates, fast-forward, then close tasks 02, 04, 05 and the plan.
+- **Building:** [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) tasks 01-06, session `96331c3f`, worktree `/github/ahpd.worktrees/build-agents-96331c3f`, started 2026-10-08 from `77aa94a`.
+- **Building:** [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01 only, session `d1ffbc3d`, worktree `/github/ahpd.worktrees/build-agents-d1ffbc3d`, started 2026-10-08 from `ecec31c`.
 
 ## Next, buildable now
 
-1. [plugin/38](../plans/plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md), approved, after plugin/37 merges. Its watch-out: freeze the principal that `write` and `remove` get, and the new `sessionOwner` answer.
-2. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, because it moves files.
-3. [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) task 01; tasks 02-05 wait on ahpapp and ahpc.
-4. A short plan for revising the package READMEs: how to use the code, its ahpd config and CLI commands, each option explained.
-5. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
+1. [host/74](../plans/host/74-the-sdks-tools-live-in-one-folder/plan.md), alone, after plugin/38 and host/43 p4 task 01 merge, because it moves files.
+2. [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md), planned 2026-10-08; two open questions for Softov in its Resume state (a README-vs-schema test, and `LICENSE` files for bot and agent-cofold).
+3. host/43 p4 tasks 02-05 wait on ahpapp and ahpc reading both names.
+4. Planned and not started: host/44 p2-p3, host/45, host/47 p1-p6 (AHP 1.0.0); host/59-61 (refactors); host/49, host/50; daemon/13 task 04; claude/19.
 
 Not yet written: a usage plan where the usage list sends each pool's kind and name, so ahpapp drops `poolWords` and `KIND_ORDER`.
 [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) waits on a cofold release.
