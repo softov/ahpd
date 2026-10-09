@@ -1,7 +1,7 @@
 ---
 title: Each optionsSchema declares every field the code reads
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -62,9 +62,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The Claude preset schema declares every preset field](task-01-the-claude-preset-schema-declares-every-preset-field.md) | implemented | - |
-| [02 - The acp machine schema declares part, state and seed](task-02-the-acp-machine-schema-declares-part-state-and-seed.md) | implemented | - |
-| [03 - The computer profile schema declares every profile field](task-03-the-computer-profile-schema-declares-every-profile-field.md) | implemented | - |
+| [01 - The Claude preset schema declares every preset field](task-01-the-claude-preset-schema-declares-every-preset-field.md) | done | - |
+| [02 - The acp machine schema declares part, state and seed](task-02-the-acp-machine-schema-declares-part-state-and-seed.md) | done | - |
+| [03 - The computer profile schema declares every profile field](task-03-the-computer-profile-schema-declares-every-profile-field.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -73,8 +73,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** tasks 01-03 are implemented and wait for review. [implemented.md](implemented.md) lists the files, the gate results and the departures.
-- **Next action:** review the diff in `build/agents/p39`.
+- **Done so far:** tasks 01-03 are done. Merged 2026-10-09 as 23710ef. [implemented.md](implemented.md) lists the files, the gate results and the departures.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the daemon check does not read into a preset or a profile. So a typed property there would not fail a load today. The properties carry no type so that this stays true if the check ever reads deeper.
 

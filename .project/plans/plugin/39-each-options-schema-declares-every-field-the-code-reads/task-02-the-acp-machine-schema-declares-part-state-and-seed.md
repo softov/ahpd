@@ -1,6 +1,6 @@
 ---
 title: The acp machine schema declares part, state and seed
-status: implemented
+status: done
 depends: []
 layer: agent-acp
 refs:

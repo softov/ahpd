@@ -17,9 +17,9 @@ Never push; Softov pushes.
 
 ## In flight
 
-- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), plugin/38 (`9f3798c`), host/74 (`79a3541`), documentation/04 (`7356624`), host/43 p4 tasks 02-04 (`995f0ce`), their closures and the plugin/39 plan.
+- **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), plugin/38 (`9f3798c`), host/74 (`79a3541`), documentation/04 (`7356624`), host/43 p4 tasks 02-04 (`995f0ce`), plugin/39 (`23710ef`) and their closures.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Building:** [plugin/39](../plans/plugin/39-each-options-schema-declares-every-field-the-code-reads/plan.md), worktree `build-agents-p39`, from `1171c04`, built here (no DeepSeek balance).
+- **Building:** nothing.
 - **Clients ready for host/43 p4:** ahpapp host/05 (`a66f582`) reads both names and sends `ahpd.commit`; ahpc ahp/07 (`a13ec65`) reads `ahpd.model` too. Both are merged on their mains and unpushed.
 
 ## Next, buildable now

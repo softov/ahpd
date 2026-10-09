@@ -1,6 +1,6 @@
 ---
 title: The computer profile schema declares every profile field
-status: implemented
+status: done
 depends: []
 layer: computer
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The Claude preset schema declares every preset field
-status: implemented
+status: done
 depends: []
 layer: agent-claude
 refs:
