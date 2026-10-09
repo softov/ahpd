@@ -20,7 +20,7 @@ Never push; Softov pushes.
 - **Unpushed:** main is ahead of `origin/main` by daemon/09 (`f1acaba`), plugin/37 tasks 02, 04, 05 (`6fb1289`), host/43 p4 task 01 (`85b0dc4`), plugin/38 (`9f3798c`), host/74 (`79a3541`), their closures and the documentation/04 plan.
 - **Restart:** plugin/37 tasks 02, 04 and 05, host/43 p4 task 01 and plugin/38 are merged and need a daemon restart. A bot made with no session now starts one, and a commit message is read as `ahpd.commit` too. Every value a plugin is handed is a frozen copy, and registration closes after `apply`.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
-- **Building:** [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md) tasks 01-04, session `7fe9107f`; [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) tasks 02-04, session `6dac4670`. Both started 2026-10-09 from `90ecb7f`.
+- **Building:** [documentation/04](../plans/documentation/04-each-package-readme-says-how-to-use-it/plan.md) tasks 01-04, session `7fe9107f`; [host/43 p4](../plans/host/43-the-wire-is-the-protocols-p4-ahpds-own-meta-keys-say-ahpd/plan.md) tasks 02-04, session `6dac4670`. Both started 2026-10-09 from `90ecb7f`. The DeepSeek balance ran out (402) early in both; Softov chose to have them finished here, without a build session, in the same worktrees.
 - **Clients ready for host/43 p4:** ahpapp host/05 (`a66f582`) reads both names and sends `ahpd.commit`; ahpc ahp/07 (`a13ec65`) reads `ahpd.model` too. Both are merged on their mains and unpushed.
 
 ## Next, buildable now
