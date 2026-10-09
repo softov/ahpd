@@ -20,7 +20,7 @@ Never push; Softov pushes.
 - **Waiting on Softov:** usage/06 task 03 and usage/07 task 04, which need his captures (Anthropic dialect, DeepSeek, a live `claude-openrouter` turn).
 - **cofold released:** agents 0.2.1 and tools 0.3.0 (`release-2026-10-09`). ahpd is still on 0.1; moving it broke 25 agent-cofold tests, so [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) takes the whole range and certifies every change. plugin/22 task 04 is dropped into plugin/40 task 07.
 - **cofold tools/04** (planned in cofold): `files: { requireRead: false }` turns off the read-first rule. Its release and version are Softov's; plugin/40 task 09 takes it after.
-- **claude/19:** built in `/github/ahpd.worktrees/build-agents-claude-19`, tasks `implemented`, uncommitted; waits for review.
+- **claude/19:** merged in `fbb24bf`. Its `answer` in `agent-cofold/src/pauses.ts` returns a boolean; plugin/40 task 02 keeps that.
 - **Parked:** `/github/ahpd.worktrees/build-agents-cofold-uptake` holds the first try at the range move. plugin/40 starts from main and copies what it needs; removing the worktree is Softov's call.
 - **VS Code 1.141 hosts:** ahpc ahp/08 (`356852c`) and ahpapp host/06 (`2b63956`) offer `0.10.0` after `1.0.0`. Merged and pushed, not yet tried against a live 1.141 host.
 - **Clients ready for host/43 p4:** ahpapp host/05 (`a66f582`) reads both names and sends `ahpd.commit`; ahpc ahp/07 (`a13ec65`) reads `ahpd.model` too. Both are merged and pushed.
