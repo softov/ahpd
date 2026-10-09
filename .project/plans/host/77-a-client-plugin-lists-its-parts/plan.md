@@ -1,7 +1,7 @@
 ---
 title: A client plugin lists its parts, and a part can be switched off
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -9,8 +9,8 @@ requires:
   - plans/host/49-a-session-loads-a-clients-plugins/plan.md
 refs:
   - "[code://packages/agent-claude/src/session/customizations.ts#L57-L113](../../../../packages/agent-claude/src/session/customizations.ts#L57-L113) - `container` and `under`, the `children` shape Claude already publishes from the SDK's names"
-  - "[code://packages/sdk/src/host/chatactions.ts#L870-L889](../../../../packages/sdk/src/host/chatactions.ts#L870-L889) - `session/customizationToggled`, where a part's toggle arrives"
-  - "[code://packages/agent-claude/src/session.ts#L2175-L2220](../../../../packages/agent-claude/src/session.ts#L2175-L2220) - the Claude SDK `query` options, where a switched-off server is left out"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1001-L1040](../../../../packages/sdk/src/host/chatactions.ts#L1001-L1040) - `session/customizationToggled`, where a part's toggle arrives"
+  - "[code://packages/agent-claude/src/session/query.ts#L206-L224](../../../../packages/agent-claude/src/session/query.ts#L206-L224) - the Claude SDK `query` options, where a switched-off server is left out"
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentPlugins/common/pluginParsers.ts#L1402-L1467 - `parsePlugin`: the manifest, then `.mcp.json`, `skills`, `agents`, `rules` and the hooks file by default, each overridable in the manifest
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/codex/codexClientCustomizations.ts#L164-L187 - `parsedPluginChildren`: agents, skills, rules, hooks, then MCP servers, deduplicated by id; a switched-off server is skipped
   - https://github.com/microsoft/vscode/blob/7516b04bc94/src/vs/platform/agentHost/node/shared/customizationEnablementGate.ts#L38-L185 - `childEnablement` is keyed by a part's name and read for MCP servers only; a plugin switched off switches off every part
@@ -50,9 +50,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A copied plugin's parts are read](task-01-a-copied-plugins-parts-are-read.md) | todo | - |
-| [02 - A client plugin lists its parts](task-02-a-client-plugin-lists-its-parts.md) | todo | 01 |
-| [03 - A switched-off server does not reach the agent](task-03-a-switched-off-server-does-not-reach-the-agent.md) | todo | 02 |
+| [01 - A copied plugin's parts are read](task-01-a-copied-plugins-parts-are-read.md) | done | - |
+| [02 - A client plugin lists its parts](task-02-a-client-plugin-lists-its-parts.md) | done | 01 |
+| [03 - A switched-off server does not reach the agent](task-03-a-switched-off-server-does-not-reach-the-agent.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -61,14 +61,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01, after host/49 merges.
+- **Done so far:** tasks 01, 02 and 03, reviewed and gated on main.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** a part's id is VS Code's: the file's URI, and `<plugin id>#mcp=<encoded name>` for a server.
+- **Watch out for:** a part's id is VS Code's: the file's URI in this host's copy of the plugin, and `<declaring file's id>#mcp=<encoded name>` for a server.
 
 ## Final verification checklist
 
-- [ ] A plugin with each kind of part lists them in VS Code's order.
-- [ ] A server switched off in `childEnablement` or by a toggle is absent from the agent's servers.
-- [ ] `pnpm test` passes.
-- [ ] `plans/index.md` updated.
+- [x] A plugin with each kind of part lists them in VS Code's order.
+- [x] A server switched off in `childEnablement` or by a toggle is absent from the agent's servers.
+- [x] `pnpm test` passes.
+- [x] `plans/index.md` updated.

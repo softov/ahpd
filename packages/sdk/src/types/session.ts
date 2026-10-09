@@ -172,6 +172,14 @@ export interface SessionOptions {
    */
   plugins?: { path: string }[];
   /**
+   * MCP servers of those plugins that a client switched off, by name.
+   *
+   * A backend that loads the plugin directories itself may find such a server
+   * anyway, so the name is handed down beside them for a backend that can be
+   * told not to run one. A backend that cannot ignores the field.
+   */
+  deniedMcpServers?: string[];
+  /**
    * Tools the host contributes to this session.
    *
    * Offered to the model as an MCP server that runs in this process, so a

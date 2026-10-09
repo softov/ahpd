@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { clientPluginsIn } from '../src/clientplugins.js';
@@ -21,6 +22,10 @@ import type { Peer } from '../src/types/rpc.js';
  *
  * The client side is a fake peer answering the two `resource*` methods a copy
  * is made of, over a directory tree held in memory.
+ *
+ * What a plugin holds is read off the copy, so the second half of what is
+ * checked here is that list: each part named by the file it was read from in
+ * the copy, and a server carrying what the client decided about it.
  */
 
 const URI = 'ahp-session:/plugins';
@@ -31,6 +36,15 @@ const OTHER = 'virtual://plugin/two';
 const TREE: Record<string, string> = {
   [`${PLUGIN}/plugin.json`]: '{"name":"one"}',
   [`${PLUGIN}/agents/one.md`]: 'agent one',
+};
+
+/** A plugin in the format this host reads, holding one agent and two servers. */
+const PARTED: Record<string, string> = {
+  [`${PLUGIN}/.claude-plugin/plugin.json`]: '{"name":"one"}',
+  [`${PLUGIN}/agents/reviewer.md`]: 'agent reviewer',
+  [`${PLUGIN}/.mcp.json`]: JSON.stringify({
+    mcpServers: { one: { type: 'stdio', command: 'bin/one' }, two: { type: 'stdio', command: 'bin/two' } },
+  }),
 };
 
 const dirs: string[] = [];
@@ -147,6 +161,23 @@ const announce = (
 
 const names = (one: Record<string, unknown>) => one.type;
 
+/** A plugin's entries as a client watched them arrive, in order. */
+const published = (p: ReturnType<typeof peer>, uri = PLUGIN): Record<string, unknown>[] => actions(p, URI)
+  .filter((one) => one.type === 'session/customizationUpdated')
+  .map((one) => one.customization as Record<string, unknown>)
+  .filter((one) => one.uri === uri);
+
+/** One plugin, one client holding it, and what a watcher was told. */
+async function withPlugin(tree: Record<string, string>, announced: Record<string, unknown> = {}) {
+  const { served } = serving();
+  const a = await session(served);
+  const b = await joins(served, 'plugin', tree);
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...announced }]);
+  await settle();
+  return a;
+}
+
 it('watches a client plugin load, then reports it beside the backend\'s own', async () => {
   const { served } = serving();
   const a = await session(served);
@@ -174,6 +205,63 @@ it('watches a client plugin load, then reports it beside the backend\'s own', as
   expect(listed.map(names)).toContain('plugin');
   expect(listed[listed.length - 1]).toMatchObject({ uri: PLUGIN, clientId: 'plugin' });
   expect(listed.some((one) => one.type !== 'plugin')).toBe(true);
+});
+
+it('lists what a plugin holds, each part named by the file it was read from', async () => {
+  const a = await withPlugin(PARTED);
+  const entries = published(a.peer);
+
+  // Nothing while the copy is on its way: the protocol reads `children`
+  // absent as a container nobody has parsed, and an empty list as one that
+  // was parsed and holds nothing. These are not the same answer.
+  expect(entries[0]?.children).toBeUndefined();
+
+  const children = entries[1]?.children as Record<string, unknown>[];
+  expect(children.map((one) => [one.type, one.name])).toEqual([
+    ['agent', 'reviewer'],
+    ['mcpServer', 'one'],
+    ['mcpServer', 'two'],
+  ]);
+  // Every part is named by a file that is really there: the client reads the
+  // part where this host read it, which is the copy it made.
+  for (const child of children) expect(existsSync(fileURLToPath(String(child.uri)))).toBe(true);
+  // A server sits in a file with others, so its name is in a fragment of the
+  // id - which is what tells the two of them apart.
+  expect(children[1]?.id).toBe(`${children[1]?.uri}#mcp=one`);
+  expect(children[2]?.id).toBe(`${children[2]?.uri}#mcp=two`);
+});
+
+it('lists no parts for a plugin whose format this host does not read', async () => {
+  const a = await withPlugin(TREE);
+  const entries = published(a.peer);
+
+  // The plugin loaded, and what it holds was never read - so there is nothing
+  // to claim about it, which is the absent field rather than an empty list.
+  expect(entries[1]?.load).toEqual({ kind: 'loaded' });
+  expect(entries[1]?.children).toBeUndefined();
+});
+
+it('carries a client\'s decision about a server, most specific first', async () => {
+  const a = await withPlugin(PARTED, {
+    // Out of order on purpose: the protocol asks a producer for Session before
+    // Workspace before Global, and a reader takes the first as the one that
+    // counts.
+    childEnablement: {
+      two: [{ kind: 'global', enabled: true }, { kind: 'workspace', uri: 'file:///work', enabled: false }],
+    },
+  });
+  const children = published(a.peer)[1]?.children as Record<string, unknown>[];
+  const server = (name: string) => children.find((one) => one.name === name);
+
+  expect(server('two')?.enablement).toEqual([
+    { kind: 'workspace', uri: 'file:///work', enabled: false },
+    { kind: 'global', enabled: true },
+  ]);
+  // A server the client said nothing about is left with no decision at all,
+  // which every reader takes as on - and a part that is not a server never
+  // carries one, because only a server can be switched off.
+  expect(server('one')?.enablement).toBeUndefined();
+  expect(children[0]?.enablement).toBeUndefined();
 });
 
 it('says nothing when the same plugin at the same revision is announced again', async () => {

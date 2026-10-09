@@ -159,9 +159,26 @@ export function createServers(ctx: SessionContext): Servers {
     }
   };
 
-  /** The server name behind an `mcp:` customization id, if it is one. */
-  const serverNamed = (id: string): string | undefined =>
-    (id.startsWith('mcp:') ? id.slice(4) : undefined);
+  /**
+   * The server name behind an id that names one, if it is one.
+   *
+   * Two ids name a server. `mcp:<name>` is how this session's own list names
+   * the ones the CLI reported. A plugin's server is named by the file that
+   * declares it with the server in a fragment, `<file uri>#mcp=<name>`, which
+   * is how a client reads it and so how a client switches it off - and the
+   * escaped name is the server's own, so it is decoded before it is used.
+   */
+  const serverNamed = (id: string): string | undefined => {
+    const at = id.indexOf('#mcp=');
+    if (at === -1) return id.startsWith('mcp:') ? id.slice(4) : undefined;
+    try {
+      return decodeURIComponent(id.slice(at + '#mcp='.length));
+    }
+    catch {
+      // An id that is not the escaping this host writes names no server.
+      return undefined;
+    }
+  };
 
   /**
    * Ask the CLI what it can do, without asking it to do anything.

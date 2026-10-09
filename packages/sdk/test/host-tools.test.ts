@@ -8,7 +8,6 @@ import { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../src/tools/
 import { foldHostOptions, pluginHost } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import type { Agent, BoundTool, McpServer, Start } from '../src/types/agent.js';
-import type { Peer } from '../src/types/rpc.js';
 import type { ClientCalls } from '../src/tools/clientcalls.js';
 import type { Bag } from '../src/types/common.js';
 import type { HostEvent } from '../src/types/events.js';
@@ -555,6 +554,21 @@ describe('the MCP servers a session is offered', () => {
       mcpServers: { a: { type: 'stdio', command: 'bin/server', args: ['--root', '.'] } },
     }),
   };
+  /**
+   * The same plugin in a format this host reads, so it has parts to switch.
+   *
+   * `two` is the one a test switches: `a` is the host's name as well, and a
+   * case about a server of a plugin being left out is not about the clash.
+   */
+  const PARTED_TREE: Record<string, string> = {
+    [`${PLUGIN}/.claude-plugin/plugin.json`]: '{"name":"one"}',
+    [`${PLUGIN}/.mcp.json`]: JSON.stringify({
+      mcpServers: {
+        a: { type: 'stdio', command: 'bin/server', args: ['--root', '.'] },
+        two: { type: 'stdio', command: 'bin/two' },
+      },
+    }),
+  };
 
   const dirs: string[] = [];
   afterEach(() => {
@@ -574,7 +588,7 @@ describe('the MCP servers a session is offered', () => {
    * is the whole of what a client has to do for a plugin of its own to reach a
    * session here.
    */
-  const pluginPeer = (tree: Record<string, string>): Peer => {
+  const pluginPeer = (tree: Record<string, string>): ReturnType<typeof peer> => {
     const entriesOf = (uri: string): { name: string; type: string }[] => {
       const prefix = uri.endsWith('/') ? uri : `${uri}/`;
       const found: { name: string; type: string }[] = [];
@@ -609,7 +623,7 @@ describe('the MCP servers a session is offered', () => {
    * with plugins of its own is - and the host's own servers are named so that
    * one of them clashes with the plugin's.
    */
-  async function withClientPlugin(pace = 0) {
+  async function withClientPlugin(pace = 0, tree: Record<string, string> = PLUGIN_TREE) {
     const dir = mkdtempSync(join(tmpdir(), 'ahpd-host-plugins-'));
     dirs.push(dir);
     const base = echo({ path: dir, pace });
@@ -638,7 +652,8 @@ describe('the MCP servers a session is offered', () => {
     const chat = opened.snapshot.state.defaultChat;
     await watch.handle({ method: 'subscribe', params: { channel: chat } });
 
-    const holder = host.accept(pluginPeer(PLUGIN_TREE));
+    const holderPeer = pluginPeer(tree);
+    const holder = host.accept(holderPeer);
     await holder.handle(hello(['0.9.0'], { clientId: 'holder' }));
     await holder.handle({ method: 'subscribe', params: { channel: uri } });
 
@@ -655,33 +670,58 @@ describe('the MCP servers a session is offered', () => {
       .filter((one) => one.action.type === 'session/customizationUpdated')
       .map((one) => one.action.customization as Record<string, unknown>)
       .findLast((one) => one.uri === PLUGIN)?.id ?? '');
+    /** The id the host published one of its parts under, which is what a toggle names. */
+    const partId = (name: string): string => {
+      const last = actions(watching, uri)
+        .filter((one) => one.action.type === 'session/customizationUpdated')
+        .map((one) => (one.action.customization as { children?: { id?: unknown; name?: unknown }[] }).children)
+        .filter((list) => list !== undefined)
+        .at(-1) ?? [];
+      return String(last.find((one) => one.name === name)?.id ?? '');
+    };
 
     return {
       dir, seen, loaded, finished,
+      /** Everything this host said back to the client that asked, as a refusal. */
+      refused: (): string[] => actions(holderPeer, uri)
+        .map((one) => one.rejectionReason)
+        .filter((one) => one !== undefined),
       /** A turn, which is the moment a chat is handed the set its session has. */
       send: (turnId: string, text = 'hi') => watch.handle({
         method: 'dispatchAction',
         params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
       }),
       /** The plugin, as the client holding it announces it. */
-      announce: () => holder.handle({
+      announce: (extra: Record<string, unknown> = {}) => holder.handle({
         method: 'dispatchAction',
         params: {
           channel: uri,
           action: {
             type: 'session/activeClientSet',
-            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1' }], tools: [] },
+            activeClient: { customizations: [{ type: 'plugin', uri: PLUGIN, nonce: 'n1', ...extra }], tools: [] },
           },
         },
       }),
       /** One client's decision about it, named as the host published it. */
-      toggle: (enabled: boolean) => holder.handle({
+      toggle: (enabled: boolean, id = pluginId()) => holder.handle({
         method: 'dispatchAction',
         params: {
           channel: uri,
           action: {
             type: 'session/customizationToggled',
-            id: pluginId(),
+            id,
+            enablement: [{ kind: 'session', enabled }],
+          },
+        },
+      }),
+      /** One client's decision about a server of it. */
+      togglePart: (name: string, enabled: boolean) => holder.handle({
+        method: 'dispatchAction',
+        params: {
+          channel: uri,
+          action: {
+            type: 'session/customizationToggled',
+            id: partId(name),
             enablement: [{ kind: 'session', enabled }],
           },
         },
@@ -750,6 +790,103 @@ describe('the MCP servers a session is offered', () => {
       a: { type: 'stdio', command: 'host-a' },
       b: { type: 'stdio', command: 'host-b' },
     });
+  });
+
+  it('leave a server a client switched off out of what the agent is given', async () => {
+    const held = await withClientPlugin(0, PARTED_TREE);
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    const at = held.seen.at(-1)?.plugins?.[0]?.path ?? '';
+    // Both of the plugin's servers, one of them over the host's own of that
+    // name, and nothing held back.
+    const pluginServers = {
+      a: { type: 'stdio', command: join(at, 'bin', 'server'), args: ['--root', '.'] },
+      two: { type: 'stdio', command: join(at, 'bin', 'two') },
+    };
+    expect(held.seen.at(-1)?.mcpServers).toEqual({ ...pluginServers, b: { type: 'stdio', command: 'host-b' } });
+    expect(held.seen.at(-1)?.deniedMcpServers).toBeUndefined();
+
+    await held.togglePart('two', false);
+    await settle();
+    await held.send('t2');
+    await settle();
+
+    // Started again without it, because what the agent may run moved even
+    // though the directories did not - and it is named as well, so the CLI is
+    // told not to run one however else it might find one.
+    expect(held.seen.at(-1)?.mcpServers).toEqual({ a: pluginServers.a, b: { type: 'stdio', command: 'host-b' } });
+    expect(held.seen.at(-1)?.deniedMcpServers).toEqual(['two']);
+
+    await held.togglePart('two', true);
+    await settle();
+    await held.send('t3');
+    await settle();
+
+    // Switched back on, and both halves move back with it.
+    expect(held.seen.at(-1)?.mcpServers).toEqual({ ...pluginServers, b: { type: 'stdio', command: 'host-b' } });
+    expect(held.seen.at(-1)?.deniedMcpServers).toBeUndefined();
+  });
+
+  it('take a part toggle on a backend with no runtime switch without refusing it', async () => {
+    const held = await withClientPlugin(0, PARTED_TREE);
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    // This backend answers every switch with no. The decision is the host's
+    // either way, so nothing is said back, and the send after it is where the
+    // switch takes effect.
+    await held.togglePart('two', false);
+    await settle();
+    expect(held.refused()).toEqual([]);
+
+    await held.send('t2');
+    await settle();
+    expect(held.seen.at(-1)?.deniedMcpServers).toEqual(['two']);
+    expect(held.seen.at(-1)?.mcpServers).not.toHaveProperty('two');
+  });
+
+  it('leave a server out that a client had already switched off when it announced the plugin', async () => {
+    const held = await withClientPlugin(0, PARTED_TREE);
+    // A decision the plugin arrived with, which is the same answer as a toggle
+    // and the other half of what a client says about a server of its own.
+    await held.announce({ childEnablement: { two: [{ kind: 'global', enabled: false }] } });
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    const at = held.seen.at(-1)?.plugins?.[0]?.path ?? '';
+    expect(held.seen.at(-1)?.mcpServers).toEqual({
+      a: { type: 'stdio', command: join(at, 'bin', 'server'), args: ['--root', '.'] },
+      b: { type: 'stdio', command: 'host-b' },
+    });
+    expect(held.seen.at(-1)?.deniedMcpServers).toEqual(['two']);
+  });
+
+  it('find none of a plugin\'s servers once a client switches the plugin off', async () => {
+    const held = await withClientPlugin(0, PARTED_TREE);
+    await held.announce();
+    await until(() => held.loaded());
+    await held.send('t1');
+    await settle();
+
+    await held.toggle(false);
+    await settle();
+    await held.send('t2');
+    await settle();
+
+    // The plugin is not handed over at all, so both of its servers go with it
+    // and neither needs naming: there is no directory left to find one in.
+    expect(held.seen.at(-1)?.plugins).toBeUndefined();
+    expect(held.seen.at(-1)?.mcpServers).toEqual({
+      a: { type: 'stdio', command: 'host-a' },
+      b: { type: 'stdio', command: 'host-b' },
+    });
+    expect(held.seen.at(-1)?.deniedMcpServers).toBeUndefined();
   });
 
   it('leave a running turn alone, and start the chat again at the send after it', async () => {

@@ -588,6 +588,15 @@ export function claude(options: ClaudeOptions): Agent {
        * host's business and already done by the time a session is created.
        */
       ...(start.plugins && start.plugins.length > 0 ? { plugins: start.plugins } : {}),
+      /*
+       * The plugin servers a client switched off, which the CLI is told not to
+       * run. Handed on unchanged, like the directories they belong to: which
+       * of a plugin's servers is off is the host's to know and the CLI's to
+       * carry out.
+       */
+      ...(start.deniedMcpServers && start.deniedMcpServers.length > 0
+        ? { deniedMcpServers: start.deniedMcpServers }
+        : {}),
       // The same answer again, for what the query loads from the folder's own
       // settings - the two halves of one decision, read where each is used.
       ...(start.trusted === undefined ? {} : { trusted: start.trusted }),

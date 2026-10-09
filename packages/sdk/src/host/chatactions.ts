@@ -1076,18 +1076,33 @@ export function chatAction(
       const enablement = Array.isArray(action.enablement) ? action.enablement.map((entry) => (
         typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
       )) : [];
-      /*
-       * A plugin a client handed this session is this host's to switch.
-       *
-       * The backend has never heard of it - it is a directory this host copied
-       * for the client, not a customization the backend reported - so asking it
-       * would be asking about something it does not have, and the answer would
-       * be the refusal below with the switch left where the client put it.
-       */
-      if (ctx.toggleClientPlugin(session.uri, id, enablement))
-        break;
       const wanted = enablement.find((entry) => entry.kind === 'session') ?? enablement[0];
       const enabled = wanted?.enabled !== false;
+      /*
+       * A plugin a client handed this session is this host's to switch, and so
+       * is a server of one.
+       *
+       * The backend has never heard of the plugin - it is a directory this host
+       * copied for the client, not a customization the backend reported - so
+       * asking it would be asking about something it does not have, and the
+       * answer would be the refusal below with the switch left where the client
+       * put it. A server of a plugin is the agent's as well, and the same id
+       * names it there, so that half is asked of the backend too.
+       */
+      const toggled = ctx.toggleClientPlugin(session.uri, id, enablement);
+      if (toggled !== undefined) {
+        /*
+         * The backend is offered the switch and its answer is dropped.
+         *
+         * A backend with no live switch does not undo it: the decision is this
+         * host's, and the next send starts the chat again without that server.
+         * Refusing here would put the switch back where the client had just
+         * moved it, over a change that does take effect.
+         */
+        if (toggled.server !== undefined)
+          void session.setCustomizationEnabled(id, enabled);
+        break;
+      }
       void session.setCustomizationEnabled(id, enabled).then((took) => {
         if (took)
           return;

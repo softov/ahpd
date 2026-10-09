@@ -50,6 +50,14 @@ export function createQuery(ctx: SessionContext): Query {
   const fromPreset = queryOptionsOf(ctx.values);
 
   /**
+   * The plugin servers the host said a client switched off, by name.
+   *
+   * Read once, at the query: a set that moved reaches a chat by starting it
+   * again, so what is here is what this CLI was told when it began.
+   */
+  const denied = ctx.options.deniedMcpServers ?? [];
+
+  /**
    * What a CLI in a machine is started with: the variant's own `env`, a pushed
    * credential over it, and `CLAUDE_CONFIG_DIR` last.
    *
@@ -204,6 +212,23 @@ export function createQuery(ctx: SessionContext): Query {
        * before this and how an automation's still does.
        */
       ...fromPreset,
+      /*
+       * The servers of a plugin that a client switched off, which the CLI is
+       * told not to run.
+       *
+       * A plugin is loaded from a directory the CLI reads itself, so a server
+       * the host left out of `mcpServers` can still be found there. Named in
+       * the CLI's own settings rather than left to the host's word alone,
+       * which is the only place the CLI takes such a list from. Merged with
+       * whatever a preset already put there, so a declared value is added to
+       * rather than replaced.
+       */
+      ...(denied.length === 0 ? {} : {
+        settings: {
+          ...bag(fromPreset.settings),
+          deniedMcpServers: denied.map((serverName) => ({ serverName })),
+        },
+      }),
       ...(ctx.options.env ? { env: { ...(fromPreset.env as Bag | undefined ?? process.env), ...ctx.options.env } } : {}),
       // In a machine, the env above is replaced by the variant's own alone.
       ...(ctx.options.spawn === undefined ? {} : { env: inMachine() }),

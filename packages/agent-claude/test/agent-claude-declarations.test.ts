@@ -48,7 +48,11 @@ const settle = async (times = 8): Promise<void> => {
 };
 
 /** One session's `query()` options, on a variant holding the given values. */
-const queried = async (preset: Record<string, unknown>, settings?: Record<string, unknown>): Promise<Record<string, unknown>> => {
+const queried = async (
+  preset: Record<string, unknown>,
+  settings?: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> => {
   sdk.options = [];
   sdk.flags = [];
   createSession({
@@ -58,6 +62,7 @@ const queried = async (preset: Record<string, unknown>, settings?: Record<string
     emit: () => {},
     preset,
     ...(settings === undefined ? {} : { settings }),
+    ...extra,
   });
   await settle();
   const one = sdk.options.at(0);
@@ -117,6 +122,22 @@ it('builds a session query from the declared values of its preset', async () => 
 
 it('leaves the sandbox layer out when nobody asked for one', async () => {
   expect((await queried({ sandbox: 'default' })).settings).toBeUndefined();
+});
+
+it('names a switched-off plugin server in the CLI\'s own settings', async () => {
+  const options = await queried({ sandbox: 'on' }, undefined, { deniedMcpServers: ['one', 'two words'] });
+  // A plugin is a directory the CLI opens itself, so a server the host left
+  // out of `mcpServers` can still be found there. The list is one the CLI
+  // reads from its settings, and what a preset put in them is added to rather
+  // than replaced.
+  expect(options.settings).toEqual({
+    sandbox: { enabled: true },
+    deniedMcpServers: [{ serverName: 'one' }, { serverName: 'two words' }],
+  });
+});
+
+it('adds no settings of its own when nothing was switched off', async () => {
+  expect((await queried({ sandbox: 'default' }, undefined, { deniedMcpServers: [] })).settings).toBeUndefined();
 });
 
 it('a preset with sandbox off wins over a stored on', async () => {

@@ -1,8 +1,9 @@
 import { isAbsolute, join } from 'node:path';
 import { idOf } from '../catalog.js';
-import { localPath } from '../fileuri.js';
+import { localPath, uriOf } from '../fileuri.js';
 import { frozenCopy } from '../frozen.js';
 import { readJsonObject } from '../jsonfile.js';
+import { partsOf } from '../pluginparts.js';
 import { bodyText } from '../records.js';
 import { bag, reason, str } from '../values.js';
 import { ROOT, chatIdFor, chatUriFor, schemeOf } from './channels.js';
@@ -22,6 +23,19 @@ import type { HostContext } from './context.js';
 const KEEPS_NONE = 'this host keeps no client plugins';
 
 /**
+ * What a toggle on a client plugin landed on.
+ *
+ * A plugin and one of its servers are both this host's to switch, and only the
+ * server is also the agent's: the backend running a server is named by the same
+ * id and has to be told, while a plugin itself is a directory this host copied
+ * for a client - the backend has never heard of it.
+ */
+export interface Toggled {
+  /** The server's name, when the id named one of a plugin's servers. */
+  readonly server?: string;
+}
+
+/**
  * One plugin a client handed a session.
  *
  * The announcement is kept exactly as it arrived: what a plugin is called,
@@ -36,6 +50,8 @@ interface HeldPlugin {
   load: Bag;
   /** The directory the copy landed in, once one has. */
   path?: string;
+  /** What the copy holds, read when it landed: the parts a client reads under this plugin. */
+  parts?: Bag[] | undefined;
   /** What a toggle decided for this session, over whatever the client published. */
   decision?: Bag[];
 }
@@ -66,12 +82,12 @@ export interface Tooling {
    */
   clientPluginsOf(uri: string): Bag[];
   /**
-   * Turn a client plugin on or off in a session.
+   * Turn a client plugin, or one of its servers, on or off in a session.
    *
-   * Answers whether the id named one of them, which is what tells the caller
-   * the switch was this host's to throw rather than the backend's.
+   * Answers nothing when the id named neither, which is what tells the caller
+   * the switch is the backend's to throw rather than this host's.
    */
-  toggleClientPlugin(uri: string, id: string, enablement: Bag[]): boolean;
+  toggleClientPlugin(uri: string, id: string, enablement: Bag[]): Toggled | undefined;
   /**
    * Tell a session's chats what they may offer, after the clients moved.
    *
@@ -94,7 +110,8 @@ export interface Tooling {
    * The directories the session's enabled plugins were copied to, in the order
    * the session lists them. Called where a backend is spawned, which is the
    * only moment a set can be handed over - so this also writes down what that
-   * chat began with, for its next send to compare against.
+   * chat began with, the servers held back from those copies included, for its
+   * next send to compare against.
    */
   pluginsFor(uri: string, chatUri: string): { path: string }[];
   /**
@@ -107,6 +124,13 @@ export interface Tooling {
   pluginsMoved(uri: string, chatUri: string): boolean;
   /** The MCP servers this session is offered, read now rather than held. */
   mcpFor(uri: string): Record<string, McpServer>;
+  /**
+   * The servers of this session's client plugins that a client switched off.
+   *
+   * By name, for a backend that can be told not to run one however else it
+   * might hear of it.
+   */
+  deniedMcpServers(uri: string): string[];
   /** The endpoints opened for a session, by the session that opened them. */
   served: Map<string, ToolsEndpoint[]>;
   /** Take back every endpoint a session opened. */
@@ -251,10 +275,50 @@ export function createTooling(ctx: HostContext): Tooling {
   /** Whether a plugin is on: the most specific decision wins, and no decision at all is on. */
   const enabledOf = (one: HeldPlugin): boolean => decisionsOf(one)[0]?.enabled !== false;
 
+  /** Whether a part is switched off: the most specific decision wins, and no decision at all is on. */
+  const off = (part: Bag): boolean =>
+    (Array.isArray(part.enablement) ? part.enablement as Bag[] : [])[0]?.enabled === false;
+
   /** The id a plugin is published under: the client's own, or one this host makes from what names it. */
   const idOfPlugin = (clientId: string, one: HeldPlugin): string => {
     const minted = str(one.announced.id);
     return minted === undefined || minted === '' ? `${clientId}|${str(one.announced.uri) ?? ''}` : minted;
+  };
+
+  /** How specific a decision's scope is, most specific first: Session, then Workspace, then Global. */
+  const specificityOf = (one: Bag): number => {
+    const kind = str(one.kind);
+    return kind === 'session' ? 0 : kind === 'workspace' ? 1 : 2;
+  };
+
+  /**
+   * The parts of a copy that has just landed, with a client's decisions on them.
+   *
+   * Read once, when the copy settles, rather than on every read of a session's
+   * customizations: the directory is on this host's disk and does not move, and
+   * a client reads the list far more often than a plugin is copied.
+   *
+   * `childEnablement` is a client's decisions, keyed by a part's name, and the
+   * protocol lets one hang on an MCP server alone: a skill, an agent, a rule
+   * and a hook load with the plugin they arrived in. So a server the client
+   * named carries what it decided, most specific first, and one it did not is
+   * left with none - which every reader of the field takes as on.
+   *
+   * Nothing at all for a copy whose format this host does not read, which is
+   * *not* the same answer as no parts: the protocol reads `children` absent as
+   * a container nobody has parsed, and an empty list as one that was parsed and
+   * contributes nothing.
+   */
+  const partsWith = (one: HeldPlugin, path: string): Bag[] | undefined => {
+    const parts = partsOf(path, uriOf(path));
+    if (parts === undefined) return undefined;
+    const named = bag(one.announced.childEnablement);
+    return parts.map((part) => {
+      const name = str(part.name) ?? '';
+      if (part.type !== 'mcpServer' || !Object.hasOwn(named, name)) return part;
+      const decisions = enablementOf(named[name]).sort((a, b) => specificityOf(a) - specificityOf(b));
+      return decisions.length === 0 ? part : { ...part, enablement: decisions };
+    });
   };
 
   /**
@@ -277,6 +341,9 @@ export function createTooling(ctx: HostContext): Tooling {
       name: str(one.announced.name) ?? uri,
       clientId,
       load: one.load,
+      // The parts a client reads under the plugin, absent while the copy is
+      // still coming and after one nobody could read.
+      ...(one.parts === undefined ? {} : { children: one.parts }),
       ...(decisions.length === 0 ? {} : { enablement: decisions }),
       ...(version === undefined ? {} : { version }),
     };
@@ -293,30 +360,55 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /**
-   * Turn a client plugin on or off, if the id names one.
+   * Turn a client plugin, or one of its servers, on or off, if the id names one.
    *
    * The plugin stays on the list with the decision on it rather than leaving:
-   * what a toggle changes is whether the plugin is part of what the session
-   * runs, and a client that switched one off has to be able to switch it back.
-   * The backend is never asked - it has never heard of this customization.
+   * what a toggle changes is whether it is part of what the session runs, and
+   * a client that switched one off has to be able to switch it back. The
+   * backend is never asked about a plugin itself - it has never heard of this
+   * customization - while a server of one is also the agent's, which is what
+   * the answer says.
+   *
+   * A server is the only part a decision reaches: a skill, an agent, a rule
+   * and a hook load with the plugin they arrived in, and the protocol lets no
+   * enablement hang on one. An id naming one of those is left to the backend,
+   * which refuses it out loud.
    */
-  const toggleClientPlugin = (uri: string, id: string, enablement: Bag[]): boolean => {
+  const toggleClientPlugin = (uri: string, id: string, enablement: Bag[]): Toggled | undefined => {
     const held = plugins.get(idOf(uri));
-    if (held === undefined || id === '') return false;
+    if (held === undefined || id === '') return undefined;
+    const decisions = enablementOf(enablement);
+    const wanted = decisions.find((entry) => entry.kind === 'session') ?? decisions[0];
+    const on = wanted?.enabled !== false;
     for (const [clientId, list] of held) {
       for (const one of list) {
         // By whatever names it: the id it is published under, the id the
         // client minted, or the URI it was announced at.
         const named = id === idOfPlugin(clientId, one) || id === str(one.announced.id) || id === str(one.announced.uri);
-        if (!named) continue;
-        const decisions = enablementOf(enablement);
-        const wanted = decisions.find((entry) => entry.kind === 'session') ?? decisions[0];
-        one.decision = [{ kind: 'session', enabled: wanted?.enabled !== false }];
+        if (named) {
+          one.decision = [{ kind: 'session', enabled: on }];
+          dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(clientId, one) });
+          return {};
+        }
+        const parts = one.parts ?? [];
+        const at = parts.findIndex((part) => part.type === 'mcpServer' && str(part.id) === id);
+        if (at === -1) continue;
+        const part = bag(parts[at]);
+        /*
+         * A new part in a new list: what a client was already sent is the
+         * list as it was, and the decision is the change it is being told
+         * about rather than a rewrite of an older message.
+         */
+        const was = (Array.isArray(part.enablement) ? part.enablement as Bag[] : [])
+          .filter((entry) => entry.kind !== 'session');
+        one.parts = parts.map((other, position) => (position === at
+          ? { ...other, enablement: [{ kind: 'session', enabled: on }, ...was] }
+          : other));
         dispatch(uri, { type: 'session/customizationUpdated', customization: entryOf(clientId, one) });
-        return true;
+        return { server: str(part.name) ?? '' };
       }
     }
-    return false;
+    return undefined;
   };
 
   /**
@@ -410,6 +502,7 @@ export function createTooling(ctx: HostContext): Tooling {
           const answer = answers[position];
           if (answer !== undefined && 'path' in answer) {
             one.path = answer.path;
+            one.parts = partsWith(one, answer.path);
             one.load = { kind: 'loaded' };
           } else {
             one.load = { kind: 'error', message: answer !== undefined && 'error' in answer ? answer.error : `${String(one.announced.uri ?? '')} was not copied` };
@@ -432,10 +525,28 @@ export function createTooling(ctx: HostContext): Tooling {
    * copied or one whose copy failed: what an agent can be handed is a
    * directory that is here.
    */
-  const pluginCopies = (uri: string): string[] => [...(plugins.get(idOf(uri))?.values() ?? [])]
+  const heldCopies = (uri: string): HeldPlugin[] => [...(plugins.get(idOf(uri))?.values() ?? [])]
     .flat()
-    .filter((one) => one.path !== undefined && one.load.kind === 'loaded' && enabledOf(one))
-    .map((one) => one.path as string);
+    .filter((one) => one.path !== undefined && one.load.kind === 'loaded' && enabledOf(one));
+
+  /** The directories those copies are in. */
+  const pluginCopies = (uri: string): string[] => heldCopies(uri).map((one) => one.path as string);
+
+  /**
+   * The servers of those copies that a client switched off, by name.
+   *
+   * Read off what each copy holds rather than out of the files: a decision
+   * about a server is a customization's, and a plugin this host did not read
+   * holds nothing to decide about. A plugin switched off takes every one of
+   * its servers with it and needs none of them named, because it is not handed
+   * over at all.
+   *
+   * What the names are for is the agent: this host leaves such a server out of
+   * what it declares, and names it where the backend is started so the CLI is
+   * told not to run it however else it might hear of one.
+   */
+  const deniedMcpServers = (uri: string): string[] => heldCopies(uri).flatMap((one) =>
+    (one.parts ?? []).filter((part) => part.type === 'mcpServer' && off(part)).map((part) => str(part.name) ?? ''));
 
   /**
    * What each chat's agent was started with, by the chat's URI.
@@ -446,18 +557,28 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const startedWith = new Map<string, string>();
 
-  /** The one string that is a set of plugin directories: the same paths in the same order. */
-  const setOf = (paths: string[]): string => paths.join('\u0000');
+  /**
+   * The one string that is what a chat was started with: the directories it
+   * was handed, and the servers held back from them.
+   *
+   * Empty for a chat that was handed neither, which is what `startedWith`
+   * holds nothing for. A server switched off moves the set even though no
+   * directory did, because the plugin it belongs to is the same one and what
+   * the agent may run is not.
+   */
+  const setOf = (paths: string[], denied: string[]): string =>
+    (paths.length === 0 && denied.length === 0 ? '' : `${paths.join('\u0000')}\u0001${denied.join('\u0000')}`);
 
   const pluginsFor = (uri: string, chatUri: string): { path: string }[] => {
     const paths = pluginCopies(uri);
-    if (paths.length === 0) startedWith.delete(chatUri);
-    else startedWith.set(chatUri, setOf(paths));
+    const denied = deniedMcpServers(uri);
+    if (paths.length === 0 && denied.length === 0) startedWith.delete(chatUri);
+    else startedWith.set(chatUri, setOf(paths, denied));
     return paths.map((path) => ({ path }));
   };
 
   const pluginsMoved = (uri: string, chatUri: string): boolean =>
-    (startedWith.get(chatUri) ?? '') !== setOf(pluginCopies(uri));
+    (startedWith.get(chatUri) ?? '') !== setOf(pluginCopies(uri), deniedMcpServers(uri));
 
   /**
    * Work out what a session's clients contribute now, after they moved.
@@ -777,9 +898,22 @@ export function createTooling(ctx: HostContext): Tooling {
    * between two sends is gone from the set the next one is handed, and one
    * whose copy has not landed yet contributes nothing rather than a directory
    * that is not there.
+   *
+   * A server of a plugin that a client switched off is left out here, which is
+   * what keeps it from being declared to the agent at all. A copy this host
+   * did not read contributes every server in its `.mcp.json`: nothing was
+   * decided about a plugin whose parts nobody parsed.
    */
-  const mcpFor = (uri: string): Record<string, McpServer> => frozenCopy(pluginCopies(uri)
-    .reduce<Record<string, McpServer>>((all, copy) => ({ ...all, ...serversOf(copy) }), { ...options.mcpServers }));
+  const mcpFor = (uri: string): Record<string, McpServer> => frozenCopy(heldCopies(uri)
+    .reduce<Record<string, McpServer>>((all, one) => {
+      const held = new Set((one.parts ?? [])
+        .filter((part) => part.type === 'mcpServer' && off(part))
+        .map((part) => str(part.name) ?? ''));
+      for (const [name, server] of Object.entries(serversOf(one.path as string))) {
+        if (!held.has(name)) all[name] = server;
+      }
+      return all;
+    }, { ...options.mcpServers }));
 
   /**
    * The endpoints opened for a session, by the session that opened them.
@@ -848,7 +982,7 @@ export function createTooling(ctx: HostContext): Tooling {
   return {
     permitted, strategyOf, shapedDefinition, toolDefinitions,
     clientTools, clientPluginsOf, toggleClientPlugin, retool, chatMeant, renameChat, toolContext,
-    pluginsFor, pluginsMoved, mcpFor,
+    pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, instructions,
     moving, served,
   };

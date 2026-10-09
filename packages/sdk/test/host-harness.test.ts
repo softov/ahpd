@@ -556,6 +556,18 @@ describe('turning a customization on and off', () => {
     expect(sdk.mcpReconnected).toEqual(['desk']);
   });
 
+  it('switches off a server a client names by the file it is declared in', async () => {
+    const { client } = await withServers('connected');
+    sdk.mcp = [{ name: 'desk two', status: 'disabled' }];
+    // How a plugin's server is named to a client: the file that declares it,
+    // with the server's own escaped name in a fragment - and the CLI knows it
+    // by that name alone.
+    toggle(client, 'file:///plugins/one/.mcp.json#mcp=desk%20two', false);
+    await settle(8);
+
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk two', enabled: false }]);
+  });
+
   it('does not reconnect one that was already ready', async () => {
     const { client } = await withServers('connected');
     toggle(client, 'mcp:desk', true);

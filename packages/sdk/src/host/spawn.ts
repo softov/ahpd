@@ -444,6 +444,14 @@ export function createSpawn(ctx: HostContext): Spawn {
      */
     const plugins = ctx.pluginsFor(uri, chatUri);
     /*
+     * The servers of those plugins a client switched off, by name.
+     *
+     * Left out of `mcpFor` above, and named here: a backend that opens a
+     * plugin directory can find a server there on its own, and this is how it
+     * is told not to run one.
+     */
+    const denied = ctx.deniedMcpServers(uri);
+    /*
      * The same tools as an MCP server, for a backend that cannot call them in
      * this process - an ACP agent, which asks its client for them.
      *
@@ -538,6 +546,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * one a backend running here could open.
        */
       ...(plugins.length === 0 ? {} : { plugins }),
+      ...(denied.length === 0 ? {} : { deniedMcpServers: denied }),
       ...(options.toolsServers === undefined ? {} : { toolsServer }),
       // Resolved here rather than left for the backend to default, so what a
       // call waits is one number the host decided and a deployment set once.

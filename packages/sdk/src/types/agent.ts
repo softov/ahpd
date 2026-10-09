@@ -211,6 +211,16 @@ export interface Start {
    */
   plugins?: { path: string }[];
   /**
+   * MCP servers of those plugins that a client switched off, by name.
+   *
+   * A backend loads a plugin directory itself, so a server left out of
+   * `mcpServers` can still be found there. Naming it here is how the host
+   * says, to a backend that can be told at all, that this one is not to run
+   * however it is found. Left out when nothing was switched off, which is the
+   * same "asked for nothing" an absent `mcpServers` is.
+   */
+  deniedMcpServers?: string[];
+  /**
    * What the host wants the model told, beside the backend's own prompt.
    *
    * One entry per host tool that carries an instruction. A backend that can
