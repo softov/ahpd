@@ -191,7 +191,7 @@ export function usageOf(message: AssistantMessage | undefined): Bag | undefined 
     ...(message.provider !== undefined && message.model !== undefined
       ? { model: `${message.provider}/${message.model}` }
       : {}),
-    ...(wrote !== undefined ? { _meta: { cacheWriteTokens: wrote } } : {}),
+    ...(wrote !== undefined ? { _meta: { 'ahpd.cacheWriteTokens': wrote } } : {}),
   };
   return Object.keys(info).length > 0 ? info : undefined;
 }
@@ -231,7 +231,7 @@ export function addUsage(total: Bag | undefined, message: AssistantMessage | und
   const input = sum(held.inputTokens, one.inputTokens);
   const output = sum(held.outputTokens, one.outputTokens);
   const read = sum(held.cacheReadTokens, one.cacheReadTokens);
-  const wrote = sum(was.cacheWriteTokens, now.cacheWriteTokens);
+  const wrote = sum(was['ahpd.cacheWriteTokens'], now['ahpd.cacheWriteTokens']);
   const price = bag(message?.usage?.cost);
   /** One side of a call, the parts pi priced it in summed; absent if pi gave none of them. */
   const side = (...keys: string[]): number | undefined => {
@@ -242,13 +242,14 @@ export function addUsage(total: Bag | undefined, message: AssistantMessage | und
     }
     return part;
   };
-  const paid = sum(bag(was.cost).amount, price.total);
-  const sent = sum(bag(was.cost).input, side('input', 'cacheRead', 'cacheWrite'));
-  const got = sum(bag(was.cost).output, side('output'));
+  const before = bag(was['ahpd.cost']);
+  const paid = sum(before.amount, price.total);
+  const sent = sum(before.input, side('input', 'cacheRead', 'cacheWrite'));
+  const got = sum(before.output, side('output'));
   const meta: Bag = {
-    ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
+    ...(wrote !== undefined ? { 'ahpd.cacheWriteTokens': wrote } : {}),
     ...(paid !== undefined ? {
-      cost: {
+      'ahpd.cost': {
         amount: paid,
         currency: 'USD',
         ...(sent === undefined ? {} : { input: sent }),

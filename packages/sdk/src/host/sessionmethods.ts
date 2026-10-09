@@ -303,6 +303,17 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
         return children.length > 0 ? children : [entry];
       });
+      /*
+       * A leaf's argument hint, wherever its kind keeps one.
+       *
+       * `PromptCustomization` declares `argumentHint` and `SkillCustomization`
+       * does not, so a skill's travels as `_meta['ahpd.argumentHint']`.
+       */
+      const hintOf = (entry: Bag): string | undefined => {
+        if (typeof entry.argumentHint === 'string') return entry.argumentHint;
+        const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
+        return typeof hint === 'string' ? hint : undefined;
+      };
       const own = leaves
         // Skills as well as prompts, and not the ones the CLI keeps for
         // the agent: offering one it will refuse is worse than not
@@ -312,7 +323,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         .map((entry) => ({
         name: String(entry.name),
         description: typeof entry.description === 'string' ? entry.description : undefined,
-        argumentHint: typeof entry.argumentHint === 'string' ? entry.argumentHint : undefined,
+        argumentHint: hintOf(entry),
         isSkill: entry.type === 'skill',
       }));
       /*

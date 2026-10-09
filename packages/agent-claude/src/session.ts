@@ -211,12 +211,12 @@ export function createSession(options: ClaudeSessionOptions): Session {
        * turn ran on and `ModelSelection` says what a client asked for, and
        * neither answers "what is this session on now" before a turn exists.
        * `_meta` is the protocol's own escape hatch, and a client reading
-       * `_meta.model` knows it is reading an extension - where a bare `model`
-       * beside `title` and `provider` reads like a declared field, which is a
-       * mistake somebody has already made with this one.
+       * `_meta['ahpd.model']` knows it is reading an extension - where a bare
+       * `model` beside `title` and `provider` reads like a declared field,
+       * which is a mistake somebody has already made with this one.
        */
       ...(ctx.chosen ?? str(bag(ctx.handshake).model)
-        ? { _meta: { model: (ctx.chosen ?? str(bag(ctx.handshake).model)) as string } }
+        ? { _meta: { 'ahpd.model': (ctx.chosen ?? str(bag(ctx.handshake).model)) as string } }
         : {}),
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.

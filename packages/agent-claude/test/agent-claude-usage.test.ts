@@ -173,7 +173,7 @@ const total = (...calls: Call[]): Bag => ({
   inputTokens: calls.reduce((sum, one) => sum + one.input, 0),
   outputTokens: calls.reduce((sum, one) => sum + one.output, 0),
   cacheReadTokens: calls.reduce((sum, one) => sum + one.read, 0),
-  _meta: { cacheWriteTokens: calls.reduce((sum, one) => sum + one.wrote, 0) },
+  _meta: { 'ahpd.cacheWriteTokens': calls.reduce((sum, one) => sum + one.wrote, 0) },
 });
 
 /** Replay frames through a real session with a recording host seam. */
@@ -246,7 +246,7 @@ it('sends a total that grows with every call, a worker\'s included, and ends at 
   ]);
   expect(payload(said[3])).toEqual({
     ...total(answered, empty, answered),
-    _meta: { ...total(answered, empty, answered)._meta as Bag, cost: { amount: 1.25, currency: 'USD' } },
+    _meta: { ...total(answered, empty, answered)._meta as Bag, 'ahpd.cost': { amount: 1.25, currency: 'USD' } },
   });
 
   // The sum belongs to the turn, so the worker's own chat carries none of it.
@@ -259,14 +259,14 @@ it('sends a total that grows with every call, a worker\'s included, and ends at 
 
 it('takes the turn\'s cost from the change in modelUsage, which is cumulative per query', async () => {
   const { main, session } = await replay([...fixture('claude-answered-round.jsonl'), result(0.5)]);
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.5, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.5, currency: 'USD' } });
 
   // The next result carries the query's running total, not this turn's spend.
   session.begin('t2', 'and again');
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), result(1.25));
   await settle();
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.75, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.75, currency: 'USD' } });
 });
 
 it('sends no cost for a result that found the books where the last one left them', async () => {
@@ -277,7 +277,7 @@ it('sends no cost for a result that found the books where the last one left them
    * rather than a cost of nothing.
    */
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.5)]);
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.5, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.5, currency: 'USD' } });
 
   session.begin('t2', 'and again');
   await settle();
@@ -285,8 +285,8 @@ it('sends no cost for a result that found the books where the last one left them
   sdk.push(...fixture('claude-empty-round.jsonl'), result(0.5));
   await settle();
   const meta = payload(reports(main).at(-1))?._meta as Bag;
-  expect(meta).toMatchObject({ cacheWriteTokens: empty.wrote });
-  expect(meta.cost).toBeUndefined();
+  expect(meta).toMatchObject({ 'ahpd.cacheWriteTokens': empty.wrote });
+  expect(meta['ahpd.cost']).toBeUndefined();
 });
 
 it('sends no cost for a result the CLI came back with zeroed, and bills the total once', async () => {
@@ -297,7 +297,7 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
    * whole total again on the result that carries it back.
    */
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(0.68)]);
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.68, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.68, currency: 'USD' } });
 
   session.begin('t2', 'and again');
   await settle();
@@ -305,7 +305,7 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
   await settle();
   // No cost key rather than one holding a nought, which read as a measurement
   // of the turn would negate what the turn before it spent.
-  expect(payload(reports(main).at(-1))).not.toHaveProperty('_meta.cost');
+  expect(payload(reports(main).at(-1))).not.toHaveProperty(['_meta', 'ahpd.cost']);
 
   // The running total is back on the result behind it, and the turn that spent
   // the money keeps it: only what grew since it was last billed is charged.
@@ -313,7 +313,7 @@ it('sends no cost for a result the CLI came back with zeroed, and bills the tota
   await settle();
   sdk.push(result(1.36));
   await settle();
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.68, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.68, currency: 'USD' } });
 });
 
 it('starts the cost baseline again when the CLI resets the conversation', async () => {
@@ -326,7 +326,7 @@ it('starts the cost baseline again when the CLI resets the conversation', async 
    * where it had been.
    */
   const { main, session } = await replay([...fixture('claude-empty-round.jsonl'), result(1)]);
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 1, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 1, currency: 'USD' } });
 
   session.begin('t2', 'and again');
   await settle();
@@ -335,7 +335,7 @@ it('starts the cost baseline again when the CLI resets the conversation', async 
   // result spent on. It is the reset, and nothing else, that takes it to zero.
   sdk.push({ ...result(0), usage: { input_tokens: 0, output_tokens: 0 } });
   await settle();
-  expect(payload(reports(main).at(-1))).not.toHaveProperty('_meta.cost');
+  expect(payload(reports(main).at(-1))).not.toHaveProperty(['_meta', 'ahpd.cost']);
 
   session.begin('t3', 'after the clear');
   await settle();
@@ -344,14 +344,14 @@ it('starts the cost baseline again when the CLI resets the conversation', async 
   // taken back to zero reads it as the spend it is.
   sdk.push(reset(), ...fixture('claude-empty-round.jsonl'), result(0.2));
   await settle();
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.2, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.2, currency: 'USD' } });
 });
 
 it('sends no cost the CLI could only guess at, and still differences the next one from it', async () => {
   // `costBasis: 'unknown'` is a model the CLI had no price row for, so the
   // figure beside it is the default model's rate and nothing more.
   const { main, session } = await replay([...fixture('claude-answered-round.jsonl'), result(0.5, 'unknown')]);
-  expect(payload(reports(main).at(-1))?._meta).toEqual({ cacheWriteTokens: answered.wrote });
+  expect(payload(reports(main).at(-1))?._meta).toEqual({ 'ahpd.cacheWriteTokens': answered.wrote });
 
   // The guess is not sent, but it is still on the books: the next result
   // differences from where this one left them, or it would bill those 0.5
@@ -360,7 +360,7 @@ it('sends no cost the CLI could only guess at, and still differences the next on
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), result(1.25));
   await settle();
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.75, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.75, currency: 'USD' } });
 });
 
 it('lets a guess made in an earlier turn spoil only that turn\'s cost', async () => {
@@ -373,13 +373,13 @@ it('lets a guess made in an earlier turn spoil only that turn\'s cost', async ()
     return frame;
   };
   const { main, session } = await replay([...fixture('claude-answered-round.jsonl'), both(0.5, 0.2)]);
-  expect((payload(reports(main).at(-1))?._meta as Bag).cost).toBeUndefined();
+  expect((payload(reports(main).at(-1))?._meta as Bag)['ahpd.cost']).toBeUndefined();
 
   session.begin('t2', 'and again');
   await settle();
   sdk.push(...fixture('claude-empty-round.jsonl'), both(1.25, 0.2));
   await settle();
-  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ cost: { amount: 0.75, currency: 'USD' } });
+  expect(payload(reports(main).at(-1))?._meta).toMatchObject({ 'ahpd.cost': { amount: 0.75, currency: 'USD' } });
 });
 
 it('writes no key into the usage\'s `_meta` that nothing has been told about', async () => {
@@ -392,7 +392,7 @@ it('writes no key into the usage\'s `_meta` that nothing has been told about', a
    * rather than in a capture nobody took.
    */
   expect(metaKeys(payload(reports(main).at(-1))).map((one) => one.key).sort())
-    .toEqual(['cacheWriteTokens', 'cost']);
+    .toEqual(['ahpd.cacheWriteTokens', 'ahpd.cost']);
 });
 
 it('falls back to the result\'s own count when the stream carried no partial messages', async () => {

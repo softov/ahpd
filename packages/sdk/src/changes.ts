@@ -107,7 +107,7 @@ const indexHolds = async (dir: string): Promise<boolean> => {
 const treeSignature = (value: { files: ChangesetFile[]; summary: ChangesSummary } | undefined): string =>
   JSON.stringify({
     summary: value?.summary ?? null,
-    staging: (value?.files ?? []).map((one) => [one.id, one._meta?.staged === true, one._meta?.unstaged === true]),
+    staging: (value?.files ?? []).map((one) => [one.id, one._meta?.['ahpd.staged'] === true, one._meta?.['ahpd.unstaged'] === true]),
   });
 
 /**
@@ -243,11 +243,11 @@ const COMMIT: ChangesetOperation = {
 const commitConfirmation = (files: readonly ChangesetFile[], subject: string | undefined): string => {
   const named = (subject ?? '').trim();
   const name = named === '' ? 'Changes from an agent session' : named;
-  const staged = files.filter((one) => one._meta?.staged === true).length;
+  const staged = files.filter((one) => one._meta?.['ahpd.staged'] === true).length;
   if (staged > 0) {
     return `Commit ${staged} staged ${staged === 1 ? 'file' : 'files'} as '${name}'?`;
   }
-  const untracked = files.filter((one) => one._meta?.staged !== true && one.edit.before === undefined).length;
+  const untracked = files.filter((one) => one._meta?.['ahpd.staged'] !== true && one.edit.before === undefined).length;
   const counted = `${files.length} ${files.length === 1 ? 'file' : 'files'}`;
   return `Commit ${counted}${untracked > 0 ? `, ${untracked} untracked` : ''}, as '${name}'?`;
 };
@@ -639,7 +639,7 @@ export function gitChanges(): ChangesetSource {
         },
         // A file can be both (`MM`): staged, then changed again. Saying only one
         // of the two would hide half of what a commit form has to decide.
-        _meta: { staged, unstaged },
+        _meta: { 'ahpd.staged': staged, 'ahpd.unstaged': unstaged },
       });
       summary.files = (summary.files ?? 0) + 1;
       summary.additions = (summary.additions ?? 0) + count.added;

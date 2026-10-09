@@ -44,7 +44,7 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },
   ]);
   expect(turns?.[0]?.usage).toEqual({
-    inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, model: 'anthropic/claude-opus-5', _meta: { cacheWriteTokens: 0 },
+    inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, model: 'anthropic/claude-opus-5', _meta: { 'ahpd.cacheWriteTokens': 0 },
   });
   expect(turns?.[1]?.responseParts).toEqual([
     { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' } },

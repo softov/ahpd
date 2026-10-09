@@ -282,6 +282,35 @@ describe('what the harness offers', () => {
     expect(meta).toEqual({ '/compact': undefined, '/writing': true });
   });
 
+  it('gives a live session\'s skill its argument hint as ghost text', async () => {
+    sdk.init = {
+      models: [],
+      commands: [{ name: 'writing', description: 'How to write' }],
+      agents: [],
+    };
+    sdk.skills.push({ name: 'writing', description: 'How to write', argumentHint: '<topic>' });
+    const { client, uri, chatUri } = await running();
+    await settle(8);
+
+    // The skill keeps its hint under this host's own key, because
+    // `SkillCustomization` declares none.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    }).snapshot.state;
+    const skill = state.customizations
+      .flatMap((c) => (c.children as Record<string, unknown>[] | undefined) ?? [c])
+      .find((c) => c.id === 'skill:writing');
+    expect(skill?._meta).toEqual({ 'ahpd.argumentHint': '<topic>' });
+
+    // The completion item carries it under the reference client's own key.
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: chatUri, kind: 'userMessage', text: '/wri', offset: 4 },
+    }) as { items: { insertText: string; attachment: Record<string, unknown> }[] };
+    expect(found.items.map((one) => one.insertText)).toEqual(['/writing ']);
+    expect(found.items[0]?.attachment._meta).toMatchObject({ command: 'writing', isSkill: true, argumentHint: '<topic>' });
+  });
+
   it('knows a skill from a command on the harness-wide list too', async () => {
     sdk.init = {
       models: [],

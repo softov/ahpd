@@ -1,6 +1,6 @@
 ---
 title: A session's owner, a turn's sender and a file's staging are sent as ahpd keys
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -38,3 +38,8 @@ A session summary and state carry `_meta['ahpd.owner']`, a live `chat/turnStarte
 - `pnpm test` passes.
 
 ## Resume
+
+Implemented 2026-10-09, in the `build/agents/6dac4670` worktree.
+Step 1 was already met: ahpapp reads both names for staging since host/05 (a66f582). No client reads `owner` or `sender` yet (ahpapp `chat/02` is todo), so nothing goes blank.
+`packages/sdk/src/host/facts.ts` sends `ahpd.owner` on the summary and the state. `packages/sdk/src/host/spawn.ts` sends `ahpd.sender` on a stored turn's message and on a live `chat/turnStarted`; the plugin event's own `sender` field is not `_meta` and stays. `packages/sdk/src/changes.ts` writes `ahpd.staged` and `ahpd.unstaged`, and its two readers read the new names.
+Tests: `commit.test.ts`, `sessions.test.ts`, `plugin-events-fire.test.ts`. Docs: `docs/AHP.md`, `docs/LIBRARY.md`.

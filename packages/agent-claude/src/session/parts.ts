@@ -100,7 +100,7 @@ export function createParts(ctx: SessionContext): Parts {
       ...(num(found.output_tokens) !== undefined ? { outputTokens: num(found.output_tokens) } : {}),
       ...(num(found.cache_read_input_tokens) !== undefined ? { cacheReadTokens: num(found.cache_read_input_tokens) } : {}),
       ...(model !== undefined ? { model } : {}),
-      ...(writes !== undefined ? { _meta: { cacheWriteTokens: writes } } : {}),
+      ...(writes !== undefined ? { _meta: { 'ahpd.cacheWriteTokens': writes } } : {}),
     };
     return Object.keys(info).length > 0 ? info : undefined;
   };

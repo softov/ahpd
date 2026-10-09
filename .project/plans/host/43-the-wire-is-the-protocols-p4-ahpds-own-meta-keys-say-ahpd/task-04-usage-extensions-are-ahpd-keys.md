@@ -1,6 +1,6 @@
 ---
 title: Usage extensions are ahpd keys in every backend, and the meter reads them
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude, agent-acp, agent-pi, agent-cofold, sdk"
 refs:
@@ -45,3 +45,8 @@ Every backend's usage carries `_meta['ahpd.cacheWriteTokens']`, `['ahpd.reasonin
 - `pnpm test` passes.
 
 ## Resume
+
+Implemented 2026-10-09, in the `build/agents/6dac4670` worktree.
+Step 1 was already met: ahpapp reads both names since host/05 (a66f582).
+`cacheWriteTokens`, `reasoningTokens`, `cost` and `context` are `ahpd.*` in agent-claude (`session/parts.ts`, `session/query.ts`), agent-acp (`mapping.ts`, `session/turn.ts`), agent-pi (`mapping.ts`) and agent-cofold (`mapping.ts`, `transcript.ts`). The readers moved with them: `packages/sdk/src/meter.ts`, pi's `addUsage`, and acp's `context` read-back. No numeric `_meta.cost` is sent. The timing keys were already `ahpd.` (plugin/29).
+Each backend's usage test asserts its census of `ahpd.` keys. `wire.test.ts`'s `PENDING` is empty.

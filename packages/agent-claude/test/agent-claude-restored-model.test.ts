@@ -64,7 +64,7 @@ async function opened(settings: Record<string, unknown>, seedModels: { id: strin
   await new Promise((done) => { setTimeout(done, 20); });
   const state = session.sessionState();
   const config = state.config as Bag | undefined;
-  return { session, model: (state._meta as Bag | undefined)?.model, values: config?.values as Bag };
+  return { session, model: (state._meta as Bag | undefined)?.['ahpd.model'], values: config?.values as Bag };
 }
 
 it('reopens on the model it was stored on, and says so before anybody has asked', async () => {
@@ -110,5 +110,5 @@ it('lets a message name another model, as it did before', async () => {
   const { session } = await opened({ model: 'opus' });
   session.begin('t1', 'first', { id: 'sonnet' });
   await new Promise((done) => { setTimeout(done, 20); });
-  expect((session.sessionState()._meta as Bag | undefined)?.model).toBe('sonnet');
+  expect((session.sessionState()._meta as Bag | undefined)?.['ahpd.model']).toBe('sonnet');
 });

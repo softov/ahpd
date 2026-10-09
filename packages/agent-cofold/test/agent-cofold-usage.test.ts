@@ -6,6 +6,7 @@ import { createFakeModel } from '@cofold/agents/testing';
 import type { ModelAdapter } from '@cofold/agents';
 import { createHost } from '../../sdk/src/host.js';
 import { cofoldAgent } from '../src/index.js';
+import { metaKeys } from '../../../tools/wire.mjs';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
 
@@ -216,8 +217,11 @@ it('grows the total it sends with every step, and ends on the run\'s own tally',
     [150, 30, 5],
   ]);
   // The cache write rides `_meta`, summed as the counts beside it are.
-  const writes = totals(p, chatUri).map((one) => (one._meta as { cacheWriteTokens?: number } | undefined)?.cacheWriteTokens);
+  const writes = totals(p, chatUri).map((one) => (one._meta as { 'ahpd.cacheWriteTokens'?: number } | undefined)?.['ahpd.cacheWriteTokens']);
   expect(writes).toEqual([undefined, 7, 7]);
+  // The census the wire test runs, over every report: no bare usage key.
+  expect([...new Set(totals(p, chatUri).flatMap((one) => metaKeys(one).map(({ key }) => key)))].sort())
+    .toEqual(['ahpd.cacheWriteTokens', 'ahpd.cost']);
   // Every total went out before the turn ended, or a client hangs it on a turn
   // that has already left the running list.
   const chat = types(p, chatUri);
@@ -244,8 +248,8 @@ it('sends the run\'s cost, in dollars, with the total that ends the turn', async
   // only the run knows the adapter's price. Both steps at the rates above,
   // which is what `costOf` rounds to micro-dollars.
   const last = totals(p, chatUri).at(-1);
-  expect(last?._meta).toEqual({ cost: { amount: 0.0009, currency: 'USD' } });
-  expect((totals(p, chatUri)[0]?._meta as Record<string, unknown> | undefined)?.cost).toBeUndefined();
+  expect(last?._meta).toEqual({ 'ahpd.cost': { amount: 0.0009, currency: 'USD' } });
+  expect((totals(p, chatUri)[0]?._meta as Record<string, unknown> | undefined)?.['ahpd.cost']).toBeUndefined();
 });
 
 it('sends no cost for a model with no price row', async () => {
@@ -306,7 +310,7 @@ it('prices a real endpoint\'s turn from the price its catalogue published', asyn
   // which `costOf` rounds to micro-dollars.
   const last = totals(p, chatUri).at(-1);
   expect(last).toMatchObject({ inputTokens: 100, outputTokens: 20 });
-  expect(last?._meta).toEqual({ cost: { amount: 0.0006, currency: 'USD' } });
+  expect(last?._meta).toEqual({ 'ahpd.cost': { amount: 0.0006, currency: 'USD' } });
 });
 
 it('sends no cost for a listed model the endpoint published no price for', async () => {

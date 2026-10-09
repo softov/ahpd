@@ -190,7 +190,7 @@ export function createFacts(ctx: HostContext): Facts {
      */
     const byAgent = agentMeta(uri);
     if (dir === undefined) {
-      const meta = { ...byAgent, ...(owner === undefined ? {} : { owner }) };
+      const meta = { ...byAgent, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
       return Object.keys(meta).length === 0 ? {} : { _meta: meta };
     }
     /*
@@ -206,7 +206,7 @@ export function createFacts(ctx: HostContext): Facts {
     // Anything past the path is the host's to be told, not this file's to go
     // and find - `git` is a binary, and a host may be given none.
     const told = metaOf(uri);
-    const meta = { ...byAgent, ...told, ...(owner === undefined ? {} : { owner }) };
+    const meta = { ...byAgent, ...told, ...(owner === undefined ? {} : { 'ahpd.owner': owner }) };
     return {
       project,
       ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),

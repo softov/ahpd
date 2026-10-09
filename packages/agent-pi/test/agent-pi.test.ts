@@ -559,7 +559,7 @@ it('sends what the turn used, before it ends, and keeps it on the transcript', a
     outputTokens: 30,
     cacheReadTokens: 10,
     model: 'anthropic/claude-opus-5',
-    _meta: { cacheWriteTokens: 5 },
+    _meta: { 'ahpd.cacheWriteTokens': 5 },
   };
   expect(last('chat/usage')?.usage).toEqual(expected);
   const chat = types('chat');

@@ -254,23 +254,11 @@ const REFERENCE: { key: string; at: string; from: string }[] = [
 /**
  * What this host writes under a name of its own, and the task that renames it.
  *
- * p4 empties this list. Until it does, this is the gap between the protocol's
- * vocabulary and this host's, written where the next key has to be added to
- * rather than left for a reader to find.
+ * Empty: every key this host invents is sent as `ahpd.<name>`. A bare key that
+ * has to ship before it is renamed is written here with its task, where the
+ * next one has to be added rather than left for a reader to find.
  */
-const PENDING: { key: string; at: string; task: string }[] = [
-  { key: 'owner', at: '/changes/_meta', task: 'p4 task 02' },
-  { key: 'owner', at: '/summary/_meta', task: 'p4 task 02' },
-  { key: 'owner', at: '/state/_meta', task: 'p4 task 02' },
-  { key: 'sender', at: 'action/_meta', task: 'p4 task 02' },
-  { key: 'model', at: '/changes/_meta', task: 'p4 task 03' },
-  { key: 'model', at: '/state/_meta', task: 'p4 task 03' },
-  // On a skill, where this host puts its own field: the reference reads
-  // `argumentHint` on a completion item, which is allowed above.
-  { key: 'argumentHint', at: 'customizations/N/children/N/_meta', task: 'p4 task 03' },
-  { key: 'cacheWriteTokens', at: 'usage/_meta', task: 'p4 task 04' },
-  { key: 'cost', at: 'usage/_meta', task: 'p4 task 04' },
-];
+const PENDING: { key: string; at: string; task: string }[] = [];
 
 /** A key at a place, as the census reports it. */
 const where = (key: string, at: string): string => `${key} @ ${at}`;

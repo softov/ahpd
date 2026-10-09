@@ -77,9 +77,9 @@ const counted = (value: unknown): number | undefined =>
  * The `_meta` a report carried, read field by field.
  *
  * The protocol names no field for cache writes or for what a turn cost, so
- * every harness rides them in `_meta` rather than dropping them: cofold,
- * Claude Code and pi as `{ amount, currency }`, ACP as whatever currency the
- * agent answered in.
+ * every harness rides them in `_meta`, as `ahpd.cacheWriteTokens` and
+ * `ahpd.cost`, rather than dropping them: cofold, Claude Code and pi as
+ * `{ amount, currency }`, ACP as whatever currency the agent answered in.
  */
 const metaOf = (usage: Bag): Bag => {
   const meta = usage._meta;
@@ -100,7 +100,7 @@ const metaOf = (usage: Bag): Bag => {
  * report, or one that is not a count, is left out rather than sent as 0.
  */
 const costOf = (usage: Bag): Cost | undefined => {
-  const cost = metaOf(usage).cost;
+  const cost = metaOf(usage)['ahpd.cost'];
   if (typeof cost !== 'object' || cost === null) return undefined;
   const { amount, currency, input, output } = cost as Bag;
   const paid = counted(amount);
@@ -121,7 +121,7 @@ const usedBy = (usage: Bag): Omit<ModelCall, 'name'> => {
   const input = counted(usage.inputTokens);
   const output = counted(usage.outputTokens);
   const read = counted(usage.cacheReadTokens);
-  const write = counted(metaOf(usage).cacheWriteTokens);
+  const write = counted(metaOf(usage)['ahpd.cacheWriteTokens']);
   return {
     ...(input === undefined ? {} : { input }),
     ...(output === undefined ? {} : { output }),
@@ -166,9 +166,9 @@ const addition = (now: Bag, before: Bag | undefined): Bag => {
   // another currency was never added to this one.
   const earlier = cost !== undefined && paid?.currency === cost.currency ? paid : undefined;
   const meta: Bag = {
-    ...growth('cacheWriteTokens', metaOf(now).cacheWriteTokens, metaOf(before).cacheWriteTokens),
+    ...growth('ahpd.cacheWriteTokens', metaOf(now)['ahpd.cacheWriteTokens'], metaOf(before)['ahpd.cacheWriteTokens']),
     ...(cost === undefined ? {} : {
-      cost: {
+      'ahpd.cost': {
         ...cost,
         ...growth('amount', cost.amount, earlier?.amount),
         ...growth('input', cost.input, earlier?.input),

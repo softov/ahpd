@@ -3,6 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { acpAgent } from '../src/index.js';
+import { metaKeys } from '../../../tools/wire.mjs';
 
 /*
  * What an ACP turn costs.
@@ -66,7 +67,7 @@ const reports = (actions: Bag[]): Bag[] =>
 
 /** What each report says the turn had cost, in the order they went out. */
 const amounts = (actions: Bag[]): unknown[] =>
-  reports(actions).map((usage) => bag(bag(usage._meta).cost).amount);
+  reports(actions).map((usage) => bag(bag(usage._meta)['ahpd.cost']).amount);
 
 /** The usage the finished turn holds, as a client reading the snapshot sees it. */
 const held = (session: Session): Bag => {
@@ -96,7 +97,7 @@ it('sends the change in the session cost as each update lands', async () => {
     // The context window is not what the turn spent, so it is reported beside
     // the cost in `_meta` and as nothing a token count could be read out of.
     expect(usage).toEqual({
-      _meta: { context: { used: 4200, size: 200000 }, cost: { amount: expect.any(Number), currency: 'USD' } },
+      _meta: { 'ahpd.context': { used: 4200, size: 200000 }, 'ahpd.cost': { amount: expect.any(Number), currency: 'USD' } },
     });
   }
   // Before the turn ends, as every other backend's running total goes out.
@@ -115,8 +116,8 @@ it('sends the context on its own when the server reported no cost', async () => 
 // update already reported: the protocol replaces the turn's usage rather than
 // adding to it, so the last word has to carry what the turn knows.
 expect(reports(actions)).toEqual([
-  { _meta: { context: { used: 4200, size: 200000 } } },
-  { _meta: { context: { used: 4200, size: 200000 } } },
+  { _meta: { 'ahpd.context': { used: 4200, size: 200000 } } },
+  { _meta: { 'ahpd.context': { used: 4200, size: 200000 } } },
 ]);
 });
 
@@ -153,10 +154,10 @@ it('sends the tokens the prompt response counted, with the cost it did not', asy
     outputTokens: 400,
     cacheReadTokens: 40,
     _meta: {
-      cacheWriteTokens: 10,
-      reasoningTokens: 80,
-      cost: { amount: 1.75, currency: 'USD' },
-      context: { used: 4200, size: 200000 },
+      'ahpd.cacheWriteTokens': 10,
+      'ahpd.reasoningTokens': 80,
+      'ahpd.cost': { amount: 1.75, currency: 'USD' },
+      'ahpd.context': { used: 4200, size: 200000 },
     },
   });
   // And it lands before the ending action, which is what moves the turn into
@@ -165,6 +166,9 @@ it('sends the tokens the prompt response counted, with the cost it did not', asy
   expect(order.lastIndexOf('chat/usage')).toBeLessThan(order.indexOf('chat/turnComplete'));
   expect(held(session)).toEqual(said.at(-1));
 
+  // The census the wire test runs, over every report: no bare usage key.
+  expect([...new Set(said.flatMap((one) => metaKeys(one).map(({ key }) => key)))].sort())
+    .toEqual(['ahpd.cacheWriteTokens', 'ahpd.context', 'ahpd.cost', 'ahpd.reasoningTokens']);
 });
 
 it('sends the cost alone when the response counted nothing', async () => {
@@ -175,7 +179,7 @@ it('sends the cost alone when the response counted nothing', async () => {
   // unstable and optional, and what the updates already reported is the whole
   // of what this turn knows.
   expect(reports(actions).at(-1)).toEqual({
-    _meta: { cost: { amount: 1.75, currency: 'USD' }, context: { used: 4200, size: 200000 } },
+    _meta: { 'ahpd.cost': { amount: 1.75, currency: 'USD' }, 'ahpd.context': { used: 4200, size: 200000 } },
   });
 });
 

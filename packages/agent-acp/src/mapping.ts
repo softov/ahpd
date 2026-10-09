@@ -508,11 +508,11 @@ export function mapUpdate(turn: AcpTurn, update: SessionUpdate, at?: number): Ba
      * through the turn, as it does with the other backends.
      */
     case 'usage_update': {
-      const _meta: Bag = { context: { used: update.used, size: update.size } };
+      const _meta: Bag = { 'ahpd.context': { used: update.used, size: update.size } };
       const cost = update.cost;
       if (cost !== undefined && cost !== null && typeof cost.amount === 'number') {
         turn.cost = { amount: cost.amount, currency: cost.currency };
-        _meta.cost = { amount: cost.amount - (turn.costAtStart ?? 0), currency: cost.currency };
+        _meta['ahpd.cost'] = { amount: cost.amount - (turn.costAtStart ?? 0), currency: cost.currency };
       }
       // The last of it is what the turn holds, which is what a rebuilt
       // conversation reads back.

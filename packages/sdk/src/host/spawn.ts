@@ -188,7 +188,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const sender = kept.sender(idOf(session), String(turn.id ?? ''));
     const message = turn.message as Bag | undefined;
     if (sender === undefined || typeof message !== 'object' || message === null) return turn;
-    return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), sender } } };
+    return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } } };
   });
 
   /**
@@ -591,7 +591,7 @@ export function createSpawn(ctx: HostContext): Spawn {
          */
         if (sender !== undefined && action.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
-          dispatch(where, { ...action, _meta: { ...(action._meta as Bag | undefined), sender } });
+          dispatch(where, { ...action, _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender } });
         }
         else dispatch(where, action);
         // A tool call that finished may have written to this session's tree, so

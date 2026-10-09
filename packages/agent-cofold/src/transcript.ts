@@ -66,8 +66,8 @@ interface Waiting {
  */
 const usageOf = (usage: Usage): WireUsage => {
   const extra: Bag = {
-    ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
-    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
+    ...(usage.cacheWriteTokens !== undefined ? { 'ahpd.cacheWriteTokens': usage.cacheWriteTokens } : {}),
+    ...(usage.reasoningTokens !== undefined ? { 'ahpd.reasoningTokens': usage.reasoningTokens } : {}),
   };
   return {
     inputTokens: usage.inputTokens,

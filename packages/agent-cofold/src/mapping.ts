@@ -104,9 +104,9 @@ export interface TurnMapping {
 /** cofold's token counts, in the protocol's spelling, and what they cost. */
 const usageOf = (usage: Usage, model: string | undefined, cost?: number): Bag => {
   const extra: Bag = {
-    ...(usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: usage.cacheWriteTokens } : {}),
-    ...(usage.reasoningTokens !== undefined ? { reasoningTokens: usage.reasoningTokens } : {}),
-    ...(cost !== undefined ? { cost: { amount: cost, currency: 'USD' } } : {}),
+    ...(usage.cacheWriteTokens !== undefined ? { 'ahpd.cacheWriteTokens': usage.cacheWriteTokens } : {}),
+    ...(usage.reasoningTokens !== undefined ? { 'ahpd.reasoningTokens': usage.reasoningTokens } : {}),
+    ...(cost !== undefined ? { 'ahpd.cost': { amount: cost, currency: 'USD' } } : {}),
   };
   return {
     inputTokens: usage.inputTokens,

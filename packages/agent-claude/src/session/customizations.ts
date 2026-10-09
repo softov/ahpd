@@ -141,8 +141,9 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
       ...(described ? { description: described } : {}),
       // Under `_meta` for the reason the session's model is: `SkillCustomization`
       // declares `description` and the two `disable*` flags and nothing else,
-      // so an argument hint sent beside them is this host's own extension.
-      ...(hint ? { _meta: { argumentHint: hint } } : {}),
+      // so an argument hint sent beside them is this host's own extension,
+      // and named as one.
+      ...(hint ? { _meta: { 'ahpd.argumentHint': hint } } : {}),
     };
     if (plugin === undefined) asSkills.push(leaf);
     else under(plugin, leaf);

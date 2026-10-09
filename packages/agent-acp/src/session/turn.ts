@@ -188,7 +188,7 @@ export function createTurn(ctx: SessionContext): Turn {
     const price = held.cost === undefined
       ? undefined
       : { amount: held.cost.amount - (held.costAtStart ?? 0), currency: held.cost.currency };
-    const filled = bag(bag(held.usage)._meta).context;
+    const filled = bag(bag(held.usage)._meta)['ahpd.context'];
     const said: Bag = {
       ...(num(usage?.inputTokens) !== undefined ? { inputTokens: num(usage?.inputTokens) } : {}),
       ...(num(usage?.outputTokens) !== undefined ? { outputTokens: num(usage?.outputTokens) } : {}),
@@ -203,10 +203,10 @@ export function createTurn(ctx: SessionContext): Turn {
       ...(wrote !== undefined || thought !== undefined || price !== undefined || filled !== undefined
         ? {
             _meta: {
-              ...(wrote !== undefined ? { cacheWriteTokens: wrote } : {}),
-              ...(thought !== undefined ? { reasoningTokens: thought } : {}),
-              ...(price !== undefined ? { cost: price } : {}),
-              ...(filled === undefined ? {} : { context: filled }),
+              ...(wrote !== undefined ? { 'ahpd.cacheWriteTokens': wrote } : {}),
+              ...(thought !== undefined ? { 'ahpd.reasoningTokens': thought } : {}),
+              ...(price !== undefined ? { 'ahpd.cost': price } : {}),
+              ...(filled === undefined ? {} : { 'ahpd.context': filled }),
             },
           }
         : {}),

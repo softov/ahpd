@@ -292,7 +292,7 @@ it('says on the wire who sent a turn, and says nothing on a host with nobody to 
   await ana.handle({ method: 'subscribe', params: { channel: chat } });
   await send(ana, chat, 'turn-who', 'hello there');
   await wait(100);
-  expect(started(on.notes)).toMatchObject({ _meta: { sender: 'user:ana' } });
+  expect(started(on.notes)).toMatchObject({ _meta: { 'ahpd.sender': 'user:ana' } });
 
   // And the absence, which is the whole of what a host with no directory has
   // to say: the action the protocol has, with nothing of this host's on it.

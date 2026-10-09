@@ -285,7 +285,7 @@ describe('choosing a model', () => {
     });
     await settle();
     const state = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-      snapshot: { state: { model?: string; _meta?: { model?: string } } };
+      snapshot: { state: { model?: string; _meta?: { 'ahpd.model'?: string } } };
     }).snapshot.state;
     /*
      * `SessionState` declares no `model`.
@@ -295,7 +295,7 @@ describe('choosing a model', () => {
      * field beside the declared ones reads like one the specification forgot,
      * which is a mistake somebody has already made with this exact field.
      */
-    expect(state._meta?.model).toBe('haiku');
+    expect(state._meta?.['ahpd.model']).toBe('haiku');
     expect(state.model).toBeUndefined();
   });
 

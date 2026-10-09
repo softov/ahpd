@@ -1,12 +1,16 @@
 ---
-title: Every _meta key ahpd invents is named ahpd.<name> - task 01 implemented
-date: 2026-10-08
+title: Every _meta key ahpd invents is named ahpd.<name> - tasks 01-04 implemented
+date: 2026-10-09
 refs:
   - "[code://packages/sdk/src/changes.ts#L1078-L1086](../../../../packages/sdk/src/changes.ts#L1078-L1086) - the `commit` branch reads `ahpd.commit`, then `ahp.commit`"
   - "[code://packages/sdk/test/commit.test.ts](../../../../packages/sdk/test/commit.test.ts) - the three cases over the two key names"
   - "[code://docs/AHP.md#L679](../../../../docs/AHP.md#L679) - the key is `ahpd.commit`, and `ahp.commit` is read while a client sends it"
   - "[code://packages/sdk/test/wire.test.ts#L243-L273](../../../../packages/sdk/test/wire.test.ts#L243-L273) - `PREFIXED` already allows `ahpd.`, so the census is unchanged"
   - "file:///github/ahpapp/src/changeset-ops.ts - line 207, the only sender of `ahp.commit`, which task 05 waits on"
+  - "[code://packages/sdk/src/host/facts.ts](../../../../packages/sdk/src/host/facts.ts) - `ahpd.owner`"
+  - "[code://packages/sdk/src/host/spawn.ts](../../../../packages/sdk/src/host/spawn.ts) - `ahpd.sender`, stored and live"
+  - "[code://packages/sdk/src/host/sessionmethods.ts](../../../../packages/sdk/src/host/sessionmethods.ts) - `hintOf` reads a skill's `ahpd.argumentHint`"
+  - "[code://packages/sdk/src/meter.ts](../../../../packages/sdk/src/meter.ts) - reads and writes `ahpd.cost` and `ahpd.cacheWriteTokens`"
 ---
 
 Task 01 of plan 43 p4. A `commit` invocation now takes its message from `_meta['ahpd.commit']`, and still from `_meta['ahp.commit']` while a client sends that name. The task needs no client, so it lands ahead of the three that do.
@@ -33,3 +37,35 @@ Task 01 of plan 43 p4. A `commit` invocation now takes its message from `_meta['
 - The `ahp.commit` fallback stands until task 05, which drops it once ahpapp sends `ahpd.commit`. ahpapp is the only sender (`file:///github/ahpapp/src/changeset-ops.ts`, line 207).
 - Tasks 02, 03 and 04 wait on ahpapp and ahpc reading both names for their keys. Only `ahp.commit` travels client to host, so task 01 is the one of the five that needs no client release first.
 - No commit was made, so this file carries no `git://` ref; the work is the working tree of `build/agents/d1ffbc3d`.
+
+## Tasks 02, 03 and 04
+
+Implemented 2026-10-09 in the `build/agents/6dac4670` worktree, not committed. Each task's step 1 was already met. Since host/05 (a66f582), ahpapp reads both names for `staged`, `unstaged`, `cacheWriteTokens` and `reasoningTokens`, and sends `ahpd.commit`. Since ahp/07 (a13ec65), ahpc reads both names for `model`. No client reads `owner` or `sender` yet.
+
+### What was built
+
+- Task 02: `packages/sdk/src/host/facts.ts` sends `ahpd.owner` on the summary and the state. `packages/sdk/src/host/spawn.ts` sends `ahpd.sender` on a stored turn (`withSender`) and on a live `chat/turnStarted`. The plugin event's own `sender` field is not `_meta` and stays. `packages/sdk/src/changes.ts` writes `ahpd.staged` and `ahpd.unstaged`, and `treeSignature` and `commitConfirmation` read the new names.
+- Task 03: `packages/agent-claude/src/session.ts` sends `ahpd.model` on the state. `packages/agent-claude/src/session/customizations.ts` sends a skill's hint as `ahpd.argumentHint`. `packages/sdk/src/host/sessionmethods.ts` gains `hintOf`, which reads a prompt's `argumentHint` and then a skill's `_meta['ahpd.argumentHint']`. The completion item still sends the bare `argumentHint`.
+- Task 04: `cacheWriteTokens`, `reasoningTokens`, `cost` and `context` are `ahpd.*` in agent-claude (`session/parts.ts`, `session/query.ts`), agent-acp (`mapping.ts`, `session/turn.ts`), agent-pi (`mapping.ts`) and agent-cofold (`mapping.ts`, `transcript.ts`), live and restored. The readers moved in the same change. These are `packages/sdk/src/meter.ts` (`costOf`, `usedBy`, and `addition`, whose output it reads back), pi's `addUsage` running sum, and acp's `context` read-back in `session/turn.ts`. No numeric `_meta.cost` is sent.
+- `packages/sdk/test/wire.test.ts`: `PENDING` is empty. `REFERENCE` is unchanged.
+- `docs/AHP.md` names every new key: sender, owner, staging, the `chat/usage` row with the four usage keys, the skill hint and the Claude model. `docs/LIBRARY.md` names owner and sender.
+
+### Verified
+
+- Tests moved to the new names: `commit.test.ts`, `sessions.test.ts`, `plugin-events-fire.test.ts`, `host-sessionconfig.test.ts`, `agent-claude-restored-model.test.ts`, and the usage tests of the four backends and the meter. The acp, pi and cofold usage tests now assert their census of `ahpd.` keys through `metaKeys`, as the claude one does.
+- `gives a live session's skill its argument hint as ghost text` in `host-harness.test.ts` is new. Without `hintOf` it fails with `'/writing'` for `'/writing '`.
+- `rg` over `packages/*/src`, `packages/*/test` and `docs` finds no producer or internal reader of the old bare keys.
+- `node tools/schema.mjs` prints 508 definitions and 633 closed objects. `pnpm build`, `pnpm typecheck` and `pnpm boundary` are clean.
+- `npx vitest run --maxWorkers=2 --testTimeout=10000` from the root: 255 files, 4463 tests pass, after a first run failed on the `REFERENCE` entry described below. The run rewrote `packages/sdk/test/fixtures/wire.jsonl`, which was restored to HEAD afterwards.
+
+### Departures from the plan
+
+- The live slash menu never read a skill's hint before: `own` read only `entry.argumentHint`, which only a prompt carries. `hintOf` is a new read, not a moved one.
+- The plan says `REFERENCE` allows a completion item's `argumentHint`, but it does not. It is not added, because the census requires each `REFERENCE` entry in the traffic, and the wire test sends no completion with a hint. The first full run failed on exactly that entry.
+- `docs/AHP.md` did not describe the usage keys, the model or the skill hint. They are added. `docs/LIBRARY.md`, not in the plan, also named owner and sender.
+- The timing keys were already `ahpd.` (plugin/29 is built), so nothing changed for them.
+
+### Left for later
+
+- Task 05, after review and once ahpapp sends `ahpd.commit`.
+- cofold's restored usage has no test with cache or reasoning tokens.

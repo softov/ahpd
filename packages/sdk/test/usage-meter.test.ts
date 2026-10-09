@@ -262,13 +262,13 @@ const stop = (client: Client, turn = 't1'): Promise<unknown> => client.handle({
   params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: turn } },
 });
 
-/** Claude Code's final report, cost in `_meta.cost`. */
+/** Claude Code's final report, cost in `_meta['ahpd.cost']`. */
 const report = (over: Bag = {}): Bag => ({
   inputTokens: 100,
   outputTokens: 20,
   cacheReadTokens: 5,
   model: 'anthropic/opus-5',
-  _meta: { cacheWriteTokens: 7, cost: { amount: 0.25, currency: 'USD' } },
+  _meta: { 'ahpd.cacheWriteTokens': 7, 'ahpd.cost': { amount: 0.25, currency: 'USD' } },
   ...over,
 });
 
@@ -411,8 +411,8 @@ it('keeps each harness\'s own spelling of the cost', async () => {
   // cofold and Claude Code write `{ amount, currency: 'USD' }`, and ACP
   // writes the currency the agent answered in.
   const { client } = serving([
-    { reports: [report({ _meta: { cost: { amount: 3, currency: 'USD' } } })], end: 'complete' },
-    { reports: [report({ _meta: { cost: { amount: 4, currency: 'EUR' } } })], end: 'complete' },
+    { reports: [report({ _meta: { 'ahpd.cost': { amount: 3, currency: 'USD' } } })], end: 'complete' },
+    { reports: [report({ _meta: { 'ahpd.cost': { amount: 4, currency: 'EUR' } } })], end: 'complete' },
     { reports: [report({ _meta: {} })], end: 'complete' },
   ], usage, directory());
   await settle();
@@ -432,7 +432,7 @@ it('keeps each harness\'s own spelling of the cost', async () => {
 it('writes a harness\'s cost as both costs, with the split it reported', async () => {
   const usage = keeping();
   const { client } = serving([
-    { reports: [report({ _meta: { cost: { amount: 1, currency: 'USD', input: 0.4, output: 0.6 } } })], end: 'complete' },
+    { reports: [report({ _meta: { 'ahpd.cost': { amount: 1, currency: 'USD', input: 0.4, output: 0.6 } } })], end: 'complete' },
   ], usage, directory());
   await settle();
   await open(client);
@@ -449,7 +449,7 @@ it('writes a harness\'s cost as both costs, with the split it reported', async (
 it('leaves out a cost part that is not a count', async () => {
   const usage = keeping();
   const { client } = serving([
-    { reports: [report({ _meta: { cost: { amount: 1, currency: 'USD', input: 'a half', output: 0.6 } } })], end: 'complete' },
+    { reports: [report({ _meta: { 'ahpd.cost': { amount: 1, currency: 'USD', input: 'a half', output: 0.6 } } })], end: 'complete' },
   ], usage, directory());
   await settle();
   await open(client);
@@ -470,7 +470,7 @@ it('writes no cost for a harness that reported nothing spent on a turn that used
       outputTokens: 0,
       cacheReadTokens: 0,
       model: '',
-      _meta: { cacheWriteTokens: 0, cost: { amount: 0, currency: 'USD' } },
+      _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0, currency: 'USD' } },
     })],
     end: 'complete',
   }], usage, directory());
@@ -489,7 +489,7 @@ it('keeps a harness cost of 0 on a turn that used tokens', async () => {
   // A model that costs nothing is not a model with no price: the harness
   // measured a cost of 0, and that is a figure rather than an absence.
   const { client } = serving([
-    { reports: [report({ _meta: { cost: { amount: 0, currency: 'USD' } } })], end: 'complete' },
+    { reports: [report({ _meta: { 'ahpd.cost': { amount: 0, currency: 'USD' } } })], end: 'complete' },
   ], usage, directory());
   await settle();
   await open(client);
@@ -553,9 +553,9 @@ it('writes one record per report where the host was asked for that', async () =>
   const usage = keeping();
   const { client } = serving([{
     reports: [
-      report({ inputTokens: 40, outputTokens: 5, cacheReadTokens: 0, _meta: { cacheWriteTokens: 0, cost: { amount: 0.1, currency: 'USD' } } }),
+      report({ inputTokens: 40, outputTokens: 5, cacheReadTokens: 0, _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.1, currency: 'USD' } } }),
       report(),
-      report({ inputTokens: 130, outputTokens: 31, _meta: { cacheWriteTokens: 7, cost: { amount: 0.3, currency: 'USD' } } }),
+      report({ inputTokens: 130, outputTokens: 31, _meta: { 'ahpd.cacheWriteTokens': 7, 'ahpd.cost': { amount: 0.3, currency: 'USD' } } }),
     ],
     end: 'complete',
   }], usage, directory(), 'report');
@@ -588,7 +588,7 @@ it('writes the reports of a turn that never said it began, per report', async ()
   const { client } = serving([{
     unstated: true,
     reports: [
-      report({ inputTokens: 40, outputTokens: 5, cacheReadTokens: 0, _meta: { cacheWriteTokens: 0, cost: { amount: 0.1, currency: 'USD' } } }),
+      report({ inputTokens: 40, outputTokens: 5, cacheReadTokens: 0, _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.1, currency: 'USD' } } }),
       report(),
     ],
     end: 'complete',
@@ -612,9 +612,9 @@ it('writes a count that went down as the value it is now', async () => {
   const usage = keeping();
   const { client } = serving([{
     reports: [
-      report({ outputTokens: 31, _meta: { cacheWriteTokens: 7 } }),
+      report({ outputTokens: 31, _meta: { 'ahpd.cacheWriteTokens': 7 } }),
       // A harness that recounted and reports fewer output tokens than before.
-      report({ outputTokens: 4, _meta: { cacheWriteTokens: 7 } }),
+      report({ outputTokens: 4, _meta: { 'ahpd.cacheWriteTokens': 7 } }),
     ],
     end: 'complete',
   }], usage, directory(), 'report');

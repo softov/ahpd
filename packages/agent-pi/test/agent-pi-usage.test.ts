@@ -8,6 +8,7 @@ import { piAgent } from '../src/agent.js';
 import { forget } from '../src/catalog.js';
 import type { BackendOptions, PiBackend } from '../src/backend.js';
 import { piSession } from '../src/session.js';
+import { metaKeys } from '../../../tools/wire.mjs';
 import type { OpenPi } from '../src/session.js';
 
 /*
@@ -158,15 +159,18 @@ it('grows the total it sends with every call, and ends on the sum', async () => 
     [180, 70, 5],
   ]);
   // The cache write rides `_meta`, summed as the other counts are.
-  expect(sentTotals.map((one) => (one._meta as Bag | undefined)?.cacheWriteTokens)).toEqual([0, 7, 7, 7]);
+  expect(sentTotals.map((one) => (one._meta as Bag | undefined)?.['ahpd.cacheWriteTokens'])).toEqual([0, 7, 7, 7]);
   for (const total of sentTotals) {
-    const cost = (total._meta as Bag).cost as Bag;
+    const cost = (total._meta as Bag)['ahpd.cost'] as Bag;
     expect(cost.currency).toBe('USD');
   }
-  const amounts = sentTotals.map((one) => ((one._meta as Bag).cost as Bag).amount as number);
+  const amounts = sentTotals.map((one) => ((one._meta as Bag)['ahpd.cost'] as Bag).amount as number);
   expect(amounts[0]).toBeCloseTo(0.01);
   expect(amounts[1]).toBeCloseTo(0.03);
   expect(amounts[2]).toBeCloseTo(0.035);
+  // The census the wire test runs, over every report: no bare usage key.
+  expect([...new Set(sentTotals.flatMap((one) => metaKeys(one).map(({ key }) => key)))].sort())
+    .toEqual(['ahpd.cacheWriteTokens', 'ahpd.cost']);
   // Every total went out before the turn ended, or a client hangs it on a turn
   // that has already left the running list.
   const chat = sent.filter((one) => one.channel === 'chat').map((one) => String(one.action.type));
@@ -212,13 +216,13 @@ it('sends no usage for a call that failed before the provider answered', async (
     outputTokens: 5,
     cacheReadTokens: 0,
     model: 'anthropic/claude-opus-5',
-    _meta: { cacheWriteTokens: 0, cost: { amount: 0.02, currency: 'USD' } },
+    _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.02, currency: 'USD' } },
   }, {
     inputTokens: 40,
     outputTokens: 5,
     cacheReadTokens: 0,
     model: 'anthropic/claude-opus-5',
-    _meta: { cacheWriteTokens: 0, cost: { amount: 0.02, currency: 'USD' } },
+    _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.02, currency: 'USD' } },
   }]);
   expect(sent.some((one) => one.action.type === 'chat/error')).toBe(true);
 });
@@ -240,7 +244,7 @@ it('sends the cost split the way pi priced it, the sent side summed into one par
   await settled();
 
   // The running total after each call, and the turn's own when it ended.
-  expect(totals(sent).map((each) => (each._meta as Bag).cost)).toEqual([
+  expect(totals(sent).map((each) => (each._meta as Bag)['ahpd.cost'])).toEqual([
     { amount: 3.5, currency: 'USD', input: 1.5, output: 2 },
     { amount: 7, currency: 'USD', input: 3, output: 4 },
     { amount: 7, currency: 'USD', input: 3, output: 4 },
@@ -259,7 +263,7 @@ it('sends a call priced as a bare total with no split invented for it', async ()
   pi.raise({ type: 'agent_settled' });
   await settled();
 
-  expect(totals(sent).map((each) => (each._meta as Bag).cost)).toEqual([
+  expect(totals(sent).map((each) => (each._meta as Bag)['ahpd.cost'])).toEqual([
     { amount: 0.5, currency: 'USD' },
     { amount: 0.5, currency: 'USD' },
   ]);
@@ -286,12 +290,12 @@ it('starts the next turn from nothing, rather than on what the last one used', a
     outputTokens: 3,
     cacheReadTokens: 0,
     model: 'anthropic/claude-opus-5',
-    _meta: { cacheWriteTokens: 0, cost: { amount: 0.002, currency: 'USD' } },
+    _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.002, currency: 'USD' } },
   }, {
     inputTokens: 7,
     outputTokens: 3,
     cacheReadTokens: 0,
     model: 'anthropic/claude-opus-5',
-    _meta: { cacheWriteTokens: 0, cost: { amount: 0.002, currency: 'USD' } },
+    _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0.002, currency: 'USD' } },
   }]);
 });

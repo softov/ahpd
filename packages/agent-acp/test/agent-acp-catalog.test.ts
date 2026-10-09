@@ -719,17 +719,17 @@ it('reads back each turn with the usage it last reported', async () => {
     outputTokens: 400,
     cacheReadTokens: 40,
     _meta: {
-      cacheWriteTokens: 10,
-      reasoningTokens: 80,
-      cost: { amount: 1.75, currency: 'USD' },
-      context: { used: 4200, size: 200000 },
+      'ahpd.cacheWriteTokens': 10,
+      'ahpd.reasoningTokens': 80,
+      'ahpd.cost': { amount: 1.75, currency: 'USD' },
+      'ahpd.context': { used: 4200, size: 200000 },
     },
   });
   // And the second turn holds what it spent rather than the session's books
   // again, which is a number the replay cannot arrive at from the session's
   // first update: nothing of the first turn's cost is charged to it.
   expect(turns?.[1]?.usage).toEqual({
-    _meta: { cost: { amount: 0.75, currency: 'USD' }, context: { used: 4200, size: 200000 } },
+    _meta: { 'ahpd.cost': { amount: 0.75, currency: 'USD' }, 'ahpd.context': { used: 4200, size: 200000 } },
   });
 
   // The same usage the chat was sent, turn for turn.

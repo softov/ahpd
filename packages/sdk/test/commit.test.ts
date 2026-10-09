@@ -80,8 +80,8 @@ describe('staging, as the changeset reports it', () => {
     const source = gitChanges();
     const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
     const meta = Object.fromEntries((state?.files ?? []).map((file) => [file.id, file._meta]));
-    expect(meta[`file://${dir}/tracked.txt`]).toEqual({ staged: true, unstaged: false });
-    expect(meta[`file://${dir}/fresh.txt`]).toEqual({ staged: false, unstaged: true });
+    expect(meta[`file://${dir}/tracked.txt`]).toEqual({ 'ahpd.staged': true, 'ahpd.unstaged': false });
+    expect(meta[`file://${dir}/fresh.txt`]).toEqual({ 'ahpd.staged': false, 'ahpd.unstaged': true });
   });
 
   it('says both when a staged file changed again, because a commit form must not hide half', async () => {
@@ -91,7 +91,7 @@ describe('staging, as the changeset reports it', () => {
     writeFileSync(join(dir, 'tracked.txt'), 'three\n');
     const source = gitChanges();
     const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
-    expect(state?.files?.[0]?._meta).toEqual({ staged: true, unstaged: true });
+    expect(state?.files?.[0]?._meta).toEqual({ 'ahpd.staged': true, 'ahpd.unstaged': true });
   });
 
   it('writes no `_meta` key on a row but the two a commit form is drawn from', async () => {
@@ -108,7 +108,7 @@ describe('staging, as the changeset reports it', () => {
      * noticing, and the two that are there are what a commit form is drawn
      * from.
      */
-    expect([...new Set(metaKeys({ state }).map((one) => one.key))].sort()).toEqual(['staged', 'unstaged']);
+    expect([...new Set(metaKeys({ state }).map((one) => one.key))].sort()).toEqual(['ahpd.staged', 'ahpd.unstaged']);
   });
 
   it('keeps a staged rename as one row under its new name', async () => {
@@ -118,7 +118,7 @@ describe('staging, as the changeset reports it', () => {
     const state = await source.state?.(dir, 'ahp-session:/s', 'uncommitted');
     const rows = state?.files ?? [];
     expect(rows.map((one) => one.id)).toEqual([`file://${dir}/new.txt`]);
-    expect(rows[0]?._meta).toEqual({ staged: true, unstaged: false });
+    expect(rows[0]?._meta).toEqual({ 'ahpd.staged': true, 'ahpd.unstaged': false });
   });
 
   it('keeps a working-tree rename as one row under its new name', async () => {

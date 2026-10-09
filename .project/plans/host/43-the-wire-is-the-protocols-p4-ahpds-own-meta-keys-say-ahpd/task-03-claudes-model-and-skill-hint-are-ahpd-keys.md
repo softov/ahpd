@@ -1,6 +1,6 @@
 ---
 title: A Claude session's model and a skill's argument hint are sent as ahpd keys
-status: todo
+status: implemented
 depends: []
 layer: "agent-claude"
 refs:
@@ -34,3 +34,8 @@ A Claude session state carries `_meta['ahpd.model']` and a skill customization `
 - `pnpm test` passes.
 
 ## Resume
+
+Implemented 2026-10-09, in the `build/agents/6dac4670` worktree.
+Step 1 was already met: ahpc reads both names for the model since ahp/07 (a13ec65).
+`packages/agent-claude/src/session.ts` sends `ahpd.model` on the state. `packages/agent-claude/src/session/customizations.ts` sends a skill's hint as `ahpd.argumentHint`. A completion item's `argumentHint` stays bare.
+`packages/sdk/src/host/sessionmethods.ts` gains `hintOf`, which reads `argumentHint` (a prompt) and then `_meta['ahpd.argumentHint']` (a skill). Before this, the live slash menu never read a skill's hint at all; the new case in `host-harness.test.ts` fails without `hintOf`.

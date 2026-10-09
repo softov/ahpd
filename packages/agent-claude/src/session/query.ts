@@ -547,7 +547,7 @@ export function createQuery(ctx: SessionContext): Query {
               // The cost rides the tokens' own `_meta`, the same place cache
               // writes go, rather than beside them as a field of its own.
               const total: Bag = used ?? {};
-              if (cost !== undefined) total._meta = { ...bag(total._meta), cost };
+              if (cost !== undefined) total._meta = { ...bag(total._meta), 'ahpd.cost': cost };
               turn.usage = total;
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }

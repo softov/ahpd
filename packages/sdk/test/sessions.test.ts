@@ -152,7 +152,7 @@ async function turnsOn(
 
 /** The sender a turn's message says it was sent by, or nothing. */
 const senderOn = (turn: Bag | undefined): unknown =>
-  ((turn?.message as Bag | undefined)?._meta as Bag | undefined)?.sender;
+  ((turn?.message as Bag | undefined)?._meta as Bag | undefined)?.['ahpd.sender'];
 
 /**
  * Echo under a backend that writes its turns down its own way.
@@ -753,7 +753,7 @@ it('says on the wire who sent a turn and whose a session is, and keeps it past a
   const row = (await client.handle({ method: 'subscribe', params: { channel: SESSION } }) as {
     snapshot: { state: { _meta?: Bag } };
   }).snapshot.state;
-  expect(row._meta?.owner).toBe('user:ana');
+  expect(row._meta?.['ahpd.owner']).toBe('user:ana');
 
   await ask(client, chat, 'turn-1');
   await new Promise((tick) => { setTimeout(tick, 100); });
