@@ -32,7 +32,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [14 - The daemon log rotates at start](daemon/14-the-daemon-log-rotates-at-start/plan.md) | low | built 2026-10-02 ([implemented.md](daemon/14-the-daemon-log-rotates-at-start/implemented.md)) | - | - |
 | [15 - A verb declares only the flags it reads](daemon/15-a-verb-declares-only-its-own-flags/plan.md) | medium | built 2026-10-06 ([implemented.md](daemon/15-a-verb-declares-only-its-own-flags/implemented.md)); reviewed and merged 2026-10-06, fixes in host 65 | - | - |
 | [16 - A command says what it does to what, and the daemon serves on the cofold that checks it](daemon/16-a-command-says-what-it-does-to-what/plan.md) | high | built 2026-10-06 ([implemented.md](daemon/16-a-command-says-what-it-does-to-what/implemented.md)) | cofold commands/03, commands/04 | ahpd-web resource screens |
-| [17 - A plugin installs at the newest version whose sdk range admits the daemon](daemon/17-a-plugin-installs-at-the-newest-version-that-fits-the-sdk/plan.md) | high | active 2026-10-09; tasks 01-04 implemented, gates pass; not committed | daemon 09 | - |
+| [17 - A plugin installs at the newest version whose sdk range admits the daemon](daemon/17-a-plugin-installs-at-the-newest-version-that-fits-the-sdk/plan.md) | high | active 2026-10-09; tasks 01-04 implemented, merged in `9f27e65` | daemon 09 | - |
 
 Next free number in `daemon`: `17`.
 
@@ -74,7 +74,7 @@ Reference: [00-host.md](host/00-host.md)
 
 | [29 - A session that is not running shows its own folder, and its changes follow git](host/29-a-session-not-running-follows-its-own-folder/plan.md) | high | built 2026-09-29 ([implemented.md](host/29-a-session-not-running-follows-its-own-folder/implemented.md)) | - | - |
 
-| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | active 2026-09-30; tasks 01-04 and 07-10 done (reviewed, fixed in host 64), 05 doing (checks by hand left), 06 done | - | - |
+| [30 - A session is listed under its provider's name, whatever a client created it as, so VS Code opens it](host/30-a-session-is-listed-under-its-providers-name/plan.md) | high | built 2026-10-09 ([implemented.md](host/30-a-session-is-listed-under-its-providers-name/implemented.md)) | - | - |
 | [31 - A session's config outlives a restart, and a stored value the schema no longer offers falls back to the default](host/31-a-sessions-config-outlives-a-restart/plan.md) | high | built 2026-10-07 ([implemented.md](host/31-a-sessions-config-outlives-a-restart/implemented.md)); tasks 01, 02 reviewed 2026-10-06 | - | claude 10 |
 | [32 - The session store is a file per session, and it forgets what no longer exists](host/32-the-session-store-is-a-file-per-session/plan.md) | medium | built 2026-10-02 ([implemented.md](host/32-the-session-store-is-a-file-per-session/implemented.md)) | host 31 | - |
 | [33 - A session tool acts as the person it works for, within VS Code's limits, and can be switched off](host/33-a-session-tool-acts-as-the-person-it-works-for/plan.md) | high | planned 2026-09-30; task files to write, tasks 01-03 todo | host 30 | - |
@@ -159,8 +159,11 @@ Reference: [00-host.md](host/00-host.md)
 | [73 - A role editor offers trust and proxy, the two subjects the gate asks for and does not advertise](host/73-a-role-editor-offers-trust-and-proxy/plan.md) | medium | built 2026-10-08 | - | - |
 | [74 - The sdk's tools live in one folder](host/74-the-sdks-tools-live-in-one-folder/plan.md) | medium | built 2026-10-09 ([implemented.md](host/74-the-sdks-tools-live-in-one-folder/implemented.md)); 79a3541 | - | - |
 | [75 - VS Code opens the uncommitted changes first](host/75-vs-code-opens-the-uncommitted-changes-first/plan.md) | medium | built 2026-10-09 ([implemented.md](host/75-vs-code-opens-the-uncommitted-changes-first/implemented.md)) | - | VS Code shows Commit |
+| [76 - A commit and a pull request get their words as the host is configured](host/76-a-commit-and-a-pull-request-get-their-words-as-configured/plan.md) | medium | planned | - | - |
+| [77 - A client plugin lists its parts, and a part can be switched off](host/77-a-client-plugin-lists-its-parts/plan.md) | medium | planned | host/49 | - |
+| [78 - Completions offer each slash command once](host/78-completions-offer-each-command-once/plan.md) | medium | planned | - | - |
 
-Next free number in `host`: `75`.
+Next free number in `host`: `79`.
 
 ## claude
 
@@ -179,7 +182,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [08 - A Claude tool call's toolInput is its whole input, and invocationMessage stays the short line](claude/08-tool-input-is-the-whole-input/plan.md) | high | built 2026-10-03 ([implemented.md](claude/08-tool-input-is-the-whole-input/implemented.md)) | - | - |
 
 | [09 - A message runs on the custom agent it picked](claude/09-a-message-runs-on-the-agent-it-picked/plan.md) | high | built 2026-10-04 ([implemented.md](claude/09-a-message-runs-on-the-agent-it-picked/implemented.md)) | - | - |
-| [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | active 2026-10-02; tasks 01-04 done (03 reviewed, fixed in host 64); the ahpapp chip check is by hand | host 31 | - |
+| [10 - A Claude session runs on a preset, and the ahpd-only chips move into it](claude/10-a-claude-session-runs-on-a-preset/plan.md) | high | built 2026-10-09 ([implemented.md](claude/10-a-claude-session-runs-on-a-preset/implemented.md)) | host 31 | - |
 | [11 - An answered AskUserQuestion call carries its answers, live and after a restart](claude/11-an-answered-question-carries-its-answers/plan.md) | medium | built 2026-10-04 ([implemented.md](claude/11-an-answered-question-carries-its-answers/implemented.md)) | claude 08 | ahpapp chat/01 |
 | [12 - A second Claude harness runs on another endpoint, named on its own and keyed from the daemon's environment](claude/12-a-second-claude-runs-on-another-endpoint/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/12-a-second-claude-runs-on-another-endpoint/implemented.md)) | claude 10 | - |
 | [13 - A Claude harness offers the models it is told, written or fetched from an endpoint](claude/13-a-claude-harness-offers-the-models-it-is-told/plan.md) | medium | built 2026-10-02 ([implemented.md](claude/13-a-claude-harness-offers-the-models-it-is-told/implemented.md)) | claude 12 | - |

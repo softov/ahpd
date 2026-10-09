@@ -1,7 +1,7 @@
 ---
 title: A Claude session runs on a preset, and the ahpd-only chips move into it
 domain: claude
-status: active
+status: built
 priority: high
 created: 2026-09-29
 revalidated: 2026-10-04
@@ -84,8 +84,8 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 04 done 2026-10-02. Task 03 is implemented; the schema no longer declares `outputStyle`, `thinking` or `sandboxEnabled`.
-- **Next action:** Softov's check in ahpapp that a Claude composer draws none of the three chips (checklist item 4, the only check left); then task 03 is done and the plan closes.
+- **Done so far:** every task done. Softov confirmed the ahpapp composer check on 2026-10-09.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a preset's `env` is laid under a signed-in credential, and `null` in it unsets a variable. A stored `thinking` or `sandboxEnabled` from before is kept and no longer read.
 
@@ -94,6 +94,6 @@ config.json plugins[agent-claude].options.presets -> optionsSchema check at load
 - Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md), which checks presets as variants: with no presets, a session starts as it does today, and no `preset` key is offered.
 - Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md): with `presets: { work: {}, test: { thinking: "disabled" } }`, ahpapp offers `preset`; a `test` session runs without thinking and a `work` one with it.
 - Superseded by [claude/15](../15-one-load-and-each-preset-is-a-variant/plan.md) and host/41 task 02: removing `test` and restarting: a `test` session resumes on `work`.
-- [ ] The composer shows no Output style, Thinking or Sandbox chip; Approvals keeps Don't Ask.
-- [ ] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
-- [ ] `plans/index.md` updated.
+- [x] The composer shows no Output style, Thinking or Sandbox chip; Approvals keeps Don't Ask.
+- [x] `pnpm typecheck`, `pnpm boundary`, full `pnpm test`.
+- [x] `plans/index.md` updated.

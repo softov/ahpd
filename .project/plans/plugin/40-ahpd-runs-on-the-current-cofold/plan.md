@@ -173,6 +173,7 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 | `describe`, `intentionOf` and `toolInputOf` read `subject` from `tool.proposed`; `toolMetaOf` stays | cofold tools 02 `deferred.md`; cofold sends no tool kind, so the terminal kind stays ahpd's | 04 |
 | `editPathOf` becomes `tool.writes(input)`, kept only when it is inside the workspace | cofold tools 02 `deferred.md`; `EDITS`'s own note: "a changeset is only told about the files it can read" | 05 |
 | `withoutTaken` becomes `Capability.exclude` | cofold tools 02 `deferred.md` | 06 |
+| Tasks 01-08 are tested against packed tarballs of cofold `main` at `b904cd1` before any release; the release is store-file 0.2.1 and tools 0.4.0 | Softov, 2026-10-09, asked how to go with the three unreleased cofold changes: "Test packed, then release"; asked which versions: "store-file 0.2.1, tools 0.4.0" | 01-09 |
 | `capabilitiesOf` becomes `standardCapabilities`; ahpd passes `memoryDir` itself, and none for a store in memory | cofold tools 03 `deferred.md` | 06 |
 | `HarnessProvider`, `SearchConfig`, `ToolsConfig` and `splitModel` come from cofold; `harnessConfig` and `harnessConfigPath` stay | cofold tools 03 `deferred.md` | 06 |
 | The `tools` option checks against `TOOLS_SCHEMA`; `strictTools: false` keeps today's loose check and `toolsOf` | Softov, 2026-10-09, asked "Adopt the strict TOOLS_SCHEMA?": "strict with option to bypass" | 06 |
@@ -218,7 +219,7 @@ tool.writes(input) -> the changeset's before and after, when the file is inside 
 ## Resume state
 
 - **Done so far:** nothing; planned 2026-10-09.
-- **Next action:** Softov reads this plan; then [task-01-ahpd-takes-the-cofold-release.md](task-01-ahpd-takes-the-cofold-release.md).
+- **Next action:** [task-01-ahpd-takes-the-cofold-release.md](task-01-ahpd-takes-the-cofold-release.md), with `@cofold/tools` and `@cofold/store-file` installed from packed tarballs of `b904cd1`; the tarball install is not committed.
 - **Open questions:** none.
 - **Watch out for:** a pause no longer ends the stream, so nothing may treat `run.finished{awaiting}` as the end of a read. `apply` still records no `endPoint` for it. Run `node tools/schema.mjs` before the suite.
 

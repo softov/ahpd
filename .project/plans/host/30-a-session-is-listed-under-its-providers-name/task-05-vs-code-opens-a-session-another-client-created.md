@@ -1,6 +1,6 @@
 ---
 title: VS Code opens a session another client created
-status: doing
+status: done
 depends: [task-02-every-request-answers-to-either-name.md, task-03-an-action-reaches-an-aliased-subscriber-in-its-spelling.md, task-04-a-chat-title-survives-the-new-name.md]
 layer: "sdk"
 refs:
@@ -36,3 +36,5 @@ A creator makes `ahp-session:/<uuid>` and starts a turn that waits on a Bash app
 It was written after tasks 01 to 04 and passed as written; on `main` it fails at the listing.
 Left for Softov, by hand, from the steps above: the daemon with `--wire`, ahpapp and the VS Code Agents Window; a Claude session created in ahpapp opens in the Agents Window with its turns and its pending approval and no `No harness descriptor found for session type …-ahp-session` in the log; approving there reaches the agent; ahpapp and then ahpc each show the session once, stream the turn and see the approval resolved; the wire capture names `claude:/<uuid>` in `listSessions` and `root/sessionAdded` and keeps ahpapp's frames in the `ahp-session:` spelling.
 Re-run on 2026-10-04 and passing: the automated case passes on its own, and the whole of `packages/sdk` passes with it (2786 tests), so nothing is left here but the by-hand half, which needs a daemon, ahpapp and the Agents Window and is not something this build can do. The task stays `doing` until Softov runs those.
+
+Softov ran the checks by hand on 2026-10-09 and confirmed them. No wire capture was kept.

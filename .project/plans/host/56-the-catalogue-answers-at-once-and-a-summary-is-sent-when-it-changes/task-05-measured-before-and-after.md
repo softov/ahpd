@@ -29,3 +29,17 @@ The numbers in the plan's Reconnaissance are measured again after tasks 01-04, b
 - A heap snapshot summary, or a line saying RSS stayed under 1.5 GB.
 
 ## Resume
+
+Measured 2026-10-09 on this machine's daemon (port 37537), built with tasks 01-04, while one to three build sessions ran.
+
+| Measure | Before (2026-10-04) | After (2026-10-09) |
+| --- | --- | --- |
+| `listSessions` here | timed out at 30 s | 19 ms for 160 sessions |
+| `root/sessionSummaryChanged` here | about 28 a second | 18 in 70 s, about 0.26 a second |
+| Identical to the one before | about 210 of 225 | none: each of the 18 changed `activity` |
+| RSS over 20 minutes | 3.1 to 3.7 GB | 320 to 600 MB, with no growth |
+| CPU | 110 to 118 % | 5.1 to 5.2 % |
+| Open descriptors | about 970 | 71 to 72 |
+
+RSS stayed under 1.5 GB, so no heap snapshot was taken.
+The dev-01 column (steps 1 and 2 of the review file) is still Softov's to measure.
