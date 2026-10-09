@@ -1,6 +1,6 @@
 ---
 title: The Claude preset schema declares every preset field
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -33,3 +33,9 @@ refs:
 - `pnpm build`, `pnpm typecheck` and `npx vitest run packages/agent-claude` pass.
 
 ## Resume
+
+`presets.additionalProperties.properties` in `packages/agent-claude/src/plugin.ts` declares `sandbox`, `thinking`, `outputStyle` and `extraArgs`. Each property holds only a `description`, read from the `schema` of its declaration in `options.ts`, and a comment says that `presetSchema` types them. `options.ts` exports `DECLARED` for the test. `plugin.ts` imports the four declarations, which `options.ts` already exported.
+
+`packages/agent-claude/test/agent-claude-options-schema.test.ts` holds the two cases. Each key of `DECLARED` is a property of the preset schema with a description. A load with `presets: { work: { thinking: 5 } }` skips `work` with the line `options.presets.work.thinking is not one of adaptive, disabled` and registers the built-in `claude`. The README rows agree with the four descriptions, so the README did not change.
+
+Found: the daemon check does not read into a preset. A probe that gave `thinking` a `type: 'string'` still passed the second case. So the case proves that `optionsOf` drops the preset, and not that a typed property would fail the load. The `thinking` description does not name `adaptive` and `disabled`, because the property takes its text from the declaration as written.

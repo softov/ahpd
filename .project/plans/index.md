@@ -254,7 +254,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [36 - A cofold turn reads its message's attachments, and sends an image only to a model that takes images](plugin/36-a-cofold-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
 | [37 - A bot is a record a person makes, with a session to talk to it in](plugin/37-a-bot-is-a-record-with-a-session/plan.md) | high | built 2026-10-08 ([implemented.md](plugin/37-a-bot-is-a-record-with-a-session/implemented.md)); 01 and 03 (1a3ee7a), 02, 04 and 05 (6fb1289) | plugin 09 as the pattern | the bot harness, a bot as a principal, the ahpc and ahpapp bot screens |
 | [38 - A plugin cannot change what the host gave it](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) | high | built 2026-10-09 ([implemented.md](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/implemented.md)); 01-06 (9f3798c) | plugin 37 (built on it) | plugins out of process |
-| [39 - Each optionsSchema declares every field the code reads](plugin/39-each-options-schema-declares-every-field-the-code-reads/plan.md) | medium | planned 2026-10-09 | documentation 04 | - |
+| [39 - Each optionsSchema declares every field the code reads](plugin/39-each-options-schema-declares-every-field-the-code-reads/plan.md) | medium | active 2026-10-09; tasks 01-03 implemented ([implemented.md](plugin/39-each-options-schema-declares-every-field-the-code-reads/implemented.md)) | documentation 04 | - |
 
 Next free number in `plugin`: `40`.
 

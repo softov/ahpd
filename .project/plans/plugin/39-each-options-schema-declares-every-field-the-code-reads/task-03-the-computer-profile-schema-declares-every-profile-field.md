@@ -1,6 +1,6 @@
 ---
 title: The computer profile schema declares every profile field
-status: todo
+status: implemented
 depends: []
 layer: computer
 refs:
@@ -32,3 +32,9 @@ refs:
 - `pnpm build`, `pnpm typecheck` and `npx vitest run packages/computer` pass.
 
 ## Resume
+
+`profiles.additionalProperties.properties` in `packages/computer/src/plugin.ts` declares the 16 fields, each with a description that gives its type in words and its default, and no type. A comment says that `profilesOf` alone reads a field with no type. `profilesOf` is exported for the test.
+
+`packages/computer/test/computer-options-schema.test.ts` holds the two cases. A profile that writes every field that `profilesOf` reads keeps all 23, and each is a property of the profile schema. A load with `profiles: { small: { cpus: 2 } }` gives no problem and loads the plugin, and `profilesOf` keeps no `cpus` for `small`. The README rows agree with the descriptions, so the README did not change.
+
+Found: the profile `needs` property has no description. This plan did not change it.

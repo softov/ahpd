@@ -79,10 +79,13 @@ export const optionsSchema = {
           // where the machine is made, so a `$secret` reaches this plugin as
           // the name it wrote.
           machine: {
-            description: 'What a machine needs to run this agent: env, variables set only inside the machine, each a string, { fromEnv: NAME } read from the daemon\'s NAME at load, or { "$secret": "<scope>:<name>" } read when the machine is made; and copy, a list of { source, target } host paths copied in.',
+            description: 'What a machine needs to run this agent: env, variables set only inside the machine, each a string, { fromEnv: NAME } read from the daemon\'s NAME at load, or { "$secret": "<scope>:<name>" } read when the machine is made; copy, a list of { source, target } host paths copied in; part, the id of the part its CLI comes from; state, the absolute directory it keeps its configuration in; and seed, the host files that directory is seeded from.',
             properties: {
               env: { additionalProperties: { writeOnly: true, secretAtUse: true }, description: 'Variables set inside the machine, by name.' },
               copy: { description: 'Host paths copied into the machine, each { source, target }.' },
+              part: { description: "The part the agent's CLI comes from, a string naming its id in the host's versions file." },
+              state: { description: 'The absolute directory inside the machine the agent keeps its configuration in, as a state volume.' },
+              seed: { description: 'The host files the state directory is seeded from, each { source, target, keep, drop }: source the host path, target where it lands in the directory, and for a JSON file keep the top-level keys kept and drop the dotted paths removed.' },
             },
           },
         },
@@ -206,7 +209,7 @@ const machineOf = (said: unknown, by: string): AcpMachine => {
 };
 
 /** The fields a preset's `machine` takes. */
-const MACHINE_KEYS = ['env', 'copy', 'part', 'state', 'seed'];
+export const MACHINE_KEYS = ['env', 'copy', 'part', 'state', 'seed'];
 
 /** A part id, as the versions file names one. */
 const PART_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;

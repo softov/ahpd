@@ -99,7 +99,25 @@ export const optionsSchema = {
       type: 'object',
       additionalProperties: {
         type: 'object',
+        // A field with no type is read by `profilesOf` alone, where a wrongly
+        // written one costs its own setting and not this load.
         properties: {
+          title: { description: 'What the picker shows for it, a string. The profile name when absent.' },
+          description: { description: 'One line about what it is for, a string.' },
+          image: { description: "The image its machines are made from, a string. The plugin's image when absent." },
+          cpus: { description: "A CPU limit for its machines, a string. The plugin's cpus when absent." },
+          memory: { description: "A memory limit for its machines, a string. The plugin's memory when absent." },
+          workdir: { description: "Where commands start, a string. folder, or the image's own, when absent." },
+          mounts: { description: "Mounts added after the plugin's own, a list of strings." },
+          agents: { description: 'The agents its machines are prepared for, a list of provider ids. A session of another agent is refused.' },
+          folder: { description: 'A host folder mounted at the same path inside the machine, a string.' },
+          host: { description: 'The command that starts the nested host inside one of its machines, a list of strings. ["ahpd"] when absent.' },
+          disposable: { description: 'true: no machine until a session starts, and one is made for that session. false when absent.' },
+          disposableDelay: { description: 'Milliseconds after the last session leaves a disposable machine before it is removed, a whole number above 0. 300000 when absent.' },
+          disposableAlone: { description: 'true: a disposable machine is kept out of the picker, so only the session it was made for runs in it. false when absent.' },
+          sessionFolder: { description: "true: the session's working folder is mounted read-write at the same path inside the machine. false when absent." },
+          sessionRepository: { description: 'true: the repository that folder sits inside is mounted too. Needs sessionFolder. false when absent.' },
+          sessionTree: { description: "shared mounts this host's tree; copy gives the machine a checkout of its own that reaches the host only by fetch. Needs sessionFolder. shared when absent." },
           needs: needValues,
           parts: { ...list, description: 'The parts every machine from this profile carries, by their ids in the versions file.' },
           secretUnreadable: {
@@ -183,7 +201,7 @@ const needValuesOf = (value: unknown): Record<string, string | SecretRef> | unde
  * than the plugin, so a profile that is not an object is not a profile and the
  * rest still load. What survives is checked properly when a body picks it.
  */
-const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
+export const profilesOf = (value: unknown): Record<string, Profile> | undefined => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
   const held: Record<string, Profile> = {};
   for (const [name, one] of Object.entries(value as Record<string, unknown>)) {

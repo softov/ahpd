@@ -154,7 +154,7 @@ export const extraArgs: Declaration = {
 };
 
 /** Every declared option, by the name a preset gives it. */
-const DECLARED: Record<string, Declaration> = { sandbox, thinking, outputStyle, env, extraArgs };
+export const DECLARED: Record<string, Declaration> = { sandbox, thinking, outputStyle, env, extraArgs };
 
 /**
  * What a preset holds beside the declared options, by the name it gives them.

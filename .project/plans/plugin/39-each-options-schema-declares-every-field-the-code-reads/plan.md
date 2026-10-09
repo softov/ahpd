@@ -1,7 +1,7 @@
 ---
 title: Each optionsSchema declares every field the code reads
 domain: plugin
-status: planned
+status: active
 priority: medium
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -48,7 +48,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | What | Source | Task |
 | --- | --- | --- |
 | Each schema declares every field its code reads | Softov, 2026-10-09, asked "the computer, Claude and acp schemas leave out fields that the code accepts; must the schemas declare them?" and answered "Plan: schemas declare them" | 01-03 |
-| A new property has a description and no `type` or `enum`, so a load that passes today still passes | (defaulted: the acp `machine` block, and the rule in `optionsOf` and `profilesOf` that a wrong field costs its own setting and not the load) | 01-03 |
+| A new property has a description and no `type` or `enum`, so a wrong value costs its own preset or setting and not the load | Softov, 2026-10-09, asked "The new preset and profile fields: keep them description-only, or add their type and enum too?" and answered "Description only" | 01-03 |
 | A Claude preset property takes its description from the `schema` of its declaration in `DECLARED` | (defaulted: one text for one option) | 01 |
 | No test checks the README rows against the schema | Softov, 2026-10-09, in documentation/04: "No, not now" | - |
 
@@ -62,21 +62,21 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The Claude preset schema declares every preset field](task-01-the-claude-preset-schema-declares-every-preset-field.md) | todo | - |
-| [02 - The acp machine schema declares part, state and seed](task-02-the-acp-machine-schema-declares-part-state-and-seed.md) | todo | - |
-| [03 - The computer profile schema declares every profile field](task-03-the-computer-profile-schema-declares-every-profile-field.md) | todo | - |
+| [01 - The Claude preset schema declares every preset field](task-01-the-claude-preset-schema-declares-every-preset-field.md) | implemented | - |
+| [02 - The acp machine schema declares part, state and seed](task-02-the-acp-machine-schema-declares-part-state-and-seed.md) | implemented | - |
+| [03 - The computer profile schema declares every profile field](task-03-the-computer-profile-schema-declares-every-profile-field.md) | implemented | - |
 
 ## Risks and tradeoffs
 
-- A typed property makes a wrong value fail the whole load. Today it costs only that preset or setting, so the new properties carry no type.
+- The daemon check does not read `additionalProperties`, so a typed property would not fail a load today. A later validator that reads it would fail the whole load, so the new properties carry no type.
 - A schema with no type tells a client less than a typed one. The description says the type in words, as the acp `machine` block does.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-claude-preset-schema-declares-every-preset-field.md](task-01-the-claude-preset-schema-declares-every-preset-field.md). The three tasks are independent.
+- **Done so far:** tasks 01-03 are implemented and wait for review. [implemented.md](implemented.md) lists the files, the gate results and the departures.
+- **Next action:** review the diff in `build/agents/p39`.
 - **Open questions:** none.
-- **Watch out for:** do not move a check from `optionsOf`, `machineOf` or `profilesOf` into the schema.
+- **Watch out for:** the daemon check does not read into a preset or a profile. So a typed property there would not fail a load today. The properties carry no type so that this stays true if the check ever reads deeper.
 
 ## Final verification checklist
 

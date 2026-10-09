@@ -1,6 +1,6 @@
 ---
 title: The acp machine schema declares part, state and seed
-status: todo
+status: implemented
 depends: []
 layer: agent-acp
 refs:
@@ -32,3 +32,7 @@ refs:
 - `pnpm build`, `pnpm typecheck` and `npx vitest run packages/agent-acp` pass.
 
 ## Resume
+
+`presets.<id>.machine.properties` in `packages/agent-acp/src/plugin.ts` declares `part`, `state` and `seed` beside `env` and `copy`, each with a description and no type. The `machine` description names the five fields. The `seed` description gives the shape `{ source, target, keep, drop }` and what each field holds, from `Seed` in the sdk. `MACHINE_KEYS` is exported for the test.
+
+`packages/agent-acp/test/agent-acp-catalog.test.ts` has the case: each entry of `MACHINE_KEYS` is a property of the `machine` schema with a description, and the `machine` description names it. The README rows agree with the descriptions, so the README did not change.

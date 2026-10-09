@@ -17,7 +17,7 @@ import { secretRef } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
-import { presetSchema } from './options.js';
+import { extraArgs, outputStyle, presetSchema, sandbox, thinking } from './options.js';
 
 /** The plugin's id, unique among the plugins one daemon loads. */
 export const name = '@ahpd/agent-claude';
@@ -77,6 +77,12 @@ export const optionsSchema = {
           // reaches this plugin as the name it wrote and one preset's missing
           // credential costs that preset and not this load.
           env: { type: 'object', additionalProperties: { type: ['string', 'null'], writeOnly: true, secretAtUse: true }, description: 'Environment the CLI is run with, by variable name.' },
+          // Typed by `presetSchema` against their declarations rather than
+          // here, so a wrongly written value costs its preset and not this load.
+          sandbox: { description: sandbox.schema.description },
+          thinking: { description: thinking.schema.description },
+          outputStyle: { description: outputStyle.schema.description },
+          extraArgs: { description: extraArgs.schema.description },
         },
       },
     },
