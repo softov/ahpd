@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { loadPlugins } from '../src/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
-import type { PluginSpec } from '../../sdk/src/types/plugin.js';
+import type { PluginHost, PluginSpec } from '../../sdk/src/types/plugin.js';
 
 /*
  * Loading a plugin: resolve, manifest, import, apply.
@@ -163,6 +163,62 @@ describe('loadPlugins log', () => {
     expect(lines).toEqual(['plugin plugin-explodes loading']);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(new RegExp(`^plugin plugin-explodes could not be imported from ${join(fixtures, 'plugin-explodes', 'index.ts')} in \\d+ ms: .*the explodes fixture throws when imported`));
+  });
+});
+
+describe('what a plugin is handed when it is applied', () => {
+  it('is a frozen context, with its own copy of the daemon\'s paths', async () => {
+    delete (globalThis as Record<string, unknown>).__pluginContextWrite;
+    const paths = ['/one', '/two'];
+    const { loaded, problems } = await loadPlugins(['./fixtures/plugin-push/index.ts'], {
+      base: base(), configDir: fixtures, cwd: here, paths, log: () => {},
+    });
+
+    // The context object is frozen, so the write to it was refused where it was
+    // made rather than landing on the object the plugin was handed.
+    expect((globalThis as Record<string, unknown>).__pluginContextWrite).toMatch(/read only property|not extensible/);
+    expect(loaded).toEqual([]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^plugin push failed/);
+    expect(problems[0]).toMatch(/not extensible|read only property/);
+    // And the listing the daemon serves is the one it was given: what the plugin
+    // was handed is a copy of it, and pushing onto the copy costs the plugin.
+    expect(paths).toEqual(['/one', '/two']);
+  });
+
+  it('is a copy of a node the plugin reads itself, not the daemon\'s own option', async () => {
+    const spec = { name: './fixtures/plugin-later/index.ts', options: { later: { $secret: 'host:orders' } } };
+    const { loaded, problems } = await loadPlugins([spec], {
+      base: base(), configDir: fixtures, cwd: here, log: () => {},
+    });
+
+    // A node the schema marks `secretAtUse` is handed on whole, and this one is
+    // the plugin's own copy of it: the write is refused, and the load costs the
+    // plugin a line.
+    expect(loaded).toEqual([]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/^plugin later failed/);
+    expect(problems[0]).toMatch(/read only property|not extensible/);
+    // What configuration wrote is where it was.
+    expect(spec.options.later).toEqual({ $secret: 'host:orders' });
+  });
+});
+
+describe('a plugin that reaches back in after apply returned', () => {
+  it('is refused a registration, because the loader has taken its copy', async () => {
+    delete (globalThis as Record<string, unknown>).__pluginAfterHost;
+    const { loaded, problems } = await load(['./fixtures/plugin-after/index.ts']);
+
+    expect(problems).toEqual([]);
+    expect(loaded.map((one) => one.name)).toEqual(['after']);
+
+    // What the plugin kept of the host is the host it was given, and the
+    // loader sealed it the moment `apply` returned: a registration now would
+    // land where the fold has already looked, so it is refused instead.
+    const host = (globalThis as Record<string, unknown>).__pluginAfterHost as PluginHost;
+    expect(() => {
+      host.registerTool({ definition: { name: 'late', description: 'Too late', inputSchema: { type: 'object', properties: {} } }, run: () => '' });
+    }).toThrow(/nothing may be registered after apply returned/);
   });
 });
 

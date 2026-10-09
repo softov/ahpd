@@ -1,4 +1,5 @@
 import { accepts } from '../configvalues.js';
+import { frozenCopy } from '../frozen.js';
 import { HOSTS_OWN } from './common.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from '../types/completions.js';
 import type { Agent } from '../types/agent.js';
@@ -357,7 +358,17 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
     const properties = (typeof schema.properties === 'object' && schema.properties !== null
       ? schema.properties
       : {}) as Bag;
-    return {
+    /*
+     * A frozen copy, because this one goes to the backend.
+     *
+     * `sessionSchema` reads the contributed keys out of the fold, which are
+     * another plugin's entries; a backend handed them live could change what a
+     * client is drawn - decision
+     * `a-plugin-gets-frozen-copies-of-host-values`. The host's own reads of the
+     * schema are elsewhere and keep the store, which is what a contributed key
+     * exists in.
+     */
+    return frozenCopy({
       ...schema,
       properties: Object.fromEntries(Object.entries(properties).map(([key, value]) => {
         if (typeof value !== 'object' || value === null) return [key, value];
@@ -365,7 +376,7 @@ export function createSessionConfig(ctx: HostContext): SessionConfig {
         if (one.sessionMutable !== false) return [key, value];
         return [key, { ...one, sessionMutable: true, readOnly: true }];
       })),
-    };
+    });
   };
 
   /**

@@ -14,14 +14,61 @@
 import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
-import type { HostOptions } from './types/host.js';
+import type { HostOptions, HostTool } from './types/host.js';
 import type { Contribution, PluginContext, PluginHost, PluginStarts, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
 import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
 import type { Vault } from './types/vault.js';
 import { idOf, schemeOf } from './catalog.js';
+import { frozenCopy } from './frozen.js';
 import { readSecret } from './vault.js';
 import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, miss } from './validate.js';
+
+/**
+ * One contributed backend, as the host keeps it: the plugin's own agent with a
+ * `provider` that cannot move.
+ *
+ * The `provider` is the id a session records, meters against and asks
+ * `agentPlugins` about, and it is read from the agent at every one of those
+ * points - so a plugin that renamed its agent after `apply` would have its
+ * sessions metered as another backend without the fold ever seeing it. It is
+ * the one property this object holds; it shadows the agent's own, and it is
+ * neither writable nor configurable, which is the whole of the promise.
+ *
+ * A view rather than a copy, because a backend is not only its properties: an
+ * agent written as a class keeps `schema`, `defaults`, `create` and the rest
+ * on its prototype, and an object built from the own property descriptors
+ * alone would answer `provider` and nothing else. Frozen it is not, either:
+ * freezing the view freezes shadows of the plugin's own fields, and a method
+ * that keeps state in `this` would then throw. The agent the plugin holds is
+ * the plugin's own; what the host reads from here on is this. Decision
+ * `a-plugin-gets-frozen-copies-of-host-values`.
+ *
+ * A `provider` already held by the base or another plugin never reaches here:
+ * the agent that lost the id is dropped and the host keeps the backend that has
+ * always answered for it.
+ */
+function keptAgent(agent: Agent): Agent {
+  return Object.create(agent, { provider: { value: agent.provider, enumerable: true } }) as Agent;
+}
+
+/**
+ * One contributed tool, as the host keeps it: a frozen copy of its definition.
+ *
+ * The definition is what a client is drawn and what the model is offered, and
+ * `serverTools` reads it every time a session snapshot is made - so a plugin
+ * that rewrote its own definition after `apply` would be changing the tools
+ * every session offers. `run`, `forSession` and the rest are carried as they
+ * are: a function is behaviour, and the shell it closes over is the plugin's
+ * own business - decision `a-plugin-gets-frozen-copies-of-host-values`.
+ */
+function keptTool(tool: HostTool): HostTool {
+  return {
+    ...tool,
+    definition: frozenCopy(tool.definition),
+    ...(tool.effects === undefined ? {} : { effects: frozenCopy(tool.effects) }),
+  };
+}
 
 /**
  * Every key a `set` registration may name.
@@ -177,7 +224,17 @@ export interface FoldedOptions {
  */
 export function foldHostOptions(base: HostOptions, contributions: Contribution[]): FoldedOptions {
   const problems: string[] = [];
-  const options: HostOptions = { ...base, agents: [...base.agents] };
+  /*
+   * From the base's own property descriptors, rather than a spread.
+   *
+   * `{ ...base }` reads each getter once and keeps the value it answered, so a
+   * base that holds one - the daemon's `mcpServers`, which root config
+   * replaces while the daemon runs - would be fixed at whatever it held when
+   * the fold ran, and a later edit would never reach a session. The
+   * descriptors keep a getter a getter.
+   */
+  const options: HostOptions = Object.defineProperties({}, Object.getOwnPropertyDescriptors(base)) as HostOptions;
+  options.agents = [...base.agents];
 
   /*
    * Who holds each port now: `the daemon` for a value the base was given, a
@@ -227,7 +284,7 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
         continue;
       }
       providers.set(agent.provider, contribution.by);
-      added.push(agent);
+      added.push(keptAgent(agent));
       plugins[agent.provider] = contribution.spec ?? contribution.by;
     }
 
@@ -259,7 +316,10 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   if (added.length > 0) options.agents = [...options.agents, ...added];
   if (Object.keys(plugins).length > 0) options.agentPlugins = plugins;
 
-  const tools = [...(base.tools ?? []), ...contributions.flatMap((contribution) => contribution.tools)];
+  const tools = [
+    ...(base.tools ?? []),
+    ...contributions.flatMap((contribution) => contribution.tools.map(keptTool)),
+  ];
   if (tools.length > 0 || base.tools !== undefined) options.tools = tools;
 
   /*
@@ -332,7 +392,13 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
        * separate.
        */
       const answerer = contribution.sessionCompletions[key];
-      sessionConfig[key] = answerer === undefined ? schema : { ...schema, enumDynamic: true };
+      /*
+       * A frozen copy, because this is what a client draws the control from and
+       * what a backend is handed on `Start`: a plugin that rewrote its own
+       * property schema after `apply` would be redrawing every session's form -
+       * decision `a-plugin-gets-frozen-copies-of-host-values`.
+       */
+      sessionConfig[key] = frozenCopy(answerer === undefined ? schema : { ...schema, enumDynamic: true });
       if (answerer !== undefined) sessionCompletions[key] = answerer;
     }
   }
@@ -378,26 +444,46 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
    * nothing could choose between, and the plugin that lost keeps everything
    * else it contributed - the rule a duplicate agent `provider` follows.
    *
-   * The entry is the object `pluginHost` built and not a copy, because the host
-   * sets `deliver` on it and the plugin's own `fireTrigger` holds the same one.
-   * What the loser loses is deleted from it here, so the host, the listing and
-   * the plugin all see one set of names.
+   * The entry is the host's own object and not the `PluginTriggers` a plugin
+   * registered in: it holds a frozen copy of every definition that plugin may
+   * still fire, and it is the one place `deliver` is written. The contribution
+   * is pointed at it, which is what the plugin's own `fireTrigger` reads, so a
+   * plugin that adds a name to the record it registered in fires something the
+   * host never arbitrated and nothing the host holds moves - decision
+   * `a-plugin-gets-frozen-copies-of-host-values`.
    */
   const typeHolders = new Map<string, string>();
   const pluginTriggers: PluginTriggers[] = [];
   for (const contribution of contributions) {
-    const held = contribution.triggers;
-    if (Object.keys(held.types).length === 0) continue;
-    for (const name of Object.keys(held.types)) {
+    if (Object.keys(contribution.triggers.types).length === 0) continue;
+    const kept: Record<string, TriggerTypeDefinition> = {};
+    for (const [name, definition] of Object.entries(contribution.triggers.types)) {
       const owner = typeHolders.get(name);
       if (owner !== undefined) {
         problems.push(`plugin ${contribution.by} registers trigger type ${name}, which plugin ${owner} already registered`);
-        delete held.types[name];
         continue;
       }
       typeHolders.set(name, contribution.by);
+      kept[name] = frozenCopy(definition);
     }
-    if (Object.keys(held.types).length > 0) pluginTriggers.push(held);
+    if (Object.keys(kept).length === 0) {
+      /*
+       * Every name this plugin offered is held by another. It is pointed at an
+       * empty entry of the host's own all the same, and not left holding the
+       * record it registered in: `fireTrigger` reads the type from here, so a
+       * plugin left with its own record would still find the name it lost and
+       * fire an event nothing is listening for - where this host's answer, to
+       * this plugin, is that it holds no such type.
+       *
+       * Empty entries are not offered: `pluginTriggers` is the host's list of
+       * the types it will arbitrate, and this plugin arbitrates none.
+       */
+      contribution.triggers = { by: contribution.by, types: Object.freeze({}) };
+      continue;
+    }
+    const entry: PluginTriggers = { by: contribution.by, types: Object.freeze(kept) };
+    contribution.triggers = entry;
+    pluginTriggers.push(entry);
   }
   if (pluginTriggers.length > 0) options.pluginTriggers = pluginTriggers;
 
@@ -422,6 +508,16 @@ export interface HostRecording {
   host: PluginHost;
   /** Everything it registered, kept apart until the fold sees it. */
   contribution: Contribution;
+  /**
+   * Close registration, once `apply` has returned.
+   *
+   * A plugin's registrations are read by the fold, so one made afterwards
+   * changes what the host holds without the fold having seen it - a trigger type
+   * arbitrated against nobody, a scheme served under a name another plugin also
+   * took. The loader calls this the moment `apply` settles, and every
+   * `register*` after it throws the same sentence.
+   */
+  seal(): void;
 }
 
 /** What a plugin host is given besides its context. */
@@ -522,7 +618,24 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
   const tools = new Set<string>();
   const sessionKeys = new Set<string>();
 
+  /*
+   * Whether `apply` has returned.
+   *
+   * Everything a plugin registers is read once, by the fold, so a registration
+   * made after that reads as one nothing arbitrated: two plugins could both
+   * claim a trigger type name and the second would simply be there, or a scheme
+   * could be served under a name another plugin already holds. The sentence is
+   * the same for every method, because the mistake is the same one.
+   */
+  let sealed = false;
+  const open = (): void => {
+    if (sealed) {
+      throw new Error(`plugin ${by}: nothing may be registered after apply returned; the host has already taken its copy of what this plugin contributed`);
+    }
+  };
+
   const setPort = <K extends PortKey>(key: K, method: string, value: PortOf<K>, when?: 'replace'): void => {
+    open();
     checkPort(key, value, by);
     if (contribution.ports[key] !== undefined) {
       throw new Error(miss(by, method, key, 'registered only once'));
@@ -615,6 +728,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       return start(asked);
     },
     registerAgent(agent) {
+      open();
       checkAgent(agent, by);
       if (providers.has(agent.provider)) {
         throw new Error(miss(by, 'registerAgent', agent.provider, 'a provider no other agent in this plugin uses'));
@@ -623,6 +737,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       contribution.agents.push(agent);
     },
     registerTool(tool) {
+      open();
       checkTool(tool, by);
       const name = tool.definition.name;
       if (tools.has(name)) {
@@ -632,6 +747,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       contribution.tools.push(tool);
     },
     registerSessionConfig(key, schema, completions) {
+      open();
       const named = typeof key === 'string' ? key.trim() : '';
       if (named === '') throw new Error(miss(by, 'registerSessionConfig', String(key), 'a non-empty key'));
       if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
@@ -649,6 +765,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     },
     registerResources: (store, when) => { setPort('resources', 'registerResources', store, when); },
     registerResourceProvider(scheme, provider) {
+      open();
       const named = checkScheme(scheme, by);
       if (reservedScheme(named)) {
         throw new Error(miss(by, 'registerResourceProvider', named, 'a scheme the host does not already own; file and ahp- are its own'));
@@ -673,6 +790,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     registerPolicies: (policies, when) => { setPort('policies', 'registerPolicies', policies, when); },
     registerVault: (vault, when) => { setPort('vault', 'registerVault', vault, when); },
     registerRoute(handler) {
+      open();
       checkRoute(handler, by);
       // A second one is refused here rather than in the fold, because only one
       // plugin is in this call and the prefix is its own: there is no collision
@@ -685,6 +803,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       contribution.routes = handler;
     },
     registerClose(close) {
+      open();
       /*
        * Callable is the whole of what can be checked here: the host calls this
        * when the daemon stops, and what it does then is the plugin's own. A
@@ -698,6 +817,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       contribution.closers.push(close);
     },
     registerTriggerType(definition) {
+      open();
       checkTriggerType(definition, by);
       const named = definition.type;
       /*
@@ -710,14 +830,21 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
       if (RESERVED_TRIGGER_TYPES.includes(named)) {
         throw new Error(miss(by, 'registerTriggerType', named, 'a name the host does not already use; session and watch are its own'));
       }
-      if (triggers.types[named] !== undefined) {
+      if (contribution.triggers.types[named] !== undefined) {
         throw new Error(miss(by, 'registerTriggerType', named, 'a type name no other type in this plugin uses'));
       }
-      triggers.types[named] = definition;
+      contribution.triggers.types[named] = definition;
     },
     fireTrigger(type, event, data) {
+      /*
+       * Read from the contribution rather than from the object `pluginHost`
+       * built, because the fold replaces it with the host's own entry: what a
+       * plugin may fire, and where the fire goes, are the host's record of the
+       * plugin rather than the plugin's own.
+       */
+      const held = contribution.triggers;
       const named = typeof type === 'string' ? type.trim() : '';
-      const offered = triggers.types[named];
+      const offered = held.types[named];
       // Both halves are this plugin's own mistake rather than a host's: the
       // type is what it registered, and the event is what that type offers.
       if (offered === undefined) throw new Error(miss(by, 'fireTrigger', named, 'a type this plugin registered'));
@@ -732,7 +859,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
        * firing from its own test rather than a fire that went missing: nothing
        * keeps it for later, because an event is about what is happening now.
        */
-      triggers.deliver?.(named, String(event), data as Record<string, unknown>);
+      held.deliver?.(named, String(event), data as Record<string, unknown>);
     },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the
@@ -742,7 +869,17 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     },
   };
 
-  return { host, contribution };
+  /*
+   * Frozen, because this object is the context the plugin was handed.
+   *
+   * Every plugin's `host` is a fresh object with that plugin's registrations on
+   * it, and it is also what `PluginContext` says it is: the directories the
+   * host serves, where its configuration is, one line to its log. A plugin that
+   * rewrote one of those would be changing what it, and the listeners it
+   * registered, read about the host - decision
+   * `a-plugin-gets-frozen-copies-of-host-values`.
+   */
+  return { host: Object.freeze(host), contribution, seal: () => { sealed = true; } };
 }
 
 /**
@@ -769,10 +906,21 @@ export async function raise<K extends EventName>(
 ): Promise<void> {
   const listeners = handlers?.[event.type as K];
   if (listeners === undefined || listeners.length === 0) return;
+  /*
+   * One frozen copy, and the same one to every listener.
+   *
+   * A listener is handed the event to read, and reading is the whole of what it
+   * may do: an event that is the host's own object would let the first listener
+   * change what the second one - or the host, for a value it kept - reads next.
+   * So the event is copied and frozen here, once, rather than trusted to be
+   * left alone by everyone who sees it. Decision
+   * `a-plugin-gets-frozen-copies-of-host-values`.
+   */
+  const held = frozenCopy(event);
   for (const listener of listeners) {
     try {
       await (listener.handle as (one: HostEvent, context: PluginContext) => void | Promise<void>)(
-        event,
+        held,
         listener.context,
       );
     }

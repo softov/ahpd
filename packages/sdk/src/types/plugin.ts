@@ -38,10 +38,12 @@ export type TriggerTypeDefinition = AutomationTriggerDefinition;
 /**
  * One plugin's trigger types, and the way its fires reach the host.
  *
- * Built by the plugin host and carried through the fold rather than copied: a
- * plugin fires from a route or a timer long after `apply` returned, so the
- * object its closure holds has to be the object the host fills in. `deliver` is
- * that place, and it is set once the host is built over these types.
+ * Built by the plugin host, and replaced by the fold with the host's own entry:
+ * one holding a frozen copy of every definition this plugin may still fire and
+ * the `deliver` the host sets once it exists. A plugin's `fireTrigger` reads the
+ * entry on its contribution rather than the object it was handed, so a plugin
+ * fires into the host's record and never into a record of its own that the host
+ * would have to trust.
  */
 export interface PluginTriggers {
   /** The plugin that registered them. */
@@ -646,9 +648,11 @@ export interface Contribution {
   /**
    * The trigger types this plugin registered, and where its fires go.
    *
-   * Carried through rather than copied, so the object the plugin's own
-   * `fireTrigger` holds is the one the host fills in. Always here, empty when
-   * the plugin offered no type, so the fold can read it without a case.
+   * Here as `pluginHost` built it, always, empty when the plugin offered no
+   * type, so the fold can read it without a case - and the fold replaces it
+   * with its own entry for the types this plugin kept, which is what a fire
+   * reads. A plugin that wrote to the object it registered in therefore changes
+   * nothing the host holds.
    */
   triggers: PluginTriggers;
   /**

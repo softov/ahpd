@@ -779,9 +779,22 @@ export function fileUsers(options: FileUserOptions): Users {
       const { teams, projects } = spellingOf(file);
       return settledOf(one, teams, projects);
     };
-    return {
+    /*
+     * Frozen, and every one of them.
+     *
+     * A principal reaches a resource provider, an `authorize` hook and a
+     * home-made scheme's own methods, and a provider that replaced `can`, `id`
+     * or a getter would be deciding what the gate asks next - so the literal is
+     * frozen where it is built and the getters go on re-reading the file, which
+     * freezing an accessor does not stop. Decision
+     * `a-plugin-gets-frozen-copies-of-host-values`.
+     */
+    return Object.freeze({
       id: record.id,
-      roles: [...record.roles, ...fromIssuer],
+      // Frozen with the literal, because the roles are the grants the gate
+      // reads: a provider handed this principal could otherwise add a role to
+      // the person it was signed in as. See the comment above.
+      roles: Object.freeze([...record.roles, ...fromIssuer]),
       // The record's own answer, or the host's default. Stamped once, because
       // the door asks once per connection, and the person's answer does not
       // change while their socket is open.
@@ -807,7 +820,7 @@ export function fileUsers(options: FileUserOptions): Users {
         if (now === undefined) return false;
         return holds(grantsOf(now.roles, file), grant) || holds(stamped, grant);
       },
-    };
+    });
   };
 
   /**

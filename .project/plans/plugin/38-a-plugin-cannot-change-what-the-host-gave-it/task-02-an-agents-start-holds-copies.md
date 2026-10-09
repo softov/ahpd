@@ -1,6 +1,6 @@
 ---
 title: An agent's start holds copies of what the host keeps
-status: todo
+status: implemented
 depends: [task-01-a-principal-cannot-be-changed.md]
 layer: "sdk"
 refs:
@@ -39,3 +39,9 @@ An agent cannot change another plugin's session-config key, a host tool's defini
 - `npx vitest run` passes.
 
 ## Resume
+
+Implemented 2026-10-08. The backend half of the same promise: what a `Start` and a host tool's `context()` hold is the host's own copy. `sessionconfig.ts`'s `runningSchema` (the one `spawn.ts` hands the backend) is a `frozenCopy`, with every property the backend may not write marked `readOnly`. `tooling.ts` copies the MCP server map, a client tool's definition, each bound tool's definition and effects, and the turns `context()` answers with. `spawn.ts` hands `Start.resources` the host's store through a new `heldResources`, which forwards each method onto the host's and freezes the wrapper: a store has methods, and `structuredClone` carries none, so the object is built new and frozen rather than copied. Bound tools are `deepFreeze`d (they hold `run`, so they cannot be copied), and `additional` and `settings` are `frozenCopy`d.
+
+Five cases in `plugin-boundary.test.ts` start a session with the echo backend behind a probe agent that tries one write, then check the next session, or the client, still reads what the host holds: a `default` in a session key the host contributed, a tool definition's `name`, an MCP server's `url`, a replaced method on the resource store, and a turn a host tool was handed (the last calls `run` directly). A write refused where it is made throws `TypeError`, but the host reports a backend that throws while its session is being made as `-32602` in the backend's own words (`host/lifecycle.ts`), so the session cases assert that shape and name the engine's sentence about a read-only property.
+
+Verified: `npx vitest run packages/sdk/test/plugin-boundary.test.ts` - 13 passed at this task's end.

@@ -27,8 +27,8 @@ import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
-import { foldHostOptions, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
+import { foldHostOptions, frozenCopy, pluginHost, readSecret, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
+import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginContext, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -605,7 +605,13 @@ const resolveSecrets = async (
   // it is the plugin's to read, at the moment it asks rather than at load.
   if (schema['secretAtUse'] === true) {
     const inner = ref === undefined ? asNames(value) : { forCheck: ref, named: true };
-    return { forApply: value, forCheck: inner.forCheck, named: inner.named };
+    /*
+     * A copy, like every other node, even though this one is handed on whole:
+     * what is under it is the plugin's own to read, and a plugin that wrote to
+     * it would be changing the options this daemon is configured with rather
+     * than a value of its own.
+     */
+    return { forApply: frozenCopy(value), forCheck: inner.forCheck, named: inner.named };
   }
   if (ref !== undefined) {
     if (vault === undefined) throw new Error(`${label}.${path} names ${ref}: ${ref} cannot be read: this host has no vault`);
@@ -739,9 +745,21 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
    */
   const told: string[] = [];
 
-  const { host, contribution } = pluginHost(name, {
+  /*
+   * What this plugin is told about the host, frozen, and every plugin gets its
+   * own.
+   *
+   * The listing of directories is the daemon's own array, shared by every
+   * plugin and by the status line, so each plugin is handed a frozen copy of it
+   * rather than the daemon's: a plugin that pushed to it would be adding a
+   * directory the daemon does not serve, to a line that says which ones it
+   * does. The object is frozen too, so the rest of the context cannot be
+   * rewritten under the plugin that was handed it. Decision
+   * `a-plugin-gets-frozen-copies-of-host-values`.
+   */
+  const context: PluginContext = Object.freeze({
     path: options.path,
-    paths: options.paths,
+    paths: frozenCopy(options.paths),
     version: options.version,
     hostName: options.hostName ?? 'host',
     configDir: options.configDir,
@@ -749,7 +767,9 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(options.hostId === undefined ? {} : { hostId: options.hostId }),
     log: options.log,
     say: options.say ?? (() => {}),
-  }, {
+  });
+
+  const { host, contribution, seal } = pluginHost(name, context, {
     ...(options.agents === undefined ? {} : { agents: options.agents }),
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
@@ -766,6 +786,13 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     // threw, the whole contribution is discarded and the plugin costs a line.
     return { problems: [...problems, ...told, `plugin ${name} failed${took()}: ${messageOf(error)}`] };
   }
+  /*
+   * Registration is over: the fold takes the host's own copies of what this
+   * plugin contributed and reads those from here on, so a `register*` it makes
+   * after returning would land somewhere nothing reads again. Refused instead,
+   * in the plugin's own name.
+   */
+  seal();
   /*
    * A vault that read a secret out of its own options is a vault that decided
    * where its own secrets come from, which is the one thing it cannot be asked
@@ -954,7 +981,11 @@ export async function loadPlugins(specs: PluginSpec[], options: LoadOptions): Pr
     problems.push(...one.problems);
     if (one.loaded !== undefined) {
       loaded.push(one.loaded);
-      if (one.loaded.plugin.optionsSchema !== undefined) schemas.set(nameOf(spec), one.loaded.plugin.optionsSchema);
+      // A copy: the schema answers for a key a client edits, so it is the
+      // host's to hold and not one a plugin may reach back into.
+      if (one.loaded.plugin.optionsSchema !== undefined) {
+        schemas.set(nameOf(spec), frozenCopy(one.loaded.plugin.optionsSchema));
+      }
     }
     if (one.contribution !== undefined) {
       contributions.push(one.contribution);

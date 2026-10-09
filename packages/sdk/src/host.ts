@@ -104,6 +104,25 @@ export const HOST_CLOSE_WAIT_MS = 5_000;
  */
 const WAIT_LIMIT = 60_000;
 
+/**
+ * One principal, held as this host's own: frozen, and its `roles` with it.
+ *
+ * Where this library builds a principal it freezes there, roles included. An
+ * embedder hands `accept` its own literal instead, and a principal frozen one
+ * level deep leaves the `roles` array writable - which is the one thing on a
+ * principal that decides a grant, so a provider, a hook or a scheme's own
+ * methods could hand the person a role the daemon never did.
+ *
+ * Frozen in place rather than copied, and the principal is not spread before
+ * it: a principal the user directory built carries getters that re-read the
+ * file, and spreading it would stamp each one with today's answer. Decision
+ * `a-plugin-gets-frozen-copies-of-host-values`.
+ */
+function heldPrincipal(who: Principal): Principal {
+  if (Array.isArray(who.roles)) Object.freeze(who.roles);
+  return Object.freeze(who);
+}
+
 export function createHost(options: HostOptions): Host {
   const dir = options.path;
   /**
@@ -941,10 +960,19 @@ export function createHost(options: HostOptions): Host {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
         tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
-        // A socket that arrived on a personal connection token is already
-        // somebody, so the gate reads this before the first command rather
-        // than waiting for an `authenticate` the client may never send.
-        ...(principal === undefined ? {} : { principal }),
+        /*
+         * A socket that arrived on a personal connection token is already
+         * somebody, so the gate reads this before the first command rather
+         * than waiting for an `authenticate` the client may never send.
+         *
+         * Frozen here as well as where it was built, because this is the last
+         * place this host sees it before a provider, a hook or a scheme's own
+         * methods are handed it - and an embedder that built its own answered
+         * for nothing beyond this process. `heldPrincipal` is that freeze, and
+         * it takes the roles with it. Decision
+         * `a-plugin-gets-frozen-copies-of-host-values`.
+         */
+        ...(principal === undefined ? {} : { principal: heldPrincipal(principal) }),
         // And one admitted on the deployment's own token is the host itself.
         ...(root === true ? { root: true } : {}),
       };

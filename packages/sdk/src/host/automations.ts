@@ -827,16 +827,18 @@ export function createAutomations(ctx: HostContext): Automations {
   };
 
   /**
-   * The trigger type a plugin registered under this name, where one did.
+   * The plugin holding a trigger type name, and the definition it holds.
    *
    * This host knows a plugin's type only because a plugin offered it, so a
    * trigger naming one is a trigger this host fires and a trigger naming
-   * anything else is one nothing does.
+   * anything else is one nothing does. Whose type it is, is the other half, and
+   * it is answered here rather than in the caller: the definition and the plugin
+   * that may fire it are one record, and the host reads its own record of both.
    */
-  const pluginType = (type: string): TriggerTypeDefinition | undefined => {
+  const pluginType = (type: string): { by: string; definition: TriggerTypeDefinition } | undefined => {
     for (const one of options.pluginTriggers ?? []) {
       const found = one.types[type];
-      if (found !== undefined) return found;
+      if (found !== undefined) return { by: one.by, definition: found };
     }
     return undefined;
   };
@@ -865,7 +867,7 @@ export function createAutomations(ctx: HostContext): Automations {
      * plugin's own fire is the whole of the match, and `fired` is what it
      * arrives at. Everything the host lists itself goes the other way.
      */
-    const byPlugin = trigger === undefined || chosen.length === 0 ? undefined : pluginType(type);
+    const byPlugin = trigger === undefined || chosen.length === 0 ? undefined : pluginType(type)?.definition;
     const rule = trigger === undefined || byPlugin !== undefined ? undefined : ruleOf(trigger);
     if (found === undefined || trigger === undefined || (rule === undefined && byPlugin === undefined)) {
       watched.delete(resource);
@@ -983,9 +985,19 @@ export function createAutomations(ctx: HostContext): Automations {
    */
   const fired = (by: string, type: string, event: string, data: Record<string, unknown>): void => {
     if (ctx.closed) return;
-    const offered = pluginType(type);
-    if (offered === undefined) return;
-    const title = eventName(offered, event);
+    const held = pluginType(type);
+    if (held === undefined) return;
+    /*
+     * A fire is a plugin's own say-so about a type that host holds for it, so a
+     * fire under a name another plugin registered is that other plugin's
+     * automations run on this one's word - and it is dropped and said, the way
+     * every other fire this host will not act on is.
+     */
+    if (held.by !== by) {
+      log(`${by} fired ${type}, which plugin ${held.by} registered, so this fire was dropped`);
+      return;
+    }
+    const title = eventName(held.definition, event);
     for (const [automation, one] of watched) {
       if (one.type !== type || !one.events.includes(event)) continue;
       if (!maySee(one.owner)) continue;

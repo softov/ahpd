@@ -3,6 +3,7 @@ import type { ChatAction, ChatState, SessionInputRequestKind } from '@microsoft/
 import { RpcError, INTERNAL_ERROR } from '../rpc.js';
 import { computerId, computersFor } from '../computers.js';
 import { uriOf } from '../fileuri.js';
+import { deepFreeze, frozenCopy } from '../frozen.js';
 import { nestedAgent } from '../nested.js';
 import { idOf, uriFor, Status } from '../catalog.js';
 import { meter } from '../meter.js';
@@ -14,6 +15,7 @@ import type { Bag } from '../types/common.js';
 import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
 import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
+import type { ResourceStore } from '../types/resources.js';
 import type { RunClientTool, ToolsChanged, ToolsEndpoint } from '../toolserver.js';
 import type { Move } from './lifecycle.js';
 import type { HostContext } from './context.js';
@@ -71,6 +73,42 @@ export interface Spawn {
     additional?: string[],
     sender?: Connection,
   ): Session;
+}
+
+/**
+ * The host's store, as one session's backend is handed it.
+ *
+ * A new object per session, frozen, whose every method calls the host's own -
+ * so a backend that replaces `read` on what it was given changes its own view
+ * and nothing else, while the bytes it reads are still the host's. The live
+ * store is one object shared by every session and by the resource commands,
+ * and a backend that reached into it would be changing what the next client
+ * reads - decision `a-plugin-gets-frozen-copies-of-host-values`.
+ *
+ * The write half is the store's to offer or leave out, and this view offers
+ * exactly what it holds: a store that cannot be written stays a read-only
+ * store here rather than one that throws on every call.
+ */
+function heldResources(store: ResourceStore): ResourceStore {
+  const taken: ResourceStore = {
+    list: (uri) => store.list(uri),
+    read: (uri, wanted) => store.read(uri, wanted),
+    resolve: (uri, followSymlinks) => store.resolve(uri, followSymlinks),
+    complete: (typed, base, limit) => store.complete(typed, base, limit),
+  };
+  const write = store.write;
+  const remove = store.remove;
+  const mkdir = store.mkdir;
+  const move = store.move;
+  const copy = store.copy;
+  const watch = store.watch;
+  if (write !== undefined) taken.write = (uri, content, owner, reader) => write(uri, content, owner, reader);
+  if (remove !== undefined) taken.remove = (uri, recursive, owner, reader) => remove(uri, recursive, owner, reader);
+  if (mkdir !== undefined) taken.mkdir = (uri) => mkdir(uri);
+  if (move !== undefined) taken.move = (source, destination, failIfExists) => move(source, destination, failIfExists);
+  if (copy !== undefined) taken.copy = (source, destination, failIfExists) => copy(source, destination, failIfExists);
+  if (watch !== undefined) taken.watch = (uri, asked, onChange) => watch(uri, asked, onChange);
+  return Object.freeze(taken);
 }
 
 export function createSpawn(ctx: HostContext): Spawn {
@@ -456,7 +494,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * breath would otherwise have been offered nothing until the next
        * announcement moved the list.
        */
-      ...(ctx.boundTools(uri, chatUri, agent.provider).length > 0 ? { tools: ctx.boundTools(uri, chatUri, agent.provider) } : {}),
+      ...(ctx.boundTools(uri, chatUri, agent.provider).length > 0 ? { tools: deepFreeze(ctx.boundTools(uri, chatUri, agent.provider)) } : {}),
       ...(ctx.instructions(uri).length > 0 ? { instructions: ctx.instructions(uri) } : {}),
       /*
        * The stores a backend may need for itself, handed down only when the
@@ -465,7 +503,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * over it: the host owns the URI, the root registration and the emit,
        * and a backend given the raw port would get none of the three.
        */
-      ...(options.resources !== undefined ? { resources: options.resources } : {}),
+      ...(options.resources !== undefined ? { resources: heldResources(options.resources) } : {}),
       ...(options.terminals !== undefined ? { terminals: ctx.heldTerminals(options.terminals, uri, chatUri) } : {}),
       ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider, uri, kept.owner(idOf(uri))) } : {}),
       /*
@@ -482,13 +520,21 @@ export function createSpawn(ctx: HostContext): Spawn {
       clientToolTimeoutMs: options.clientToolTimeoutMs ?? DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
       ...(credentials && Object.keys(credentials).length > 0 ? { credentials } : {}),
       ...(workingDirectory !== undefined ? { workingDirectory } : {}),
-      ...(additional !== undefined && additional.length > 0 ? { additional } : {}),
+      ...(additional !== undefined && additional.length > 0 ? { additional: frozenCopy(additional) } : {}),
       ...(resuming?.resume !== undefined ? { resume: resuming.resume } : {}),
       ...(resuming?.seed !== undefined ? { seed: resuming.seed } : {}),
       ...(resuming?.forkAt !== undefined ? { forkAt: resuming.forkAt } : {}),
       ...(resuming?.rewindAt !== undefined ? { rewindAt: resuming.rewindAt } : {}),
       ...(resuming?.context !== undefined ? { context: resuming.context } : {}),
-      settings: { ...agent.defaults(), ...contributedDefaults(), ...config },
+      /*
+       * The values in force, as a frozen copy rather than the host's own map.
+       *
+       * A backend reads these to know what it was started with; one that set
+       * `model` on them would be setting what the host records against this
+       * session and what the next turn is started with - decision
+       * `a-plugin-gets-frozen-copies-of-host-values`.
+       */
+      settings: frozenCopy({ ...agent.defaults(), ...contributedDefaults(), ...config }),
       schema: () => runningSchema(agent),
       // What the boot probe already learned: the commands behind a slash, the
       // skills, the subagents and the MCP servers. A session that answered

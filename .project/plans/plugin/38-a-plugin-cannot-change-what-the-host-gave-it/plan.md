@@ -1,7 +1,7 @@
 ---
 title: A plugin cannot change what the host gave it
 domain: plugin
-status: planned
+status: active
 priority: high
 created: 2026-10-08
 revalidated: 2026-10-08
@@ -91,12 +91,12 @@ plugin contribution -> copy + freeze at registration or fold -> host keeps only 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a principal cannot be changed](task-01-a-principal-cannot-be-changed.md) | todo | - |
-| [02 - an agent's start holds copies](task-02-an-agents-start-holds-copies.md) | todo | 01 |
-| [03 - the host holds copies of contributions](task-03-the-host-holds-copies-of-contributions.md) | todo | 01 |
-| [04 - events, paths and options are per plugin copies](task-04-events-paths-and-options-are-per-plugin-copies.md) | todo | 01 |
-| [05 - the fold keeps the base's getters](task-05-the-fold-keeps-the-bases-getters.md) | todo | - |
-| [06 - docs](task-06-docs.md) | todo | 02, 03, 04 |
+| [01 - a principal cannot be changed](task-01-a-principal-cannot-be-changed.md) | implemented | - |
+| [02 - an agent's start holds copies](task-02-an-agents-start-holds-copies.md) | implemented | 01 |
+| [03 - the host holds copies of contributions](task-03-the-host-holds-copies-of-contributions.md) | implemented | 01 |
+| [04 - events, paths and options are per plugin copies](task-04-events-paths-and-options-are-per-plugin-copies.md) | implemented | 01 |
+| [05 - the fold keeps the base's getters](task-05-the-fold-keeps-the-bases-getters.md) | implemented | - |
+| [06 - docs](task-06-docs.md) | implemented | 02, 03, 04 |
 
 ## Risks and tradeoffs
 
@@ -107,14 +107,25 @@ plugin contribution -> copy + freeze at registration or fold -> host keeps only 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-principal-cannot-be-changed.md](task-01-a-principal-cannot-be-changed.md).
+- **Done so far:** all six tasks, in dependency order, 2026-10-08. Nothing is committed: Softov reads the diff first.
+  - **01 - a principal cannot be changed.** `frozenCopy(value)` and `deepFreeze(value)` in the new `packages/sdk/src/frozen.ts`; every principal the host builds is frozen, the daemon's `ROOT` and the `can`/`id` literals in `packages/sdk/src/users.ts` included, so the reader a provider is handed at `read`, `write` and `remove` is read-only.
+  - **02 - an agent's start holds copies.** `Start`'s schema, tool definitions, MCP servers and per-session file store are the host's own frozen copies; a host tool's `context()` answers a frozen copy of the turns.
+  - **03 - the host holds copies of contributions.** The fold takes its own copy of every agent, tool, session-config schema, trigger type and `optionsSchema`; a `register*` after `apply` returns throws the loader's seal sentence; `fired` asks the door which plugin holds a trigger type.
+  - **04 - events, paths and options are per plugin copies.** `raise` hands one frozen copy of the event to every listener; the plugin context is a frozen literal with `paths: frozenCopy(...)`; a `secretAtUse` node is copied like any other.
+  - **05 - the fold keeps the base's getters.** The fold starts from `Object.defineProperties({}, Object.getOwnPropertyDescriptors(base))`, so the daemon's `get mcpServers()` is still read at each session's start. Found on the way and fixed here rather than left.
+  - **06 - docs.** `docs/PLUGINS.md` gained "Everything you are handed is read-only", at the end of the contract and before what may be registered.
+  - **Review round, 2026-10-08.** Softov read the diff and found three sites where the promise held on paper and not in the value. All three are fixed, each with a case that failed first: an agent written as a class lost its prototype methods to `keptAgent`; a plugin that lost every trigger type kept its own record and dropped a fire in silence; and a principal was frozen one level deep, so `roles` stayed a writable array in both `users.ts` and the embedder's road into `host.ts`. The details are in `implemented.md` and in the Resume sections of tasks 01 and 03.
+- **Next action:** the three review findings are fixed and the gates are green. Softov reads the diff again; the plan stays `active` until that read closes it as built.
 - **Open questions:** none.
-- **Watch out for:** plugin/37 changes `resourcemethods.ts` and `plugins.ts`. Rebase on it before task 01, and freeze the principal that `write` gets too.
+- **Watch out for:**
+  1. `PluginHost.sessionOwner` answers an `Owner`, which is a string type, so nothing there is a value a plugin could write to and nothing needed freezing. The principal the resource roads hand a provider (`read`, `write`, `remove`) was the writable one, and task 01 is what covers it.
+  2. A plugin that writes to a value it was given now throws. The full suite found no in-repo plugin or backend that did, so nothing was unfrozen to make one pass.
+  3. `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every suite run with this box's endpoint (`api.deepseek.com/anthropic/v1/models`). It is an output and never an input, and it was put back line by line, because `git checkout --` is refused in this session.
 
 ## Final verification checklist
 
-- [ ] Every crossing in the refs has a test that writes to the value and checks the host is unchanged.
-- [ ] `rg "connection.principal" packages/sdk/src` shows no site that hands an unfrozen principal out.
-- [ ] `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary`, `npx vitest run` pass.
-- [ ] `plans/index.md` updated.
+- [x] Every crossing in the refs has a test that writes to the value and checks the host is unchanged. `packages/sdk/test/plugin-boundary.test.ts` (24 cases) holds the sdk half and `packages/server/test/plugin-load.test.ts` with the three new fixtures holds the loader half.
+- [x] `rg "connection.principal" packages/sdk/src` shows no site that hands an unfrozen principal out: the handshake assigns the principal onto a connection, and every road that reaches a plugin copies and freezes it first.
+- [x] `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary`, `npx vitest run --maxWorkers=2 --testTimeout=10000` pass. The suite is 255 files: 4456 tests twice during the build, and 4459 after the review round, exit 0.
+- [x] Softov's three review findings are fixed, each with a case that failed first: a class-based agent keeps its methods through the fold, a plugin that lost every trigger type has its fire refused, and a principal's `roles` is frozen in `users.ts` and on the embedder's road into `host.ts`. See `implemented.md`.
+- [x] `plans/index.md` updated.

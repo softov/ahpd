@@ -253,7 +253,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 | [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | built 2026-10-06 ([implemented.md](plugin/35-cofold-uses-what-cofold-ships/implemented.md)); reviewed and merged 2026-10-06 | plugin 05, plugin 32 p3 | - |
 | [36 - A cofold turn reads its message's attachments, and sends an image only to a model that takes images](plugin/36-a-cofold-turn-reads-its-attachments/plan.md) | medium | planned 2026-10-06 | host 68 | - |
 | [37 - A bot is a record a person makes, with a session to talk to it in](plugin/37-a-bot-is-a-record-with-a-session/plan.md) | high | built 2026-10-08 ([implemented.md](plugin/37-a-bot-is-a-record-with-a-session/implemented.md)); 01 and 03 (1a3ee7a), 02, 04 and 05 (6fb1289) | plugin 09 as the pattern | the bot harness, a bot as a principal, the ahpc and ahpapp bot screens |
-| [38 - A plugin cannot change what the host gave it](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) | high | planned 2026-10-08 | plugin 37 (rebase on it) | plugins out of process |
+| [38 - A plugin cannot change what the host gave it](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/plan.md) | high | active 2026-10-08; tasks implemented, three review findings fixed, awaiting review ([implemented.md](plugin/38-a-plugin-cannot-change-what-the-host-gave-it/implemented.md)) | plugin 37 (built on it) | plugins out of process |
 
 Next free number in `plugin`: `39`.
 

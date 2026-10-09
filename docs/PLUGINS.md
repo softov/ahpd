@@ -111,6 +111,32 @@ apiKey: { type: 'string', secretAtUse: true, description: 'The key this calls wi
 
 A node saying `secretAtUse: true` is handed to `apply` as written, references and all, so your option is a `SecretRef` rather than a `string`, and you read it yourself with `host.secret(name)`. It is the schema keyword this uses where Claude's `fromEnv: true` uses the environment, and the two answer to different needs: `fromEnv` hands you a value out of the process's environment, `secretAtUse` hands you a name out of the host's vault. See [Reading a secret](#reading-a-secret).
 
+### Everything you are handed is read-only
+
+Every value the host gives a plugin is a copy, so nothing you write to one
+reaches the host. `PluginContext` and the `paths` in it, the `Start` a backend's
+`create` receives, the turns a host tool's `context()` answers, the event a
+listener is given and any `secretAtUse` option node are frozen, so writing to
+one throws where you wrote it. The options object itself is your own copy, and a
+write there is something only your `apply` ever sees. A plugin that moved the
+principal a grant was checked against, or the session settings another plugin
+registered, would be changing what the host does next, which is what this stops.
+
+Registration ends when `apply` returns. The loader takes the host's own copy of
+everything you registered and reads that from then on, so a `register*` called
+later - from a timer, or from a listener - throws `<name>: nothing may be
+registered after apply returned; the host has already taken its copy of what
+this plugin contributed`, and an `on` registered later never fires, because the
+listeners were taken at the same moment. Register what you have while you are
+being applied.
+
+This is not a sandbox, and it does not pretend to be one. A plugin is code in
+the daemon's process with the daemon's permissions: it may import anything the
+runtime has and patch a module another plugin imported. Naming a plugin in the
+configuration is the trust decision, and what is set out here is the narrower
+promise the host can keep - that nothing changes the host's state through a
+value that crossed the boundary, by accident or otherwise.
+
 ## What you can register
 
 The surface is `HostOptions` named back, so there is nothing new to learn. Every
@@ -184,7 +210,7 @@ export const apply: Plugin['apply'] = (host) => {
 };
 ```
 
-`type` and `title` are what the type is called, `events` needs at least one entry with an `id` and a `title`, and two events of one type may not share an id. `configSchema` is optional and is the JSON Schema a client draws the trigger's own settings from; the host does not read the config it describes, so what you do with it is yours. `session` and `watch` are the host's own names and are refused, as is a name you have already registered in this plugin, because a type is chosen by its name and two meanings for one is a choice nobody could make. Two plugins claiming one name is reported where the plugins are folded and the second loses that type alone, keeping everything else it contributed.
+`type` and `title` are what the type is called, `events` needs at least one entry with an `id` and a `title`, and two events of one type may not share an id. `configSchema` is optional and is the JSON Schema a client draws the trigger's own settings from; the host does not read the config it describes, so what you do with it is yours. `session` and `watch` are the host's own names and are refused, as is a name you have already registered in this plugin, because a type is chosen by its name and two meanings for one is a choice nobody could make. Two plugins claiming one name is reported where the plugins are folded and the second loses that type alone, keeping everything else it contributed - and a name you lost is not a name you may fire, so `fireTrigger` throws for it exactly as it does for a type you never registered.
 
 `host.fireTrigger(type, event, data)` says an event of that type happened. Every enabled automation saved with that type and that event id starts a run, under its own overlap setting, and each run's message names the event with the `title` your definition gave it. The call hands the event over and returns: it does not wait for the runs it started. A type you never registered, or an event id your type does not offer, throws rather than firing nothing.
 

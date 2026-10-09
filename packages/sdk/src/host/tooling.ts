@@ -1,5 +1,6 @@
 import { idOf } from '../catalog.js';
 import { localPath } from '../fileuri.js';
+import { frozenCopy } from '../frozen.js';
 import { ROOT, chatUriFor } from './channels.js';
 import { need } from './common.js';
 import type { Bag } from '../types/common.js';
@@ -148,10 +149,10 @@ export function createTooling(ctx: HostContext): Tooling {
       const name = typeof definition.name === 'string' ? definition.name : '';
       if (!/^[A-Za-z0-9_-]+$/.test(name)) return [];
       return [{
-        definition: {
+        definition: frozenCopy({
           ...definition as unknown as BoundTool['definition'],
           name: `${clientId}__${name}`,
-        },
+        }),
         owner: clientId,
       }];
     });
@@ -274,11 +275,17 @@ export function createTooling(ctx: HostContext): Tooling {
       const found = held === undefined ? undefined : chatMeant(held, chatId);
       if (found === undefined) return undefined;
       const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
-      return {
+      /*
+       * Frozen copies of the turns, for the same reason a tool definition is
+       * one: this leaves the host with whichever host tool asked, and a tool
+       * that rewrote a turn would be rewriting the conversation - decision
+       * `a-plugin-gets-frozen-copies-of-host-values`.
+       */
+      return frozenCopy({
         turns: Array.isArray(state.turns) ? state.turns as Bag[] : [],
         ...(typeof state.activeTurn === 'object' && state.activeTurn !== null ? { activeTurn: state.activeTurn as Bag } : {}),
         hasMoreHistory: state.turnsNextCursor !== undefined,
-      };
+      });
     },
     send: async (session, chatId, text, from) => {
       const held = sessions.get(heldAs(session));
@@ -405,7 +412,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * customizations to merge, so nothing overrides a name yet and the merge is
    * one spread waiting for the plugins that will fill it.
    */
-  const mcpFor = (): Record<string, McpServer> => ({ ...options.mcpServers });
+  const mcpFor = (): Record<string, McpServer> => frozenCopy({ ...options.mcpServers });
 
   /**
    * The endpoints opened for a session, by the session that opened them.
@@ -432,7 +439,13 @@ export function createTooling(ctx: HostContext): Tooling {
     ...ctx.contributing.flatMap((one): BoundTool[] => {
       const definition = shapedDefinition(one, uri);
       return definition === undefined ? [] : [{
-        definition,
+        /*
+         * A frozen copy: this one leaves the host with the backend, and a
+         * backend that changed the wording would be changing what the host
+         * offers the next session - decision
+         * `a-plugin-gets-frozen-copies-of-host-values`.
+         */
+        definition: frozenCopy(definition),
         // The call and its outcome are one event, raised after the tool is
         // done, so a handler knows whether it answered and not only that it
         // ran. Raising it before would report an attempt as a result.
@@ -454,7 +467,7 @@ export function createTooling(ctx: HostContext): Tooling {
             throw error;
           }
         },
-        ...(one.effects !== undefined ? { effects: one.effects } : {}),
+        ...(one.effects !== undefined ? { effects: frozenCopy(one.effects) } : {}),
         ...(one.deferLoading !== undefined ? { deferLoading: one.deferLoading } : {}),
       }];
     }),

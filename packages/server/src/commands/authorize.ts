@@ -25,12 +25,19 @@ export interface AuthorizeOptions {
   users?: Users;
 }
 
-/** A caller who holds every grant, which is what the deployment's own token is. */
-export const ROOT: Principal = {
+/**
+ * A caller who holds every grant, which is what the deployment's own token is.
+ *
+ * Frozen, and its `roles` with it: this one principal is handed to every
+ * provider, hook and daemon-internal reader that asks who is calling, and the
+ * values behind `can` are the whole of the host's authority - decision
+ * `a-plugin-gets-frozen-copies-of-host-values`.
+ */
+export const ROOT: Principal = Object.freeze({
   id: 'the deployment token',
-  roles: [],
+  roles: Object.freeze([]) as readonly string[],
   can: () => true,
-};
+});
 
 /** Whether a caller is the deployment's own token, rather than a person. */
 export const isRoot = (actor: unknown): boolean => actor === ROOT;

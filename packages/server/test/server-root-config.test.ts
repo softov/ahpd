@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { daemonRootConfig } from '../src/rootconfig.js';
-import { loadPlugins } from '../src/plugins.js';
+import { loadPlugins, optionsSchemaLoaded } from '../src/plugins.js';
 import { optionsFrom } from '../src/commands/options.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { PluginSpec } from '@ahpd/sdk';
@@ -54,6 +54,8 @@ const SCHEMA = './fixtures/plugin-schema/index.ts';
 const SECRET = './fixtures/plugin-secret/index.ts';
 /** A plugin whose options carry item bounds, on an array and on a string. */
 const BOUNDED = './fixtures/plugin-bounded/index.ts';
+/** A plugin that keeps the host it was handed and the schema it exported. */
+const AFTER = './fixtures/plugin-after/index.ts';
 /** The backend that keeps its credentials in a preset's environment. */
 const CLAUDE = './packages/agent-claude/src/index.ts';
 /** The backend whose own search providers keep a key of their own. */
@@ -387,6 +389,34 @@ describe('a credential in a plugin key', () => {
     const root = await withPlugins([{ name: SECRET, options: { apiKey: 'k-1' } }]);
     await root.write({ [`plugins.${SECRET}`]: { options: { apiKey: 'k-2' } } });
     expect(held().plugins).toEqual([{ name: SECRET, options: { apiKey: 'k-2' } }]);
+  });
+
+  it('is masked from the copy the host took, not from the schema the plugin holds', async () => {
+    put({ plugins: [{ name: AFTER, options: { region: 'eu', apiKey: 'k-1' } }] });
+    const { loaded, problems } = await loadPlugins([AFTER], {
+      base: { path: home, agents: [echo({ path: home })] },
+      configDir: import.meta.dirname,
+      cwd: import.meta.dirname,
+      log: () => {},
+    });
+    expect(problems).toEqual([]);
+
+    // The plugin rewrites the schema it exports, after the loader has loaded it.
+    const own = loaded[0]?.plugin.optionsSchema as { properties: Record<string, Record<string, unknown>> };
+    delete own.properties['apiKey']?.['writeOnly'];
+    expect(own.properties['apiKey']).not.toHaveProperty('writeOnly');
+
+    // What a client is served walks the host's copy, which still marks it: the
+    // write reached a schema nobody answers from.
+    const root = daemonRootConfig(optionsFrom({ configFile: config }));
+    expect((await root.values())[`plugins.${AFTER}`]).toMatchObject({ options: { apiKey: '<set>', region: 'eu' } });
+
+    // And the copy is the host's own, frozen: the same write made to it is
+    // refused where it is made rather than quietly dropped.
+    const kept = optionsSchemaLoaded(AFTER) as { properties: Record<string, Record<string, unknown>> };
+    expect(kept).not.toBe(own);
+    expect(Object.isFrozen(kept.properties['apiKey'])).toBe(true);
+    expect(() => { delete kept.properties['apiKey']?.['writeOnly']; }).toThrow(TypeError);
   });
 
   it('is honoured however deep in the plugin options it sits', async () => {
