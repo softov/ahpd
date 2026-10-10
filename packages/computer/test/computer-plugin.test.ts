@@ -534,6 +534,44 @@ it('makes a machine from a named profile, and refuses one it does not define', a
   })).rejects.toThrow(/no profile called nope; it has claude, plain/);
 });
 
+it('refuses a body naming a runtime this host does not serve, and names the ones it does', async () => {
+  loose = mkdtempSync(join(tmpdir(), 'ahpd-computer-runtimes-'));
+  const state = join(loose, 'docker.json');
+  const { options } = await load({
+    command: process.execPath,
+    args: [FIXTURE],
+    env: { DOCKER_FAKE_STATE: state },
+    sessionSetting: false,
+  });
+  const provider = options.resourceProviders?.computer as {
+    write(uri: string, content: { data: string; encoding: string }): Promise<void>;
+    list(uri: string): Promise<{ name: string }[]>;
+    describe(): { manifest?: { properties?: Record<string, { enum?: unknown[] }> } };
+  };
+
+  // The picker still offers only what this host makes machines on, which is the
+  // one runtime it was configured with.
+  expect(provider.describe().manifest?.properties?.runtime?.enum).toEqual(['docker']);
+  /*
+   * Naming one of the others is refused for what it is rather than for not
+   * existing, because `ssh` is a runtime this project has and this host does
+   * not serve: the sentence says which ones it does.
+   */
+  await expect(provider.write('computer://box', {
+    data: JSON.stringify({ runtime: 'ssh' }),
+    encoding: 'utf-8',
+  })).rejects.toThrow(/ssh is not a runtime this host serves; it serves docker/);
+
+  // The one it serves is still made, and its id is its name alone: a machine on
+  // the local Docker is addressed the way it always was.
+  await provider.write('computer://box', {
+    data: JSON.stringify({ runtime: 'docker' }),
+    encoding: 'utf-8',
+  });
+  const listed = await provider.list('computer://');
+  expect(listed.map((one) => one.name)).toEqual(['box']);
+});
+
 /*
  * Plan host/67 task 01: a profile's `gitGuard` is `fetch`, the default, or
  * `open` - decision

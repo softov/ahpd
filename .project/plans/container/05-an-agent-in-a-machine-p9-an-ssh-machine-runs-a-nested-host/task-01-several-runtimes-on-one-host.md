@@ -1,6 +1,6 @@
 ---
 title: The plugin serves several runtimes, and a machine's id says which
-status: todo
+status: done
 depends: []
 layer: "computer"
 refs:
@@ -33,7 +33,7 @@ The plugin holds one runtime per value it serves and routes every call by the ma
 
 ## Steps
 
-1. For now an id is `<runtime>.<name>` (`ssh.dev86`, `libvirt.<name>`, `node.<name>`, `docker-<profile>.<name>`), and the local Docker keeps a bare name so no machine made today changes id; a docker name starting with a served runtime value and a dot is refused at create. Only `spellMachineId` and `parseMachineId` know this, so a later spelling changes those two functions; nothing else splits an id on a dot.
+1. For now an id is `<runtime>.<name>` (`ssh.dev86`, `libvirt.<name>`, `node.<name>`, `docker-<profile>.<name>`), and the local Docker keeps a bare name so no machine made today changes id; a local docker name that holds a dot is refused at create. Only `spellMachineId` and `parseMachineId` know this, so a later spelling changes those two functions; nothing else splits an id on a dot.
 2. Move docker's `how` argv and `within` into `dockerRuntime` unchanged; the plugin's `reach` keeps the dev container branch until decision `a-dev-container-is-reached-by-docker-exec` changes it elsewhere.
 3. `routed().kind` is the plugin's `runtime` option, which stays the default for a create that names none; `capabilities()` answers the default runtime's, and a machine's own `capabilities` leaf answers its runtime's.
 4. `made` meters every runtime: one that makes machines opens and closes a stretch on start and stop as today; one that only lists (ssh) opens a stretch when a listing sees a machine reachable and closes it when one sees it unreachable or the daemon stops, charged to the host (`root:<host>`). The rule for a listing runtime is one function in `made`, so it can change; it takes reachability events (`reachable(id)`, `unreachable(id)`), and a listing is one source of them, so p10's node registry can feed the same function from its connect and drop events.
@@ -52,3 +52,14 @@ The plugin holds one runtime per value it serves and routes every call by the ma
 - `pnpm --filter @ahpd/computer test` and `pnpm typecheck` pass.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/1676a492`.
+- `router.ts` is new: `BARE`, `spellMachineId`, `parseMachineId`, `routed`, `Routed` and `RoutedOptions`, with `list` asking every runtime, bounding each by a timeout, keeping the rows that answered and logging one line for each runtime that did not.
+- `ComputerRuntime` gains `remote`, `how` and `hostCommand`; `dockerRuntime` answers all three with today's argv, and `within` moved into `runtime.ts` unchanged.
+- `plugin.ts` holds the runtimes, wraps the router in `made`, routes `claimOf`, `reach` and `nestedHost` through it, and closes each stretch in its own `try` at `stopping`.
+- `listingMeter` and `makesMachines` are exported from `plugin.ts`; `manifest.ts` and `provider.ts` take the served runtime values, and `DockerOptions` takes the profiles' `host` map.
+- Tests: `computer-runtimes.test.ts` is new and covers the id spelling, the routing, a listing that survives a throwing and a hanging runtime, the listing meter and `makesMachines`; `computer-plugin.test.ts` gains the refusal of a body naming a runtime this host does not serve; the fake runtime in `computer.test.ts` gained the three new members.
+- `pnpm typecheck` and `npx vitest run packages/computer/test --maxWorkers=2 --testTimeout=10000` pass.
+- Validation bullets 5, 7 and 8 need a second runtime inside the plugin, so they wait for task 02; bullet 5's rule is covered directly by `listingMeter`.
+- Files the Files list did not name: `index.ts` exports the router; `computer-runtimes.test.ts` is a new test file; `manifest.ts`, `provider.ts` and `runtime.ts` carry the served runtime values.
+- A dot anywhere in a name on the bare runtime is refused, not only a name that starts with a served runtime value and a dot, because `docker-far.box` must answer the `docker-far` runtime.

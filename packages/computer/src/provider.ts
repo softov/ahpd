@@ -42,6 +42,14 @@ export interface ProviderOptions {
   /** The images a machine may be made from, as patterns. Absent allows any. */
   images?: string[];
   /**
+   * Every runtime this host serves, of which the default is what makes machines.
+   *
+   * A body may name the default and no other. A value this host serves but does
+   * not make machines on is a runtime that only lists, and one it does not
+   * serve is named with the ones it does.
+   */
+  runtimes?: string[];
+  /**
    * The folder a dev container is made from here, resolved, or the sentence for
    * one this host will not build from. The plugin's own list, reported so a
    * create body is refused the way a session setting is.
@@ -364,6 +372,7 @@ export function computerProvider(runtime: ComputerRuntime, options: ProviderOpti
       const profiles = profilesFor(picked, profile, own?.values);
       const spec = manifestOf(held.id, content, {
         runtime: runtime.kind,
+        ...(options.runtimes === undefined ? {} : { runtimes: options.runtimes }),
         image: options.image,
         ...(options.cpus === undefined ? {} : { cpus: options.cpus }),
         ...(options.memory === undefined ? {} : { memory: options.memory }),

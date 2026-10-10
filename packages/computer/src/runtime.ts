@@ -4,7 +4,7 @@ import { createWriteStream, lstatSync, mkdtempSync, readdirSync, readFileSync, r
 import { tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { gitArgv, ownerOf, partTarget } from '@ahpd/sdk';
-import type { BroughtBack, Owner, ResolvedSeed } from '@ahpd/sdk';
+import type { BroughtBack, Owner, ResolvedSeed, Spawn, SpawnOptions } from '@ahpd/sdk';
 import { cliOf, definitionOf, DEVCONTAINER_FOLDER, execArgv, folderLabelOf, idLabels, LOCAL_FOLDER, masked, parseUp, probeEnv, probeKept, reachOf, runCli, workdirOf } from './devcontainer.js';
 import { adoptedOf, keepProbe, probeOf } from './owners.js';
 import type { MadeNeed } from './owners.js';
@@ -511,9 +511,40 @@ export interface RuntimeCapabilities {
 export interface ComputerRuntime {
   /** The name `capabilities` reports and the option a host was configured with. */
   readonly kind: string;
+  /**
+   * Whether the machines this runtime makes are off this host.
+   *
+   * Asked before a backend is started, because a machine on another box cannot
+   * be reached by a command run here: every backend runs nested in such a
+   * machine - decision
+   * `a-nested-host-is-used-only-where-a-command-cannot-reach-the-agent`.
+   */
+  readonly remote: boolean;
   list(): Promise<Machine[]>;
   /** The runtime's own record of one machine, or nothing when it is not there. */
   inspect(id: string): Promise<Record<string, unknown> | undefined>;
+  /**
+   * The command that runs a program inside one, or nothing when there is no
+   * such machine.
+   *
+   * A descriptor and not a running process, as `nested` answers one: the caller
+   * owns the spawn and its stdio - decision
+   * `a-backend-reaches-a-computer-through-a-port`. The environment a spawned
+   * program needs travels in the descriptor, so no value is in the argv a
+   * process list shows. A runtime that cannot reach its host at all throws,
+   * because "there is no such machine" and "the runtime is not answering" are
+   * different answers.
+   */
+  how(id: string, asked: SpawnOptions): Promise<Spawn | undefined>;
+  /**
+   * The command that starts a nested host inside one of this runtime's
+   * machines, or nothing when there is no such machine.
+   *
+   * The machine's own recipe says it, rather than the caller: a profile's
+   * `host`, or what the runtime starts a host with by default - decision
+   * `a-nested-host-is-configured-by-the-machine-profile-only`.
+   */
+  hostCommand(id: string): Promise<string[] | undefined>;
   run(spec: MachineSpec): Promise<Machine>;
   stop(id: string): Promise<void>;
   remove(id: string): Promise<void>;
@@ -738,6 +769,19 @@ export interface DockerOptions extends CommandOptions {
   configDir?: string;
   /** Lines worth keeping. A probe that could not be run is said here. */
   log?: (line: string) => void;
+  /**
+   * The command that starts a nested host inside one of a profile's machines,
+   * by profile key.
+   *
+   * A profile's `host` is what a machine made from it runs its host with, so it
+   * is read here rather than in the plugin: which host a machine starts is read
+   * from the machine's own record, and that record names the profile it was
+   * made from - decision
+   * `a-nested-host-is-configured-by-the-machine-profile-only`.
+   */
+  hosts?: Record<string, string[] | undefined>;
+  /** How a nested host is started in a machine, before a profile says otherwise. */
+  host?: string[];
   /**
    * Whether a part may be mounted from its own image. Absent asks Docker once.
    *
@@ -1047,6 +1091,41 @@ export const claimedOf = (found: Record<string, unknown>): ReturnType<typeof cla
  */
 export const devcontainerFolder = (found: Record<string, unknown>): string | undefined =>
   folderLabelOf(found);
+
+/**
+ * Where a path on this host is inside one machine, or nothing.
+ *
+ * A caller's working directory is this host's, and a `-w` of a host path is a
+ * directory the machine does not have. A bind mount is the one thing that
+ * makes the two the same place, so a path a mount covers is rewritten to its
+ * path inside and a path no mount covers has no answer here - the caller falls
+ * back to the machine's own working directory rather than starting somewhere
+ * that only looks right.
+ *
+ * The longest source wins, so a mount nested inside another is not shadowed by
+ * it, and a match is on a path boundary: `/srv/app` does not cover
+ * `/srv/application`.
+ *
+ * One function for every runtime that mounts a host path into a machine, and
+ * none for one that does not: a path on this host is not a path on a box
+ * reached over the network, and an answer here would be a directory that is not
+ * there.
+ */
+export const within = (held: Record<string, unknown>, path: string): string | undefined => {
+  const mounts = Array.isArray(held.Mounts) ? held.Mounts : [];
+  let best: { source: string; target: string } | undefined;
+  for (const mount of mounts) {
+    if (typeof mount !== 'object' || mount === null) continue;
+    const { Source: source, Destination: target } = mount as Record<string, unknown>;
+    if (typeof source !== 'string' || typeof target !== 'string' || source === '' || target === '') continue;
+    if (path !== source && !path.startsWith(source.endsWith('/') ? source : `${source}/`)) continue;
+    if (best === undefined || source.length > best.source.length) best = { source, target };
+  }
+  if (best === undefined) return undefined;
+  const rest = path.slice(best.source.length);
+  if (rest === '') return best.target;
+  return `${best.target.endsWith('/') ? best.target.slice(0, -1) : best.target}${rest}`;
+};
 
 /**
  * A `source:target` mount as the Dev Container CLI's `--mount` takes it.
@@ -1618,6 +1697,14 @@ export const adoptedDevContainer = async (
   return { id, remoteWorkspaceFolder: remote };
 };
 
+/**
+ * How a nested host is started inside a machine, when no profile says otherwise.
+ *
+ * The daemon's own program, in stdio mode, is what serves a session that runs
+ * in a machine - decision `a-nested-host-is-configured-by-the-machine-profile-only`.
+ */
+const DEFAULT_HOST: string[] = ['ahpd'];
+
 export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   /**
    * Run the program and answer what it printed, or throw; `env` gives each `-e
@@ -2108,6 +2195,62 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
     const at = await containerOf(id);
     if (at === undefined) throw new Error(`${id} names a container this host did not make, and no computer is named that`);
     return at;
+  };
+
+  /**
+   * What `docker inspect` says about the machine a caller's id names, or
+   * nothing when there is no such computer here.
+   *
+   * The one reading of a record behind `inspect`, `how` and `hostCommand`, so
+   * the three answer about the same machine: a name that is not this host's is
+   * not there, whichever of them is asked.
+   */
+  const look = async (id: string): Promise<Record<string, unknown> | undefined> => {
+    const at = await containerOf(id);
+    if (at === undefined) return undefined;
+    const held = await ran(options, ['inspect', '--format', '{{json .}}', at]);
+    // A machine that is not there is docker exiting non-zero, which is an
+    // answer rather than a failure: the provider turns it into `-32008`.
+    if (held.code !== 0) return undefined;
+    const parsed = rows(held.stdout)[0];
+    // Docker runs plenty this provider did not make, and none of them is a
+    // computer. Not there and not ours read the same on purpose: a refusal
+    // that named the difference would answer whether a container exists.
+    // An adopted container is ours by its record, not by a label.
+    if (parsed !== undefined && !ours(parsed, options.label) && !adoptedIds().includes(id)) return undefined;
+    return parsed;
+  };
+
+  /**
+   * The `docker` program's own environment, with the values `-e NAME` reads
+   * laid over it.
+   *
+   * The environment a machine is given travels by name, so each value has to be
+   * in the environment `docker` is spawned with or the flag reads nothing -
+   * decision `a-backend-reaches-a-computer-through-a-port`.
+   */
+  const spawnEnvOf = (over: Record<string, string>): Record<string, string> | undefined =>
+    (options.env === undefined && Object.keys(over).length === 0 ? undefined : { ...(options.env ?? {}), ...over });
+
+  /** The `Config` of a record, which is where its working directory and labels are. */
+  const configIn = (found: Record<string, unknown>): Record<string, unknown> =>
+    (typeof found.Config === 'object' && found.Config !== null ? found.Config : {}) as Record<string, unknown>;
+
+  /** Where inside a machine a caller's working directory is, or the machine's own. */
+  const startIn = (found: Record<string, unknown>, asked?: string): string | undefined => {
+    const workdir = configIn(found).WorkingDir;
+    const own = typeof workdir === 'string' && workdir !== '' ? workdir : undefined;
+    // A caller that names a path names one on *this host*, so it is read
+    // through the machine's mounts: covered by one, it is the same place under
+    // another name; covered by none, there is no such directory in there and
+    // the machine's own stands.
+    return (asked === undefined ? undefined : within(found, asked)) ?? own;
+  };
+
+  /** The command that starts a nested host inside a machine, as its recipe says. */
+  const hostFor = (found: Record<string, unknown>): string[] => {
+    const key = profileOf(found);
+    return (key === undefined ? undefined : options.hosts?.[key]) ?? options.host ?? DEFAULT_HOST;
   };
 
   /**
@@ -2737,6 +2880,10 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
   return {
     kind: 'docker',
 
+    // A Docker machine is a container on this host, reached by a `docker exec`
+    // run here: nothing about it is off this host.
+    remote: false,
+
     /*
      * A listing is two calls: `ps` for what is there, then one `inspect` for
      * the labels of exactly those, because a listing prints a label map as one
@@ -2815,26 +2962,78 @@ export function dockerRuntime(options: DockerOptions): ComputerRuntime {
         .filter((one) => one.id !== '');
     },
 
-    inspect: async (id) => {
-      // The name a create gave, when that is what the caller holds: a listing
-      // answers it, so every caller reading a listing back must be able to
-      // hand that answer to anything that inspects.
-      const at = await containerOf(id);
-      // A name that answers to something this host did not make: not there, the
-      // way a name Docker does not have is, and answered without running
-      // anything at all.
-      if (at === undefined) return undefined;
-      const held = await ran(options, ['inspect', '--format', '{{json .}}', at]);
-      // A machine that is not there is docker exiting non-zero, which is an
-      // answer rather than a failure: the provider turns it into `-32008`.
-      if (held.code !== 0) return undefined;
-      const parsed = rows(held.stdout)[0];
-      // Docker runs plenty this provider did not make, and none of them is a
-      // computer. Not there and not ours read the same on purpose: a refusal
-      // that named the difference would answer whether a container exists.
-      // An adopted container is ours by its record, not by a label.
-      if (parsed !== undefined && !ours(parsed, options.label) && !adoptedIds().includes(id)) return undefined;
-      return parsed;
+    // The name a create gave, when that is what the caller holds: a listing
+    // answers it, so every caller reading a listing back must be able to hand
+    // that answer to anything that inspects.
+    inspect: look,
+
+    /*
+     * How a command reaches one of these machines.
+     *
+     * A descriptor rather than a running process: the caller owns the spawn and
+     * its stdio, and this only says what to spawn. The machine's own environment
+     * travels as `-e NAME` flags and the descriptor's `env` is the `docker`
+     * program's own with each value laid over it, so no value is in the argv a
+     * process list shows - decision `a-backend-reaches-a-computer-through-a-port`.
+     */
+    how: async (id, asked) => {
+      const found = await look(id);
+      if (found === undefined) return undefined;
+      const values = asked.env ?? {};
+      const start = startIn(found, asked.cwd);
+      /*
+       * The container Docker knows this machine by, which is not always the name
+       * the caller gave: a dev container carries the name its create gave as a
+       * label and the CLI named it after the folder, so the `docker exec` is
+       * handed the latter - decision
+       * `the-name-a-create-gives-a-dev-container-is-a-label-on-it`.
+       */
+      const at = text(found.Id) === '' ? id : text(found.Id);
+      /*
+       * A dev container is reached the way the CLI reaches it, which is the same
+       * `docker exec` as any other machine with the user and environment its own
+       * definition asks for - decision `a-dev-container-is-reached-by-docker-exec`.
+       */
+      if (devcontainerFolder(found) !== undefined) {
+        // Under the machine id the caller gave, which is what a create and the
+        // relay keep their probe against, not the container id `at` holds.
+        const reached = await reachedDevContainer(options, id, found);
+        const into = execArgv(
+          { ...reached, id: at, ...(start === undefined ? {} : { workdir: start }) },
+          [asked.command, ...(asked.args ?? [])],
+          values,
+        );
+        const devEnv = spawnEnvOf(into.env);
+        return {
+          command: options.command,
+          args: [...(options.args ?? []), ...into.argv],
+          ...(devEnv === undefined ? {} : { env: devEnv }),
+        };
+      }
+      const given = byName(values);
+      const env = spawnEnvOf(given.env);
+      // The user its label names, which a machine with a git directory carries.
+      const user = userLabelOf(labelsOf(found));
+      return {
+        command: options.command,
+        args: [
+          ...(options.args ?? []),
+          'exec', '-i',
+          ...(user === undefined ? [] : ['--user', user]),
+          ...(start === undefined ? [] : ['-w', start]),
+          ...given.flags,
+          at,
+          asked.command,
+          ...(asked.args ?? []),
+        ],
+        ...(env === undefined ? {} : { env }),
+      };
+    },
+
+    /** The command this machine starts its nested host with, as its recipe says. */
+    hostCommand: async (id) => {
+      const found = await look(id);
+      return found === undefined ? undefined : hostFor(found);
     },
 
     /*

@@ -4,7 +4,7 @@ import { isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ComputerPort, ContainerPort, MachineNeed, MachineSource, Owner, Plugin, PluginSpec, SecretRef, SecretWork } from '@ahpd/sdk';
 import { resolveNeeds, secretRef, strings } from '@ahpd/sdk';
-import { cliOf, devContainer, execArgv, hasDefinition, idLabels } from './devcontainer.js';
+import { cliOf, devContainer, hasDefinition, idLabels } from './devcontainer.js';
 import type { CliOptions } from './devcontainer.js';
 import { computerProvider } from './provider.js';
 import { patternOf } from './reference.js';
@@ -13,11 +13,13 @@ import type { VaultRead } from './secrets.js';
 import { manifestOf } from './manifest.js';
 import { ensureParts, readParts, refusedWithout } from './parts.js';
 import type { FolderAnswer, Profile } from './manifest.js';
-import { adoptedDevContainer, byName, claimedOf, devcontainerFolder, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, madeUnderBind, partsHeld, preparedFor, profileOf, reachedDevContainer, roomFor, sessionOf, stateVolumeOf } from './runtime.js';
+import { adoptedDevContainer, claimedOf, disposableOf, dockerRuntime, hostOf, inTurn, isRunning, madeUnderBind, partsHeld, preparedFor, profileOf, roomFor, sessionOf, stateVolumeOf, within } from './runtime.js';
 import type { ComputerRuntime, DockerOptions, MachineSpec } from './runtime.js';
+import { routed } from './router.js';
+import type { Routed } from './router.js';
 import { claimAdopted, claimOwned, forgetOwned, keepMadeNeeds, keepProbe, madeNeedsOf, ownedOf, probeOf } from './owners.js';
 import { computerTools } from './tools.js';
-import { guardFor, hostUser, runsAsHost, userLabelOf } from './gitdir.js';
+import { guardFor, hostUser, runsAsHost } from './gitdir.js';
 import type { GitGuard, SessionTree } from './gitdir.js';
 
 /**
@@ -308,12 +310,58 @@ interface Disposable {
  * nothing behind to read, and a stretch whose owner cannot be named would
  * charge the host for work somebody else made.
  */
-interface Claim {
+export interface Claim {
   /** The owner as the machine carried it, or the host where it carried none. */
   owner: Owner;
   team?: string;
   project?: string;
 }
+
+/** What a stretch of up time is opened and closed by, as `made` does it. */
+export interface StretchBook {
+  /** Begin a machine's stretch, ignoring one already open for it. */
+  open(id: string): void;
+  /** End a machine's stretch and write it, charged for what `claimed` says. */
+  close(id: string, claimed: Claim): Promise<void>;
+}
+
+/**
+ * The up time of a runtime that only lists, read from what its listings see.
+ *
+ * Such a runtime never starts or stops a machine of its own, so there is no
+ * moment of its own to open a stretch at. The only thing that says one of its
+ * machines is up is a listing that found it reachable, and the only thing that
+ * says it went is one that found it unreachable, or a daemon that is stopping -
+ * so a machine that is up between two listings is charged for the time between
+ * them.
+ *
+ * Charged to the host, because a machine on a runtime that only lists is
+ * nobody's: it was not made here, so no owner was recorded for it - decision
+ * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`, read the
+ * other way round.
+ *
+ * Two events rather than one call, because a listing is not the only thing that
+ * knows: a runtime that learns a machine went down from a connection or a
+ * disconnect feeds the same two events, and the rule stays in one place.
+ */
+export const listingMeter = (
+  book: StretchBook,
+  hostName: string,
+): { reachable(id: string): void; unreachable(id: string): Promise<void> } => ({
+  reachable: (id) => { book.open(id); },
+  unreachable: (id) => book.close(id, { owner: `root:${hostName}` }),
+});
+
+/**
+ * Whether a runtime makes machines, from the actions it says it has.
+ *
+ * A runtime that only lists answers no `create`, and it is metered from what a
+ * listing sees rather than from a start and a stop - the one thing about a
+ * runtime the plugin decides for itself, since it is read from the runtime's
+ * own answer.
+ */
+export const makesMachines = (runtime: ComputerRuntime | undefined): boolean =>
+  runtime === undefined || runtime.capabilities().actions.includes('create');
 
 /**
  * The pools a stretch is charged to.
@@ -329,36 +377,6 @@ const poolsOf = (claimed: Claim): string[] => [
     ? []
     : [`project:${claimed.team}:${claimed.project}`]),
 ];
-
-/**
- * Where a path on this host is inside one machine, or nothing.
- *
- * A caller's working directory is this host's, and a `-w` of a host path is a
- * directory the machine does not have. A bind mount is the one thing that
- * makes the two the same place, so a path a mount covers is rewritten to its
- * path inside and a path no mount covers has no answer here - the caller falls
- * back to the machine's own working directory rather than starting somewhere
- * that only looks right.
- *
- * The longest source wins, so a mount nested inside another is not shadowed by
- * it, and a match is on a path boundary: `/srv/app` does not cover
- * `/srv/application`.
- */
-const within = (held: Record<string, unknown>, path: string): string | undefined => {
-  const mounts = Array.isArray(held.Mounts) ? held.Mounts : [];
-  let best: { source: string; target: string } | undefined;
-  for (const mount of mounts) {
-    if (typeof mount !== 'object' || mount === null) continue;
-    const { Source: source, Destination: target } = mount as Record<string, unknown>;
-    if (typeof source !== 'string' || typeof target !== 'string' || source === '' || target === '') continue;
-    if (path !== source && !path.startsWith(source.endsWith('/') ? source : `${source}/`)) continue;
-    if (best === undefined || source.length > best.source.length) best = { source, target };
-  }
-  if (best === undefined) return undefined;
-  const rest = path.slice(best.source.length);
-  if (rest === '') return best.target;
-  return `${best.target.endsWith('/') ? best.target.slice(0, -1) : best.target}${rest}`;
-};
 
 /** The folder a session's own files are under, as the host names it. */
 const ATTACHMENTS = 'attachments';
@@ -381,7 +399,12 @@ const underAttachments = (path: string): boolean => {
 };
 
 export const apply: Plugin['apply'] = (host, options) => {
-  const runtime = options.runtime as 'docker' | undefined ?? defaults.runtime;
+  /*
+   * The runtime a create that names none goes to, which is also what a caller
+   * that knows only one runtime reads: every other value this host serves is
+   * addressed by the id of a machine that is already there.
+   */
+  const runtime = options.runtime as string | undefined ?? defaults.runtime;
   const command = options.command as string | undefined ?? defaults.command;
   const args = options.args as string[] | undefined;
   const env = named(options.env);
@@ -391,6 +414,12 @@ export const apply: Plugin['apply'] = (host, options) => {
   const max = options.max as number | undefined ?? defaults.max;
   const label = options.label as string | undefined ?? defaults.label;
   const prefix = options.prefix as string | undefined ?? defaults.prefix;
+  /*
+   * How a nested host is started in a machine, when the machine's profile says
+   * nothing: the daemon's own program, in stdio mode - decision
+   * `a-nested-host-is-configured-by-the-machine-profile-only`.
+   */
+  const hostDefault = options.host as string[] | undefined ?? defaults.host;
   /*
    * The session setting, which is how a person names the machine a session
    * runs in. Contributed unless the option switches it off, and its default is
@@ -602,9 +631,27 @@ export const apply: Plugin['apply'] = (host, options) => {
     ...(env === undefined ? {} : { env }),
     configDir: host.configDir,
     log: noted,
+    // How a machine starts its nested host, read from the machine's own record
+    // as the profile it names says - decision
+    // `a-nested-host-is-configured-by-the-machine-profile-only`. The profile's
+    // own `host` wins over the plugin's, which is the one thing a profile can
+    // say about it.
+    hosts: Object.fromEntries(Object.entries(profiles ?? {}).map(([key, one]) => [key, one.host])),
+    host: [...hostDefault],
     ...(options.imageMounts === false ? { imageMounts: false } : {}),
   };
   const dockered = dockerRuntime(dockeredOptions);
+
+  /*
+   * The runtimes this host serves, by the value that prefixes a machine's id.
+   *
+   * One entry today, and this map is where a later runtime is added: the plugin
+   * holds one runtime per value, and every road into a machine - the provider,
+   * the tools, `reach` - goes through the router, so nothing outside it knows
+   * how many there are - decision `a-machine-runtime-is-named-for-its-maker`.
+   */
+  const runtimes: Record<string, ComputerRuntime> = { [dockered.kind]: dockered };
+  const computerRouter = routed(runtimes, runtime, { log: noted });
 
   /*
    * Read one need's value when it names a secret.
@@ -646,7 +693,9 @@ export const apply: Plugin['apply'] = (host, options) => {
    * caller has already read it.
    */
   const claimOf = async (id: string, held?: Record<string, unknown>): Promise<Claim> => {
-    const found = held ?? await dockered.inspect(id);
+    // Through the router, so a machine on any runtime this host serves has its
+    // owner read from its own record rather than from Docker's.
+    const found = held ?? await computerRouter.inspect(id);
     const labels = found === undefined ? {} : claimedOf(found);
     const said = labels.owner === undefined ? ownedOf(host.configDir, id, noted) : labels;
     return {
@@ -690,7 +739,7 @@ export const apply: Plugin['apply'] = (host, options) => {
   const namedFor = async (id: string, found?: Record<string, unknown>, provider?: string): Promise<Record<string, string>> => {
     const known = vaulted.get(id);
     if (known !== undefined) return scopedTo(known, provider);
-    const held = found ?? await dockered.inspect(id);
+    const held = found ?? await computerRouter.inspect(id);
     if (held === undefined) return {};
     const key = profileOf(held);
     const profile = key === undefined ? undefined : profiles?.[key];
@@ -743,6 +792,14 @@ export const apply: Plugin['apply'] = (host, options) => {
     }
   };
 
+  /*
+   * The same two ends, for a runtime that has no start and stop of its own.
+   *
+   * A machine on such a runtime is charged to the host, because nobody here
+   * made it and so no owner was recorded for it.
+   */
+  const metered = listingMeter({ open, close }, host.hostName);
+
   /**
    * The runtime, with a stretch around every change of state.
    *
@@ -751,8 +808,8 @@ export const apply: Plugin['apply'] = (host, options) => {
    * writes, the tools a model calls, and the timer that takes a disposable away
    * - and up time is the same however it ended.
    */
-  const made: ComputerRuntime = {
-    ...dockered,
+  const made: Routed = {
+    ...computerRouter,
     run: async (asked: MachineSpec) => {
       /*
        * The parts the machine asks for, built before it is made. One that will
@@ -810,7 +867,9 @@ export const apply: Plugin['apply'] = (host, options) => {
           })),
         };
       }
-      const machine = await dockered.run(spec);
+      // Through the router, which is what spells the id a machine on any
+      // runtime is listed and addressed by.
+      const machine = await computerRouter.run(spec);
       // What the vault gave, which the runtime left off the make: held for
       // every command into the machine from now on, and its references
       // recorded beside the configuration for a daemon started afterwards.
@@ -839,25 +898,25 @@ export const apply: Plugin['apply'] = (host, options) => {
       return machine;
     },
     start: async (id) => {
-      await dockered.start(id);
+      await computerRouter.start(id);
       open(id);
     },
     restart: async (id) => {
       await close(id, await claimOf(id));
-      await dockered.restart(id);
+      await computerRouter.restart(id);
       open(id);
     },
     stop: async (id) => {
-      await dockered.stop(id);
+      await computerRouter.stop(id);
       await close(id, await claimOf(id));
     },
     // A command a tool runs is a command in the machine like any other, so it
     // is given the machine's vault-named variables too, under its own: the
     // calling session's agent's alone, and every agent's for a caller with none.
-    exec: async (id, command, env, provider) => dockered.exec(id, command, { ...await namedFor(id, undefined, provider), ...(env ?? {}) }),
+    exec: async (id, command, env, provider) => computerRouter.exec(id, command, { ...await namedFor(id, undefined, provider), ...(env ?? {}) }),
     remove: async (id) => {
       const claimed = await claimOf(id);
-      await dockered.remove(id);
+      await computerRouter.remove(id);
       vaulted.delete(id);
       // The machine is gone, and so is the record kept beside the config: an
       // entry for an id nothing holds is a claim on a machine that may be made
@@ -867,12 +926,27 @@ export const apply: Plugin['apply'] = (host, options) => {
     },
   };
 
-  // The daemon is stopping, so this is the last moment every machine still up
-  // can say how long it has been. A crash does not get here, and loses the
-  // stretch that was open: a machine up across one is charged nothing until it
-  // is next stopped.
+  /*
+   * The daemon is stopping, so this is the last moment every machine still up
+   * can say how long it has been. A crash does not get here, and loses the
+   * stretch that was open: a machine up across one is charged nothing until it
+   * is next stopped.
+   *
+   * Each stretch is closed on its own, so a runtime that does not answer for
+   * one machine does not keep every other stretch open: a runtime that is down
+   * is exactly the one a daemon is stopping with machines on it, and it is the
+   * one whose record cannot be read to see who pays.
+   */
   host.on('stopping', async () => {
-    for (const id of [...stretches.keys()]) await close(id, await claimOf(id));
+    for (const id of [...stretches.keys()]) {
+      try {
+        await close(id, await claimOf(id));
+      }
+      catch (error) {
+        host.log(`${name}: could not close the up time of ${id}: ${error instanceof Error ? error.message : String(error)}`);
+        stretches.delete(id);
+      }
+    }
   });
 
   /*
@@ -1058,6 +1132,18 @@ export const apply: Plugin['apply'] = (host, options) => {
           : `${name}: left the disposable machine ${one.id} alone; it is another daemon's machine`);
         continue;
       }
+      /*
+       * A runtime that only lists has no start of its own to open a stretch at,
+       * so what a listing sees is the whole of it: one found up has a stretch
+       * from now, and one found down has none. Nothing below is its business
+       * either - a disposable machine is one this daemon made, and this daemon
+       * makes machines only on a runtime that has a `create`.
+       */
+      if (!makesMachines(made.runtimeFor(one.id))) {
+        if (isRunning(one)) metered.reachable(one.id);
+        else await metered.unreachable(one.id);
+        continue;
+      }
       // Up before this daemon was watching, and still up: its stretch starts
       // now, because the stretch a daemon before this one was keeping is one
       // that daemon's to write. A machine that is stopped is not up, and a
@@ -1079,6 +1165,9 @@ export const apply: Plugin['apply'] = (host, options) => {
     image,
     max,
     label,
+    // Every value this host serves, so a body naming one of them is refused for
+    // what it is rather than for not existing.
+    runtimes: Object.keys(runtimes),
     ...(cpus === undefined ? {} : { cpus }),
     ...(memory === undefined ? {} : { memory }),
     ...(mounts === undefined ? {} : { mounts }),
@@ -1165,12 +1254,14 @@ export const apply: Plugin['apply'] = (host, options) => {
    * How a backend reaches one of these machines.
    *
    * A descriptor rather than a running process: the backend owns the spawn and
-   * its stdio, and this only says what to spawn. The machine's own environment
-   * travels as `-e NAME` flags, and the descriptor's `env` is the docker
-   * program's own with each value laid over it, so no value is in the argv a
-   * process list shows - decision `a-backend-reaches-a-computer-through-a-port`.
-   * The machine's vault-named variables are among them, under what the caller
-   * asked for.
+   * its stdio, and this only says what to spawn - decision
+   * `a-backend-reaches-a-computer-through-a-port`. What to spawn is the routed
+   * runtime's own answer, because what reaches a machine is a property of what
+   * made it: a `docker exec` here, an `ssh` there.
+   *
+   * The machine's vault-named variables are laid into what the caller asked
+   * for, under the agent the command runs for, so the runtime that spells them
+   * into its own flags never has to know the vault.
    */
   const reach: ComputerPort['how'] = async (id, asked) => {
     const held = await made.inspect(id);
@@ -1191,86 +1282,28 @@ export const apply: Plugin['apply'] = (host, options) => {
         : `computer://${id} was made with the host's git directory writable, and it is another daemon's machine; make a machine of your own for this session or run it on the host`);
     }
     const values = { ...await namedFor(id, held, asked.provider), ...(asked.env ?? {}) };
-    /** The docker program's own environment, with the values `-e NAME` reads laid over it. */
-    const spawnEnvOf = (over: Record<string, string>): Record<string, string> | undefined =>
-      (env === undefined && Object.keys(over).length === 0 ? undefined : { ...(env ?? {}), ...over });
-    /*
-     * Where in the machine to start.
-     *
-     * A caller that names nowhere gets the machine's own working directory.
-     * A caller that names a path names one on *this host*, so it is read
-     * through the machine's mounts: covered by one, it is the same place
-     * under another name and `-w` takes the inside path; covered by none,
-     * there is no such directory in there and the machine's own stands.
-     */
-    const config = (typeof held.Config === 'object' && held.Config !== null ? held.Config : {}) as Record<string, unknown>;
-    const workdir = typeof config.WorkingDir === 'string' && config.WorkingDir !== '' ? config.WorkingDir : undefined;
-    const start = (asked.cwd === undefined ? undefined : within(held, asked.cwd)) ?? workdir;
-    /*
-     * The container Docker knows this machine by, which is not always the name
-     * the caller gave: a dev container carries the name its create gave as a
-     * label and the CLI named it after the folder, so the `docker exec` is
-     * handed the latter - decision
-     * `the-name-a-create-gives-a-dev-container-is-a-label-on-it`.
-     */
-    const at = typeof held.Id === 'string' && held.Id !== '' ? held.Id : id;
-    /*
-     * A dev container is reached the way the CLI reaches it, which is the same
-     * `docker exec` as any other machine with the user and environment its own
-     * definition asks for - decision `a-dev-container-is-reached-by-docker-exec`.
-     */
-    if (devcontainerFolder(held) !== undefined) {
-      // Under the machine id the caller gave, which is what a create and the
-      // relay keep their probe against, not the container id `held.Id` holds.
-      const reached = await reachedDevContainer(dockeredOptions, id, held);
-      const into = execArgv({ ...reached, id: at, ...(start === undefined ? {} : { workdir: start }) }, [asked.command, ...(asked.args ?? [])], values);
-      const spawnEnv = spawnEnvOf(into.env);
-      return {
-        command,
-        args: [...(args ?? []), ...into.argv],
-        ...(spawnEnv === undefined ? {} : { env: spawnEnv }),
-      };
-    }
-    const given = byName(values);
-    const spawnEnv = spawnEnvOf(given.env);
-    // The user its label names, which a machine with a git directory carries.
-    const user = userLabelOf((typeof config.Labels === 'object' && config.Labels !== null ? config.Labels : {}) as Record<string, unknown>);
-    return {
-      command,
-      args: [
-        ...(args ?? []),
-        'exec', '-i',
-        ...(user === undefined ? [] : ['--user', user]),
-        ...(start === undefined ? [] : ['-w', start]),
-        ...given.flags,
-        at,
-        asked.command,
-        ...(asked.args ?? []),
-      ],
-      ...(spawnEnv === undefined ? {} : { env: spawnEnv }),
-    };
+    return made.how(id, { ...asked, env: values });
   };
 
   /*
    * A whole host inside a machine, in stdio mode.
    *
    * What a backend that cannot move its own process asks for: the machine's
-   * profile says how its host is started (`host`, default `ahpd`), and this
-   * runs `<host> --stdio --plugin <each>` by the same `how` a backend's own
-   * command takes - so a dev container is reached through its CLI and an
-   * image through Docker without either being spelled twice. The profile is
-   * read back from the machine's own label, so a machine found by a daemon
-   * that did not make it still starts its own host - decision
+   * own recipe says how its host is started, and this runs
+   * `<host> --stdio --plugin <each>` by the same `how` a backend's own command
+   * takes - so a dev container is reached through its CLI, an image through
+   * Docker, and a box over ssh, without any of them being spelled twice. The
+   * recipe is read back from the machine, so a machine found by a daemon that
+   * did not make it still starts its own host - decision
    * `a-cofold-session-in-a-computer-runs-in-a-nested-host`.
    */
   const nestedHost: NonNullable<ComputerPort['nested']> = async (id, asked) => {
     const held = await made.inspect(id);
     if (held === undefined) return undefined;
-    const key = profileOf(held);
-    const host = (key === undefined ? undefined : profiles?.[key]?.host) ?? defaults.host;
+    const host = await made.hostCommand(id) ?? hostDefault;
     const [program, ...before] = host;
     const spawn = await reach(id, {
-      command: program ?? defaults.host[0],
+      command: program ?? hostDefault[0],
       // One `--plugin` per spec, which is how the daemon's own flag repeats.
       args: [...before, '--stdio', ...asked.plugins.flatMap((plugin) => ['--plugin', plugin])],
       ...(asked.cwd === undefined ? {} : { cwd: asked.cwd }),
@@ -1498,6 +1531,7 @@ export const apply: Plugin['apply'] = (host, options) => {
         const values = await revealed(withDefaults(needValues, [asked.provider], forSession), [asked.provider], forSession, work, secret);
         const spec = manifestOf(id, { data: JSON.stringify({}), encoding: 'utf-8' }, {
           runtime,
+          runtimes: Object.keys(runtimes),
           image,
           ...(cpus === undefined ? {} : { cpus }),
           ...(memory === undefined ? {} : { memory }),
@@ -1601,6 +1635,7 @@ export const apply: Plugin['apply'] = (host, options) => {
       const id = `${prefix}-${randomUUID().slice(0, 8)}`;
       const spec = manifestOf(id, { data: JSON.stringify({ profile: key }), encoding: 'utf-8' }, {
         runtime,
+        runtimes: Object.keys(runtimes),
         image,
         ...(cpus === undefined ? {} : { cpus }),
         ...(memory === undefined ? {} : { memory }),

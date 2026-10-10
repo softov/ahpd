@@ -1,6 +1,6 @@
 ---
 title: A fake ssh runs the remote command on this host, so the tests need no box
-status: todo
+status: done
 depends: [task-01-several-runtimes-on-one-host.md]
 layer: "computer"
 refs:
@@ -29,3 +29,10 @@ refs:
 - `pnpm --filter @ahpd/computer test` passes with no network and no `ssh` installed.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/1676a492`; tasks 02 and 03 add their cases to the same test file.
+- `fixtures/ssh.mjs` reads ssh's flags, appends each call as one JSON line to `SSH_FAKE_LOG`, refuses a destination in `SSH_FAKE_UNREACHABLE` with ssh's own sentence and exit 255, and runs the remote string with `sh -c`.
+- `computer-ssh.test.ts` covers the recorded argv, a remote string kept whole for the shell, the refusal and its exit code, one line per overlapping call, and a call with no destination.
+- `npx vitest run packages/computer/test/computer-ssh.test.ts` passes; nothing there opens a socket or needs `ssh`.
+- The end-to-end case waits for task 03, which starts `container-host.mjs` as the remote `ahpd`.
+- Task 02's `stats` case needs fixed `/proc` text, which this fixture does not answer yet: its `sh -c` reads this host's own `/proc`.

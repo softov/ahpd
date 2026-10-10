@@ -3,9 +3,11 @@ export { computerProvider } from './provider.js';
 export type { ComputerProvider, ProviderOptions } from './provider.js';
 export { cliOf, devContainer, DEVCONTAINER_FOLDER, hasDefinition, idLabels, parseUp, runCli } from './devcontainer.js';
 export type { Cli, CliOptions, DevContainerOptions } from './devcontainer.js';
-export { devcontainerFolder, dockerRuntime, disposableOf, preparedFor } from './runtime.js';
+export { devcontainerFolder, dockerRuntime, disposableOf, preparedFor, within } from './runtime.js';
 export type {
   CommandOptions, ComputerRuntime, DockerOptions, ExecResult, Machine, MachineSpec, RuntimeCapabilities,
 } from './runtime.js';
+export { BARE, parseMachineId, routed, spellMachineId } from './router.js';
+export type { Routed, RoutedOptions } from './router.js';
 export { computerTools } from './tools.js';
 export type { ToolOptions } from './tools.js';

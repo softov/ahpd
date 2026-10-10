@@ -50,6 +50,11 @@ const fake = () => {
   const calls: string[] = [];
   const runtime: ComputerRuntime = {
     kind: 'docker',
+    // Machines on this host's own Docker, and nothing here asks how a program
+    // is run inside one: the provider and the tools go through `exec`.
+    remote: false,
+    how: async () => undefined,
+    hostCommand: async () => undefined,
     list: async () => [...held.values()].map((one) => ({
       id: String(one.name), image: String(one.image), status: 'Up', created: String(one.Created),
     })),

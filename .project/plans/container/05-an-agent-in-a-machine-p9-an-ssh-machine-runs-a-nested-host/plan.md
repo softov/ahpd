@@ -1,7 +1,7 @@
 ---
 title: An ssh machine runs a nested host
 domain: container
-status: planned
+status: active
 priority: medium
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -118,6 +118,9 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 | For now an ssh machine is owned by the host (`root:<host>`), and its up time is metered: a stretch opens when a listing sees it reachable and closes when one sees it unreachable or the daemon stops | Softov, 2026-10-03, asked "who owns an ssh machine, and is its up time metered?": "host-owned, and metered" | 01, 02 |
 | For now ahpd is installed on the box by hand, at this host's version; the copy from p5's ahpd part waits for p5 and goes to p11's template or a later plan | Softov, 2026-10-03, asked "how does ahpd get onto the box?": "installed by hand for now" | 06 |
 | For now `how` writes non-secret variables inline, a secret env need (one whose value is named from the vault) is refused for an ssh machine, and p12's per-session token is the one credential that travels | Softov, 2026-10-03, asked "how does a value reach an ssh machine without sitting in a process list?": "as proposed" | 03 |
+| A name on the local Docker runtime holds no dot, so every id parses one way and no stored bare id changes | Softov, 2026-10-10, asked "How should a local docker machine's id be spelled?": "Bare, refuse dots" | 01 |
+| Each runtime answers `state()`, `agents()` and `owner()`, and the plugin stops reading Docker's `inspect` record; Docker answers them from its record | Softov, 2026-10-10, asked "How should an ssh machine answer?" about callers that read `inspect` in Docker's shape: "Typed runtime methods" | 02 |
+| The ssh runtime takes a `pollSeconds` option: unset, only a listing moves the meter; set, a timer checks each machine over ssh at that interval | Softov, 2026-10-10, asked "How should an ssh machine's up time be metered?": "Configurable, off by default" | 02 |
 
 ## Proposed architecture
 
@@ -133,10 +136,10 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The plugin serves several runtimes, and an id says which](task-01-several-runtimes-on-one-host.md) | todo | - |
+| [01 - The plugin serves several runtimes, and an id says which](task-01-several-runtimes-on-one-host.md) | done | - |
 | [02 - An ssh machine is listed from the options and answers over ssh](task-02-an-ssh-machine-is-listed-from-the-options.md) | todo | 01, 04 |
 | [03 - A session on an ssh machine runs nested over ssh](task-03-a-session-on-an-ssh-machine-runs-nested.md) | todo | 02, container 04 task 17 |
-| [04 - The ssh fixture and the tests](task-04-the-ssh-fixture-and-tests.md) | todo | 01 |
+| [04 - The ssh fixture and the tests](task-04-the-ssh-fixture-and-tests.md) | done | 01 |
 | [05 - A restart of this host leaves a nested session to resume](task-05-a-restart-leaves-a-nested-session-to-resume.md) | todo | 03 |
 | [06 - dev86, set up by hand, runs a session](task-06-dev86-runs-a-session.md) | todo | 04 |
 | [07 - Docs](task-07-docs.md) | todo | 06 |
@@ -150,11 +153,9 @@ session computer://ssh.dev86 -> port.remote(id) -> nested for every backend
 
 ## Resume state
 
-- **Done so far:** nothing; planned 2026-10-02.
-- **Next action:** [task-01-several-runtimes-on-one-host.md](task-01-several-runtimes-on-one-host.md), then task 04's fixture, then 02.
-- **Open question (ask before task 02):** callers read a machine's `inspect` record in Docker's shape (`State.Running` in `provider.ts:179`, `Config.Labels` in `runtime.ts:457`, `Config.WorkingDir`, `HostConfig`) - (a) the ssh and node runtimes answer `inspect` with a Docker-shaped record, or (b) the runtime gains `state()`, `agents()` and `owner()`, and the plugin stops parsing the record?
-- **Open question (ask before task 02):** an ssh machine's up time is metered from what a listing sees, so a box that goes down between listings is charged until the next one - (a) poll each listing runtime on an interval (which interval?), or (b) accept coarse metering driven by listings?
-- **Watch out for:** `ssh:dev86` is not a usable id, because `new URL('computer://ssh:dev86')` reads the colon as a port, so the separator is a dot; a policy matches a runtime with `computer: ["ssh.*"]`; a docker name that starts with a served runtime value and a dot is refused at create; p8, p10 and p11 spell their ids through task 01's functions; container/04 tasks 11 (resume by id), 14 (the inner working directory), 15 (close waits for dispose) and 17 (a backend names its plugin) must land first, or a nested session on the box starts in a path the box does not have and never resumes; container/04 task 15 makes close wait for `disposeSession`, which task 05 here must not undo for a session that is ending because this host is stopping; claude/15 loads a plugin once with presets as variants, so the box's ahpd needs the same plugin options to serve a preset.
+- **Done so far:** tasks 01 and 04, reviewed 2026-10-10; 02, 03, 05 and 07 are todo, and 06 is a run by hand on dev86; container 04 task 17, which 03 needs, is done.
+- **Next action:** [task-02-an-ssh-machine-is-listed-from-the-options.md](task-02-an-ssh-machine-is-listed-from-the-options.md), then 03, then 05, then 06 by hand, then 07.
+- **Watch out for:** `ssh:dev86` is not a usable id, because `new URL('computer://ssh:dev86')` reads the colon as a port, so the separator is a dot; a policy matches a runtime with `computer: ["ssh.*"]`; a local docker name that holds a dot is refused at create; p8, p10 and p11 spell their ids through task 01's functions; container/04 tasks 11 (resume by id), 14 (the inner working directory), 15 (close waits for dispose) and 17 (a backend names its plugin) must land first, or a nested session on the box starts in a path the box does not have and never resumes; container/04 task 15 makes close wait for `disposeSession`, which task 05 here must not undo for a session that is ending because this host is stopping; claude/15 loads a plugin once with presets as variants, so the box's ahpd needs the same plugin options to serve a preset.
 
 ## Final verification checklist
 

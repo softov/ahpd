@@ -213,8 +213,21 @@ export interface Profile {
 
 /** What the provider holds, and what a manifest may leave out. */
 export interface ManifestDefaults {
-  /** The runtime this provider is, which the body must agree with when it says one. */
+  /**
+   * The runtime this provider makes machines on, which is what a body's
+   * `runtime` defaults to.
+   */
   runtime: string;
+  /**
+   * Every runtime this host serves, of which `runtime` is the one that makes
+   * machines.
+   *
+   * Absent where a host serves one. A body may name `runtime` and no other, but
+   * a value this host does serve is refused for a different reason than one it
+   * does not, and a sentence that said "this host runs docker" to an operator
+   * who listed a box over ssh would be wrong about their own configuration.
+   */
+  runtimes?: string[];
   image: string;
   cpus?: string;
   memory?: string;
@@ -787,9 +800,20 @@ const devcontainerOf = (
 export const manifestOf = (name: string, content: Write, defaults: ManifestDefaults): Omit<MachineSpec, 'label'> => {
   const held = bodyOf(content);
 
+  /*
+   * A body's `runtime` is the value a create goes to, so what it may name is
+   * what this host makes machines on. Any other value this host serves is a
+   * runtime that only lists - a box somebody set up by hand, which a body made
+   * here would be a second, empty version of - and a value this host does not
+   * serve at all is named with the ones it does.
+   */
+  const served = defaults.runtimes ?? [defaults.runtime];
   const runtime = said(held, 'runtime') ?? defaults.runtime;
+  if (!served.includes(runtime)) {
+    throw new RpcError(-32602, `${runtime} is not a runtime this host serves; it serves ${served.join(', ')}`);
+  }
   if (runtime !== defaults.runtime) {
-    throw new RpcError(-32602, `This host runs ${defaults.runtime}, and that body asks for ${runtime}`);
+    throw new RpcError(-32602, `A machine is not made on ${runtime} here; this host makes machines on ${defaults.runtime}, and ${runtime} is one it only lists`);
   }
 
   /*
