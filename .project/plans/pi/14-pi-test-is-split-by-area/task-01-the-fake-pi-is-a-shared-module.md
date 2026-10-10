@@ -1,6 +1,6 @@
 ---
 title: The fake pi is a module the suites share
-status: implemented
+status: done
 depends: []
 layer: "agent-pi tests"
 refs:

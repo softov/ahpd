@@ -1,6 +1,6 @@
 ---
 title: The agent a turn runs on is one file
-status: implemented
+status: done
 depends: [task-01-the-session-state-is-one-context.md]
 layer: "agent-cofold"
 refs:

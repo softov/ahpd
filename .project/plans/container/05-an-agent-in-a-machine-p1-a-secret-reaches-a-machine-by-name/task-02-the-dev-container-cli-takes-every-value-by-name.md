@@ -1,6 +1,6 @@
 ---
 title: A vault-named value reaches a dev container on each docker exec, by name
-status: implemented
+status: done
 depends: [task-01-docker-takes-every-value-by-name.md]
 layer: "computer"
 refs:

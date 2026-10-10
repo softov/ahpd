@@ -84,12 +84,12 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The SDK has a part need](task-01-the-sdk-has-a-part-need.md) | implemented | - |
-| [02 - A machine is made with its parts](task-02-a-machine-is-made-with-its-parts.md) | implemented | 01 |
-| [03 - Docker mounts a part from its image](task-03-docker-mounts-a-part-from-its-image.md) | implemented | 02 |
-| [04 - A volume is the fallback](task-04-a-volume-is-the-fallback.md) | implemented | 03 |
-| [05 - A dev container gets its parts as a Docker machine does](task-05-a-dev-container-gets-its-parts-by-volume.md) | implemented | 04 |
-| [06 - Docs](task-06-docs.md) | implemented | 05 |
+| [01 - The SDK has a part need](task-01-the-sdk-has-a-part-need.md) | done | - |
+| [02 - A machine is made with its parts](task-02-a-machine-is-made-with-its-parts.md) | done | 01 |
+| [03 - Docker mounts a part from its image](task-03-docker-mounts-a-part-from-its-image.md) | done | 02 |
+| [04 - A volume is the fallback](task-04-a-volume-is-the-fallback.md) | done | 03 |
+| [05 - A dev container gets its parts as a Docker machine does](task-05-a-dev-container-gets-its-parts-by-volume.md) | done | 04 |
+| [06 - Docs](task-06-docs.md) | done | 05 |
 
 ## Risks and tradeoffs
 
@@ -98,12 +98,11 @@ agent.machine() { codex: { part: 'codex' } } + profile.parts
 
 ## Resume state
 
-- **Done so far:** every task built on 2caabb1, 2026-10-05, and each is `implemented`; see [implemented.md](implemented.md). The image and volume routes were run against Docker 29.6.2 and `@devcontainers/cli` 0.89.0 through the built runtime. A machine made for one session is refused at create when that session's part fails to build, as the answer table says, decided in `refusedWithout`.
-- **Next action:** Softov's review of the six tasks, and the by-hand lines of the checklist below.
+- **Done so far:** every task built on 2caabb1, 2026-10-05, and each is `done`; see [implemented.md](implemented.md). The image and volume routes were run against Docker 29.6.2 and `@devcontainers/cli` 0.89.0 through the built runtime. A machine made for one session is refused at create when that session's part fails to build, as the answer table says, decided in `refusedWithout`.
+- **Next action:** the by-hand checklist items only. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `cecc459`.
 - **Open questions:** none; the session-time question is answered in the table above (Softov, 2026-10-05).
 - **Watch out for:**
   - plugin 15's task 09 checks every mount target at create; a part's target joins that check.
-  - Task 05 waits for container/03's switch to `docker exec` (its tasks 17 and 18) and its override configuration (task 09).
 
 ## Final verification checklist
 

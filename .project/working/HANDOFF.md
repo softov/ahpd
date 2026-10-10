@@ -9,21 +9,29 @@ Current progress and pending items only, as of 2026-10-10.
 
 ## Main
 
-- `main` is at `d1d950b`, pushed, and CI is green (run 38066810517, 3m29s).
-- The version is still 0.10.0, with 114 commits since the `v0.10.0` tag. The bump and the tag are Softov's.
+- `main` is at `5f4c87a`, one commit ahead of `origin/main` (this handoff). `d1d950b` is pushed and CI is green (run 38066810517, 3m29s).
+- The version is still 0.10.0, with 115 commits since the `v0.10.0` tag. The bump and the tag are Softov's.
+- The review of 2026-10-10 found four release blockers:
+  - `bot` and `push` are not in `PUBLISHED` in `release.yml`.
+  - The plugins' `sdk` peer range is `>=0.10`.
+  - `packages/push` has no LICENSE.
+  - The decision `the-whole-workspace-is-published` still says eight packages.
 - CI runs `test:unit` in the `check` job and `test:processes` in the `processes` job. If `processes` nears its 300 s limit, the next file to move out is `computer-git-fetch`.
 
 ## Build worktrees
 
 | Worktree | Branch head | State |
 |---|---|---|
-| `build-agents-f8d0dae8` | `cfb1224` | [plugin/18](../plans/plugin/18-the-acp-bridge-resumes-forks-and-asks/plan.md) tasks 01-04 implemented, not reviewed. Three forks wait for Softov: cancel and decline are the same to a backend, an unknown form field is asked as text, `resumable()` reads only `loadSession`. |
-| `build-agents-428b7b46` | `653adc5` | Uncommitted edits to the [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) plan files (33 files). plugin/40 is built on main. Check whether the edits are wanted, then remove the worktree. |
-| `build-agents-cofold-uptake` | `c50d5bc` | Parked. Removing it is Softov's call. |
+| `build-agents-f8d0dae8` | `cfb1224` | [plugin/18](../plans/plugin/18-the-acp-bridge-resumes-forks-and-asks/plan.md) tasks 01-04 implemented, reviewed 2026-10-10. The fork reopen bug is fixed there, uncommitted, with a test. Three forks wait for Softov: cancel and decline are the same to a backend, an unknown form field is asked as text, `resumable()` reads only `loadSession`. Before the commit, revert the regenerated `wire.jsonl`; expect a rebase conflict with `ab763e4`. |
+
+The `build-agents-428b7b46` and `build-agents-cofold-uptake` worktrees and their branches are removed.
 
 ## Plans to close
 
-- Many task files carry `status: implemented` under plans that the index lists as built. Each one needs a review and `done`, or the plan stays open.
+- 57 task files under 13 built plans were reviewed against `main` on 2026-10-10 and are `done`.
+- Two tasks stay `implemented` and wait for Softov:
+  - [host/46 task 01](../plans/host/46-built-in-surfaces-are-advertised-for-role-control/plan.md): holding the session group does not cover the chat group.
+  - [host/52 task 05](../plans/host/52-deleting-a-session-deletes-the-backends-copy/plan.md): waits on Softov.
 - `active` without `implemented.md`: [daemon/13](../plans/daemon/13-ahpd-restart/plan.md), [host/56](../plans/host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md), [container/02](../plans/container/02-vscode-offers-our-dev-container/plan.md), [container/05 p9](../plans/container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md).
 
 ## Reviews

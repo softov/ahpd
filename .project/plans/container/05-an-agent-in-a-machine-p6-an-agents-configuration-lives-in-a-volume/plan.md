@@ -90,11 +90,11 @@ profile.stateScope = 'owner' (default) | 'shared'
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The SDK has a state need, and a need may belong to one mode](task-01-the-sdk-has-a-state-need.md) | implemented | - |
-| [02 - A profile picks the mode, and a machine gets its state volumes](task-02-a-machine-gets-its-state-volumes.md) | implemented | 01 |
-| [03 - A state volume is seeded when its seed changed](task-03-a-state-volume-is-seeded.md) | implemented | 02 |
-| [04 - Docs](task-04-docs.md) | implemented | 03, 05 |
-| [05 - Two identical needs collapse to one](task-05-identical-needs-collapse-to-one.md) | implemented | - |
+| [01 - The SDK has a state need, and a need may belong to one mode](task-01-the-sdk-has-a-state-need.md) | done | - |
+| [02 - A profile picks the mode, and a machine gets its state volumes](task-02-a-machine-gets-its-state-volumes.md) | done | 01 |
+| [03 - A state volume is seeded when its seed changed](task-03-a-state-volume-is-seeded.md) | done | 02 |
+| [04 - Docs](task-04-docs.md) | done | 03, 05 |
+| [05 - Two identical needs collapse to one](task-05-identical-needs-collapse-to-one.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -104,12 +104,12 @@ profile.stateScope = 'owner' (default) | 'shared'
 
 ## Resume state
 
-- **Done so far:** every task built on cecc459, 2026-10-05, in the order 05, 01, 02, 03, 04, and each is `implemented`; see [implemented.md](implemented.md).
-- **Next action:** Softov's review of the five tasks, and the by-hand lines of the checklist below against a real Docker.
-- **Open questions:** listed in [implemented.md](implemented.md#open-questions).
+- **Done so far:** every task built on cecc459, 2026-10-05, in the order 05, 01, 02, 03, 04, and each is `done`; see [implemented.md](implemented.md).
+- **Next action:** the by-hand checklist items only. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `7cd7117`.
+- **Open questions:** none.
 - **Watch out for:**
   - plugin 16's disposable profile is the profile name for its volumes, so two disposable machines of one owner and profile, or of one shared profile, share state by design.
-  - A volume is named by provider, so the built-in Claude and an OpenRouter variant of one profile and owner get `ahpd-state-<profile>-<owner>-claude` and `ahpd-state-<profile>-<owner>-claude-openrouter`; the state need carries the provider it came from, so the computer can name it.
+  - A volume is named by provider. For one profile and owner, the built-in Claude gets `ahpd-state-<profile>-<owner>-claude-<hash>`. An OpenRouter variant gets `ahpd-state-<profile>-<owner>-claude-openrouter-<hash>`. The state need carries its provider, so the computer can name the volume.
 
 ## Final verification checklist
 
@@ -119,4 +119,4 @@ profile.stateScope = 'owner' (default) | 'shared'
 - [ ] `state: "host"` makes exactly today's machine.
 - [ ] A profile naming the built-in Claude and a Claude variant makes one machine with two state volumes at `/ahpd/claude` and `/ahpd/<variant>`, and two differing needs at one target are still refused.
 - [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green.
-- [ ] `docs/COMPUTER.md`, `plans/index.md` updated.
+- [x] `docs/COMPUTER.md`, `plans/index.md` updated.

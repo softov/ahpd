@@ -1,6 +1,6 @@
 ---
 title: The fake SDK and the shared helpers are modules of their own
-status: implemented
+status: done
 depends: []
 layer: "sdk test"
 refs:

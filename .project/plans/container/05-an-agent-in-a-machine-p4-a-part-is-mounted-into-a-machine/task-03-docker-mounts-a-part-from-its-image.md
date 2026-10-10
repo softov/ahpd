@@ -1,6 +1,6 @@
 ---
 title: Docker mounts a part from its image
-status: implemented
+status: done
 depends: [task-02-a-machine-is-made-with-its-parts.md]
 layer: "computer"
 refs:

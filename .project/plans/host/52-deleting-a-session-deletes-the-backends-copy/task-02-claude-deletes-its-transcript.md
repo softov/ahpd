@@ -1,6 +1,6 @@
 ---
 title: Claude deletes its transcript
-status: implemented
+status: done
 depends: [task-01-the-host-deletes-through-the-agent.md]
 layer: "agent-claude"
 refs:

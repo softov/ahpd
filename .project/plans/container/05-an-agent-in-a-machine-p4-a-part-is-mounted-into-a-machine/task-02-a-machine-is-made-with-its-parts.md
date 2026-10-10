@@ -1,6 +1,6 @@
 ---
 title: A machine is made with its parts
-status: implemented
+status: done
 depends: [task-01-the-sdk-has-a-part-need.md]
 layer: "computer"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The query and the MCP servers are files of their own
-status: implemented
+status: done
 depends: [task-06-asking.md]
 layer: "agent-claude"
 refs:

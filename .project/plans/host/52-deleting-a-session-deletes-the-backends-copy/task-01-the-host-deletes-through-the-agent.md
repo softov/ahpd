@@ -1,6 +1,6 @@
 ---
 title: The host deletes a session through its agent, held or listed
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

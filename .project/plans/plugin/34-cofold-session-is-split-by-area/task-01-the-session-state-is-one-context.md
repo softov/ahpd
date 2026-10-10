@@ -1,6 +1,6 @@
 ---
 title: The session's mutable state is one context
-status: implemented
+status: done
 depends: []
 layer: "agent-cofold"
 refs:

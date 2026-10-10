@@ -1,6 +1,6 @@
 ---
 title: Session config and what the harness offers are test files of their own
-status: implemented
+status: done
 depends: [task-03-turn-and-input.md]
 layer: "sdk test"
 refs:

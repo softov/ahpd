@@ -99,9 +99,9 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - Operations and their groups are one table, and a grant names either](task-01-operations-and-groups-are-one-table.md) | implemented | - |
-| [02 - Every gated method and client action needs one operation](task-02-every-method-and-action-needs-one-operation.md) | implemented | 01 |
-| [03 - The host advertises its subjects in `ahpd.grants`](task-03-the-host-advertises-its-subjects.md) | implemented | 01 |
-| [04 - Roles and the docs speak in operations](task-04-roles-and-docs-speak-in-operations.md) | implemented | 02, 03 |
+| [02 - Every gated method and client action needs one operation](task-02-every-method-and-action-needs-one-operation.md) | done | 01 |
+| [03 - The host advertises its subjects in `ahpd.grants`](task-03-the-host-advertises-its-subjects.md) | done | 01 |
+| [04 - Roles and the docs speak in operations](task-04-roles-and-docs-speak-in-operations.md) | done | 02, 03 |
 
 ## Risks and tradeoffs
 
@@ -113,7 +113,7 @@ initialize / root state -> _meta['ahpd.resourceProviders'] (schemes only)
 ## Resume state
 
 - **Done so far:** built 2026-10-04 in `6795e9b`; see [implemented.md](implemented.md).
-- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Next action:** Softov decides task 01: `groupOf('chat', 'write')` gives a chat group no cover through the session group, so a `session:write` holder may not grant `chat:write`. Tasks 02-04 were reviewed against main on 2026-10-10 and are `done`.
 - **Open questions:** none; Softov's answers of 2026-10-04 are in the table above.
 - **Watch out for:** ahpapp must read `put` where it read `write` in `ahpd.resourceProviders` before the client-visible rename is relied on.
 

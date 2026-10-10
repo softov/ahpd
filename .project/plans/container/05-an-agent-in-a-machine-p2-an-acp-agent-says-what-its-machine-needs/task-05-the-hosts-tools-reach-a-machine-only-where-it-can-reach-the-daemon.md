@@ -1,6 +1,6 @@
 ---
 title: The host's tools are offered to a session in a machine only where the machine can reach the daemon
-status: implemented
+status: done
 depends: []
 layer: "agent-acp"
 refs:

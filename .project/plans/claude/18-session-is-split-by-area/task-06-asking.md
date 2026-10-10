@@ -1,6 +1,6 @@
 ---
 title: Asking a person is a file of its own
-status: implemented
+status: done
 depends: [task-05-stream.md]
 layer: "agent-claude"
 refs:

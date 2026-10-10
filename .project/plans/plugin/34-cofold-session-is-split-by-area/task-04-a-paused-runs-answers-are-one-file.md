@@ -1,6 +1,6 @@
 ---
 title: A paused run's answers and stops are one file
-status: implemented
+status: done
 depends: [task-03-reading-a-run-is-one-file.md]
 layer: "agent-cofold"
 refs:

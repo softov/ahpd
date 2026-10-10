@@ -1,6 +1,6 @@
 ---
 title: Tools and terminals are test files of their own
-status: implemented
+status: done
 depends: [task-04-session-config-and-harness.md]
 layer: "sdk test"
 refs:

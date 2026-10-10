@@ -1,6 +1,6 @@
 ---
 title: A need value in the computer plugin's options answers set
-status: implemented
+status: done
 depends: []
 layer: "computer"
 refs:

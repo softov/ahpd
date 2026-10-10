@@ -1,6 +1,6 @@
 ---
 title: The SDK has a state need, and a need may belong to one mode
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

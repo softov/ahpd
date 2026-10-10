@@ -1,6 +1,6 @@
 ---
 title: The command gate and the dispatch gate are files of their own
-status: implemented
+status: done
 depends: [task-01-the-helpers-and-the-table-tests.md]
 layer: "sdk test"
 refs:

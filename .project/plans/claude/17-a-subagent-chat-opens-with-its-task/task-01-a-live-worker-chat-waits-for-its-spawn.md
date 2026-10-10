@@ -1,6 +1,6 @@
 ---
 title: A live worker chat opens once its spawn is known, titled by its task
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

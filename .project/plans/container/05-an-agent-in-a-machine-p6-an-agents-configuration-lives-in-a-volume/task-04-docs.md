@@ -1,6 +1,6 @@
 ---
 title: The docs say where an agent's configuration lives
-status: implemented
+status: done
 depends: [task-03-a-state-volume-is-seeded.md, task-05-identical-needs-collapse-to-one.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Names, snapshots and GitHub are test files of their own, and host.test.ts is gone
-status: implemented
+status: done
 depends: [task-06-files-and-chats.md]
 layer: "sdk test"
 refs:

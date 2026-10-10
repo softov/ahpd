@@ -75,8 +75,8 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahpd.grants holds every scheme](task-01-ahpd-grants-holds-every-scheme.md) | implemented | - |
-| [02 - The docs read one key](task-02-the-docs-read-one-key.md) | implemented | 01 |
+| [01 - ahpd.grants holds every scheme](task-01-ahpd-grants-holds-every-scheme.md) | done | - |
+| [02 - The docs read one key](task-02-the-docs-read-one-key.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -85,8 +85,8 @@ resourceProviders (users directory, plugins) -> advertisedGrants -> initialize _
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, implemented 2026-10-04 and uncommitted in `build/agents/9e279e09`: `schemeOperations` at module scope in `root.ts` with `advertisedSchemes` and the new `schemeGrants` both reading it, `advertisedGrants` the eight of `OPERATIONS` plus one entry per registered scheme, and the descriptions passed through with the `chat` and `file` suffixes removed.
-- **Next action:** Softov's review; see [implemented.md](implemented.md).
+- **Done so far:** tasks 01 and 02, built 2026-10-04 and merged in `3025b42`. `schemeOperations` is at module scope in `root.ts`, and `advertisedSchemes` and the new `schemeGrants` both read it. `advertisedGrants` holds the eight of `OPERATIONS` plus one entry per registered scheme. The descriptions pass through without the `chat` and `file` suffixes.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `3025b42`.
 - **Open questions:** none.
 - **Watch out for:** ahpapp's people/01 role editor reads this key; tell its session the schemes moved in once this lands. `docs/COMPUTER.md` was changed as well as the two files task 02 names, because it sent a client to the `file` entry for a scheme's groups too.
 

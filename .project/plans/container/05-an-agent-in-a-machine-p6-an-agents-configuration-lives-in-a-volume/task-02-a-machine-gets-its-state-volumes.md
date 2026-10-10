@@ -1,6 +1,6 @@
 ---
 title: A profile picks the mode, and a machine gets its state volumes
-status: implemented
+status: done
 depends: [task-01-the-sdk-has-a-state-need.md]
 layer: "computer"
 refs:

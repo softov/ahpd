@@ -1,6 +1,6 @@
 ---
 title: A restored worker chat takes the same title
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

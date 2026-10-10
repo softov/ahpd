@@ -1,6 +1,6 @@
 ---
 title: pi, cofold and ACP delete their own copy
-status: implemented
+status: done
 depends: [task-01-the-host-deletes-through-the-agent.md]
 layer: "agents"
 refs:

@@ -98,14 +98,14 @@ Estimated at 330 lines, from 4,234.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The shared helpers and the customization list are files of their own](task-01-common-and-customizations.md) | implemented | - |
-| [02 - The context, the session config and the client tools are files of their own](task-02-context-config-and-client-tools.md) | implemented | 01 |
-| [03 - What a turn holds is a file of its own](task-03-turn-parts.md) | implemented | 02 |
-| [04 - Subagents and their chats are a file of their own](task-04-workers.md) | implemented | 03 |
-| [05 - The stream translation is a file of its own](task-05-stream.md) | implemented | 04 |
-| [06 - Asking a person is a file of its own](task-06-asking.md) | implemented | 05 |
-| [07 - The query and the MCP servers are files of their own](task-07-query-and-servers.md) | implemented | 06 |
-| [08 - The turn lifecycle is a file of its own, and session.ts only composes](task-08-turns.md) | implemented | 07 |
+| [01 - The shared helpers and the customization list are files of their own](task-01-common-and-customizations.md) | done | - |
+| [02 - The context, the session config and the client tools are files of their own](task-02-context-config-and-client-tools.md) | done | 01 |
+| [03 - What a turn holds is a file of its own](task-03-turn-parts.md) | done | 02 |
+| [04 - Subagents and their chats are a file of their own](task-04-workers.md) | done | 03 |
+| [05 - The stream translation is a file of its own](task-05-stream.md) | done | 04 |
+| [06 - Asking a person is a file of its own](task-06-asking.md) | done | 05 |
+| [07 - The query and the MCP servers are files of their own](task-07-query-and-servers.md) | done | 06 |
+| [08 - The turn lifecycle is a file of its own, and session.ts only composes](task-08-turns.md) | done | 07 |
 
 ## Risks and tradeoffs
 
@@ -119,8 +119,8 @@ Estimated at 330 lines, from 4,234.
 
 ## Resume state
 
-- **Done so far:** all eight tasks, implemented on `build/agents/6a395779` on 2026-10-04 and left uncommitted for review. `session.ts` is 263 lines and holds only the imports and re-exports, the module comment, `createSession` with the `ctx` literal, the nine factory calls, the six construction statements and `self`. Thirteen files sit under `session/`: `asking` 447, `clienttools` 230, `common` 5, `config` 241, `context` 262, `customizations` 345, `parts` 328, `query` 581, `servers` 341, `stream` 600, `turns` 607, `workers` 423 - none over 700.
-- **Next action:** review, then commit. Nothing under `packages/agent-claude/test` changed and no file outside `packages/agent-claude/src` was touched.
+- **Done so far:** all eight tasks, built on 2026-10-04 and merged in `dfebfe4`. `session.ts` is 263 lines. It holds only the imports and re-exports, the module comment, `createSession` with the `ctx` literal, the nine factory calls and the rest of the construction. Twelve files sit under `session/`, none over 700 lines: `asking` 447, `clienttools` 230, `common` 5, `config` 241, `context` 262, `customizations` 345, `parts` 328, `query` 581, `servers` 341, `stream` 600, `turns` 607, `workers` 423.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `dfebfe4`.
 - **Gates:** `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/agent-claude` (19 files, 169 tests) and the whole `pnpm test` suite (186 files, 2,839 tests) all pass. `packages/agent-pi/test/agent-pi-lazy.test.ts` passed this run.
 - **Pure-move check** over the whole diff against the commit task 01 started from, comparing both sides with indentation, `export ` and `ctx.` stripped: 55 removed lines do not reappear among the added. Ten are imports, three are the `common.ts` helpers, twenty-five are the `let`s that became `SessionContext` fields, and fifteen had to be rewritten rather than moved (the `session/titleChanged` emit, `title,`, `cwd,`, the two `UUID.test(idOf(uri))` lines, `canUseTool,`, `chat: chatUri,`, the `customizationsChanged` emit, `status,`, `chats: [...]`, `customizations,`, the `activity` and `draft` spreads, `stopWorker: (toolCallId) => {`, and one stray `},`). Every one is listed in the *Resume* of the task that made it.
 - **Open questions:**
@@ -135,4 +135,4 @@ Estimated at 330 lines, from 4,234.
 - [ ] `index.ts`, `claude.ts`, `probe.ts` and every test still import from `./session.js` or `../src/session.js` unchanged.
 - [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/agent-claude` pass.
 - [ ] The pure-move check over the whole plan finds only imports, exports and context wiring.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

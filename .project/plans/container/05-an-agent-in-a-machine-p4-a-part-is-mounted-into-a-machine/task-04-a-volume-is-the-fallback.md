@@ -1,6 +1,6 @@
 ---
 title: A volume is the fallback
-status: implemented
+status: done
 depends: [task-03-docker-mounts-a-part-from-its-image.md]
 layer: "computer"
 refs:

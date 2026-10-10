@@ -1,6 +1,6 @@
 ---
 title: A dev container gets its parts as a Docker machine does
-status: implemented
+status: done
 depends: [task-04-a-volume-is-the-fallback.md]
 layer: "computer"
 refs:

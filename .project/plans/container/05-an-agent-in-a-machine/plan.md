@@ -1,7 +1,7 @@
 ---
 title: An agent in a machine is built once, started fast, and reached from anywhere
 domain: container
-status: planned
+status: active
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-04

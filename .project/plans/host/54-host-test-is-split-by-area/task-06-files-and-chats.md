@@ -1,6 +1,6 @@
 ---
 title: Files and chats are test files of their own
-status: implemented
+status: done
 depends: [task-05-tools-and-terminals.md]
 layer: "sdk test"
 refs:

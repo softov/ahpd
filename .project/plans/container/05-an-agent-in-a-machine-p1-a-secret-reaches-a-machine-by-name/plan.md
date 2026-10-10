@@ -104,10 +104,10 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Docker takes every value by name, and a vault-named value only on each exec](task-01-docker-takes-every-value-by-name.md) | implemented | - |
-| [02 - A vault-named value reaches a dev container on each docker exec, by name](task-02-the-dev-container-cli-takes-every-value-by-name.md) | implemented | 01, container/03 tasks 09 and 18, rebased onto vault/01 p2 |
-| [03 - Docs](task-03-docs.md) | implemented | 01, 02, 04 |
-| [04 - A need value answers set](task-04-a-need-value-answers-set.md) | implemented | - |
+| [01 - Docker takes every value by name, and a vault-named value only on each exec](task-01-docker-takes-every-value-by-name.md) | done | - |
+| [02 - A vault-named value reaches a dev container on each docker exec, by name](task-02-the-dev-container-cli-takes-every-value-by-name.md) | done | 01, container/03 tasks 09 and 18, rebased onto vault/01 p2 |
+| [03 - Docs](task-03-docs.md) | done | 01, 02, 04 |
+| [04 - A need value answers set](task-04-a-need-value-answers-set.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -116,8 +116,8 @@ manifest env -> runtime.run() -> must([run, -e, KEY=VALUE, ...])                
 
 ## Resume state
 
-- **Done so far:** tasks 04, 01, 02 and 03 implemented on 2026-10-05, on main after container/03 (`52f98f6`). Every asked value reaches `docker run` and `docker exec` as `-e NAME` with the value in the spawned `docker` process's environment, except `PATH`, `HOME` and every `DOCKER_*` name, which stay `-e NAME=VALUE` and never enter docker's spawn env; a dev container's `remoteEnv` and probe values go by name too, as `execArgv` answers `{ argv, env }` to every caller; a vault-named value is left out of `docker run`, the override config and so `Config.Env` on both recipes, held in the plugin's memory per machine, and passed by name on every `docker exec` - `how`, the nested host, `computer_exec` and the relay's `connect`; the needs it was made with are recorded by need, variable and secret name in the machine's `computers.json` entry, and after a restart they are read again for `claimOf(id)` from that record, or, for a machine with none recorded, from the machine's `ahpd.agents` and its `ahpd.profile`; `secretUnreadable` decides a failed read. [implemented.md](implemented.md) sums it up. Each task's Resume lists its files, tests and differences from its steps.
-- **Next action:** Softov's review.
+- **Done so far:** tasks 04, 01, 02 and 03 built on 2026-10-05, on main after container/03 (`52f98f6`). Every asked value reaches `docker run` and `docker exec` as `-e NAME` with the value in the spawned `docker` process's environment, except `PATH`, `HOME` and every `DOCKER_*` name, which stay `-e NAME=VALUE` and never enter docker's spawn env; a dev container's `remoteEnv` and probe values go by name too, as `execArgv` answers `{ argv, env }` to every caller; a vault-named value is left out of `docker run`, the override config and so `Config.Env` on both recipes, held in the plugin's memory per machine, and passed by name on every `docker exec` - `how`, the nested host, `computer_exec` and the relay's `connect`; the needs it was made with are recorded by need, variable and secret name in the machine's `computers.json` entry, and after a restart they are read again for `claimOf(id)` from that record, or, for a machine with none recorded, from the machine's `ahpd.agents` and its `ahpd.profile`; `secretUnreadable` decides a failed read. [implemented.md](implemented.md) sums it up. Each task's Resume lists its files, tests and differences from its steps.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `a43c077`.
 - **Ran on 2026-10-05:** against Docker 29.6.2 with the built runtime: `Config.Env` held the plain variable and not the vault-named one, an `exec` given the vault-named one by name printed it, and `ps -ww` during `docker exec -e ANTHROPIC_API_KEY` showed only the name.
 - **Watch out for:**
   - The fake Docker refuses `-e NAME` when `NAME` is not in its environment, where real Docker drops it silently; a test that spawns a descriptor must spawn it with its `env`.

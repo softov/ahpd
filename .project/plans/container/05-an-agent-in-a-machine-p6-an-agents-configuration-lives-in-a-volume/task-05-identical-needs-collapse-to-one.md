@@ -1,6 +1,6 @@
 ---
 title: Two identical needs collapse to one, and only differing needs at one target are refused
-status: implemented
+status: done
 depends: []
 layer: "computer"
 refs:

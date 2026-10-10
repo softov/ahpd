@@ -1,6 +1,6 @@
 ---
 title: The host advertises its subjects in ahpd.grants
-status: implemented
+status: done
 depends: [task-01-operations-and-groups-are-one-table.md]
 layer: "sdk"
 refs:

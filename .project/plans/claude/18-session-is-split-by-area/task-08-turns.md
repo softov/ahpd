@@ -1,6 +1,6 @@
 ---
 title: The turn lifecycle is a file of its own, and session.ts only composes
-status: implemented
+status: done
 depends: [task-07-query-and-servers.md]
 layer: "agent-claude"
 refs:

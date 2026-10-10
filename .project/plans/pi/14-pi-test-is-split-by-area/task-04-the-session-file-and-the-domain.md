@@ -1,6 +1,6 @@
 ---
 title: agent-pi.test.ts holds the session cases, and the domain names every file
-status: implemented
+status: done
 depends:
   - task-02-tools-and-asking-are-files.md
   - task-03-mapping-and-disk-are-files.md

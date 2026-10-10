@@ -1,6 +1,6 @@
 ---
 title: The shared helpers and the customization list are files of their own
-status: implemented
+status: done
 depends: []
 layer: "agent-claude"
 refs:

@@ -105,14 +105,14 @@ The test column adds up to 328, the count `host.test.ts` holds today.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The fake SDK and the shared helpers are modules of their own](task-01-the-helpers-are-a-module.md) | implemented | - |
-| [02 - The handshake and the catalogue are test files of their own](task-02-handshake-and-catalogue.md) | implemented | 01 |
-| [03 - A turn and what a client puts into it are test files of their own](task-03-turn-and-input.md) | implemented | 02 |
-| [04 - Session config and what the harness offers are test files of their own](task-04-session-config-and-harness.md) | implemented | 03 |
-| [05 - Tools and terminals are test files of their own](task-05-tools-and-terminals.md) | implemented | 04 |
-| [06 - Files and chats are test files of their own](task-06-files-and-chats.md) | implemented | 05 |
-| [07 - Names, snapshots and GitHub are test files of their own, and host.test.ts is gone](task-07-names-snapshots-and-github.md) | implemented | 06 |
-| [08 - Open plans cite the new test files](task-08-open-plans-cite-the-new-files.md) | implemented | 07 |
+| [01 - The fake SDK and the shared helpers are modules of their own](task-01-the-helpers-are-a-module.md) | done | - |
+| [02 - The handshake and the catalogue are test files of their own](task-02-handshake-and-catalogue.md) | done | 01 |
+| [03 - A turn and what a client puts into it are test files of their own](task-03-turn-and-input.md) | done | 02 |
+| [04 - Session config and what the harness offers are test files of their own](task-04-session-config-and-harness.md) | done | 03 |
+| [05 - Tools and terminals are test files of their own](task-05-tools-and-terminals.md) | done | 04 |
+| [06 - Files and chats are test files of their own](task-06-files-and-chats.md) | done | 05 |
+| [07 - Names, snapshots and GitHub are test files of their own, and host.test.ts is gone](task-07-names-snapshots-and-github.md) | done | 06 |
+| [08 - Open plans cite the new test files](task-08-open-plans-cite-the-new-files.md) | done | 07 |
 
 ## Risks and tradeoffs
 
@@ -124,8 +124,8 @@ The test column adds up to 328, the count `host.test.ts` holds today.
 
 ## Resume state
 
-- **Done so far:** all eight tasks, 2026-10-04. `host.test.ts` (7,945 lines, 328 tests) is gone; `support/claude-sdk.ts` (128), `support/host.ts` (115) and the 13 area files hold it, the largest `host-turn.test.ts` at 756 lines.
-- **Next action:** review; nothing is left to build.
+- **Done so far:** all eight tasks, 2026-10-04, in `ed21215`; the sizes are at that commit. `host.test.ts` (7,945 lines, 328 tests) is gone; `support/claude-sdk.ts` (128), `support/host.ts` (115) and the 13 area files hold it, the largest `host-turn.test.ts` at 756 lines.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `ed21215`.
 - **Count before:** 1,334 tests in `packages/sdk` at `a93988a`, the count this plan measured for itself; after task 08 it is still 1,334, and the sorted list of test names still fingerprints to `532860aa4c087b69e30d8a47dcead5f4`.
 - **Open questions:** none open. The one the plan asked (keep `driving a turn` whole at about 830 lines, or split it) was answered by building it as the table says.
 - **Watch out for:** the four `00-*.md` overview files and the three built plans that still write `host.test.ts` are history and were left alone; `claude/00-claude.md`, `daemon/00-daemon.md` and `plugin/00-plugin.md` were also given the `host-*.test.ts` spelling, which task 08 did not list.
@@ -138,4 +138,4 @@ The test column adds up to 328, the count `host.test.ts` holds today.
 - [x] `pnpm exec vitest list packages/sdk | sed 's/^[^ ]* > //' | sort` equals the same list taken before task 01.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm exec vitest run packages/sdk` pass.
 - [x] `rg -n "test/host\.test\.ts" .project/plans` matches only built or dropped plans and this plan's family.
-- [ ] `plans/index.md` updated. - left to the reviewer, as the build was told not to edit it.
+- [x] `plans/index.md` updated.

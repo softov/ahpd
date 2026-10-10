@@ -1,6 +1,6 @@
 ---
 title: The context, the session config and the client tools are files of their own
-status: implemented
+status: done
 depends: [task-01-common-and-customizations.md]
 layer: "agent-claude"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: A turn and what a client puts into it are test files of their own
-status: implemented
+status: done
 depends: [task-02-handshake-and-catalogue.md]
 layer: "sdk test"
 refs:

@@ -17,7 +17,7 @@ refs:
   - "[code://packages/agent-acp/src/plugin.ts#L35-L48](../../../../packages/agent-acp/src/plugin.ts#L35-L48) - `optionsSchema`: one spec, no presets, no machine"
   - "[code://packages/agent-acp/src/plugin.ts#L59-L61](../../../../packages/agent-acp/src/plugin.ts#L59-L61) - `apply` registers one agent"
   - "[code://packages/agent-acp/src/types.ts#L43-L60](../../../../packages/agent-acp/src/types.ts#L43-L60) - `AcpOptions`"
-  - "[code://packages/agent-acp/src/session.ts#L615-L638](../../../../packages/agent-acp/src/session.ts#L615-L638) - `placed()`, the spawn in a machine"
+  - "[code://packages/agent-acp/src/session/opening.ts#L221-L245](../../../../packages/agent-acp/src/session/opening.ts#L221-L245) - `placed()`, the spawn in a machine"
   - "[code://packages/sdk/src/types/agent.ts#L353](../../../../packages/sdk/src/types/agent.ts#L353) - `machine()` on the agent contract"
   - "[code://packages/sdk/src/host/machines.ts#L201-L209](../../../../packages/sdk/src/host/machines.ts#L201-L209) - the host asks the session's own provider for `machine()`, so each registered variant answers for itself"
   - "[code://packages/agent-cofold/src/agent.ts#L561-L572](../../../../packages/agent-cofold/src/agent.ts#L561-L572) - cofold's `machine()`, the pattern to mirror"
@@ -83,11 +83,11 @@ presets.<key>.machine -> the variant's acpAgent().machine() -> host.placedIn(pro
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A preset declares what its machine needs](task-01-a-spec-declares-what-its-machine-needs.md) | implemented | acp 05, rewritten as the ACP presets plan |
+| [01 - A preset declares what its machine needs](task-01-a-spec-declares-what-its-machine-needs.md) | done | acp 05, rewritten as the ACP presets plan |
 | [02 - A spec may sign in after initialize](task-02-a-spec-may-sign-in.md) | dropped | - |
 | [03 - Presets for the ACP agents](task-03-presets.md) | dropped | - |
-| [04 - Docs](task-04-docs.md) | implemented | 01, 05 |
-| [05 - The host's tools are offered to a session in a machine only where it can reach the daemon](task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md) | implemented | - |
+| [04 - Docs](task-04-docs.md) | done | 01, 05 |
+| [05 - The host's tools are offered to a session in a machine only where it can reach the daemon](task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -95,8 +95,8 @@ presets.<key>.machine -> the variant's acpAgent().machine() -> host.placedIn(pro
 
 ## Resume state
 
-- **Done so far:** built 2026-10-05 on a43c077, tasks 01, 04 and 05 `implemented`, see [implemented.md](implemented.md); 02 and 03 stay dropped. The answered sign-in row is in task 01: a row's `fromEnv` counts `machine.env` for a session placed in a machine.
-- **Next action:** Softov reviews; the first two checklist items want a real Docker and a real Codex or Copilot by hand.
+- **Done so far:** built 2026-10-05 on a43c077, tasks 01, 04 and 05 `done`, see [implemented.md](implemented.md); 02 and 03 stay dropped. The answered sign-in row is in task 01: a row's `fromEnv` counts `machine.env` for a session placed in a machine.
+- **Next action:** the by-hand checklist items only. Tasks 01, 04 and 05 were reviewed against main on 2026-10-10 and are `done`; the work is in `2caabb1`.
 - **Open questions:** none; the sign-in question is answered in the table above (Softov, 2026-10-05).
 - **Watch out for:**
   - `machine()` is read at create with the live agent list, so a preset added later is seen by the next machine only.

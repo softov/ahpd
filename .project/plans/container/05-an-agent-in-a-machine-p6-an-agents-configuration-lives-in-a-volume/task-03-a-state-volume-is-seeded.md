@@ -1,6 +1,6 @@
 ---
 title: A state volume is seeded when its seed changed
-status: implemented
+status: done
 depends: [task-02-a-machine-gets-its-state-volumes.md]
 layer: "computer"
 refs:

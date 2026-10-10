@@ -4,7 +4,7 @@ status: open
 date: 2026-10-06
 severity: minor
 refs:
-  - "[code://packages/agent-claude/src/transcript.ts#L324](../../packages/agent-claude/src/transcript.ts#L324) - a frame with `isCompactSummary` is skipped"
+  - "[code://packages/agent-claude/src/transcript.ts#L322](../../packages/agent-claude/src/transcript.ts#L322) - a frame with `isCompactSummary` is skipped"
   - "[code://packages/agent-claude/src/session/query.ts#L345-L358](../../packages/agent-claude/src/session/query.ts#L345-L358) - live, `compact_boundary` becomes a `systemNotification`"
 ---
 
@@ -14,7 +14,7 @@ A Claude session that compacted shows `Context compacted automatically: ...` whi
 
 ## Cause
 
-The transcript reader skips the summary frame (`transcript.ts:324`) and has no case for the `compact_boundary` system frame the live path reads; whether that frame is in the session file at all is unknown.
+The transcript reader skips the summary frame (`transcript.ts:322`) and has no case for the `compact_boundary` system frame the live path reads; whether that frame is in the session file at all is unknown.
 
 ## Impact
 

@@ -82,10 +82,10 @@ disposeSession(channel) -> heldAs -> removeSession(uri) [held: teardown] -> agen
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host deletes through the agent, held or listed](task-01-the-host-deletes-through-the-agent.md) | implemented | - |
-| [02 - Claude deletes its transcript](task-02-claude-deletes-its-transcript.md) | implemented | 01 |
-| [03 - pi, cofold and ACP delete theirs](task-03-pi-cofold-and-acp-delete-theirs.md) | implemented | 01 |
-| [04 - The docs say a delete is permanent](task-04-docs.md) | implemented | 02, 03 |
+| [01 - The host deletes through the agent, held or listed](task-01-the-host-deletes-through-the-agent.md) | done | - |
+| [02 - Claude deletes its transcript](task-02-claude-deletes-its-transcript.md) | done | 01 |
+| [03 - pi, cofold and ACP delete theirs](task-03-pi-cofold-and-acp-delete-theirs.md) | done | 01 |
+| [04 - The docs say a delete is permanent](task-04-docs.md) | done | 02, 03 |
 | [05 - Only the owner, or a session:* holder, may delete a session](task-05-only-the-owner-may-delete-a-session.md) | implemented | 01 |
 
 ## Risks and tradeoffs
@@ -96,7 +96,7 @@ disposeSession(channel) -> heldAs -> removeSession(uri) [held: teardown] -> agen
 
 ## Resume state
 
-- **Next:** none. All five tasks are implemented, including 05, which Softov added after a review found that a member holding `session:write` could have deleted anyone's session; `pnpm exec tsc --noEmit` and `pnpm boundary` are clean and `pnpm test` passes except `packages/agent-pi/test/agent-pi-lazy.test.ts`, which measures a module import against a 2000 ms budget and takes ~2026 ms on this loaded machine (it passed alone at 1941 ms earlier in the same build, and the entry graph now imports nothing `HEAD` did not). Softov was told it is left as it is.
+- **Next action:** task 05 waits on Softov. Tasks 01-04 were reviewed against main on 2026-10-10 and are `done`.
 
 ## Final verification checklist
 

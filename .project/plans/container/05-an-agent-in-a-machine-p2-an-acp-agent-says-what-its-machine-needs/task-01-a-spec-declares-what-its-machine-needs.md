@@ -1,6 +1,6 @@
 ---
 title: A preset declares what its machine needs
-status: implemented
+status: done
 depends: []
 layer: "agent-acp"
 refs:

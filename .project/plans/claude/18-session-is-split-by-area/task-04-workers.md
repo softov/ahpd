@@ -1,6 +1,6 @@
 ---
 title: Subagents and their chats are a file of their own
-status: implemented
+status: done
 depends: [task-03-turn-parts.md]
 layer: "agent-claude"
 refs:

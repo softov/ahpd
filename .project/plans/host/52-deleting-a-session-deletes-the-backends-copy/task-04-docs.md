@@ -1,6 +1,6 @@
 ---
 title: The docs say a delete is permanent
-status: implemented
+status: done
 depends: [task-02-claude-deletes-its-transcript.md, task-03-pi-cofold-and-acp-delete-theirs.md]
 layer: "docs"
 refs:

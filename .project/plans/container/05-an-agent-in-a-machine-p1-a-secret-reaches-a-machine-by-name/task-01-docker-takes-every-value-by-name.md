@@ -1,6 +1,6 @@
 ---
 title: Docker takes every value by name, and a vault-named value only on each exec
-status: implemented
+status: done
 depends: []
 layer: "computer"
 refs:

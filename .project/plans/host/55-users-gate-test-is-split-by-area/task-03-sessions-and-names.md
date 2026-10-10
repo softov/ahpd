@@ -1,6 +1,6 @@
 ---
 title: Sessions and names are files of their own, and users-gate.test.ts is gone
-status: implemented
+status: done
 depends: [task-02-the-command-and-dispatch-gates.md]
 layer: "sdk test"
 refs:

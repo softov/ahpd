@@ -10,9 +10,9 @@ changes: []
 creates: []
 decisions: []
 refs:
-  - "[code://packages/agent-claude/src/session.ts#L1112-L1145](../../../../packages/agent-claude/src/session.ts#L1112-L1145) - `scopeFor` opens a worker chat on its first frame, with `subagentType ?? 'Subagent'` and `info?.prompt ?? ''` when the spawn is not recorded yet"
-  - "[code://packages/agent-claude/src/session.ts#L1835-L1855](../../../../packages/agent-claude/src/session.ts#L1835-L1855) - `assistant()` records the spawn from the canonical message, after the chat may already be open"
-  - "[code://packages/agent-claude/src/session.ts#L2115](../../../../packages/agent-claude/src/session.ts#L2115) - `workerBlock`, the `subagent` content's title"
+  - "[code://packages/agent-claude/src/session/workers.ts#L203-L243](../../../../packages/agent-claude/src/session/workers.ts#L203-L243) - `scopeFor` opens a worker chat on its first frame, with `subagentType ?? 'Subagent'` and `info?.prompt ?? ''` when the spawn is not recorded yet"
+  - "[code://packages/agent-claude/src/session/stream.ts#L326-L334](../../../../packages/agent-claude/src/session/stream.ts#L326-L334) - `assistant()` records the spawn from the canonical message, after the chat may already be open"
+  - "[code://packages/agent-claude/src/session/workers.ts#L620](../../../../packages/agent-claude/src/session/workers.ts#L620) - `workerBlock`, the `subagent` content's title"
   - "[code://packages/agent-claude/src/transcript.ts#L155-L160](../../../../packages/agent-claude/src/transcript.ts#L155-L160) - a restored worker chat, titled by agent type too"
   - "[code://packages/sdk/src/host/spawn.ts#L217](../../../../packages/sdk/src/host/spawn.ts#L217) - the host opens the worker's turn with the prompt it is handed"
   - file:///github/externals/vscode/src/vs/platform/agentHost/common/agent.ts#L774-L784 - VS Code 1.140 `subagentChatTitle`: the description cut to 60 characters, else the agent type, else `Subagent`
@@ -63,8 +63,8 @@ assistant() tool_use Agent -> spawning.set(id, { description, prompt, ... }) -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A live worker chat waits for its spawn](task-01-a-live-worker-chat-waits-for-its-spawn.md) | implemented | - |
-| [02 - A restored worker chat takes the same title](task-02-a-restored-worker-chat-takes-the-same-title.md) | implemented | - |
+| [01 - A live worker chat waits for its spawn](task-01-a-live-worker-chat-waits-for-its-spawn.md) | done | - |
+| [02 - A restored worker chat takes the same title](task-02-a-restored-worker-chat-takes-the-same-title.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -73,7 +73,8 @@ assistant() tool_use Agent -> spawning.set(id, { description, prompt, ... }) -> 
 
 ## Resume state
 
-- **Done so far:** both tasks implemented 2026-10-04. A worker chat waits for its spawn, is titled by its task live and restored, and opens on the prompt; the spawn is recorded from the canonical message or from `canUseTool`, whichever says it first.
+- **Done so far:** both tasks built 2026-10-04. A worker chat waits for its spawn and opens on the prompt. Its task gives its title, live and when restored. The spawn is recorded from the canonical message or from `canUseTool`, whichever says it first.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `7a02145`.
 
 ## Final verification checklist
 

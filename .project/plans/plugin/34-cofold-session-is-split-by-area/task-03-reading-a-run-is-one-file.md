@@ -1,6 +1,6 @@
 ---
 title: Reading and reopening a run is one file
-status: implemented
+status: done
 depends: [task-02-the-turn-agent-is-one-file.md]
 layer: "agent-cofold"
 refs:

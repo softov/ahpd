@@ -100,9 +100,9 @@ The 60 tests are 4 + 17 + 10 + 13 + 16.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The shared helpers and the table tests are files of their own](task-01-the-helpers-and-the-table-tests.md) | implemented | - |
-| [02 - The command gate and the dispatch gate are files of their own](task-02-the-command-and-dispatch-gates.md) | implemented | 01 |
-| [03 - Sessions and names are files of their own, and users-gate.test.ts is gone](task-03-sessions-and-names.md) | implemented | 02 |
+| [01 - The shared helpers and the table tests are files of their own](task-01-the-helpers-and-the-table-tests.md) | done | - |
+| [02 - The command gate and the dispatch gate are files of their own](task-02-the-command-and-dispatch-gates.md) | done | 01 |
+| [03 - Sessions and names are files of their own, and users-gate.test.ts is gone](task-03-sessions-and-names.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -115,9 +115,9 @@ The 60 tests are 4 + 17 + 10 + 13 + 16.
 ## Resume state
 
 - **Done so far:** all three tasks. `packages/sdk/test/users-gate.test.ts` is gone and its 60 tests are five files beside `users-gate-helpers.ts`: tables 160 lines and 4 tests, commands 450 and 17, dispatch 285 and 10, sessions 322 and 13, names 453 and 16, helpers 155. `tsc --noEmit`, `pnpm boundary` and `vitest run packages/sdk` pass; `vitest list packages/sdk/test/users-gate` is 60.
-- **Next action:** nothing; the plan is implemented.
+- **Next action:** none. Every task was reviewed against main on 2026-10-10 and is `done`; the work is in `0f14041`.
 - **Open questions:** none.
-- **Watch out for:** `Bag` is imported `import type` from the helper module, because `verbatimModuleSyntax` makes it a type, where the tasks list it among the values. `plans/index.md` was not updated, which is the last item of the checklist below; the decisions table leaves it to whoever runs the plans index. The `vitest list packages/sdk` count reads 1380 before the first `pnpm` invocation of a worktree and 1351 after it, which is the workspace's `tools/ahp.strict.schema.json` being generated during prepare and is not this move: users-gate was 60 on both sides of it.
+- **Watch out for:** `Bag` is imported `import type` from the helper module, because `verbatimModuleSyntax` makes it a type, where the tasks list it among the values. The `vitest list packages/sdk` count reads 1380 before the first `pnpm` invocation of a worktree and 1351 after it, which is the workspace's `tools/ahp.strict.schema.json` being generated during prepare and is not this move: users-gate was 60 on both sides of it.
 
 ## Final verification checklist
 
@@ -126,4 +126,4 @@ The 60 tests are 4 + 17 + 10 + 13 + 16.
 - [x] `pnpm exec vitest list packages/sdk/test/users-gate | wc -l` is 60, and the test count in `packages/sdk` equals the count recorded before task 01.
 - [x] Every test title in the old file appears exactly once across the new files.
 - [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm exec vitest run packages/sdk` pass.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

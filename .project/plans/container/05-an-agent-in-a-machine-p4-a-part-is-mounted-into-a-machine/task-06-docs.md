@@ -1,6 +1,6 @@
 ---
 title: The docs say how parts reach a machine
-status: implemented
+status: done
 depends: [task-05-a-dev-container-gets-its-parts-by-volume.md]
 layer: "docs"
 refs:

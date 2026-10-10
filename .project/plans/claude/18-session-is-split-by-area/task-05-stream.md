@@ -1,6 +1,6 @@
 ---
 title: The stream translation is a file of its own
-status: implemented
+status: done
 depends: [task-04-workers.md]
 layer: "agent-claude"
 refs:

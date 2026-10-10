@@ -1,6 +1,6 @@
 ---
 title: Roles and the docs speak in operations
-status: implemented
+status: done
 depends: [task-02-every-method-and-action-needs-one-operation.md, task-03-the-host-advertises-its-subjects.md]
 layer: "sdk, server, docs"
 refs:

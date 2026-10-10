@@ -1,6 +1,6 @@
 ---
 title: The mapping and disk cases are files of their own
-status: implemented
+status: done
 depends:
   - task-01-the-fake-pi-is-a-shared-module.md
 layer: "agent-pi tests"

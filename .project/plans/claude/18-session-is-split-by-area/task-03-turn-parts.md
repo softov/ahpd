@@ -1,6 +1,6 @@
 ---
 title: What a turn holds is a file of its own
-status: implemented
+status: done
 depends: [task-02-context-config-and-client-tools.md]
 layer: "agent-claude"
 refs:

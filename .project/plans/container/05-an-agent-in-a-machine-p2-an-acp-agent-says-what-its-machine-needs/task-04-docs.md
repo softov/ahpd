@@ -1,6 +1,6 @@
 ---
 title: The ACP docs cover a preset's machine
-status: implemented
+status: done
 depends: [task-01-a-spec-declares-what-its-machine-needs.md, task-05-the-hosts-tools-reach-a-machine-only-where-it-can-reach-the-daemon.md]
 layer: "docs"
 refs:

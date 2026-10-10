@@ -1,6 +1,6 @@
 ---
 title: The handshake and the catalogue are test files of their own
-status: implemented
+status: done
 depends: [task-01-the-helpers-are-a-module.md]
 layer: "sdk test"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The docs say a value never reaches a command line
-status: implemented
+status: done
 depends: [task-01-docker-takes-every-value-by-name.md, task-02-the-dev-container-cli-takes-every-value-by-name.md, task-04-a-need-value-answers-set.md]
 layer: "docs"
 refs:

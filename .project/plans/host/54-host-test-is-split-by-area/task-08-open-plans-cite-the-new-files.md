@@ -1,6 +1,6 @@
 ---
 title: Open plans cite the new test files
-status: implemented
+status: done
 depends: [task-07-names-snapshots-and-github.md]
 layer: "docs"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: Opening a turn and the queue are one file
-status: implemented
+status: done
 depends: [task-04-a-paused-runs-answers-are-one-file.md]
 layer: "agent-cofold"
 refs:
