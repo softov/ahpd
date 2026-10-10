@@ -631,6 +631,14 @@ export function createQuery(ctx: SessionContext): Query {
             ctx.calling.clear();
             ctx.streaming = undefined;
             /*
+             * And every preview the turn was still holding. A question left
+             * unanswered when the turn ended is one nobody will answer now, and
+             * its text would be a file that never came to be. A subagent's
+             * calls are the same: its frames arrive inside this turn, so this
+             * is the end of them too.
+             */
+            ctx.settleEdits();
+            /*
              * One action ends a turn, and which one says how it went.
              *
              * `chat/error` is not a message beside a completed turn - it *is*

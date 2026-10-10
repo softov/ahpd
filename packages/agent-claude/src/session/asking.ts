@@ -2,7 +2,7 @@ import type { StringOrMarkdown } from '@microsoft/agent-host-protocol';
 import type { Bag } from '@ahpd/sdk';
 import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
-import { lineOf, pastLineOf, questionRequest, toolInputOf } from '../input.js';
+import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
 import { toolMetaOf } from '../kinds.js';
 interface PendingInput {
   id: string;
@@ -102,6 +102,15 @@ export interface Asking {
   answeredInputs: Map<string, Bag>;
   /** The SDK’s own gate between a tool call and the host that runs it. */
   canUseTool: (toolName: string, raw: Bag, asked?: Bag) => Promise<unknown>;
+  /**
+   * Drop the preview of one call, or of every call this session is holding.
+   *
+   * A preview is the file as it *would* be, which stops being true the moment
+   * the person answers, and a session being disposed has nothing left to
+   * preview at all. The text is the changes port's to hold; this says which
+   * calls are done with it.
+   */
+  settleEdits: (toolCallId?: string) => void;
   methods: {
     confirm: (toolCallId: string, approved: boolean, optionId?: string) => void;
     setAnswer: (requestId: string, questionId: string, answer: Bag | undefined) => boolean;
@@ -123,6 +132,24 @@ export function createAsking(ctx: SessionContext): Asking {  /**
    * `session/inputNeededSet` says it adds or updates *matched by id*.
    */
   const pending = new Map<string, PendingInput>();
+
+  /**
+   * The calls whose proposed text the host is still holding.
+   *
+   * By call id, because that is what the host's `settle` is given: the URI it
+   * minted is its own to remember. A set rather than a list, so a call settled
+   * twice - by its own answer and again when its turn ends - tells the host
+   * once.
+   */
+  const previews = new Set<string>();
+
+  const settleEdits = (toolCallId?: string): void => {
+    const done = toolCallId === undefined ? [...previews] : previews.has(toolCallId) ? [toolCallId] : [];
+    for (const id of done) {
+      previews.delete(id);
+      ctx.options.onEditSettled?.(id);
+    }
+  };
 
   // ------------------------------------------------------ asking a person
 
@@ -153,8 +180,38 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     const already = settled(toolName);
     if (already === 'allow') return { behavior: 'allow', updatedInput: raw };
     if (already === 'deny') return { behavior: 'deny', message: `${toolName} is denied for this session` };
+    const about = bag(asked);
+    /*
+     * The agent's own id for this call.
+     *
+     * Not one of this host's making. The assistant message opens the call
+     * under this id, and a confirmation that invented its own put a second
+     * row beside it for the same command - and answered under a name the
+     * client had never been given, so approving did nothing.
+     *
+     * Read here rather than inside the question, because the question's
+     * preview is made before it is put and is held under this id.
+     */
+    const id = str(about.toolUseID) ?? `req-${Date.now()}`;
+    /*
+     * The edit the tool would make, drawn on the card before it is approved.
+     *
+     * Somebody approving a write is being asked to trust a file they cannot
+     * see, and the tool has not run yet - so the text is made here, from what
+     * the file holds now, and the host keeps it until the answer comes. It is
+     * made before the question goes out, because a client reads the preview
+     * off the confirmation itself.
+     *
+     * Nothing is held back for want of it. A tool whose input says nothing
+     * about what it would write, a host with no changeset source, a session
+     * with no folder and a file the edit does not fit are all one answer here:
+     * a card exactly as it was before there was a preview at all.
+     */
+    const writing = writeOf(toolName, raw);
+    const shown = writing === undefined ? undefined : await ctx.options.onEditProposed?.(id, writing.path, writing.apply);
+    const edits: Bag | undefined = shown === undefined ? undefined : { items: [shown] };
+    if (edits !== undefined) previews.add(id);
     return await new Promise((settle) => {
-      const about = bag(asked);
       /*
        * The conversation the tool is running in.
        *
@@ -184,15 +241,6 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       if ((toolName === 'Task' || toolName === 'Agent') && callId !== undefined) {
         ctx.recordSpawn(callId, bag(raw), scope, str(turn.id));
       }
-      /*
-       * The agent's own id for this call.
-       *
-       * Not one of this host's making. The assistant message opens the call
-       * under this id, and a confirmation that invented its own put a second
-       * row beside it for the same command - and answered under a name the
-       * client had never been given, so approving did nothing.
-       */
-      const id = str(about.toolUseID) ?? `req-${Date.now()}`;
       /** Where a question about this call is drawn: the worker's chat, or the lead. */
       const where = scope.chat?.uri ?? ctx.options.chatUri;
 
@@ -260,6 +308,10 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // has one too. See the call built in `assistant`.
       call.invocationMessage = invocationMessage;
       delete call.confirmed;
+      // The sides the card previews, read off the snapshot as well as the
+      // action: a client that subscribes while the question is open reads the
+      // call, and one watching reads the ready.
+      if (edits !== undefined) call.edits = edits;
       if (!held) {
         const part: Bag = { id, kind: 'toolCall', toolCall: call };
         scope.parts.set(id, part);
@@ -277,6 +329,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         confirmationTitle,
         ...(input !== undefined ? { toolInput: input } : {}),
         ...(options !== undefined ? { options } : {}),
+        ...(edits !== undefined ? { edits } : {}),
       });
 
       if (scope === ctx.mainScope) ctx.doing(`Waiting on you: ${displayName}`);
@@ -371,6 +424,10 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         // The whole bag, because an action's `_meta` replaces the call's.
         ...(times === undefined || Object.keys(times).length === 0 ? {} : { _meta: times }),
       });
+      // The answer is given and said back, so the preview goes with it: what
+      // the tool would leave is on no disk, and the file itself is the copy
+      // every client can read once it has run.
+      settleEdits(toolCallId);
       settle(approved
         ? { behavior: 'allow', updatedInput: {}, ...(picked?.id === 'allow-always' && held.suggestions !== undefined ? { updatedPermissions: held.suggestions } : {}) }
         : { behavior: 'deny', message: DECLINED });
@@ -486,5 +543,5 @@ export function createAsking(ctx: SessionContext): Asking {  /**
     },
   };
 
-  return { pending, answeredInputs, canUseTool, methods };
+  return { pending, answeredInputs, canUseTool, settleEdits, methods };
 }

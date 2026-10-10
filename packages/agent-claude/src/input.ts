@@ -203,6 +203,83 @@ const PATHS: Readonly<Record<string, string>> = {
 const DESCRIBED = new Set(['Bash', 'Task', 'Agent', 'Monitor']);
 
 /**
+ * A text with one string replaced by another, or nothing when it is not there.
+ *
+ * `all` replaces every occurrence, as `replace_all` asks, and the first one
+ * otherwise. The replacement is a function so a `new_string` holding `$&` or
+ * `$'` is written as itself rather than read as a pattern.
+ *
+ * Nothing for a file that is not there, because there is nothing to replace in
+ * it. Nothing for an empty `old_string` either: it is in every text, so
+ * replacing it would insert the new text at the start of a file no `Edit`
+ * asked to change.
+ */
+const swapped = (current: string | undefined, old: string, next: string, all: boolean): string | undefined => {
+  if (current === undefined || old === '' || !current.includes(old)) return undefined;
+  return all ? current.split(old).join(next) : current.replace(old, () => next);
+};
+
+/**
+ * The file a write tool would change, and the text it would leave there.
+ *
+ * Only the three tools whose input holds the whole of what they would write.
+ * `Write` carries the text; `Edit` and `MultiEdit` name a string to replace,
+ * so the text they would leave is made by reading the file back with that
+ * string swapped - which is what `apply` is for, and why it is handed the file
+ * rather than a promise of one. `NotebookEdit` writes a cell of a notebook and
+ * is not one of them.
+ *
+ * Nothing for a tool this does not cover, or for an input with no path in it:
+ * a call that names no file is a call with nothing to preview.
+ */
+export function writeOf(name: string, input: Bag): { path: string; apply: (current: string | undefined) => string | undefined } | undefined {
+  const path = filled(input[PATHS[name] ?? '']);
+  if (path === undefined) return undefined;
+
+  if (name === 'Write') {
+    const content = str(input.content);
+    return content === undefined ? undefined : { path, apply: () => content };
+  }
+
+  if (name === 'Edit') {
+    const old = str(input.old_string);
+    const next = str(input.new_string);
+    if (old === undefined || next === undefined) return undefined;
+    return { path, apply: (current) => swapped(current, old, next, input.replace_all === true) };
+  }
+
+  if (name === 'MultiEdit') {
+    const steps: { old: string; next: string; all: boolean }[] = [];
+    for (const entry of list(input.edits)) {
+      const held = bag(entry);
+      const old = str(held.old_string);
+      const next = str(held.new_string);
+      // An edit that names no string is one that cannot be carried out, and a
+      // preview of the list without it would be of a file the tool will not
+      // write - so the whole call goes unpreviewed rather than half of it.
+      if (old === undefined || next === undefined) return undefined;
+      steps.push({ old, next, all: held.replace_all === true });
+    }
+    if (steps.length === 0) return undefined;
+    return {
+      path,
+      apply: (current) => {
+        // In order, each over what the one before it left, which is what the
+        // tool does: the second edit may name a string the first one wrote.
+        let text = current;
+        for (const step of steps) {
+          text = swapped(text, step.old, step.next, step.all);
+          if (text === undefined) return undefined;
+        }
+        return text;
+      },
+    };
+  }
+
+  return undefined;
+}
+
+/**
  * The line a call's row draws while it runs, and on its confirmation card.
  *
  * The call's `description` for a tool whose description says what the call

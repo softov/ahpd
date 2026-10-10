@@ -4,27 +4,21 @@ import type {
   ChangesetOperationScope as Scope,
   ChangesetOperationTargetKind as TargetKind,
   ChangesetStatus,
+  FileEdit,
 } from '@microsoft/agent-host-protocol';
 import type { PullRequests } from './github.js';
 
-/** A pointer to content the state tree does not carry. */
-export interface ContentRef {
-  uri: string;
-  sizeHint?: number;
-  contentType?: string;
-}
-
 /**
- * One file, on both sides of the change.
+ * The protocol's own names for a file edit, taken rather than written again.
  *
- * `before` absent is a creation and `after` absent a deletion, which is how
- * the protocol says both rather than carrying a status word for them.
+ * This host wrote the same shape by hand, which is a copy that drifts. It had
+ * already drifted: `nonce` was missing from the content reference, and `diff`
+ * carried its own inline type instead of the protocol's `FileEditDiffStats`.
+ *
+ * Of `FileEdit`: `before` absent is a creation and `after` absent a deletion,
+ * which is how the protocol says both rather than carrying a status word.
  */
-export interface FileEdit {
-  before?: { uri: string; content: ContentRef };
-  after?: { uri: string; content: ContentRef };
-  diff?: { added?: number; removed?: number };
-}
+export type { ContentRef, FileEdit, FileEditSide, FileEditCollection } from '@microsoft/agent-host-protocol';
 
 /** One row of a changeset. `id` is stable within it. */
 export interface ChangesetFile {
@@ -317,6 +311,35 @@ export interface ChangesetSource {
    * caller waits for, so a `before` is read before the write that follows it.
    */
   observe?(dir: string, session: string, turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
+  /**
+   * A file a *person* is being asked to approve, and the text the tool would leave.
+   *
+   * Where `observe` records a turn that is already running, this is a question
+   * nobody has answered yet. The tool has not run, so the file on disk is what
+   * it was offered and the text it would write is on no disk at all: `apply`
+   * makes it from what is there, and this source holds it for the client to
+   * read while the question is open.
+   *
+   * `apply` is given what the file holds now, or `undefined` when there is no
+   * such file, and answers the text the tool would leave. Undefined is also
+   * the answer for a tool whose change cannot be worked out from its input, or
+   * for a file the input does not name. Either way the caller gets no preview
+   * and sends its confirmation as it would have without one: a question is
+   * never held back for want of a preview.
+   *
+   * Reading the file is this source's business, as it is for `observe` - this
+   * is the part of the host that has a filesystem.
+   */
+  propose?(dir: string, session: string, toolCallId: string, path: string, apply: (current: string | undefined) => string | undefined): Promise<FileEdit | undefined>;
+  /**
+   * The preview for a call is done with, so what it was serving goes.
+   *
+   * Called once the person has answered the question, whichever way they
+   * answered, and when the session that asked is closed. A client that reads
+   * the URI afterwards is told there is nothing there, rather than being
+   * served a file that is no longer what the tool would leave.
+   */
+  settle?(session: string, toolCallId: string): void;
   /**
    * The verbs this source offers on one scope, in the order to draw them.
    *

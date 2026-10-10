@@ -622,6 +622,8 @@ export function claude(options: ClaudeOptions): Agent {
       ...(start.context !== undefined ? { context: start.context } : {}),
       ...(start.seed ? { seed: start.seed } : {}),
       ...(start.onFileEdit ? { onFileEdit: start.onFileEdit } : {}),
+      ...(start.onEditProposed ? { onEditProposed: start.onEditProposed } : {}),
+      ...(start.onEditSettled ? { onEditSettled: start.onEditSettled } : {}),
       ...(start.onTurnRecorded ? { onTurnRecorded: start.onTurnRecorded } : {}),
       ...(start.onHandshake ? { onHandshake: start.onHandshake } : {}),
       // The host's worker-chat seam, carried through unchanged: this backend

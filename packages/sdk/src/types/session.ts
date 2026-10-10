@@ -2,6 +2,7 @@
 
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
+import type { FileEdit } from './changes.js';
 import type { BoundTool } from './agent.js';
 import type { ClientCallAnswer } from '../tools/clientcalls.js';
 
@@ -208,6 +209,27 @@ export interface SessionOptions {
    * read, so a `before` finishes before the write that follows it.
    */
   onFileEdit?(turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
+  /**
+   * A file a write tool is about to change, while a person decides about it.
+   *
+   * `Start.onEditProposed` handed down: the session names the call, the file
+   * and what the tool would leave, and the host reads the file and holds that
+   * text under a URI of its own for a client to draw the proposed side from.
+   * The tool has not run, so the text is on no disk until it does.
+   *
+   * Absent on a host with no changeset source, and answering nothing is the
+   * same answer: a call with no preview, whose confirmation goes out as it
+   * would have without one.
+   */
+  onEditProposed?(toolCallId: string, path: string, apply: (current: string | undefined) => string | undefined): Promise<FileEdit | undefined> | FileEdit | undefined;
+  /**
+   * The preview for a call is done with.
+   *
+   * `Start.onEditSettled` handed down: said once the person has answered, and
+   * once for every call the session was still holding as it closes. Absent on
+   * a host that passes no such callback.
+   */
+  onEditSettled?(toolCallId: string): void;
   /**
    * A turn this session has written under an id of its own.
    *

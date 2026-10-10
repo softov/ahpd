@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { memoryAutomations } from '../src/automations.js';
 import { gitChanges } from '../src/changes.js';
@@ -210,6 +211,96 @@ describe('ahp-edit:, a turn\'s captured sides', () => {
     const { source } = await captured('cofold:/Abc-123', 't1', file);
     const old = `ahp-edit://${encodeURIComponent('cofold:/Abc-123')}/${encodeURIComponent('t1')}/before${file}`;
     expect(await text(source, old)).toBe('as found\n');
+  });
+});
+
+/**
+ * A call a person is being asked about, which holds the text the tool would leave.
+ *
+ * Nothing is written for this: the tool has not run, which is the whole point,
+ * so the text exists only in what `propose` was handed and what it answers
+ * with. A client reads it from the URI on the `after` side.
+ */
+describe('ahp-edit://pending, the file a tool would leave', () => {
+  it('serves the text the tool would leave, until the call is settled', async () => {
+    const file = join(scratch(), 'a file #1.md');
+    writeFileSync(file, 'as it is\n');
+    const source = gitChanges();
+    const edit = await source.propose?.('', 'ahp-session:/s', 'toolu_1', file, (current) => `${current ?? ''}and more\n`);
+    // The file itself, named as a `file:` URI, which is where a client reads
+    // the side the tool would change rather than the one it would leave.
+    expect(fileURLToPath(edit?.before?.uri as string)).toBe(file);
+    expect(edit?.before?.content.uri).toBe(edit?.before?.uri);
+    const after = edit?.after?.content.uri as string;
+    expect(after.startsWith('ahp-edit://pending/')).toBe(true);
+    expect(await text(source, after)).toBe('as it is\nand more\n');
+    // And the form VS Code prints after parsing it.
+    expect(await text(source, vscode(after))).toBe('as it is\nand more\n');
+    source.settle?.('ahp-session:/s', 'toolu_1');
+    expect(await text(source, after)).toBeUndefined();
+  });
+
+  it('leaves `before` out for a file that is not there, and holds no diff counts', async () => {
+    const file = join(scratch(), 'new.md');
+    const source = gitChanges();
+    const edit = await source.propose?.('', 'ahp-session:/s', 'toolu_2', file, () => 'made\n');
+    expect(edit?.before).toBeUndefined();
+    expect(edit).not.toHaveProperty('diff');
+    expect(await text(source, edit?.after?.content.uri as string)).toBe('made\n');
+  });
+
+  it('answers nothing for a change it cannot make out of the file', async () => {
+    const file = join(scratch(), 'x.md');
+    writeFileSync(file, 'as it is\n');
+    const source = gitChanges();
+    // What an `Edit` whose `old_string` is not in the file answers with.
+    expect(await source.propose?.('', 'ahp-session:/s', 'toolu_3', file, () => undefined)).toBeUndefined();
+  });
+
+  it('holds one preview per call, and settles only the call it names', async () => {
+    const file = join(scratch(), 'x.md');
+    writeFileSync(file, 'as it is\n');
+    const source = gitChanges();
+    const edit = await source.propose?.('', 'ahp-session:/s', 'toolu_4', file, () => 'first\n');
+    const before = edit?.after?.content.uri as string;
+    // A second ask for the same call: one answer is being waited on, so the
+    // text it minted before is not held beside this one.
+    const again = await source.propose?.('', 'ahp-session:/s', 'toolu_4', file, () => 'second\n');
+    const now = again?.after?.content.uri as string;
+    expect(now).toBe(before);
+    expect(await text(source, now)).toBe('second\n');
+    // A different call is a different preview, and settling one leaves it.
+    const other = await source.propose?.('', 'ahp-session:/s', 'toolu_5', file, () => 'other\n');
+    const kept = other?.after?.content.uri as string;
+    source.settle?.('ahp-session:/s', 'toolu_4');
+    expect(await text(source, now)).toBeUndefined();
+    expect(await text(source, kept)).toBe('other\n');
+  });
+
+  it('is what the host itself answers for, until the call is settled', async () => {
+    const dir = scratch();
+    const file = join(dir, 'a.md');
+    writeFileSync(file, 'as it is\n');
+    const changes = gitChanges();
+    const host = createHost({ path: dir, agents: [echo({ path: dir })], changes });
+    const client = host.accept({
+      send: () => {}, notify: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
+    });
+    await client.handle({ method: 'initialize', params: { clientId: 'pending', protocolVersions: ['0.9.0'] } });
+
+    // The card names a URI, and the client reading that URI is reading the
+    // host: nobody wrote this text anywhere a filesystem could find it.
+    const edit = await changes.propose?.(dir, 'ahp-session:/s', 'toolu_9', file, (current) => `${current ?? ''}and more\n`);
+    const after = edit?.after?.content.uri as string;
+    expect(await client.handle({
+      method: 'resourceRead', params: { channel: 'ahp-root://', uri: after },
+    })).toEqual({ data: 'as it is\nand more\n', encoding: 'utf-8' });
+
+    changes.settle?.('ahp-session:/s', 'toolu_9');
+    // Answered for while the question is open, and nobody's once it is not.
+    await expect(client.handle({
+      method: 'resourceRead', params: { channel: 'ahp-root://', uri: after },
+    })).rejects.toMatchObject({ code: -32601 });
   });
 });
 

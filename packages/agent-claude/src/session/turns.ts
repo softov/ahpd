@@ -594,6 +594,10 @@ export function createTurns(ctx: SessionContext): Turns {
         one.settle({ behavior: 'deny', message: 'The turn was stopped' });
         ctx.inputNeededRemoved(one.id);
       }
+      // And the previews those questions were carrying. A call that will never
+      // run leaves no file to show, so the text the host was holding goes with
+      // the question it was held for.
+      ctx.settleEdits();
       // And the calls a client is running for us, for the same reason: a
       // promise settled by somebody else is one a stopped turn still waits on.
       ctx.releaseCalls('The turn was stopped');

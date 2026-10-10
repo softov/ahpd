@@ -59,7 +59,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | [p1 - A chat is reordered in its session, or moved to another session of the same agent and machine](../47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) | planned | host/50 |
 | [p2 - A chat lists the shells and subagents running in its background](../47-ahpd-serves-what-ahp-1-0-0-added-p2-a-chat-lists-its-background-work/plan.md) | built | - |
 | [p3 - A blocking MCP server startup can be sent to the background](../47-ahpd-serves-what-ahp-1-0-0-added-p3-an-mcp-server-startup-can-be-backgrounded/plan.md) | built | - |
-| [p4 - A file edit is the protocol's type, and a Claude write confirmation previews its edit](../47-ahpd-serves-what-ahp-1-0-0-added-p4-a-file-edit-is-the-protocols-type/plan.md) | planned | - |
+| [p4 - A file edit is the protocol's type, and a Claude write confirmation previews its edit](../47-ahpd-serves-what-ahp-1-0-0-added-p4-a-file-edit-is-the-protocols-type/plan.md) | built | - |
 | [p5 - An automation carries the client plugins its template names](../47-ahpd-serves-what-ahp-1-0-0-added-p5-an-automation-carries-client-plugins/plan.md) | built | host/49 (task 02) |
 | [p6 - A changeset being recomputed says so, and keeps its files](../47-ahpd-serves-what-ahp-1-0-0-added-p6-a-changeset-says-it-is-recomputing/plan.md) | planned | - |
 
@@ -72,8 +72,8 @@ Every child requires host/44 p1, which is built (`1eb8c8f`); p1 also requires ho
 
 ## Resume state
 
-- **Done so far:** p2 built.
-- **Next action:** [p4](../47-ahpd-serves-what-ahp-1-0-0-added-p4-a-file-edit-is-the-protocols-type/plan.md) and [p6](../47-ahpd-serves-what-ahp-1-0-0-added-p6-a-changeset-says-it-is-recomputing/plan.md), in build; then p1.
+- **Done so far:** p2, p3, p4 and p5 built.
+- **Next action:** [p6](../47-ahpd-serves-what-ahp-1-0-0-added-p6-a-changeset-says-it-is-recomputing/plan.md) in review; [p1](../47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) in build.
 - **Open questions:** none; the three asked were answered by Softov on 2026-10-03.
 - **Watch out for:** `node_modules` on `main` may still hold 0.9.0 after `1eb8c8f`; run `pnpm install` before any child, or the new types do not exist.
 

@@ -835,6 +835,27 @@ export function createSpawn(ctx: HostContext): Spawn {
         return options.changes?.observe?.(dir, uri, turnId, path, phase, text);
       },
       /*
+       * A file a person is being asked about, on its way to the same source.
+       *
+       * The other direction of the seam above: this is a call the agent has
+       * not run, so the source reads the file and keeps the text the tool
+       * would leave rather than recording a side of a change already made.
+       * The session names the call; the source mints the URI the client reads
+       * it from, because the URI is the source's own scheme.
+       *
+       * Nothing where this session has no folder, which is the folder the
+       * previews would be of. A session running in a computer is the same
+       * case the changeset is: this source reads the daemon's own disk.
+       */
+      onEditProposed: (toolCallId, path, apply) => {
+        const dir = dirOf(uri);
+        if (dir === undefined) return undefined;
+        return options.changes?.propose?.(dir, uri, toolCallId, path, apply);
+      },
+      onEditSettled: (toolCallId) => {
+        options.changes?.settle?.(uri, toolCallId);
+      },
+      /*
        * A turn the backend has written under an id of its own.
        *
        * What the host keeps against a turn is kept against the id the client

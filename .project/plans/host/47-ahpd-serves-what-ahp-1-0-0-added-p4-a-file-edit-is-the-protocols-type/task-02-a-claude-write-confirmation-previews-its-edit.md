@@ -1,6 +1,6 @@
 ---
 title: A Claude write confirmation previews the edit it would make
-status: todo
+status: done
 depends: [task-01-ahpds-file-edits-are-the-protocols-types.md]
 layer: "sdk, agent-claude"
 refs:
@@ -45,3 +45,17 @@ When the Claude backend asks a person to approve `Write`, `Edit` or `MultiEdit`,
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/5860f22a`, after task 01.
+- **The port.** `ChangesetSource` gained `propose?(dir, session, toolCallId, path, apply)` and `settle?(session, toolCallId)`. `propose` reads the file, calls `apply`, and answers one `FileEdit`. An absent file reaches `apply` as `undefined`. `before` is the `file:` URI of the file, and only when it is there. `after` is a URI the port mints. `settle` drops the text, and no `diff` is built.
+- **Where the text lives.** `packages/sdk/src/changes.ts` holds it in a `Map` keyed by `${session}\u0000${toolCallId}`, because `settle` is given no path to key a URI by. `pendingUri` copies `capturedUri`'s shape with `pending/` where the turn's scope was. `read` answers that map before it looks at the scheme, which is what makes the URI the host's own.
+- **The seams.** `Start.onEditProposed?(toolCallId, path, apply)` and `Start.onEditSettled?(toolCallId)` sit beside `onFileEdit` in `types/agent.ts` and `types/session.ts`. `packages/sdk/src/host/spawn.ts` wires both to `options.changes`, and gets the directory from the session URI the way `onFileEdit` does.
+- **What each tool proposes.** `writeOf(name, input)` in `packages/agent-claude/src/input.ts` answers a path and an `apply` for `Write`, `Edit` and `MultiEdit`, and nothing for any other tool. `Edit` replaces the first occurrence, or every one when `replace_all` is true, and answers `undefined` when the string is not in the file. `MultiEdit` applies its list in order.
+- **When it is asked for.** `packages/agent-claude/src/session/asking.ts` builds the preview before the confirmation goes out, so the card carries it. The same code keeps the call's id in a `Set`. The id and the preview sit above the `new Promise` the ask returns, because that executor is not async. The `Set` is what the seams are keyed by, so a preview is settled once.
+- **The four settle points.** The person's answer (`confirm`, for approval and refusal alike), `turns.cancel`, the `result` frame in `query.ts`, and `session.close`. Each calls `settleEdits`.
+- **Departure from the plan's Files list.** The plan named `packages/agent-claude/src/session.ts` for the confirmation. That file is now a composition of `session/*.ts` after the claude/18 split, so the work landed in `input.ts` and `session/{asking,turns,query}.ts`. `session.ts` carries only the close hook. `claude.ts` passes the two options through as the plan said.
+- **Tests.** `packages/agent-claude/test/agent-claude-edit-preview.test.ts` is new: nine cases, on the hoisted SDK fake from `agent-claude-tool-input.test.ts`, wired to the real changes port rather than a stand-in. `packages/sdk/test/changes-uris.test.ts` gained a fifth `ahp-edit://pending` case, which reads a proposed URI through the host's own `resourceRead`.
+- **One case takes the last `chat/toolCallReady`, not the first.** The assistant message announces a call ready as `not-needed` before anybody is asked. The question is the second one for that id.
+- **The `before` side is not the port's.** It is a `file:` URI the host answers from its filesystem, so a test reads it with `readFileSync`. Only the side the tool would leave goes through the port.
+- **Validation.** `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and the full `vitest run --maxWorkers=2 --testTimeout=10000` all pass: 266 files, 4698 tests.
+- **Not done:** nothing was set `done` and nothing was committed.

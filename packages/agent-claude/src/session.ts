@@ -290,6 +290,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
         ctx.pending.delete(one.id);
         one.settle({ behavior: 'deny', message: 'The session was disposed' });
       }
+      // And every preview those questions were carrying, which is the whole of
+      // what this session was holding: nothing is left to preview a call with.
+      ctx.settleEdits();
       ctx.releaseCalls('The session was disposed');
       try { rmSync(ctx.initScript, { force: true }); }
       catch { /* a script that was never written */ }

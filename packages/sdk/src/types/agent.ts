@@ -2,6 +2,7 @@
 
 import type { Turn } from '@microsoft/agent-host-protocol';
 import type { Bag } from './common.js';
+import type { FileEdit } from './changes.js';
 import type { WireTurn } from './wire.js';
 import type { Emit, Session, SubagentChat, SubagentRequest } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
@@ -349,6 +350,29 @@ export interface Start {
    * read is of.
    */
   onFileEdit?(turnId: string, path: string, phase: 'before' | 'after', text?: string): Promise<void> | void;
+  /**
+   * A file a write tool is about to change, while a person decides about it.
+   *
+   * Where `onFileEdit` says what a turn *did*, this is what a call *would* do,
+   * asked as the confirmation goes out. The tool has not run, so the file as
+   * it would be is on no disk: the host reads what is there, hands it to
+   * `apply`, and holds the text that answers for the client to read.
+   *
+   * Optional both ways, like `onFileEdit`: a backend that cannot see its own
+   * tools never calls it, and a host with no changeset source passes none.
+   * Nothing back is a call with no preview, and its confirmation is sent as it
+   * would have been without one - a question is never held back for want of a
+   * preview.
+   */
+  onEditProposed?(toolCallId: string, path: string, apply: (current: string | undefined) => string | undefined): Promise<FileEdit | undefined> | FileEdit | undefined;
+  /**
+   * The preview for a call is done with.
+   *
+   * Said once the person has answered the confirmation, and for every call a
+   * session was holding as it is closed, so the text the host kept goes with
+   * the question it was kept for.
+   */
+  onEditSettled?(toolCallId: string): void;
   /**
    * A turn this backend has written under an id of its own.
    *

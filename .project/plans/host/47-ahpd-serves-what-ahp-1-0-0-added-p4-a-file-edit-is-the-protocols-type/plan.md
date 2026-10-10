@@ -1,7 +1,7 @@
 ---
 title: A file edit is the protocol's type, and a Claude write confirmation previews its edit
 domain: host
-status: planned
+status: built
 priority: low
 created: 2026-10-03
 revalidated: 2026-10-03
@@ -52,8 +52,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - ahpd's file edits are the protocol's types](task-01-ahpds-file-edits-are-the-protocols-types.md) | todo | - |
-| [02 - A Claude write confirmation previews the edit it would make](task-02-a-claude-write-confirmation-previews-its-edit.md) | todo | 01 |
+| [01 - ahpd's file edits are the protocol's types](task-01-ahpds-file-edits-are-the-protocols-types.md) | done | - |
+| [02 - A Claude write confirmation previews the edit it would make](task-02-a-claude-write-confirmation-previews-its-edit.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -62,14 +62,14 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-ahpds-file-edits-are-the-protocols-types.md](task-01-ahpds-file-edits-are-the-protocols-types.md).
+- **Done so far:** task 01 and task 02, both `implemented`, in one session on 2026-10-09. Every gate passes.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** `types/` imports no runtime value (`scripts/boundary.mjs`); the re-export is `export type`.
+- **Watch out for:** `types/` imports no runtime value (`scripts/boundary.mjs`), so the re-export is `export type`. The backend half of task 02 is not in `session.ts`, which the claude/18 split turned into a composition of `session/*.ts`. The full suite rewrites `packages/sdk/test/fixtures/wire.jsonl` with this machine's paths, so that file shows as modified after a run.
 
 ## Final verification checklist
 
-- [ ] No hand-written `before?: { uri` shape left under `packages/*/src`.
-- [ ] A Claude `Edit` waiting for approval carries `edits` whose `after` reads back through `resourceRead`.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] No hand-written `before?: { uri` shape left under `packages/*/src`.
+- [x] A Claude `Edit` waiting for approval carries `edits` whose `after` reads back through `resourceRead`.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

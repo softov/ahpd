@@ -388,6 +388,24 @@ export function gitChanges(): ChangesetSource {
     [session, turn, phase, path].join('\u0000');
 
   /**
+   * The text a confirmation is previewing, by the URI it is served under.
+   *
+   * Held between the question and the answer. A tool nobody has approved has
+   * written nothing, so the file as it *would* be is on no disk, and the
+   * client drawing the diff reads it from here.
+   */
+  const proposed = new Map<string, string>();
+  /** The URI one call's preview was minted under, by the session and the call. */
+  const proposedBy = new Map<string, string>();
+  /**
+   * A session and a call as one key.
+   *
+   * `settle` is given the two and not the path, so the URI cannot be built
+   * again from them: it is remembered under this instead.
+   */
+  const proposedKey = (session: string, toolCallId: string): string => `${session}\u0000${toolCallId}`;
+
+  /**
    * Which files somebody has ticked off, per changeset.
    *
    * A reader's bookkeeping rather than anything about the files: keyed by the
@@ -407,6 +425,19 @@ export function gitChanges(): ChangesetSource {
   const capturedUri = (session: string, turn: string, path: string, phase: string): string =>
     `${CAPTURED}//turn/${Buffer.from(session, 'utf8').toString('base64url')}`
     + `/${encodeURIComponent(turn)}/${encodeURIComponent(phase)}${escaped(path)}`;
+
+  /**
+   * A proposed side, as `ahp-edit://pending/<session>/<call>/<path>`.
+   *
+   * A captured side's shape under an authority of its own, and for the same
+   * reason: the text is one this source is holding, and no `file:` URI
+   * resolves to it. The session is one base64url segment, which holds nothing
+   * a client lowercases, decodes or splits; the call id and each segment of
+   * the absolute path are percent-encoded.
+   */
+  const pendingUri = (session: string, toolCallId: string, path: string): string =>
+    `${CAPTURED}//pending/${Buffer.from(session, 'utf8').toString('base64url')}`
+    + `/${encodeURIComponent(toolCallId)}${escaped(path)}`;
 
   /**
    * The `kept` key an `ahp-edit:` URI names, or nothing when no side is held under it.
@@ -960,6 +991,55 @@ export function gitChanges(): ChangesetSource {
         }
       })().catch(() => {}),
 
+    /*
+     * A file a person is being asked to approve, held until they answer.
+     *
+     * The other half of `observe`, and the opposite one: a captured side is
+     * what a turn did, and this is what a tool *would* do, which is why it
+     * exists only while the question is open. The file is read because it is
+     * what the tool was offered, and `apply` turns it into the text the client
+     * will be shown.
+     */
+    propose: async (_dir, session, toolCallId, path, apply) => {
+      const current = await readFile(path, 'utf8').catch(() => undefined);
+      const text = apply(current);
+      if (text === undefined) return undefined;
+      const key = proposedKey(session, toolCallId);
+      // A call that asks twice is waiting on one answer, the last one, so the
+      // URI it minted before goes rather than being held for ever.
+      const already = proposedBy.get(key);
+      if (already !== undefined) proposed.delete(already);
+      const uri = pendingUri(session, toolCallId, path);
+      proposed.set(uri, text);
+      proposedBy.set(key, uri);
+      /*
+       * Both sides name the file itself, and only the `after` content is this
+       * source's to serve: what the tool would leave is on no disk yet. The
+       * `before` side is left out when there is no file, which is how the
+       * protocol says a creation. No `diff`: the tool sends no unified diff
+       * for this source to count.
+       */
+      const file = uriOf(path);
+      return {
+        ...(current === undefined ? {} : { before: { uri: file, content: { uri: file } } }),
+        after: { uri: file, content: { uri } },
+      };
+    },
+
+    /*
+     * The answer is in, or the session is gone: the text goes with it.
+     *
+     * Nothing else is done on the way out. A tool that was approved has
+     * written the file by now, and the file is where its text is read from.
+     */
+    settle: (session, toolCallId) => {
+      const key = proposedKey(session, toolCallId);
+      const uri = proposedBy.get(key);
+      if (uri === undefined) return;
+      proposedBy.delete(key);
+      proposed.delete(uri);
+    },
+
     summary: (dir) => held.get(dir)?.summary,
 
     /*
@@ -969,6 +1049,14 @@ export function gitChanges(): ChangesetSource {
      * the only place that version still exists.
      */
     read: async (uri) => {
+      /*
+       * A preview, which is the one thing here that is not a change of the
+       * past: the file the tool was offered has not been written yet. Read
+       * first, because it is looked up whole rather than parsed - a pending
+       * URI says nothing a phase walk could find.
+       */
+      const previewing = proposed.get(uri);
+      if (previewing !== undefined) return { data: previewing, encoding: 'utf-8' };
       // Captured sides are held, not fetched: neither is on disk any more.
       if (uri.startsWith(CAPTURED)) {
         const key = sideOf(uri);
