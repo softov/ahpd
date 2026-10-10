@@ -1,11 +1,24 @@
-import { ROOT } from './channels.js';
+import { ROOT, subagentChatUri } from './channels.js';
 import { Status, idFor, idOf } from '../catalog.js';
-import type { Summary } from '../types/catalog.js';
+import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { Agent, Listed } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
 import type { Held, LiveSubagent } from './state.js';
 import type { HostContext } from './context.js';
+
+/**
+ * A worker chat read back from a backend's own record, and the URI this host
+ * gives its channel.
+ *
+ * The pair travels together because neither half survives the other: the
+ * record says what the worker was and the URI is the only way to open it, and
+ * a list built from one without the other is a chat nobody can subscribe to.
+ */
+export interface RestoredWorker {
+  uri: string;
+  one: Bag;
+}
 
 /** The session list and each row of it. */
 export interface Catalogue {
@@ -13,7 +26,14 @@ export interface Catalogue {
   startedBy(session: string, chat?: string): Bag;
   chatSummary(session: string, uri: string, chat: Session): Bag;
   subagentSummary(uri: string, ref: LiveSubagent): Bag;
-  restoredSubagentSummary(uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }): Bag;
+  /**
+   * Every chat of one running session, in the order both answers list them.
+   *
+   * `restored` is what the backend said about the workers it ran before this
+   * process held the session, which the caller has already read.
+   */
+  chatCatalogOf(session: string, held: Held, restored: RestoredWorker[]): Bag[];
+  restoredSubagentSummary(session: string, uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }): Bag;
   activityOf(held: Held): string | undefined;
   sessionAdded(uri: string): void;
   summaryMoved(uri: string): void;
@@ -74,7 +94,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     resource: uri,
     ...startedBy(session, uri),
     title: chat.title(),
-    status: chat.status(),
+    // What the backend is doing, with the client's own bits laid over it. A
+    // chat marked read is read whatever the backend says next, and the flags
+    // are this host's to remember - no backend has heard of them.
+    status: chat.status() | kept.chatFlags(idOf(session), uri),
     modifiedAt: chat.modifiedAt(),
     ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
     // The same answer the chat's own state gives. A summary that left it out
@@ -86,7 +109,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   const subagentSummary = (uri: string, ref: LiveSubagent) => ({
     resource: uri,
     title: ref.title,
-    status: Number(ref.state.status ?? Status.Idle),
+    // A worker is a chat of its session, so it carries the same bits: a person
+    // reads a worker's conversation, or files it away, without the lead chat.
+    status: Number(ref.state.status ?? Status.Idle) | kept.chatFlags(idOf(ref.session), uri),
     modifiedAt: String(ref.state.modifiedAt ?? new Date().toISOString()),
     origin: { kind: 'tool', chat: ref.parentChat, toolCallId: ref.toolCallId },
     interactivity: 'read-only',
@@ -94,14 +119,77 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   });
 
   /** The same, for a worker read back from a backend's own record. */
-  const restoredSubagentSummary = (uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }): Bag => ({
+  const restoredSubagentSummary = (
+    session: string,
+    uri: string,
+    parentChat: string,
+    ref: { toolCallId: string; title: string; turns: Bag[] },
+  ): Bag => ({
     resource: uri,
     title: ref.title,
-    status: Status.Idle,
+    status: Status.Idle | kept.chatFlags(idOf(session), uri),
     modifiedAt: new Date().toISOString(),
     origin: { kind: 'tool', chat: parentChat, toolCallId: ref.toolCallId },
     interactivity: 'read-only',
   });
+  /**
+   * One session's chats, in the one order both answers use.
+   *
+   * A session's state and its catalogue row are two answers to one question
+   * and a client reads both, so a row listing two chats where the state lists
+   * three is a client drawing a chat it cannot open. The list is built here
+   * once and both call it.
+   *
+   * The session's own chats first, then the workers: a worker is a chat of the
+   * session even though no `Session` holds it, and a client that subscribes
+   * after one opened reads the list rather than finding the conversation
+   * nowhere.
+   */
+  const chatCatalogOf = (session: string, held: Held, restored: RestoredWorker[]): Bag[] => [
+    ...[...held.chats].map(([uri, chat]) => chatSummary(session, uri, chat)),
+    ...[...subagents].filter(([, one]) => one.session === session)
+      .map(([uri, one]) => subagentSummary(uri, one)),
+    ...restored.map(({ uri, one }) => restoredSubagentSummary(
+      session,
+      uri,
+      // Read off `ctx` rather than destructured: this area is built before the
+      // one that owns the answer.
+      ctx.restoredParentChat(session, held.defaultChat, one),
+      one as unknown as { toolCallId: string; title: string; turns: Bag[] },
+    )),
+  ];
+  /**
+   * The workers a running session read back, as they were last read.
+   *
+   * `summaryOf` answers in the same tick as the row it builds, and a backend's
+   * record is not read in one, so the row reads the cache the session's own
+   * snapshot fills: both ends up listing the same workers rather than the row
+   * asking the disk again behind the state's back. Until something has looked
+   * for them the row carries the chats this host is holding and no more, and
+   * the next move of it carries them - a session nobody has subscribed to has
+   * workers nobody has asked about.
+   */
+  const restoredOf = (session: string): RestoredWorker[] =>
+    (ctx.subHistory.get(idOf(session)) ?? [])
+      .map((one) => ({ one, uri: subagentChatUri(session, String(one.toolCallId ?? '')) }))
+      .filter(({ uri }) => !subagents.has(uri));
+  /**
+   * One session's chats, cut to the fields a catalogue row carries.
+   *
+   * `SessionChatSummary` is the protocol's compact chat - what a client draws
+   * a session's chats from without subscribing to any of them - and a
+   * `ChatSummary` is not it. `activity` and `modifiedAt` are the two it has
+   * and this one does not, and leaving either in would make the row move on
+   * its own: a worker read back from a record is stamped with the moment it
+   * was built, so a list carrying that is a list that differs on every read.
+   */
+  const compactChats = (chats: Bag[]): SummaryChat[] => chats.map((chat) => ({
+    resource: String(chat.resource),
+    title: String(chat.title),
+    ...(chat.origin !== undefined ? { origin: chat.origin as Record<string, unknown> } : {}),
+    ...(chat.interactivity !== undefined ? { interactivity: String(chat.interactivity) } : {}),
+    ...(chat.status !== undefined ? { status: Number(chat.status) } : {}),
+  }));
 
   /**
    * A session's status, with the client flags folded in.
@@ -201,6 +289,19 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       createdAt: held.createdAt,
       modifiedAt: modifiedOf(held),
       workingDirectories: lead.workingDirectories(),
+      /*
+       * What the session's chats are, and which of them a client gets when it
+       * names none.
+       *
+       * The catalogue is what a client draws a session list from, and a client
+       * listing twenty sessions reads their chats from the rows rather than
+       * subscribing to twenty sessions. Both fields are optional in the
+       * protocol and both are the same answer the session's own state gives,
+       * from the same list: a row and the state it opens disagreeing about
+       * what chats a session has is a client drawing a chat it cannot open.
+       */
+      chats: compactChats(chatCatalogOf(uri, held, restoredOf(uri))),
+      defaultChat: held.defaultChat,
       // A row's own field, and a row's alone: `SessionState` does not declare
       // it, so it is added here rather than in `describes`.
       ...changesOf(uri),
@@ -607,6 +708,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
         createdAt: held.createdAt,
         modifiedAt: modifiedOf(held),
         workingDirectories: lead.workingDirectories(),
+        // The chats and the default one, as `summaryOf` carries them: a client
+        // that lists rather than subscribes reads a row's chats from here, and
+        // a row that left them out would disagree with the session it names.
+        chats: compactChats(chatCatalogOf(uri, held, restoredOf(uri))),
+        defaultChat: held.defaultChat,
         ...(started !== undefined ? { origin: started } : {}),
         ...changesOf(uri),
         ...ctx.describes(uri),
@@ -793,7 +899,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
+    statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary, chatCatalogOf,
     activityOf, sessionAdded, summaryMoved, forgetSent, activeSessionsMoved, learnModels,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };

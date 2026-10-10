@@ -513,6 +513,204 @@ describe('the fields a client reads by name', () => {
     expect(row?.createdAt).toBe(born);
     expect(row?.modifiedAt).not.toBe(born);
   });
+
+  /** A session's row as the root last said it, folded from either notification. */
+  const rowOf = (p: ReturnType<typeof peer>, session: string): Record<string, unknown> | undefined => {
+    let found: Record<string, unknown> | undefined;
+    for (const note of p.notes) {
+      const params = note.params as Record<string, unknown>;
+      if (note.method === 'root/sessionAdded') {
+        const summary = params.summary as Record<string, unknown> | undefined;
+        if (summary?.resource === session) found = { ...(found ?? {}), ...summary };
+      }
+      if (note.method === 'root/sessionSummaryChanged' && params.session === session) {
+        found = { ...(found ?? {}), ...(params.changes as Record<string, unknown>) };
+      }
+    }
+    return found;
+  };
+
+  /** The chats the row lists, in the spelling the host holds them under. */
+  const chatsOf = (p: ReturnType<typeof peer>, session: string) =>
+    (rowOf(p, session)?.chats ?? []) as { resource: string; status?: number; interactivity?: string; title?: string }[];
+
+  const statusOf = (p: ReturnType<typeof peer>, session: string, chat: string) =>
+    chatsOf(p, session).find((one) => one.resource === chat)?.status;
+
+  const sessionStatus = (p: ReturnType<typeof peer>, session: string) =>
+    (catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1)?.params.changes as
+      { status?: number } | undefined)?.status;
+
+  it("marks one chat read without moving the session or its other chats", async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    // Subscribed, because a notification goes to the connections watching a
+    // channel and to no others - a client opens the chat it is about to read.
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    p.notes.length = 0;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/isReadChanged', isRead: true } },
+    });
+    await settle();
+
+    // On the chat's own channel, which is where the client watching that one
+    // chat reduces it.
+    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged')).toBe(true);
+    // And on the session channel, which is where a client watching the session
+    // reads what each of its chats is doing. `changes` carries the status the
+    // protocol says to project, not a chat summary it has no field for.
+    const updated = actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated').at(-1);
+    expect(updated?.action.chat).toBe(second);
+    expect((updated?.action.changes as { status?: number } | undefined)?.status).toBe(Status.Idle | Status.IsRead);
+    // The row a client lists says it too, and says it about that chat alone.
+    expect(statusOf(p, 'claude:/live', second)).toBe(Status.Idle | Status.IsRead);
+    const others = chatsOf(p, 'claude:/live').filter((one) => one.resource !== second);
+    expect(others.map((one) => one.status)).toEqual(others.map(() => Status.Idle));
+    // A chat marked read is not the session being read, and the session's own
+    // status is the session's.
+    expect(sessionStatus(p, 'claude:/live')).toBe(Status.Idle);
+    // A client opening the chat afterwards gets the bit in its state, so a
+    // restart of the client is not a chat that forgot it was read.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: second } }) as {
+      snapshot: { state: { status: number } };
+    }).snapshot.state;
+    expect(state.status).toBe(Status.Idle | Status.IsRead);
+  });
+
+  it('says nothing the second time a chat is marked read', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    const read = {
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/isReadChanged', isRead: true } },
+    };
+    client.handle(read);
+    await settle();
+    const said = p.notes.length;
+    client.handle(read);
+    await settle();
+    // Nothing at all: not the chat action, not the row. A client applies what
+    // it is sent, so sending the bit it already holds is a notification per
+    // click for a state that did not move.
+    expect(p.notes.length).toBe(said);
+  });
+
+  it('marks a worker chat read, which the row lists like any other', async () => {
+    sdk.sessions.push({ sessionId: 'restored', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov', [], {
+      agents: [{
+        ...claude({ paths: ['/home/softov'] }),
+        subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
+      }],
+    } as never);
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
+    // A turn is what starts the session, and a session nothing is running for
+    // lists no chats - so the worker's chat is only there once one is.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle(8);
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+
+    const worker = chatsOf(p, 'claude:/restored').find((one) => one.interactivity === 'read-only');
+    expect(worker?.resource).toContain('toolu_task');
+    p.notes.length = 0;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: worker?.resource as string, action: { type: 'chat/isReadChanged', isRead: true } },
+    });
+    await settle();
+    // Read is the client's own bit and outlives every reason the turns are
+    // read-only: somebody who has read what a subagent did does not want it
+    // back as unread when they open the session again.
+    expect(statusOf(p, 'claude:/restored', worker?.resource as string)).toBe(Status.Idle | Status.IsRead);
+  });
+
+  it('archives one chat, and restores it, without archiving the session', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    p.notes.length = 0;
+    const archive = (on: boolean) => client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/isArchivedChanged', isArchived: on } },
+    });
+
+    archive(true);
+    await settle();
+    expect(statusOf(p, 'claude:/live', second)).toBe(Status.Idle | Status.IsArchived);
+    // The session is not archived with it. One chat put away is a chat, and a
+    // session that went with it would take the other chats off the list too.
+    expect(sessionStatus(p, 'claude:/live')).toBe(Status.Idle);
+
+    archive(false);
+    await settle();
+    expect(statusOf(p, 'claude:/live', second)).toBe(Status.Idle);
+  });
+
+  it('takes archiving the default chat as archiving the session', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    p.notes.length = 0;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+    });
+    await settle();
+
+    // Said on the session channel, because the session is what moved, and with
+    // the action the protocol declares for it.
+    expect(actions(p, uri).some((e) => e.action.type === 'session/isArchivedChanged'
+      && e.action.isArchived === true)).toBe(true);
+    // And not on the chat channel. The default chat *is* the session, so a
+    // chat action here would be a chat a client hides while the session it
+    // names says it is still there.
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/isArchivedChanged')).toBe(false);
+    expect(sessionStatus(p, 'claude:/live')).toBe(Status.Idle | Status.IsArchived);
+    // The chat's own entry carries no archive bit: the session is what is
+    // archived, and an entry repeating it says one thing twice.
+    const chats = chatsOf(p, 'claude:/live');
+    expect(chats).toHaveLength(1);
+    expect((chats[0]?.status ?? 0) & Status.IsArchived).toBe(0);
+
+    // And back the other way, which is a session taken out of the archive.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/isArchivedChanged', isArchived: false } },
+    });
+    await settle();
+    expect(sessionStatus(p, 'claude:/live')).toBe(Status.Idle);
+  });
+
+  it('keeps a chat read while a turn runs in it', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/isReadChanged', isRead: true } },
+    });
+    await settle();
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+
+    // Both bits, because they are different facts about one chat: work is
+    // happening in it, and the person has already read what came before.
+    expect(statusOf(p, 'claude:/live', second)).toBe(Status.InProgress | Status.IsRead);
+  });
 });
 
 /*

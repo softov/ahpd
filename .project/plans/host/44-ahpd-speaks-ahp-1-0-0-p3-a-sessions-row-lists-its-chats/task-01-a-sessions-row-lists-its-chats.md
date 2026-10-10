@@ -1,6 +1,6 @@
 ---
 title: A session's row lists its chats and its default chat
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -40,3 +40,21 @@ refs:
 - `pnpm exec vitest run packages/sdk/test/wire.test.ts` and `pnpm test` pass.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/cf58b4f7`.
+- `chatCatalogOf(session, held, restored)` in `catalogue.ts` builds a session's chats once.
+- `restoredOf` gathers the worker chats read back from a backend.
+- The session state's `chats` and the row's `chats` both call it, so the two cannot disagree about which chats a session has.
+- `compactChats` cuts each entry to `resource`, `title`, `origin`, `interactivity` and `status`, which is `SessionChatSummary`'s field set. It keeps the order.
+- `summaryOf` adds `chats` and `defaultChat`, so `summaryMoved` carries them with the rest.
+- `sayMoved` compares a partial against the last one sent and drops a repeat, so no client is told a list it already holds.
+- A running session's row carries both fields.
+- A row listed from a transcript, with no session running, carries neither: that is the plan's decision, not an omission.
+- `summaryMoved` is now called at each site that adds or removes a chat: `spawn.ts`, `tooling.ts` and `sessionmethods.ts`.
+- In `spawn.ts` the worker branch no longer compares `status` and `activity` itself.
+- A worker is a chat of its session, and `summaryMoved` answers whether its own summary moved.
+- **Departure 1.** `packages/sdk/src/types/catalog.ts` is not in the Files list. `SummaryChat`, and the two optional fields on `Summary`, are declared there.
+- **Departure 2.** `lifecycle.ts:121` needed no change. `teardown` is reached only from `removeSession`, and `root/sessionRemoved` follows at once.
+- `packages/sdk/test/conformance.test.ts` folds the two root notifications by hand, because the protocol ships no reducer for them. It compares the folded `chats` with the session state's.
+- `docs/AHP.md`: the `root/sessionAdded` and `root/sessionSummaryChanged` rows say a running session's row carries `chats` and `defaultChat`.
+- `pnpm typecheck`, `pnpm boundary` and the full suite pass.

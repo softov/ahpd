@@ -96,6 +96,15 @@ export function memorySessions(): SessionStore & Held {
       else held.set(chatUri, title);
       patch(id, { chatTitles: held.size === 0 ? undefined : held });
     },
+    chatFlags: (id, chatUri) => rows.get(id)?.chatFlags?.get(chatUri) ?? 0,
+    setChatFlags: (id, chatUri, value) => {
+      const held = new Map(rows.get(id)?.chatFlags);
+      // A chat with no bit set is a chat nothing was recorded for, the way a
+      // session's own flags are: the map holds the chats that have one.
+      if (value === 0) held.delete(chatUri);
+      else held.set(chatUri, value);
+      patch(id, { chatFlags: held.size === 0 ? undefined : held });
+    },
     chats: (id) => rows.get(id)?.chats ?? [],
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
@@ -126,6 +135,7 @@ export function memorySessions(): SessionStore & Held {
         ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
         ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
         ...(held.chatTitles === undefined ? {} : { chatTitles: held.chatTitles }),
+        ...(held.chatFlags === undefined ? {} : { chatFlags: held.chatFlags }),
         ...(held.parent === undefined ? {} : { parent: held.parent }),
         ...(held.nested === undefined ? {} : { nested: held.nested }),
         ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -231,6 +241,7 @@ interface Row {
   artifacts?: Record<string, unknown>[] | undefined;
   pullRequests?: PullRequestBaseline | undefined;
   chatTitles?: Map<string, string> | undefined;
+  chatFlags?: Map<string, number> | undefined;
   parent?: string | undefined;
   nested?: NestedRecord | undefined;
   chats?: StoredChat[] | undefined;
@@ -241,6 +252,7 @@ const empty = (row: Row): boolean =>
   row.flags === undefined && row.config === undefined && row.scope === undefined
   && row.owner === undefined && row.senders === undefined && row.provider === undefined
   && row.artifacts === undefined && row.pullRequests === undefined && row.chatTitles === undefined
+  && row.chatFlags === undefined
   && row.parent === undefined && row.nested === undefined && row.chats === undefined;
 
 /**
@@ -263,6 +275,8 @@ interface Saved {
   artifacts?: Record<string, unknown>[];
   pullRequests?: PullRequestBaseline;
   chatTitles?: Record<string, string>;
+  /** The read and archived bits of each chat, by the chat's URI. */
+  chatFlags?: Record<string, number>;
   /** The id of the session this one was started from, where one did. */
   parent?: string;
   nested?: NestedRecord;
@@ -397,6 +411,7 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
       ...(held.artifacts === undefined ? {} : { artifacts: held.artifacts }),
       ...(held.pullRequests === undefined ? {} : { pullRequests: held.pullRequests }),
       ...(held.chatTitles === undefined ? {} : { chatTitles: Object.fromEntries(held.chatTitles) }),
+      ...(held.chatFlags === undefined ? {} : { chatFlags: Object.fromEntries(held.chatFlags) }),
       ...(held.parent === undefined ? {} : { parent: held.parent }),
       ...(held.nested === undefined ? {} : { nested: held.nested }),
       ...(held.chats === undefined ? {} : { chats: held.chats }),
@@ -520,6 +535,13 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
           if (typeof title === 'string') inner.setChatTitle(row.id, chatUri, title);
         }
       }
+      // A record of numbers, one per chat, and anything else is ignored rather
+      // than guessed at - as every other field here is.
+      if (typeof row.chatFlags === 'object' && row.chatFlags !== null && !Array.isArray(row.chatFlags)) {
+        for (const [chatUri, value] of Object.entries(row.chatFlags)) {
+          if (typeof value === 'number') inner.setChatFlags(row.id, chatUri, value);
+        }
+      }
       // The id of a session that started this one. Anything that is not a
       // non-empty string is ignored rather than guessed at, as every other
       // field here is.
@@ -559,6 +581,8 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setPullRequests: (id, value) => { touched(id, () => { inner.setPullRequests(id, value); }); },
     chatTitle: (id, chatUri) => inner.chatTitle(id, chatUri),
     setChatTitle: (id, chatUri, title) => { touched(id, () => { inner.setChatTitle(id, chatUri, title); }); },
+    chatFlags: (id, chatUri) => inner.chatFlags(id, chatUri),
+    setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
     chats: (id) => inner.chats(id),
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
     // What this store holds is what it read at construction, which is the whole

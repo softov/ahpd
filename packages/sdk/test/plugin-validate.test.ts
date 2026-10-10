@@ -55,6 +55,7 @@ const ports = {
     flags: () => {}, setFlags: () => {}, config: () => {}, setConfig: () => {},
     artifacts: () => {}, setArtifacts: () => {}, pullRequests: () => {}, setPullRequests: () => {},
     chatTitle: () => {}, setChatTitle: () => {}, chats: () => {}, setChats: () => {}, forget: () => {},
+    chatFlags: () => {}, setChatFlags: () => {},
     sessions: () => {},
   },
   diagnostics: {},

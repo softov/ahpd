@@ -1,7 +1,7 @@
 ---
 title: A session's row lists its chats with their status, and a chat is read or archived on its own
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -65,8 +65,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session's row lists its chats and its default chat](task-01-a-sessions-row-lists-its-chats.md) | todo | - |
-| [02 - A chat is marked read or archived on its own](task-02-a-chat-is-marked-read-or-archived-on-its-own.md) | todo | 01 |
+| [01 - A session's row lists its chats and its default chat](task-01-a-sessions-row-lists-its-chats.md) | done | - |
+| [02 - A chat is marked read or archived on its own](task-02-a-chat-is-marked-read-or-archived-on-its-own.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -75,10 +75,20 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** p1 first; then [task-01-a-sessions-row-lists-its-chats.md](task-01-a-sessions-row-lists-its-chats.md).
+- **Done so far:** both tasks, on 2026-10-09.
+- A running session's `root/sessionAdded` and every `root/sessionSummaryChanged` carry `chats` and `defaultChat`.
+- They are built by `chatCatalogOf`, so the row and the session state hold one list.
+- A client's `chat/isReadChanged` and `chat/isArchivedChanged` set that chat's own bits.
+- Those bits show in its state, in `session/chatUpdated` and in the row's entry, and survive a restart.
+- On the session's default chat the archive is the session's.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `IsRead` and `IsArchived` are orthogonal to the activity bits; a chat's status is its activity bits from the backend OR its flags, never the session's flags.
+- **Files the plan's lists did not name:** `packages/sdk/src/types/catalog.ts` (task 01's row fields).
+- `packages/sdk/src/validate.ts` and `packages/sdk/test/plugin-validate.test.ts` (task 02's store members).
+- `packages/sdk/test/ahp-test-cases.test.ts` (task 02, whose refusal lists name these two actions).
+- `README.md` (task 02, whose coverage line carries the same state-action total as `docs/AHP.md`).
+- Each is written up in its task's Resume.
 
 ## Final verification checklist
 

@@ -788,6 +788,72 @@ it('takes one on a running session, and leaves the advertised control saying wha
   expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
 });
 
+/*
+ * A session's row and its state, told the same list of chats.
+ *
+ * The protocol package reduces the root *actions* and ships no reducer for
+ * `root/sessionAdded` or `root/sessionSummaryChanged`, so the fold below is
+ * the one a client writes itself. What it has to leave is the list the
+ * session reducer's state carries: a row and the state it opens disagreeing
+ * about what chats a session has is a client drawing a chat it cannot open.
+ *
+ * The client names the session the way this host publishes it, so both
+ * answers are spelt the same - a snapshot is respelt into whatever name was
+ * asked about, and a catalogue notification is not.
+ */
+it("says a session's chats in its row as the session's own state says them", async () => {
+  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'claude:/live';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+  const first = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  await client.handle({ method: 'subscribe', params: { channel: first.snapshot.state.defaultChat } });
+  // A second chat, and a turn in it: the two answers then have a list to agree
+  // about rather than one chat each.
+  const second = 'ahp-chat:/second';
+  await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+  dispatch(client, second, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  await settle();
+
+  let row: Record<string, unknown> | undefined;
+  for (const note of p.notes) {
+    const params = note.params as Record<string, unknown>;
+    const summary = note.method === 'root/sessionAdded' ? params.summary as Record<string, unknown> : undefined;
+    if (summary?.resource === uri) row = { ...summary };
+    if (note.method === 'root/sessionSummaryChanged' && params.session === uri)
+      row = { ...(row ?? {}), ...(params.changes as Record<string, unknown>) };
+  }
+  const listed = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { chats: Record<string, unknown>[]; defaultChat: string } };
+  };
+  const state = listed.snapshot.state;
+
+  /*
+   * `SessionChatSummary` is the protocol's compact chat and `ChatSummary` is
+   * not, so the state's list is cut to the same fields before the two are
+   * compared. `activity` and `modifiedAt` are the two the row does not carry,
+   * and `modifiedAt` is the one that matters: a worker read back from a
+   * backend's record is stamped with the moment it was built, so a row
+   * carrying it would differ on every read of the same list.
+   */
+  const cut = (chats: Record<string, unknown>[]) => chats.map((one) => ({
+    resource: one.resource,
+    title: one.title,
+    ...(one.origin !== undefined ? { origin: one.origin } : {}),
+    ...(one.interactivity !== undefined ? { interactivity: one.interactivity } : {}),
+    ...(one.status !== undefined ? { status: one.status } : {}),
+  }));
+  expect(cut(row?.chats as Record<string, unknown>[])).toEqual(cut(state.chats));
+  expect(row?.defaultChat).toBe(state.defaultChat);
+});
+
 it('still starts the harness on what the schema says', async () => {
   const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
   const client = host.accept(peer());

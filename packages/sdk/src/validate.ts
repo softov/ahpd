@@ -144,6 +144,7 @@ const PORT_MEMBERS: Record<PortKey, Record<string, Kind>> = {
     flags: 'function', setFlags: 'function', config: 'function', setConfig: 'function',
     artifacts: 'function', setArtifacts: 'function', pullRequests: 'function', setPullRequests: 'function',
     chatTitle: 'function', setChatTitle: 'function', chats: 'function', setChats: 'function',
+    chatFlags: 'function', setChatFlags: 'function',
     sessions: 'function', forget: 'function',
   },
   // Every member of `Diagnostics` is optional, so any object is a diagnostics

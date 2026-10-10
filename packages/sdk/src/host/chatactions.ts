@@ -10,6 +10,39 @@ import type { Origin } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
 /**
+ * Set or clear one of a session's own two bits, and say so.
+ *
+ * A session's `IsRead` and `IsArchived` are this host's rather than a
+ * backend's: a harness asked would have no idea whether a person had read a
+ * transcript. Three actions reach this - `session/isReadChanged` and
+ * `session/isArchivedChanged` on a session channel, and `chat/isArchivedChanged`
+ * on the session's default chat, which archives the session because that chat
+ * is what the session's row is.
+ *
+ * Answers whether anything moved. A bit handed the value it already had is not
+ * a change, and a client told about one is a client woken for a message that
+ * moved nothing.
+ */
+export function sessionFlag(
+  ctx: HostContext,
+  uri: string,
+  bit: number,
+  on: boolean,
+  action: Record<string, unknown>,
+): boolean {
+  const before = ctx.kept.flags(idOf(uri));
+  const after = on ? before | bit : before & ~bit;
+  if (after === before) return false;
+  ctx.kept.setFlags(idOf(uri), after);
+  // Every client watching, and the catalogue: a flag one client sets is a flag
+  // the others have to see, which is what having a host for this buys over
+  // each client keeping its own.
+  ctx.dispatch(uri, action);
+  ctx.summaryMoved(uri);
+  return true;
+}
+
+/**
  * A session's and a chat's actions.
  *
  * The part of a dispatch that needs the session the action is about: a
@@ -34,7 +67,7 @@ export function chatAction(
     known, leadOf, lifeOf, lives, log, messageAttachments, messageFrom, modelIn, nameOf, names,
     ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, recordedChats, renameChat, restart,
     restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting, statusOf,
-    storedConfig, summaryMoved, value, waitingFor, wheres,
+    storedConfig, subagents, summaryMoved, value, waitingFor, wheres,
   } = ctx;
 
   /** The message an action carries, which its text and its attachments ride on. */
@@ -71,6 +104,62 @@ export function chatAction(
     return settled;
   };
 
+  /*
+   * The two bits a chat carries of its own.
+   *
+   * Read and archived are this host's, the way a session's are, and they
+   * belong to the chat rather than to the session it sits in: a session is a
+   * container for conversations and a person reads one of them without the
+   * others.
+   *
+   * Handled above the worker guard, because a worker chat carries them too.
+   * Read-only says nobody types into it; it does not say nobody may file it
+   * away. Only a chat of a session this host is running has anywhere to keep
+   * one - a chat read back off a disk is a row nothing was recorded for, and
+   * the guard below answers for it.
+   */
+  const bitOf = type === 'chat/isReadChanged' ? Status.IsRead
+    : type === 'chat/isArchivedChanged' ? Status.IsArchived
+    : undefined;
+  const flagSession = bitOf === undefined ? undefined : sessionFor(channel);
+  if (bitOf !== undefined && flagSession !== undefined && sessions.has(flagSession)) {
+    const on = type === 'chat/isReadChanged' ? action.isRead === true : action.isArchived === true;
+    /*
+     * Archiving the chat that is the session's row archives the session.
+     *
+     * A session is a row in a list and its first chat is what that row is, so
+     * the protocol makes the two the same act. It goes out as the session's
+     * own action on the session channel, and nothing is said on the chat
+     * channel: a chat reducer applying this there would set the chat's own bit
+     * as well, and the chat and its session would then disagree about whether
+     * the session is archived.
+     */
+    if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
+      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
+      return;
+    }
+    const before = kept.chatFlags(idOf(flagSession), channel);
+    const after = on ? before | bitOf : before & ~bitOf;
+    // Said again, a bit that did not move is not a change: it would move the
+    // catalogue and wake every client for a message that said nothing.
+    if (after === before) return;
+    kept.setChatFlags(idOf(flagSession), channel, after);
+    dispatch(channel, action);
+    /*
+     * And the session's list of chats, which is where a client watching the
+     * session rather than this one chat reads that chat's status. The value is
+     * the chat's own status with its bits laid over it - the exact number the
+     * chat's own state now answers with, which is what the protocol requires
+     * of it.
+     */
+    const lead = byChat.get(channel)?.chat;
+    const base = lead !== undefined
+      ? lead.status()
+      : Number(((subagents.get(channel)?.state ?? {}) as Bag).status ?? Status.Idle);
+    dispatch(flagSession, { type: 'session/chatUpdated', chat: channel, changes: { status: base | after } });
+    summaryMoved(flagSession);
+    return;
+  }
   /*
    * A worker's chat is read-only, whichever side of a restart it is on.
    *

@@ -805,6 +805,8 @@ export function createTooling(ctx: HostContext): Tooling {
       log(`opened ${chatUri} in ${at}`);
       if (asked.title !== undefined) { chat.setTitle?.(asked.title); keepTitle(at, chatUri, asked.title); }
       dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
+      // And the row: a client listing sessions reads a session's chats there.
+      summaryMoved(at);
       chat.begin(crypto.randomUUID(), asked.prompt, asked.model === undefined ? undefined : { id: asked.model }, asked.from);
       return { chat: chatUri };
     },

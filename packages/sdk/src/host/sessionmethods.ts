@@ -38,7 +38,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     isolating, isolated, keepChat, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle, snapshotOf,
-    spawn, unheld, waitingFor, watches, withSender,
+    spawn, summaryMoved, unheld, waitingFor, watches, withSender,
   } = ctx;
 
   /**
@@ -764,6 +764,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
       // and a chat named any other way arrives as a TypeError inside it.
       dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(uri, chatUri, chat) });
+      // And the row, which lists the session's chats: a client that is only
+      // listing sessions reads the new chat from there.
+      summaryMoved(uri);
       const first_ = (typeof params.initialMessage === 'object' && params.initialMessage !== null
         ? params.initialMessage
         : undefined) as Record<string, unknown> | undefined;
@@ -825,6 +828,9 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
+      // Last, and once: the row's chat list and its default chat both just
+      // moved, and one notification carries both rather than one per change.
+      summaryMoved(found.uri);
       return null;
     },
     disposeSession: async (params) => {

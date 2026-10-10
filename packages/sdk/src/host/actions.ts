@@ -6,7 +6,7 @@ import { localPath } from '../fileuri.js';
 import { reason } from '../values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, PER_CONNECTION } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { chatAction } from './chatactions.js';
+import { chatAction, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
@@ -671,21 +671,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
 
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
-      const uri = sessionFor(channel);
-      const bit = type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived;
-      const on = type === 'session/isReadChanged'
-        ? action.isRead === true
-        : action.isArchived === true;
-      const before = kept.flags(idOf(uri));
-      const after = on ? before | bit : before & ~bit;
-      if (after === before)
-        return;
-      kept.setFlags(idOf(uri), after);
-      // Every client watching, and the catalogue: a flag one client sets
-      // is a flag the others have to see, which is what having a host
-      // for this buys over each client keeping its own.
-      dispatch(uri, action);
-      summaryMoved(uri);
+      // The session's own bits, kept beside it and never seen by a backend.
+      // One function, because `chat/isArchivedChanged` on a session's default
+      // chat is this same act - see `sessionFlag`.
+      sessionFlag(
+        ctx,
+        sessionFor(channel),
+        type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived,
+        type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
+        action,
+      );
       return;
     }
     const terminal = terminals.get(channel);

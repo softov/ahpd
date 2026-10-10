@@ -29,7 +29,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig,
-    rootState, waitingFor, statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary, activityOf,
+    rootState, waitingFor, statusOf, startedBy, chatSummary, chatCatalogOf, restoredSubagentSummary, activityOf,
     past, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
   } = ctx;
@@ -252,22 +252,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         // No `modifiedAt`: `SessionSummary` declares it and `SessionState`
         // does not, and the catalogue row is where a client reads it.
         defaultChat: held.defaultChat,
-        chats: [
-          ...[...held.chats].map(([uri_, chat_]) => chatSummary(channel, uri_, chat_)),
-          /*
-           * And the workers, which are chats of this session even though no
-           * `Session` holds them. A client that subscribes after they opened
-           * reads the list, so a worker missing from it is a conversation
-           * nobody can find.
-           */
-          ...[...subagents].filter(([, one]) => one.session === channel)
-            .map(([uri_, one]) => subagentSummary(uri_, one)),
-          ...restored.map(({ one, uri: uri_ }) => restoredSubagentSummary(
-            uri_,
-            restoredParentChat(channel, held.defaultChat, one),
-            one as unknown as { toolCallId: string; title: string; turns: Bag[] },
-          )),
-        ],
+        // The same list the session's catalogue row carries, built by the one
+        // function both answers call: a row and the state it opens disagreeing
+        // about what chats a session has is the bug that sharing this avoids.
+        chats: chatCatalogOf(channel, held, restored),
         ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
       };
       return value({ resource: channel, state, fromSeq: ctx.serverSeq });
@@ -282,7 +270,13 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     if (worker)
       return value({
         resource: channel,
-        state: { ...(worker.state as Bag), resource: channel },
+        state: {
+          ...(worker.state as Bag),
+          resource: channel,
+          // What the worker is doing, with the read and archived bits a client
+          // set on it laid over: those are this host's and no backend has them.
+          status: Number((worker.state as Bag).status ?? Status.Idle) | kept.chatFlags(idOf(worker.session), channel),
+        },
         fromSeq: ctx.serverSeq,
       });
     const talking = byChat.get(channel);
@@ -299,7 +293,14 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         ? (await restoredSubagents(idOf(talking.uri), owner.agent, talking.chat.allTurns() as unknown as WireTurn<Turn>[]))
           .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
         : [];
-      const state: Bag = { ...talking.chat.chatState(), ...startedBy(talking.uri, channel) };
+      const state: Bag = {
+        ...talking.chat.chatState(),
+        ...startedBy(talking.uri, channel),
+        // The chat's own status with the read and archived bits laid over it,
+        // which is what its catalogue row says too: a chat's state and its row
+        // are two answers to one question.
+        status: talking.chat.status() | kept.chatFlags(idOf(talking.uri), channel),
+      };
       if (Array.isArray(state.turns)) {
         const turns = linkedTurns(talking.uri, state.turns as Bag[], restored);
         state.turns = ctx.withSender(talking.uri, ctx.stampedCalls(talking.uri, turns));
@@ -370,7 +371,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           state: {
             resource: channel,
             title: opened.title ?? title,
-            status: Status.Idle,
+            status: Status.Idle | kept.chatFlags(id, channel),
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             ...tail(ctx.withSender(owning, ctx.stampedCalls(owning, (own ?? []) as unknown as Bag[]))),
             queuedMessages: [],
@@ -396,7 +397,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           state: {
             resource: channel,
             title: String(one.title ?? 'Subagent'),
-            status: Status.Idle,
+            status: Status.Idle | kept.chatFlags(id, channel),
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             origin: { kind: 'tool', chat: parentChat, toolCallId: wanted },
             interactivity: 'read-only',
@@ -417,7 +418,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
           state: {
             resource: channel,
             title,
-            status: Status.Idle,
+            status: Status.Idle | kept.chatFlags(id, channel),
             modifiedAt: moves.get(owning) ?? new Date().toISOString(),
             ...startedBy(nameOf(id)),
             ...tail(ctx.withSender(owning, ctx.stampedCalls(owning, linkedTurns(owning, turns, workers)))),
@@ -460,7 +461,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             {
               resource: lead?.uri ?? chatUriFor(nameOf(id)),
               title: lead?.title ?? title,
-              status: Status.Idle,
+              status: Status.Idle | kept.chatFlags(id, lead?.uri ?? chatUriFor(nameOf(id))),
               modifiedAt: stamp,
               ...startedBy(nameOf(id), lead?.uri),
             },
@@ -478,7 +479,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
               .map((one) => ({
                 resource: one.uri,
                 title: one.title ?? title,
-                status: Status.Idle,
+                status: Status.Idle | kept.chatFlags(id, one.uri),
                 modifiedAt: stamp,
                 ...startedBy(nameOf(id), one.uri),
               })),
@@ -486,6 +487,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
             // the call that spawned it - which is what makes a restored
             // session's subagents openable rather than lost.
             ...workers.map((one) => restoredSubagentSummary(
+              nameOf(id),
               subagentChatUri(nameOf(id), String(one.toolCallId ?? '')),
               restoredParentChat(nameOf(id), chatUriFor(nameOf(id)), one),
               one as unknown as { toolCallId: string; title: string; turns: Bag[] },

@@ -207,7 +207,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     const action = withWorkerUri(uri, given);
-    const was = { status: ref.state.status, activity: ref.state.activity };
     absorb(ref, action);
     dispatch(uri, action);
     const summary = subagentSummary(uri, ref);
@@ -215,8 +214,14 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (describedSub.get(uri) === now) return;
     describedSub.set(uri, now);
     dispatch(ref.session, { type: 'session/chatUpdated', chat: uri, changes: summary });
-    // A worker's status and activity are part of what its session reads as.
-    if (ref.state.status !== was.status || ref.state.activity !== was.activity) summaryMoved(ref.session);
+    /*
+     * A worker is a chat of its session, so what moved on it moves the
+     * session's row as well: its status and title are in the row's chat list,
+     * and its activity is in what the session is doing. `summaryMoved` is what
+     * decides whether the row says anything new, so it is asked whenever the
+     * chat's own summary moved rather than on a list of fields kept here.
+     */
+    summaryMoved(ref.session);
   };
 
   /**
@@ -261,6 +266,9 @@ export function createSpawn(ctx: HostContext): Spawn {
       };
       subagents.set(uri, ref);
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
+      // The session's row is where a client listing sessions reads its chats,
+      // so a chat that has just appeared is said there too.
+      summaryMoved(session);
       sendSubagent(uri, {
         type: 'chat/turnStarted',
         turnId: ref.turnId,

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Status } from '../src/catalog.js';
 import type { Request } from '../src/types/rpc.js';
 import {
   claude, createHost, machine, resetSdk, actions, emit, hello, open, peer,
@@ -553,6 +554,126 @@ describe('a session read from its transcript', () => {
     // turn rather than an empty session it would have to reopen to fix.
     expect(opened.snapshot.state.turns[0]?.message.text).toBe('there');
     expect(sdk.reads).toBe(2);
+  });
+});
+
+describe("a row lists the session's chats", () => {
+  type Row = { chats?: { resource: string; title: string; status: number }[]; defaultChat?: string };
+  /**
+   * A session's row as the root said it last, from either notification.
+   *
+   * Read from the wire rather than from `listSessions`, because half of what
+   * is checked here is that the notification carries the list: a client told
+   * about a chat appearing and not told about it in the row is a client whose
+   * list is one revision behind its own action.
+   */
+  const rowOf = (p: ReturnType<typeof peer>, session: string): Row | undefined => {
+    let found: Row | undefined;
+    for (const note of p.notes) {
+      const params = note.params as Record<string, unknown>;
+      const summary = note.method === 'root/sessionAdded' ? params.summary as Record<string, unknown> : undefined;
+      if (summary?.resource === session) found = { ...(found ?? {}), ...summary } as Row;
+      if (note.method === 'root/sessionSummaryChanged' && params.session === session)
+        found = { ...(found ?? {}), ...(params.changes as Record<string, unknown>) } as Row;
+    }
+    return found;
+  };
+  const chatsOf = (p: ReturnType<typeof peer>, session: string) => rowOf(p, session)?.chats ?? [];
+  const resourcesOf = (p: ReturnType<typeof peer>, session: string) => chatsOf(p, session).map((one) => one.resource);
+
+  it("lists a session's chats and the one a client gets when it names none", async () => {
+    const { client, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string; title: string; status: number }[]; defaultChat?: string }[];
+    };
+    const row = listed.items.find((one) => one.resource === 'claude:/live');
+    // A client listing sessions draws their chats from the rows rather than
+    // subscribing to each session, so the list has to be on the row - and the
+    // default chat is the first of them and named as well.
+    expect(row?.chats?.map((one) => one.resource)).toEqual([row?.defaultChat, second]);
+    expect(row?.defaultChat).toMatch(/^ahp-chat:\/\/default\//);
+    expect(row?.chats?.every((one) => typeof one.status === 'number')).toBe(true);
+  });
+
+  it("says a chat's status in the row when a turn starts in it", async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle();
+
+    const updated = actions(p).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === second).at(-1);
+    const status = (updated?.action.changes as { status?: number } | undefined)?.status;
+    expect(status).toBe(Status.InProgress);
+    // And the row agrees with the chat, which is what a client listing
+    // sessions with no subscription to either reads.
+    expect(chatsOf(p, 'claude:/live').find((one) => one.resource === second)?.status).toBe(status);
+    expect(chatsOf(p, 'claude:/live').find((one) => one.resource === rowOf(p, 'claude:/live')?.defaultChat)?.status)
+      .toBe(Status.Idle);
+  });
+
+  it('says the row again when a chat opens and when one closes', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    const said = () => p.notes.filter((n) => n.method === 'root/sessionSummaryChanged'
+      && (n.params as { session?: string }).session === 'claude:/live').length;
+
+    const before = said();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    expect(said()).toBeGreaterThan(before);
+    expect(resourcesOf(p, 'claude:/live')).toContain(second);
+
+    const opened = said();
+    await client.handle({ method: 'disposeChat', params: { channel: second } });
+    expect(said()).toBeGreaterThan(opened);
+    // The list replaces the catalog, so the chat being gone from it is what
+    // takes it out of a client's list.
+    expect(resourcesOf(p, 'claude:/live')).not.toContain(second);
+    expect(resourcesOf(p, 'claude:/live')).toEqual([rowOf(p, 'claude:/live')?.defaultChat]);
+  });
+
+  it('lists a worker chat read back from a backend, and read-only', async () => {
+    sdk.sessions.push({ sessionId: 'restored', summary: 'Restored', lastModified: 2, cwd: '/home/softov' });
+    sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
+    /*
+     * A backend that says it once ran a worker. The Claude plugin reaches its
+     * worker records through the SDK, which this file has faked away, so what
+     * a restart finds is driven from the agent itself - the seam
+     * `subagent-chat.test.ts` uses to open one live.
+     */
+    const base = claude({ paths: ['/home/softov'] });
+    const host = serving('/home/softov', [], {
+      agents: [{ ...base, subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }] }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
+    });
+    await settle(8);
+    // Subscribing again is what reads the backend's record of the workers it
+    // ran, which is where the row's copy of them comes from.
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
+    await settle();
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; chats?: { resource: string; title: string; interactivity?: string }[] }[];
+    };
+    const row = listed.items.find((one) => one.resource === 'claude:/restored');
+    const worker = row?.chats?.find((one) => one.interactivity === 'read-only');
+    // A worker is a chat of its session even though no `Session` holds it, and
+    // a client that never subscribes to it still has to see that it is there.
+    expect(worker?.title).toBe('Explore');
+    expect(worker?.resource).toContain('toolu_task');
   });
 });
 

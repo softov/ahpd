@@ -1,7 +1,7 @@
 ---
 title: ahpd speaks AHP 1.0.0, and keeps 0.9.0
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -57,9 +57,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - ahpd speaks 1.0.0 and 0.9.0](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md) | planned | - |
-| [p2 - An automation disables itself as its definition says](../44-ahpd-speaks-ahp-1-0-0-p2-an-automation-disables-itself/plan.md) | planned | p1 |
-| [p3 - A session's row lists its chats, and a chat is read or archived on its own](../44-ahpd-speaks-ahp-1-0-0-p3-a-sessions-row-lists-its-chats/plan.md) | planned | p1 |
+| [p1 - ahpd speaks 1.0.0 and 0.9.0](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md) | built | - |
+| [p2 - An automation disables itself as its definition says](../44-ahpd-speaks-ahp-1-0-0-p2-an-automation-disables-itself/plan.md) | built | p1 |
+| [p3 - A session's row lists its chats, and a chat is read or archived on its own](../44-ahpd-speaks-ahp-1-0-0-p3-a-sessions-row-lists-its-chats/plan.md) | built | p1 |
 
 ## Risks and tradeoffs
 
@@ -68,9 +68,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [p1](../44-ahpd-speaks-ahp-1-0-0-p1-ahpd-speaks-1-0-0-and-0-9-0/plan.md).
-- **Open questions:** in p2 and p3.
+- **Done so far:** p1, p2 and p3 built.
+- **Next action:** none; see [implemented.md](implemented.md).
+- **Open questions:** none.
 - **Watch out for:** 1.0.0 registers most of its new actions as introduced in `0.9.0` (`ACTION_INTRODUCED_IN`), so a 0.9.0 connection is not a reason to hold them back; only the canvas actions are `0.10.0`.
 
 ## Final verification checklist

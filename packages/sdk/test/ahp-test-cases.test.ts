@@ -427,10 +427,8 @@ const NOT_REPLAYED = [
   '271-chat-movablechanged-sets-true',
   '271-turn-end-normalizes-offset-and-rollover',
   '272-chat-changesetschanged-clears-catalogue',
-  '272-chat-isarchivedchanged-archives-chat',
   '272-chat-movablechanged-sets-false',
   '272-toolcallready-typed-edit-previews',
-  '273-chat-isarchivedchanged-unarchives-chat',
   '274-chat-canvaseschanged-sets-canvases',
   '275-chat-canvaseschanged-clears-canvases',
   '277-chat-backgroundworkset-adds',
@@ -448,8 +446,6 @@ const NOT_REPLAYED = [
   '284-chat-backgroundworkremoved-removes-unknown-kind',
   '284-session-chatsreordered-unknown-order-noop',
   '285-session-chatsreordered-duplicate-order-noop',
-  '286-chat-isreadchanged-marks-default-chat-as-read',
-  '287-chat-isreadchanged-marks-chat-as-unread',
   '288-session-chatupdated-mirrors-chat-read-status',
 ];
 
@@ -471,12 +467,6 @@ const HOST_REFUSED = [
   // `session/activeClientRemoved is not served yet`
   '221-session-activeclientremoved-removes-client',
   '222-session-activeclientremoved-no-op-unknown-client',
-  // `chat/isArchivedChanged is not served yet`
-  '272-chat-isarchivedchanged-archives-chat',
-  '273-chat-isarchivedchanged-unarchives-chat',
-  // `chat/isReadChanged is not served yet`
-  '286-chat-isreadchanged-marks-default-chat-as-read',
-  '287-chat-isreadchanged-marks-chat-as-unread',
   // `Nothing is running in this chat to steer`
   '039-set-steering-message',
   '040-replace-existing-steering-message',
@@ -553,6 +543,13 @@ const HOST_REFUSED = [
  * here. The case's expectation for those fields is a state ahpd never makes,
  * so the difference is asserted rather than passed over: a case that starts
  * agreeing fails the test and has to come off this list.
+ *
+ * `272-chat-isarchivedchanged-archives-chat` names a peer chat and every chat
+ * case here is driven on a session's default chat, where the protocol says
+ * archiving is archiving the session - so what moves is the session's status
+ * and the chat's own bit is left alone, which is a decision this host took
+ * deliberately. The same action on a peer chat sets that chat's bit; the case
+ * cannot be reached here because the driven session has no peer chat.
  */
 const HOST_OWNS: Record<string, string[]> = {
   '005-session-turnstarted': ['activeTurn'],
@@ -566,6 +563,8 @@ const HOST_OWNS: Record<string, string[]> = {
   '046-append-queued-message-when-id-is-new': ['status'],
   '047-update-queued-message-in-place-when-id-already-exists': ['status'],
   '075-turnstarted-clears-isread': ['activeTurn'],
+  // Driven on the default chat, where archiving is the session's; see above.
+  '272-chat-isarchivedchanged-archives-chat': ['status'],
 };
 
 /** The state the host serves for one channel, read by a connection of its own. */
@@ -678,17 +677,17 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
   }
 
   it('names every case it cannot replay, and no other', () => {
-    expect(NOT_REPLAYED).toHaveLength(205);
-    expect(new Set(NOT_REPLAYED).size).toBe(205);
-    expect(HOST_REFUSED).toHaveLength(59);
+    expect(NOT_REPLAYED).toHaveLength(201);
+    expect(new Set(NOT_REPLAYED).size).toBe(201);
+    expect(HOST_REFUSED).toHaveLength(55);
     // The rest of the refused cases are the ones a client may not send, and
     // each of those is checked against the protocol's own answer per case.
     expect(NOT_REPLAYED.length - HOST_REFUSED.length).toBe(146);
-    expect(Object.keys(HOST_OWNS)).toHaveLength(11);
-    // And 32 that ran and agreed, which need no entry in either list: they are
+    expect(Object.keys(HOST_OWNS)).toHaveLength(12);
+    // And 35 that ran and agreed, which need no entry in either list: they are
     // the coverage this suite is for, and a case joining or leaving them is
     // what moves this number.
-    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 32).toBe(hostCases.length);
+    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 35).toBe(hostCases.length);
   });
 });
 

@@ -149,9 +149,9 @@ handed them again as if it had not.
 | notification | ahpd | Notes |
 | --- | :---: | --- |
 | `action` | ✅ | The envelope every state action rides in: `channel`, `action`, `serverSeq`, and the `origin` of whatever caused it. Counted with the [state actions](#state-actions) rather than here. |
-| `root/sessionAdded` | ✅ | Carries the whole `summary`, to the connections watching the root channel and no others. |
+| `root/sessionAdded` | ✅ | Carries the whole `summary`, to the connections watching the root channel and no others. A running session's `summary` carries `chats` and `defaultChat`. |
 | `root/sessionRemoved` | ✅ | Carries `session`. |
-| `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. `activity` is `null` when there is none: a partial is spread over the row a client holds, so a key left off is a field that did not move, and a row that went idle kept saying what its last tool was doing. The type says `string`; the reference host sends `null` and its client reads it as cleared. |
+| `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. `activity` is `null` when there is none: a partial is spread over the row a client holds, so a key left off is a field that did not move, and a row that went idle kept saying what its last tool was doing. The type says `string`; the reference host sends `null` and its client reads it as cleared. `chats` carries the session's whole compact chat catalogue and replaces the list a client holds, and `defaultChat` names the chat a client gets when it names none. A row and the state it opens build that list with one function, so they cannot disagree about which chats a session has. |
 | `root/progress` | ✅ | Only when the request carried a `progressToken`, and only to the client that sent it: the token is that request's and means nothing to anybody else. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree on a large repository is seconds somebody otherwise waits through with nothing on screen. |
 | `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does: nothing here verifies a token, but `authenticate` now carries `expiresIn`, so when one goes stale is a fact this host holds. |
 | `otlp/exportLogs` | ✅ | `ahp-otlp://logs/{level}`, a template a client expands before subscribing - a literal URI would mean every subscriber got every line. Carries an OTLP/JSON `ExportLogsServiceRequest` verbatim, the same lines the daemon writes to stdout. |
@@ -160,7 +160,7 @@ handed them again as if it had not.
 
 ## State actions
 
-**95 of the 96 declared, across nine channels**, one row each. The one that is
+**99 of the 100 declared, across nine channels**, one row each. The one that is
 not served is `chat/toolCallResultConfirmed`, and it is refused in its own words
 rather than as unserved - a client that sends it learns why nothing happened.
 
@@ -229,7 +229,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
 | `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
 
-### `chat/*` — 31 of 32
+### `chat/*` — 33 of 34
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -250,6 +250,8 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/error` | host | ✅ | The ending, not a message beside one: it carries the `turnId` and the duration the completion would have. |
 | `chat/turnResume` | client | ✅ | The protocol's conditions - latest, errored, message and parts intact - are the backend's to check, because only it knows what its last turn was. A backend that cannot re-run one says so rather than being asked to. |
 | `chat/activityChanged` | host | ✅ | What this chat is doing, in the tool's own words while one runs. Sent with no `activity` to clear it. |
+| `chat/isReadChanged` | client | ✅ | Marks one chat read or unread, and only that chat: the session's own read state is `session/isReadChanged`, and a sibling chat's is its own. The bit is kept per chat, so a chat comes back read when a client opens it again, and it survives a restart. It is projected into the chat's `ChatSummary.status` and into its `SessionChatSummary.status`, which is what the protocol asks a host to synchronize. Setting what is already set sends nothing. |
+| `chat/isArchivedChanged` | client | ✅ | Archives one chat, or restores it. On the session's default chat this is the session being archived, which the protocol says to send as `session/isArchivedChanged` - so that is what goes out, on the session channel, and nothing on the chat channel, whose reducer would set the chat's own bit. On any other chat it is that chat's bit, kept beside its title. |
 | `chat/workingDirectorySet` | client | ✅ | A chat may hold any subset of its session's directories and never more; anything outside is refused rather than quietly widening the session. The change starts that one chat again, resumed. |
 | `chat/workingDirectoryRemoved` | client | ✅ | The primary cannot be removed, for the reason the session's cannot: it is where the process is rooted. |
 | `chat/usage` | host | ✅ | Tokens and the model that spent them, at the end of the turn. What the protocol names no field for rides `_meta` where a backend reports it: `ahpd.cacheWriteTokens`, `ahpd.reasoningTokens`, `ahpd.context` (`{ used, size }`) and `ahpd.cost` (`{ amount, currency }`, never the reference host's bare number). |

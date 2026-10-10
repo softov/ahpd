@@ -23,4 +23,29 @@ export interface Summary {
    * absent means. Only automations set it.
    */
   origin?: { kind: 'automation'; automation: string; run: string };
+  /**
+   * The session's chats, as the protocol's compact `SessionChatSummary` has
+   * them: enough to draw a chat in a list without opening it.
+   *
+   * Absent for a row read from a transcript with nothing running, which is a
+   * row whose chats are the store's rather than a session's - the same answer
+   * `defaultChat` gives.
+   */
+  chats?: SummaryChat[];
+  /** The chat a client gets when it names none, as the session state says it. */
+  defaultChat?: string;
+}
+
+/** One chat of a row: the protocol's compact `SessionChatSummary`, field for field. */
+export interface SummaryChat {
+  /** The chat's channel URI. */
+  resource: string;
+  /** What the chat is called. */
+  title: string;
+  /** What it was made from, when it was made out of something. */
+  origin?: Record<string, unknown>;
+  /** `full` for a chat somebody talks in, `read-only` for a worker's. */
+  interactivity?: string;
+  /** `SessionStatus` bits, which for a chat are its activity and its own flags. */
+  status?: number;
 }

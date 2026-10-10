@@ -1,6 +1,6 @@
 ---
 title: A chat is marked read or archived on its own
-status: todo
+status: done
 depends: [task-01-a-sessions-row-lists-its-chats.md]
 layer: "sdk"
 refs:
@@ -42,3 +42,37 @@ A client's `chat/isReadChanged` or `chat/isArchivedChanged` sets or clears that 
 - `packages/sdk/test/conformance.test.ts` and `pnpm test` pass.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/cf58b4f7`.
+- `sessionFlag(ctx, uri, bit, on, action)` in `chatactions.ts` is the session's flag path, lifted out of `actions.ts`.
+- Both callers share it rather than a copy.
+- `session/isReadChanged` and `session/isArchivedChanged` call it, and so does `chat/isArchivedChanged` on the session's default chat.
+- There the session's bit moves and `session/isArchivedChanged` goes out on the session channel.
+- Nothing goes out on the chat channel, whose reducer would set the chat's own bit.
+- On any other chat the two actions compare the bit, store it and dispatch the action on the chat channel.
+- They send `session/chatUpdated` with the chat's `status` and call `summaryMoved`.
+- A bit already at the value asked for sends nothing at all - not the action, not the row.
+- The flags are held in the session store keyed by chat URI, beside `chatTitle`, in both stores.
+- They are written with the session and forgotten with it.
+- A chat whose bits are all cleared leaves no key, and a row with nothing else leaves no file.
+- Every place a chat's status is built ORs the session's flags for that chat into the activity bits.
+- In `catalogue.ts` those are `chatSummary`, `subagentSummary` and `restoredSubagentSummary`.
+- In `snapshots.ts` they are the session state's chat list, the live worker, the peer chat, the restored worker and the recorded chat.
+- The session's own flags are never folded into a chat's status, and a chat's never into the session's.
+- `restoredSubagentSummary` takes the session as a leading argument, not decoded from the chat URI. The flags are keyed by the pair.
+- **Departure 1.** `packages/sdk/src/validate.ts` and `packages/sdk/test/plugin-validate.test.ts` are not in the Files list.
+- The plugin boundary checks a store's members against a table keyed by port.
+- A required member missing from that table is a compile error, and one missing from the fixture is a test failure.
+- Both needed `chatFlags` and `setChatFlags`.
+- **Departure 2.** `packages/sdk/test/ahp-test-cases.test.ts` is not in the Files list.
+- The protocol's own case suite asserts which cases this host refuses.
+- So the four cases naming these two actions had to leave `NOT_REPLAYED` and `HOST_REFUSED` in this change.
+- The counts that guard those lists move with them.
+- One of the four is driven on the default chat, where archiving is the session's, so its `status` joins `HOST_OWNS`.
+- The reason is written beside it.
+- **Departure 3.** `docs/AHP.md`: besides the two rows the Files list names, the `chat/*` heading moves to `33 of 34`.
+- The `## State actions` total said `95 of the 96` while its own tables summed to `98 of the 99`. It now says `99 of the 100`.
+- **Departure 4.** `README.md` is not in the Files list either. Its coverage line carried the same stale state-action total.
+- Moving one of the two without the other leaves the documents disagreeing, so the README now says `99 of 100` too.
+- The commands half of that line did not move: no method changed.
+- `pnpm typecheck`, `pnpm boundary` and the full suite pass.

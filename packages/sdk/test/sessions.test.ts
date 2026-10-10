@@ -1051,6 +1051,44 @@ it('keeps the titles chats were given, and forgets them with the session', async
   expect(fileSessions({ dir }).chatTitle('a', 'ahp-chat:/one')).toBeUndefined();
 });
 
+it("keeps the flags a chat was given, and forgets them with the session", async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setChatFlags('a', 'ahp-chat:/one', READ);
+  store.setChatFlags('a', 'ahp-chat:/two', READ | ARCHIVED);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toEqual({
+    version: 1, id: 'a', chatFlags: { 'ahp-chat:/one': READ, 'ahp-chat:/two': READ | ARCHIVED },
+  });
+  // Read back by a second store on the same folder, which is what a restart is.
+  // A chat marked read that came back unread is the whole reason these are
+  // written down rather than held in the session that is running.
+  const second = fileSessions({ dir });
+  expect(second.chatFlags('a', 'ahp-chat:/one')).toBe(READ);
+  expect(second.chatFlags('a', 'ahp-chat:/two')).toBe(READ | ARCHIVED);
+  // A chat nobody marked is idle, not unknown, because the value is a bitset.
+  expect(second.chatFlags('a', 'ahp-chat:/nobody')).toBe(0);
+  second.forget('a');
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'a')).toBeUndefined();
+  expect(fileSessions({ dir }).chatFlags('a', 'ahp-chat:/one')).toBe(0);
+});
+
+it('writes no flags for a chat whose bits are all cleared', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  store.setChatFlags('b', 'ahp-chat:/one', READ);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'b')).toMatchObject({ chatFlags: { 'ahp-chat:/one': READ } });
+  // Cleared is where it started, so the file says nothing about it - a store
+  // that kept the zero would grow a key for every chat ever marked and cleared.
+  // With nothing else on it the row is empty, and an empty row is no file.
+  store.setChatFlags('b', 'ahp-chat:/one', 0);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+  expect(row(dir, 'b')).toBeUndefined();
+  expect(fileSessions({ dir }).chatFlags('b', 'ahp-chat:/one')).toBe(0);
+});
+
 it('keeps the record of a nested session across a restart, lists it, and forgets it with the session', async () => {
   const dir = join(root, 'sessions');
   const record = {

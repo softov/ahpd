@@ -249,6 +249,18 @@ export interface SessionStore {
   /** Set it. An empty string forgets it, which is a title taken back. */
   setChatTitle(id: string, chatUri: string, title: string): void;
   /**
+   * The client flags in force for one chat, or `0` where none were ever set.
+   *
+   * A chat carries the same two bits a session does, and they are its own: a
+   * session is a container for conversations and a person reads one of them
+   * without the others. Keyed by the chat URI for the reason a chat's title
+   * is, so the bit belongs to that chat and not to the session it sits in -
+   * and a worker's chat, which no `Session` holds, still has one.
+   */
+  chatFlags(id: string, chatUri: string): number;
+  /** Replace them. The whole bitset, because that is what the protocol sends. */
+  setChatFlags(id: string, chatUri: string, value: number): void;
+  /**
    * The chats this session has, in the order they were opened.
    *
    * A session is a container for conversations, and this is what makes a
