@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  resetSdk, actions, claude, createHost, hello, open, peer, sdk,
+  resetSdk, actions, claude, createHost, hello, machine, open, peer, sdk,
   serving, settle, running,
 } from './support/host.js';
 
@@ -465,6 +465,89 @@ describe('what a slash offers', () => {
       params: { kind: 'somethingElse', channel: chatUri, text: '/de', offset: 3 },
     }) as { items: unknown[] };
     expect(result.items).toEqual([]);
+  });
+
+  it('offers a command that two backends share once, on the root channel', async () => {
+    /*
+     * Five Claude presets report the same `batch`.
+     *
+     * The root channel is where a composer with no session asks, and it was
+     * answered with one `/batch` per backend - a menu with the same command
+     * repeated, where picking the second is picking the first.
+     */
+    sdk.init = { models: [], commands: [{ name: 'batch', description: 'Run it in the background' }], agents: [] };
+    const host = createHost({
+      path: '/home/softov',
+      agents: [
+        claude({ paths: ['/home/softov'] }),
+        claude({ paths: ['/home/softov'], provider: 'codex', displayName: 'Codex' }),
+      ],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await settle(8);
+    /*
+     * Both probes have answered, so both lists are on the root. Asserted
+     * rather than assumed: a backend still starting offers nothing, and the
+     * answer below would then hold for the wrong reason.
+     */
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { provider: string; customizations?: unknown[] }[] } };
+    }).snapshot.state;
+    expect(root.agents.map((one) => [one.provider, one.customizations !== undefined]))
+      .toEqual([['claude', true], ['codex', true]]);
+
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: 'ahp-root://', kind: 'userMessage', text: '/', offset: 1 },
+    }) as { items: { insertText: string }[] };
+    expect(found.items.map((one) => one.insertText)).toEqual(['/batch']);
+  });
+
+  it('gives a new session its own backend\'s commands, and not every backend\'s', async () => {
+    /*
+     * A session created a moment ago has not heard back from its own CLI.
+     *
+     * That silence used to fall back to every backend's list, so a session was
+     * handed the commands of backends it does not run - which is a slash menu
+     * whose items the session will refuse.
+     */
+    sdk.init = { models: [], commands: [{ name: 'batch', description: 'Run it in the background' }], agents: [] };
+    const { echo } = await import('../../../examples/echo/agent.js');
+    const host = createHost({
+      path: '/home/softov',
+      agents: [
+        claude({ paths: ['/home/softov'] }),
+        { ...echo({ path: '/home/softov', pace: 0 }), provider: 'codex', displayName: 'Codex' },
+      ],
+      ...machine(),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    await settle(8);
+    // The boot probe has answered, and the root channel is where that shows.
+    const root = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+      snapshot: { state: { agents: { provider: string; customizations?: unknown[] }[] } };
+    }).snapshot.state;
+    expect(root.agents.find((one) => one.provider === 'claude')?.customizations).toBeDefined();
+    // Cleared only now, so what this session's own CLI answers stands for a
+    // backend that has not replied yet.
+    sdk.init = {};
+
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } }) as {
+      snapshot: { state: { defaultChat: string } };
+    };
+    await settle(8);
+
+    const found = await client.handle({
+      method: 'completions',
+      params: { channel: opened.snapshot.state.defaultChat, kind: 'userMessage', text: '/', offset: 1 },
+    }) as { items: { insertText: string }[] };
+    // `batch` is this session's own backend's; `shout` belongs to the other
+    // one, and is what answering with every backend's list would have added.
+    expect(found.items.map((one) => one.insertText)).toEqual(['/batch']);
   });
 });
 

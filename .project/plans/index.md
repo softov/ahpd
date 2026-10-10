@@ -161,7 +161,7 @@ Reference: [00-host.md](host/00-host.md)
 | [75 - VS Code opens the uncommitted changes first](host/75-vs-code-opens-the-uncommitted-changes-first/plan.md) | medium | built 2026-10-09 ([implemented.md](host/75-vs-code-opens-the-uncommitted-changes-first/implemented.md)) | - | VS Code shows Commit |
 | [76 - A commit and a pull request get their words as the host is configured](host/76-a-commit-and-a-pull-request-get-their-words-as-configured/plan.md) | medium | planned | - | - |
 | [77 - A client plugin lists its parts, and a part can be switched off](host/77-a-client-plugin-lists-its-parts/plan.md) | medium | built 2026-10-09 ([implemented.md](host/77-a-client-plugin-lists-its-parts/implemented.md)) | host/49 | - |
-| [78 - Completions offer each slash command once](host/78-completions-offer-each-command-once/plan.md) | medium | planned | - | - |
+| [78 - Completions offer each slash command once](host/78-completions-offer-each-command-once/plan.md) | medium | built 2026-10-09 ([implemented.md](host/78-completions-offer-each-command-once/implemented.md)) | - | - |
 
 Next free number in `host`: `79`.
 

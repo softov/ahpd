@@ -285,8 +285,16 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const typed = (found[1] ?? '').toLowerCase();
       const start = offset - typed.length - 1;
       const asked_ = meantBy(String(params.channel ?? ''));
-      const session = byChat.get(asked_)?.chat
-        ?? (sessions.get(asked_) ? leadOf(sessions.get(asked_) as Held) : undefined);
+      /*
+       * The session behind the channel, and the backend it runs.
+       *
+       * Both kinds of channel are read, because a chat carries its session's
+       * URI and a session channel is the session itself. The backend is what
+       * the fallback list below belongs to.
+       */
+      const chat = byChat.get(asked_);
+      const held = chat === undefined ? sessions.get(asked_) : sessions.get(chat.uri);
+      const session = chat?.chat ?? (held === undefined ? undefined : leadOf(held));
       // A live session's own list wins: two sessions in one directory can
       // be handed different things.
       /*
@@ -356,16 +364,37 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * a slash menu that is empty for exactly as long as somebody is
        * likely to use it.
        *
-       * With no session it is the root channel being asked, and the
-       * answer is every backend's - narrowed to one when the client says
-       * which provider it is composing for, because that is the only
+       * The fallback list is the client's own `provider`, when it names
+       * one, because it is composing for that backend and this is the only
        * thing that knows.
+       * Otherwise the session's own - a session whose CLI has not answered yet
+       * is handed its backend's commands rather than every backend's, which is
+       * a menu full of items that session would refuse. With no session and no
+       * provider it is the root channel being asked, and the answer is every
+       * backend's.
        */
       const named = String(params.provider ?? '');
-      const wide = named !== '' && agents.has(named)
-        ? skilled(named)
+      const mine = held?.agent.provider;
+      const one = named !== '' && agents.has(named) ? named : mine;
+      const wide = one !== undefined && agents.has(one)
+        ? skilled(one)
         : [...agents.keys()].flatMap((provider) => skilled(provider));
-      const offered = own.length > 0 ? own : wide;
+      /*
+       * One item per name, because two backends can offer one command.
+       *
+       * Five Claude presets report the same `batch`, so the every-backend
+       * answer above carries one copy per preset - a menu where `/batch` is
+       * drawn five times and picking the second is picking the first. The
+       * first is kept: the backends are read in registration order, so which
+       * of two commands with one name is offered does not move between
+       * keystrokes.
+       */
+      const seen = new Set<string>();
+      const offered = (own.length > 0 ? own : wide).filter((command) => {
+        if (seen.has(command.name)) return false;
+        seen.add(command.name);
+        return true;
+      });
       const matches = offered
         .filter((command) => command.name.toLowerCase().includes(typed))
         // What was typed a prefix of, first. A substring match is useful

@@ -1,6 +1,6 @@
 ---
 title: Completions offer each command once
-status: todo
+status: done
 depends: []
 layer: sdk
 refs:
@@ -32,5 +32,10 @@ refs:
 
 ## Resume
 
-- **Done so far:** nothing.
-- **Next action:** step 1.
+- **Status:** done.
+- **Done:** `completions` in [`code://packages/sdk/src/host/sessionmethods.ts`](../../../../packages/sdk/src/host/sessionmethods.ts) reads the session behind the channel. A chat gives its session's URI, and a session channel is the session itself. The backend of that session is kept for the fallback list.
+- **Which list:** the client's `provider` when it names one, else the session's backend, else every backend. The root channel with no provider still answers with all of them.
+- **Once each:** `offered` drops a command whose name an earlier command already has. The first is kept, and the backends are read in registration order, so the answer is stable.
+- **Tests:** two cases were added to `what a slash offers` in `packages/sdk/test/host-harness.test.ts`. One asks the root channel of a host whose two Claude presets report one command. The other asks a session whose own CLI has not answered yet. Both failed before the change: the first answered two `/batch`, and the second added the other backend's `/shout`.
+- **Unchanged:** every existing completion test passes as written, a client that names `provider` on the root channel included.
+- **Gates:** pass. `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` are clean. The full `vitest` run reports 265 files and 4686 tests passed.

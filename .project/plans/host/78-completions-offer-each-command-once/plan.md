@@ -1,7 +1,7 @@
 ---
 title: Completions offer each slash command once
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-09
 revalidated: 2026-10-09
@@ -44,7 +44,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Completions offer each command once](task-01-completions-offer-each-command-once.md) | todo | - |
+| [01 - Completions offer each command once](task-01-completions-offer-each-command-once.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -53,14 +53,15 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01 implemented on `build/agents/ad2f487a` on 2026-10-09, and left uncommitted for review. A session's fallback list is its own backend's commands, and the root channel with no provider offers each command once.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** an explicit `provider` still wins over the session's provider.
+- **Gates:** `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` are clean. The full `vitest` run reports 265 files and 4686 tests passed.
 
 ## Final verification checklist
 
-- [ ] Several providers with the same command give one item on the root channel.
-- [ ] A new session gets its own provider's commands only.
-- [ ] `pnpm test` passes.
-- [ ] `plans/index.md` updated.
+- [x] Several providers with the same command give one item on the root channel.
+- [x] A new session gets its own provider's commands only.
+- [x] `pnpm test` passes.
+- [x] `plans/index.md` updated.
