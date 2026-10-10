@@ -168,11 +168,12 @@ export function createRoot(ctx: HostContext): Root {
    * setting. The host's own keys come after, so a clash would resolve to the
    * host's reading of the same key (there is none).
    *
-   * Three of them are read by this host: `defaultShell` and `workspaceTrust`
-   * below, which belong to the connection that pushed them, and
-   * `globalAutoApproveEnabled`, which `trust.ts` asks before a tool call runs.
-   * The rest are declared and nothing more, which is what a client needs and
-   * all it gets.
+   * Four of them are read by this host: `defaultShell` and `workspaceTrust`
+   * below, which belong to the connection that pushed them,
+   * `globalAutoApproveEnabled`, which `trust.ts` asks before a tool call runs,
+   * and this host's own `changeWords`, which says where a commit message and a
+   * pull request's words come from. The rest are declared and nothing more,
+   * which is what a client needs and all it gets.
    */
   const ROOT_CONFIG_SCHEMA = {
     // `type` is required of a `ConfigSchema` and is always `object`. Left out,
@@ -212,6 +213,48 @@ export function createRoot(ctx: HostContext): Root {
         },
         required: ['enabled', 'trustedUris'],
         readOnly: true,
+      },
+      /*
+       * Where a commit message and a pull request's words come from.
+       *
+       * This host's own key and not VS Code's: the reference client pushes
+       * nothing for it, draws it from here and reads a value it pushed back as
+       * a setting. Four modes, and two of them ask something else to write the
+       * words - a model on a provider this host serves, or the session's own
+       * agent in a side chat. The default is the session title, which is what
+       * this host wrote before there was a key at all, so a client that never
+       * pushes one sees nothing move.
+       */
+      changeWords: {
+        type: 'object',
+        title: 'Change Words',
+        description: "Where a commit message and a pull request's words come from when the person gives none.",
+        properties: {
+          mode: {
+            type: 'string',
+            title: 'Mode',
+            description: "Session Title uses the session's own title, Forced refuses an empty message, Model asks a named model, Agent asks the session's own agent in a side chat.",
+            enum: ['session-title', 'forced', 'model', 'agent'],
+            enumDescriptions: [
+              "Use the session's own title, which is what this host wrote before there was a setting.",
+              'Refuse the commit or the pull request when the person gave no words.',
+              'Ask a model on a provider this host serves.',
+              "Ask the session's own agent in a side chat.",
+            ],
+            default: 'session-title',
+          },
+          provider: {
+            type: 'string',
+            title: 'Provider',
+            description: 'The backend to ask, in Model mode. One this host serves.',
+          },
+          model: {
+            type: 'string',
+            title: 'Model',
+            description: 'The model to run the turn on, in Model mode, as the root channel spells it.',
+          },
+        },
+        required: ['mode'],
       },
     },
   };

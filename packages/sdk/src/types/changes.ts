@@ -154,6 +154,57 @@ export interface ChangesetOperation {
 }
 
 /**
+ * Where a commit message and a pull request's words come from.
+ *
+ * Four places, and a host setting names one: the session's own title, which is
+ * what this host used before there was a setting; the person's own text, with
+ * a refusal when they gave none; a model on a provider the host serves; and
+ * the session's own agent, asked in a side chat.
+ */
+export type ChangeWordsMode = 'session-title' | 'forced' | 'model' | 'agent';
+
+/** The setting, as `rootConfig.changeWords` holds it. */
+export interface ChangeWordsSetting {
+  /** Which of the four places writes the words. */
+  mode: ChangeWordsMode;
+  /** The backend to ask, in `model` mode. One the host serves. */
+  provider?: string;
+  /** The model to run the turn on, spelled as the root channel spells it. */
+  model?: string;
+}
+
+/**
+ * How the host writes words, in the two modes that ask for them.
+ *
+ * A promise of the answer, or `undefined` when there is none - a model that
+ * did not reply, a turn that failed. A rejection is the same thing said
+ * louder, and the caller treats it the same way.
+ */
+export type ChangeWordsAsk = (prompt: string) => Promise<string | undefined>;
+
+/**
+ * The setting, and the ask that goes with it.
+ *
+ * Handed to the source the way `github` is: the source builds the prompt,
+ * calls the ask, splits the answer and falls back. The host owns the ask
+ * because only it can open a session or a chat, and the source owns the words
+ * because only it knows what changed.
+ */
+export interface ChangeWords {
+  setting: ChangeWordsSetting;
+  /** Present in the two modes that ask, and absent in the other two. */
+  ask?: ChangeWordsAsk;
+  /**
+   * Why the mode asks and there is no ask.
+   *
+   * The modes that ask can still have nothing to ask with: no model named, an
+   * agent that cannot start a side chat, a session with no turn to ask from.
+   * The source falls back to the session title and says this.
+   */
+  why?: string;
+}
+
+/**
  * What the host knows about a session that bears on which verbs to offer.
  *
  * All of it is the host's rather than this source's: which branch a worktree
@@ -183,6 +234,22 @@ export interface ChangesetOperationContext {
    * confirmation and `invoke` commits under it.
    */
   subject?: string;
+  /**
+   * How the words are written when the person gave none.
+   *
+   * Absent on a host configured with nothing, which reads as the session
+   * title - the words this host wrote before there was a setting.
+   */
+  changeWords?: ChangeWords;
+  /**
+   * What has been said in the session, as the prompt's own context.
+   *
+   * A conversation is the host's to read and not this source's: a changeset is
+   * a set of files, and what was said about them is in the session. Handed
+   * over so a model or an agent writes a title about the work rather than
+   * about the diff alone.
+   */
+  conversation?: string;
 }
 
 /** One invocation, as the host hands it to the source. */

@@ -956,8 +956,17 @@ export function createTooling(ctx: HostContext): Tooling {
    * A backend is handed something it can call and nothing else: which session
    * asked, and what this host knows about the sessions and terminals beside
    * it, are answered here because they are the host's to answer.
+   *
+   * None at all for a session opened for its words alone. A model writing a
+   * commit message has no business reading the tree it is being asked about,
+   * and a client handing tools to such a session later reaches this through
+   * `retool` - so the answer is empty here rather than only at the start.
    */
-  const boundTools = (uri: string, chatUri: string, provider?: string): BoundTool[] => [
+  const boundTools = (uri: string, chatUri: string, provider?: string): BoundTool[] =>
+    ctx.bareSessions.has(uri) ? [] : offeredTools(uri, chatUri, provider);
+
+  /** The tools a session with something to call is handed, in the order it is offered them. */
+  const offeredTools = (uri: string, chatUri: string, provider?: string): BoundTool[] => [
     ...clientTools(uri),
     ...ctx.contributing.flatMap((one): BoundTool[] => {
       const definition = shapedDefinition(one, uri);

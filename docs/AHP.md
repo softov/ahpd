@@ -188,7 +188,7 @@ which is a different complaint from an action nobody has served.
 The schema a client draws its controls from holds three kinds of key: the ones VS Code's client pushes, this host's own, and the daemon's.
 `packages/sdk/src/vscoderootconfig.ts` holds the first, one property per key as VS Code's agent host declares it at `7516b04bc94`, out of `common/agentHostSchema.ts`, `common/agentMerge.ts` and `common/automationConfig.ts`.
 Two entries resolve a constant from `src/vs/platform/chat/common/chatSettings.ts` and write the literal it holds, naming the file by URL.
-This host acts on `defaultShell`, on `workspaceTrust` through the connection that pushed it, and on `globalAutoApproveEnabled`; nothing else it declares changes what it does.
+This host acts on `defaultShell`, on `workspaceTrust` through the connection that pushed it, on `globalAutoApproveEnabled`, and on its own `changeWords`, which says where a commit message and a pull request's words come from; nothing else it declares changes what it does.
 The rest are declared so that a client can draw each one. A value pushed for one reads back as a setting, not as an unknown key.
 The description on such a key describes VS Code's agent host, not this one. `automationsEnabled` reads as a promise, and automations here run whatever it says.
 Three keys VS Code declared before 1.140 are not declared here, because 1.140 dropped them: `artifactToolsCompactPrompts`, `deferredTitleGeneration` and `activeAgentTitleGeneration`.
@@ -717,6 +717,28 @@ operation and not only these two.
 the commit goes in with, replacing the session title this host would otherwise
 use. The protocol has no field for it, so it travels in the bag the reference
 client already uses for an operation's arguments.
+
+When nobody gives the words - no `_meta['ahpd.commit']`, no
+`_meta['vscode.pullRequest']` - they are written the way `changeWords` on the
+root channel says. The key has a `mode` and four values. `session-title` is the
+default and is what this host did before the key existed: the session's title
+for a commit subject and a pull request title, and the branch's commits for a
+pull request body. `forced` requires the person's own words, so a commit with no
+message is refused by name and the pull request form is left to fill in. `model`
+asks a backend the key names, and `agent` asks the session's own agent in a side
+chat of its newest turn. Both of the last two are asked what the reference host
+asks: the branch, the base, the changed files, the diff and what the session has
+said, answered as a title of at most 72 characters, a blank line, and a markdown
+body. An answer that failed or said nothing falls back to `session-title`, and
+the operation's message says it fell back and why. A model or an agent that has
+not answered in two minutes has its turn cancelled, and falls back the same way,
+so a commit is not left waiting on one. `changeWordsTimeoutMs` sets the limit,
+and zero there is no limit at all. `model` names a `provider` and a `model`; a
+provider this host does not serve, or a model one of them does not list, is
+refused at the push. The model's question runs in a session of its own,
+opened for that turn and disposed of after it, with no tools offered - a model
+naming the work has no business reading or writing the tree it is naming. The
+agent's question runs in a side chat, which stays in the session afterwards.
 
 The uncommitted changeset follows the tree between turns. It is re-read when git's
 `index` or `HEAD` moves, when a tool call completes, when a client writes a file

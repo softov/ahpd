@@ -44,8 +44,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    changed, channelKind, daemonKey, decided, declaresConfigKey,
-    dir, dirOf, dispatch, first, homeOf, kept, log, marks, marksOf, meantBy, names, options,
+    agents, changed, channelKind, daemonKey, decided, declaresConfigKey,
+    dir, dirOf, dispatch, first, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, past, permitted, presence, relayed, restart, retool,
     rootConfig, served, sessionFor, sessions, starting, summaryMoved, terminals, toolDefinitions,
     value, waitingFor,
@@ -277,6 +277,31 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       }
       if (refused.length > 0) log(`root config: refused ${refused.join(', ')}`);
       const config = Object.fromEntries(Object.entries(pushed).filter(([key]) => declaresConfigKey(key)));
+      /*
+       * A `changeWords` naming a backend this host cannot ask, refused before
+       * anything is applied.
+       *
+       * The check is on what the root would hold after the write rather than
+       * on what this push carries, so a client that sets the mode in one push
+       * and the provider in the next is not refused for the gap between them.
+       * A model mode with nothing named is left alone: the commit and the pull
+       * request fall back to the session title and say why, which is a whole
+       * answer, and a refusal there would make the mode unreachable in two
+       * steps.
+       *
+       * A model is checked only when the host has a list for the provider. An
+       * empty list means a harness nobody has signed into yet - the boot probe
+       * keeps an empty list out - and accepting the name is the honest answer
+       * when there is nothing to contradict it.
+       */
+      const words = { ...(action.replace === true ? {} : rootConfig.changeWords as Bag | undefined), ...config.changeWords as Bag | undefined };
+      if (words.mode === 'model' && typeof words.provider === 'string') {
+        if (!agents.has(words.provider))
+          return Promise.reject(new Error(`root config names a provider this host does not serve: ${words.provider}`));
+        const listed = learned.get(words.provider)?.models ?? [];
+        if (typeof words.model === 'string' && listed.length > 0 && !listed.some((one) => one.id === words.model))
+          return Promise.reject(new Error(`root config names a model ${words.provider} does not list: ${words.model}`));
+      }
       /**
        * What the daemon's half answers for the keys that were written, put
        * in place of what the client sent.

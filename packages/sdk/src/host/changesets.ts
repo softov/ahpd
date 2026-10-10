@@ -1,9 +1,38 @@
 import type { ChangesetFile } from '@microsoft/agent-host-protocol';
-import { Status } from '../catalog.js';
-import { localPath } from '../fileuri.js';
-import type { ChangesetOperationContext, ChangesetState } from '../types/changes.js';
+import { idOf, Status } from '../catalog.js';
+import { localPath, uriOf } from '../fileuri.js';
+import { chatUriFor } from './channels.js';
+import type {
+  ChangeWords, ChangeWordsAsk, ChangeWordsMode, ChangeWordsSetting, ChangesetOperationContext, ChangesetState,
+} from '../types/changes.js';
 import type { Bag } from '../types/common.js';
+import type { Session } from '../types/session.js';
+import type { Held } from './state.js';
 import type { HostContext } from './context.js';
+
+/**
+ * The most of a conversation a prompt carries.
+ *
+ * A session that has been talking for an hour is not a prompt, and naming the
+ * work needs the shape of the conversation rather than every word of it. The
+ * cut is said where it is made, so a reader is not left taking a sentence that
+ * stops mid-way for the whole of what was said.
+ */
+const CONVERSATION_MOST = 8_000;
+
+/**
+ * How long a turn asked for the words is waited for, in milliseconds.
+ *
+ * Two minutes: long enough for a model to read a diff and write a paragraph,
+ * short enough that a commit is not left hanging on one. A session asking a
+ * model for a title has nobody to cancel the turn, so this is what ends one
+ * that no backend ever finished. `changeWordsTimeoutMs` sets it, and `0` there
+ * means no limit at all.
+ */
+const CHANGE_WORDS_MOST = 2 * 60_000;
+
+/** The four places the words can come from, as the schema declares them. */
+const MODES = new Set<string>(['session-title', 'forced', 'model', 'agent']);
 
 /** What a session's changesets offer the rest of the host. */
 export interface Changesets {
@@ -99,6 +128,249 @@ export function createChangesets(ctx: HostContext): Changesets {
   const opKey = (channel: string, id: string): string => `${channel}\u0000${id}`;
 
   /**
+   * The answer a chat's newest turn ended with, as text.
+   *
+   * What a model says comes back as response parts rather than as a message,
+   * and a markdown part is its words. Nothing at all where the turn ended
+   * without saying anything, which is what a cancellation and a failed turn
+   * both look like from here.
+   */
+  const saidIn = (turn: Bag | undefined): string | undefined => {
+    const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
+    const said = parts
+      .filter((part) => part.kind === 'markdown')
+      .map((part) => String(part.content ?? ''))
+      .join('')
+      .trim();
+    return said === '' ? undefined : said;
+  };
+
+  /** The answer a chat's newest turn ended with. */
+  const answerOf = (chat: Session): string | undefined => saidIn(chat.allTurns().at(-1) as Bag | undefined);
+
+  /**
+   * What has been said in a session, as one prompt carries it.
+   *
+   * What the person asked for and what the session answered, in order, with
+   * the person's own words marked as a quotation so a reader can tell the two
+   * apart. A model asked to name work it did not do has only this to go on,
+   * and a title drawn from it is about the intention rather than about the
+   * diff alone.
+   */
+  const conversationOf = (lead: Session | undefined): string | undefined => {
+    const turns = lead?.allTurns() as Bag[] | undefined;
+    if (turns === undefined || turns.length === 0) return undefined;
+    const said: string[] = [];
+    for (const turn of turns) {
+      const message = (turn.message ?? {}) as Bag;
+      const text = typeof message.text === 'string' ? message.text.trim() : '';
+      if (text !== '') said.push(text.split('\n').map((line) => `> ${line}`).join('\n'));
+      const answered = saidIn(turn);
+      if (answered !== undefined) said.push(answered);
+    }
+    if (said.length === 0) return undefined;
+    const whole = said.join('\n\n');
+    return whole.length <= CONVERSATION_MOST ? whole : `${whole.slice(0, CONVERSATION_MOST)}\n... the conversation was cut here.`;
+  };
+
+  /**
+   * One turn, and the limit on waiting for it.
+   *
+   * The reader is armed before the turn starts, because a turn that answered
+   * before anything was listening would leave this waiting for an end that had
+   * already happened. `chat/turnComplete`, `chat/turnCancelled` and
+   * `chat/error` are the three ways a turn stops, and `true` is all three,
+   * because the answer is read off the turn whichever of them it was - a
+   * cancelled turn that said something first has still said it.
+   *
+   * An event names the session and not the chat, so a turn that ends in
+   * another chat of the same session is one too. Only a turn more on the
+   * watched chat than it had when the wait began is this turn's end.
+   *
+   * `false` is the limit: `CHANGE_WORDS_MOST`, or whatever
+   * `changeWordsTimeoutMs` says. A turn this host opened for the words alone
+   * has nobody else to cancel it, so the limit is what ends one that no
+   * backend ever finished. The turn is stopped rather than merely abandoned,
+   * because a model still going would spend on words nobody will read, and
+   * the answer is `false` for the caller to fall back on.
+   */
+  const watchTurn = (session: Session, uri: string, turnId: string): { ended: Promise<boolean>; stop: () => void } => {
+    const limit = ctx.options.changeWordsTimeoutMs ?? CHANGE_WORDS_MOST;
+    let stop: (() => void) | undefined;
+    let late: ReturnType<typeof setTimeout> | undefined;
+    const before = session.allTurns().length;
+    const ended = new Promise<boolean>((resolve) => {
+      stop = ctx.sessionEvents.watch((event) => {
+        if (event.session !== uri) return;
+        if (event.kind !== 'turnCompleted' && event.kind !== 'turnCancelled' && event.kind !== 'turnFailed') return;
+        if (session.allTurns().length > before) resolve(true);
+      });
+      // Zero is no limit at all, which is how `clientToolTimeoutMs` reads it.
+      if (limit <= 0) return;
+      late = setTimeout(() => {
+        ctx.log(`${uri} had not answered after ${limit}ms, so the turn was stopped`);
+        /*
+         * A backend that throws here is a line in the log and nothing else.
+         * The throw would otherwise leave the timer, where nothing catches
+         * it, and the ask waiting on a turn that is never going to end - the
+         * one thing this limit exists to prevent.
+         */
+        try { session.cancel(turnId); }
+        catch (error) {
+          ctx.log(`${uri} could not be stopped: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        resolve(false);
+      }, limit);
+    });
+    return {
+      ended,
+      stop: () => {
+        stop?.();
+        if (late !== undefined) clearTimeout(late);
+      },
+    };
+  };
+
+  /**
+   * A model on a session of its own, asked one question and let go of.
+   *
+   * The session is named after its provider, works in the directory the
+   * changeset is about, is offered no tools at all and runs one turn. It is
+   * disposed of once it has answered, so nothing of it is left - the answer is
+   * the whole of what it was for.
+   */
+  const askModel = (provider: string, model: string, dir: string): ChangeWordsAsk => async (prompt: string): Promise<string | undefined> => {
+    const uri = `${provider}:/${crypto.randomUUID()}`;
+    const turnId = crypto.randomUUID();
+    let watching: ReturnType<typeof watchTurn> | undefined;
+    try {
+      ctx.bareSessions.add(uri);
+      ctx.openSession(uri, provider, {}, uriOf(dir));
+      const held = sessions.get(uri);
+      const lead = held === undefined ? undefined : leadOf(held);
+      if (lead === undefined) return undefined;
+      watching = watchTurn(lead, uri, turnId);
+      const refused = ctx.beginOrRun(lead, provider, turnId, prompt, { id: model }, { origin: { kind: 'systemNotification' } });
+      const why = refused instanceof Promise ? await refused : refused;
+      if (why !== undefined) {
+        ctx.log(`${provider} was asked for the words of ${dir} and refused: ${why}`);
+        return undefined;
+      }
+      if (!await watching.ended) return undefined;
+      return answerOf(lead);
+    }
+    catch (error) {
+      ctx.log(`${provider} could not write the words of ${dir}: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+    finally {
+      watching?.stop();
+      ctx.bareSessions.delete(uri);
+      // After the hold is lifted, so the teardown is not itself bare - it is
+      // not a turn, and a session being disposed of has nothing left to call.
+      if (sessions.has(uri)) await ctx.removeSession(uri);
+    }
+  };
+
+  /**
+   * The session's own agent, asked in a side chat.
+   *
+   * The same shape a client's `createChat` with a `sideChat` source builds: a
+   * chat of the same session and the same backend, told what the turn it came
+   * from said rather than shown it, which is what the protocol says a side
+   * chat's visible history holds. The chat stays afterwards - host/76's
+   * *Decisions locked in*, "The side chat stays in the session after it
+   * answers" - so the person can read the answer, disagree with it and say so.
+   *
+   * Built here rather than by calling the request the client's own create
+   * chat goes through, because a request handler is not on the context and
+   * this is the one caller that is not a request.
+   */
+  const askAgent = (uri: string, held: Held, lead: Session): ChangeWordsAsk => async (prompt: string): Promise<string | undefined> => {
+    const newest = lead.allTurns().at(-1) as Bag | undefined;
+    if (newest === undefined) return undefined;
+    const message = (newest.message ?? {}) as Bag;
+    const chatUri = `ahp-chat://side/${crypto.randomUUID()}`;
+    const turnId = crypto.randomUUID();
+    let watching: ReturnType<typeof watchTurn> | undefined;
+    try {
+      ctx.claimable(chatUri, 'chat');
+      ctx.madeFrom.set(chatUri, {
+        kind: 'sideChat',
+        chat: held.defaultChat,
+        turnId: String(newest.id ?? ''),
+      });
+      const chat = ctx.spawn(
+        held.agent, uri, chatUri, idOf(chatUri), ctx.backendsOwn(held.config),
+        { context: typeof message.text === 'string' ? message.text : '' },
+        held.workingDirectory, undefined, held.additional,
+      );
+      ctx.log(`opened ${chatUri} in ${uri} to write the words`);
+      ctx.dispatch(uri, { type: 'session/chatAdded', summary: ctx.chatSummary(uri, chatUri, chat) });
+      watching = watchTurn(chat, uri, turnId);
+      const refused = ctx.beginOrRun(chat, held.agent.provider, turnId, prompt, undefined, { origin: { kind: 'systemNotification' } });
+      const why = refused instanceof Promise ? await refused : refused;
+      if (why !== undefined) {
+        ctx.log(`${chatUri} was asked for the words and refused: ${why}`);
+        return undefined;
+      }
+      if (!await watching.ended) return undefined;
+      return answerOf(chat);
+    }
+    catch (error) {
+      ctx.log(`${chatUri} could not write the words: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+    finally { watching?.stop(); }
+  };
+
+  /**
+   * The setting, with the ask that goes with it.
+   *
+   * Nothing at all when the key was never pushed, which is a host configured
+   * with nothing - the source reads that as the session title, the words this
+   * host wrote before there was a setting.
+   *
+   * A mode that asks and has nothing to ask with carries `why` instead of an
+   * ask: the source falls back to the session title and says what went
+   * without, which is the whole answer rather than a refusal. The mode is
+   * checked here as well as at the push, because the schema's enum is not what
+   * holds a value off the wire - `declaresConfigKey` asks whether a key
+   * exists, and a client may put anything under it.
+   */
+  const changeWordsOf = (
+    uri: string,
+    dir: string,
+    held: Held | undefined,
+    lead: Session | undefined,
+  ): ChangeWords | undefined => {
+    const raw = (typeof ctx.rootConfig.changeWords === 'object' && ctx.rootConfig.changeWords !== null
+      ? ctx.rootConfig.changeWords
+      : undefined) as Bag | undefined;
+    const mode = raw === undefined ? '' : String(raw.mode ?? '');
+    if (!MODES.has(mode)) return undefined;
+    const setting: ChangeWordsSetting = {
+      mode: mode as ChangeWordsMode,
+      ...(typeof raw?.provider === 'string' ? { provider: raw.provider } : {}),
+      ...(typeof raw?.model === 'string' ? { model: raw.model } : {}),
+    };
+    if (mode === 'model') {
+      if (setting.provider === undefined || setting.model === undefined)
+        return { setting, why: 'the setting names no provider and model' };
+      if (!ctx.agents.has(setting.provider))
+        return { setting, why: `${setting.provider} is not a backend this host serves` };
+      return { setting, ask: askModel(setting.provider, setting.model, dir) };
+    }
+    if (mode === 'agent') {
+      if (held === undefined || lead === undefined) return { setting, why: 'the session has no chat to ask' };
+      if (held.agent.chats?.sideChat !== true) return { setting, why: `${held.agent.provider} cannot start a side chat` };
+      if (lead.allTurns().length === 0) return { setting, why: 'the session has no turn to ask from' };
+      return { setting, ask: askAgent(uri, held, lead) };
+    }
+    return { setting };
+  };
+
+  /**
    * What the host knows that bears on a changeset's verbs.
    *
    * The base branch it chose for a worktree; GitHub, when there is a way to
@@ -106,6 +378,10 @@ export function createChangesets(ctx: HostContext): Changesets {
    * whether the branch already has a pull request; and whether the session
    * has said anything yet. Read at the moment of asking, since every one of
    * them moves.
+   *
+   * The last two are what a commit message and a pull request's words are
+   * written from: the setting that says where they come from, and what the
+   * session has said about the work.
    */
   const operationContext = (asked: string, dir: string): ChangesetOperationContext => {
     const uri = heldAs(asked);
@@ -120,12 +396,16 @@ export function createChangesets(ctx: HostContext): Changesets {
       : undefined;
     const held = sessions.get(uri);
     const lead = held && leadOf(held);
+    const words = changeWordsOf(uri, dir, held, lead);
+    const conversation = conversationOf(lead);
     return {
       ...(base !== undefined && base !== 'HEAD' ? { base } : {}),
       ...(github !== undefined ? { github } : {}),
       ...(facts?.pullRequestUrls !== undefined && facts.pullRequestBranchName === git?.branchName ? { pullRequest: true } : {}),
       ...(lead !== undefined && lead.allTurns().length === 0 ? { unused: true } : {}),
       ...(lead !== undefined ? { subject: lead.title() } : {}),
+      ...(words !== undefined ? { changeWords: words } : {}),
+      ...(conversation !== undefined ? { conversation } : {}),
     };
   };
 

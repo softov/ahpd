@@ -425,6 +425,18 @@ export function createSpawn(ctx: HostContext): Spawn {
       scope: () => charged.get(uri)?.scope,
     });
     /*
+     * Whether this session runs with nothing to call.
+     *
+     * A session opened for its words alone - a commit message, a pull request
+     * title - is one question answered by one model, and a tool call in the
+     * middle of it would be that model reading and writing the very tree the
+     * operation is about to commit. The host's own tools are left out by
+     * `boundTools`, which answers none for a URI in here, and the four fields
+     * below are the other ways a backend is handed something callable. It is
+     * asked before any of them, and it decides nothing else about the session.
+     */
+    const bare = ctx.bareSessions.has(uri);
+    /*
      * The MCP servers this session's agent is offered, read when the session
      * starts rather than held, so a daemon that edits the key while it runs
      * changes what the next session is given.
@@ -433,7 +445,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * reach every backend through here, including the ones that cannot load a
      * plugin at all.
      */
-    const servers = ctx.mcpFor(uri);
+    const servers = bare ? {} : ctx.mcpFor(uri);
     /*
      * The client plugin copies this chat's agent is handed, and a note of
      * which they were.
@@ -442,7 +454,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * ignores the field; either way the set is written down here, because a
      * send is the only thing that can compare it with the session's set now.
      */
-    const plugins = ctx.pluginsFor(uri, chatUri);
+    const plugins = bare ? [] : ctx.pluginsFor(uri, chatUri);
     /*
      * The servers of those plugins a client switched off, by name.
      *
@@ -450,7 +462,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * plugin directory can find a server there on its own, and this is how it
      * is told not to run one.
      */
-    const denied = ctx.deniedMcpServers(uri);
+    const denied = bare ? [] : ctx.deniedMcpServers(uri);
     /*
      * The same tools as an MCP server, for a backend that cannot call them in
      * this process - an ACP agent, which asks its client for them.
@@ -460,6 +472,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * handed to and nothing else.
      */
     const toolsServer = (ask?: { runClient?: RunClientTool; toolsChanged?: ToolsChanged }): ToolsEndpoint | undefined => {
+      if (bare) return undefined;
       const opened = options.toolsServers?.open(
         ctx.boundTools(uri, chatUri, agent.provider),
         ask?.runClient,

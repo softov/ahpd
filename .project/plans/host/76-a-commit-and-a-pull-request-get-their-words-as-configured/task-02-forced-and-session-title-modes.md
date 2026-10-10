@@ -1,6 +1,6 @@
 ---
 title: Forced and session-title modes
-status: todo
+status: done
 depends: [task-01-the-host-declares-the-setting.md]
 layer: sdk
 refs:
@@ -30,3 +30,12 @@ The three places that write words go through one function, and forced mode refus
 - The gates pass.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/016ab0b2`, uncommitted.
+- `packages/sdk/src/changes.ts:789-820` is `wordsFor(kind, setting, given)`, the one function the three places that write words go through: the commit operation (1253), the commit `create-pr` makes of a dirty tree (912) and the pull request's own words (942). `words()` became `wordsFromSession(kind, given)`, and `asMessage` carries a body when there is one.
+- The person's own text wins in every mode. With no setting, the words are what this host wrote before the key existed: the session title for a commit, and the session title with the branch's commits for a pull request.
+- `forced` throws `A commit message is required.` for a commit with nothing typed, before anything is staged. A pull request is the other way round: its form is how the person gives the text, so an empty form is left for `create-pr` to refuse at the point the request is actually opened.
+- `packages/sdk/test/commit.test.ts` is 30 tests; the four new ones are forced refusing an empty message with the tree left exactly as it was, forced still taking a typed one, the session title with no setting at all, and `session-title` saying nothing about a fallback.
+- **Departure 1.** The `create-pr` commit no longer has a rule of its own. It goes through `wordsFor('commit', ...)` with `Changes on ${branch}` as its fallback, so the setting is honoured there too - the plan's watch-out. Under `session-title` the words are what they were.
+- **Departure 2.** The pull request's precedence moved. A form that carried a title is used and the setting is not asked at all, where before the port's title, then the form's, then `words()` each had a turn. A form title of spaces now falls through to the setting rather than opening a request under a blank title. The refusal of a form with no title is unchanged and still fires before anything is committed (`changes.ts:888-892`). A second one at 949 covers the case where no form carried a title and the setting wrote none either, which is forced mode with an empty form.
+- Gates: `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` pass.

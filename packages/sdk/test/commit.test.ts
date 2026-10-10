@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { metaKeys } from '../../../tools/wire.mjs';
 import { gitChanges } from '../src/changes.js';
-import type { ChangesetOperationContext } from '../src/types/changes.js';
+import type { ChangeWords, ChangeWordsMode, ChangesetOperationContext } from '../src/types/changes.js';
 
 /*
  * Staging and the commit form's arguments, on a real repository.
@@ -304,6 +304,53 @@ describe('the key a commit message arrives under', () => {
     writeFileSync(join(dir, 'tracked.txt'), 'two\n');
     await invoke(dir, { 'ahpd.commit': { message: 'The new name' }, 'ahp.commit': { message: 'The old name' } });
     expect(subjectOf(dir)).toBe('The new name');
+  });
+});
+
+/*
+ * Where the words come from when the person gave none.
+ *
+ * The setting is the host's - `rootConfig.changeWords` reaches the source on
+ * `ChangesetOperationContext` - so what is under test here is what the source
+ * does with each mode. The two that ask are in `changewords.test.ts`, where the
+ * prompt and the split of an answer live.
+ */
+describe('the mode that says where a commit message comes from', () => {
+  /** The setting as the host hands it over: a mode, and an ask when it is one that asks. */
+  const setting = (mode: ChangeWordsMode, ask?: ChangeWords['ask']): ChangeWords =>
+    ({ setting: { mode }, ...(ask === undefined ? {} : { ask }) });
+
+  it('refuses a commit with no message when the mode is forced', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    await expect(invoke(dir, {}, { changeWords: setting('forced') }))
+      .rejects.toThrow('A commit message is required.');
+    // Refused before anything was staged, so the tree is exactly as it was.
+    expect(porcelain(dir)).toBe(' M tracked.txt');
+    expect(git(dir, 'log', '-1', '--format=%s')).toBe('first');
+  });
+
+  it('commits under a typed message in forced mode, because the mode is about the person giving none', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    await invoke(dir, { 'ahpd.commit': { message: 'Said it myself' } }, { changeWords: setting('forced') });
+    expect(git(dir, 'log', '-1', '--format=%s')).toBe('Said it myself');
+  });
+
+  it('keeps the session title as the words when nothing says otherwise', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    const said = await invoke(dir, {}, { subject: 'Fix the kqueue build' });
+    expect(git(dir, 'log', '-1', '--format=%s')).toBe('Fix the kqueue build');
+    // Nothing fell back, so the operation says nothing about a mode.
+    expect(said?.message).toBe('Committed ' + git(dir, 'rev-parse', '--short', 'HEAD') + ': Fix the kqueue build');
+  });
+
+  it('says nothing about falling back in the mode that is the fallback', async () => {
+    const dir = repository();
+    writeFileSync(join(dir, 'tracked.txt'), 'two\n');
+    const said = await invoke(dir, {}, { subject: 'Fix the kqueue build', changeWords: setting('session-title') });
+    expect(said?.message).not.toContain('session title was used');
   });
 });
 

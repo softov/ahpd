@@ -88,6 +88,17 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * last given, in the embedder's words.
    */
   refusing: string | undefined;
+  /**
+   * The sessions that run with nothing to call.
+   *
+   * A session opened for its words alone - a commit message, a pull request
+   * title - is a model answering one question, and a tool call in the middle
+   * of it would be a model reading and writing the tree that is being
+   * committed. `spawn` leaves every tool field out for a URI in here and
+   * `boundTools` answers none, so a later `retool` cannot put one back.
+   * Empty for every host that never opens one.
+   */
+  bareSessions: Set<string>;
   /** What each chat's summary last said, so an unchanged one is not re-sent. */
   described: Map<string, string>;
   /** The side index a worker's link is written from, fed from `dispatch`. */

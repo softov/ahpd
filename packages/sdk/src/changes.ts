@@ -6,9 +6,10 @@ import { readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
-  ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetOperationResult, ChangesetSource, ChangesetState,
+  ChangeWords, ChangesSummary, ChangesetFile, ChangesetOperation, ChangesetOperationResult, ChangesetSource, ChangesetState,
 } from './types/changes.js';
 import type { PullRequests } from './types/github.js';
+import { commitPrompt, cutDiff, pullRequestPrompt, splitWords } from './changewords.js';
 import { gitArgv } from './repo/hardened.js';
 import { uriOf } from './fileuri.js';
 
@@ -716,20 +717,162 @@ export function gitChanges(): ChangesetSource {
   });
 
   /**
+   * Whether this place is writing a commit or a pull request's words.
+   *
+   * The two differ in more than their prompt: a commit with nothing said is
+   * refused in forced mode, and a pull request is a form somebody is about to
+   * fill in.
+   */
+  type WordsKind = 'commit' | 'pull-request';
+
+  /** What a place that writes words has in hand when it asks. */
+  interface WordsGiven {
+    /** The directory the work is in, for the commits and the diff. */
+    dir: string;
+    /*
+     * Every one but `dir` is optional *and* may be passed as an explicit
+     * `undefined`, because the host hands over whatever it has: a session with
+     * no title, an operation with no conversation. Writing the `undefined` into
+     * the type is what `exactOptionalPropertyTypes` asks for, and the
+     * alternative is a call site that builds each argument up with a spread.
+     */
+    /** What the person typed, when they typed anything. */
+    text?: string | undefined;
+    /** The session's own title, which the host reads as the subject. */
+    subject?: string | undefined;
+    /** The branch the words are about. */
+    branch?: string | undefined;
+    /** The branch the work goes to, for a pull request. */
+    base?: string | undefined;
+    /** What has been said in the session. */
+    conversation?: string | undefined;
+    /** The line a commit keeps when there is no subject at all. */
+    fallback?: string | undefined;
+  }
+
+  /** What one place's words came to, and whether they were the ones asked for. */
+  interface Words {
+    title: string;
+    description: string;
+    /** Why the session title was used instead of what the setting named. */
+    fellBack?: string;
+  }
+
+  /**
+   * The paths and the diff a prompt carries.
+   *
+   * Uncommitted work includes files git has never seen, which `git diff` says
+   * nothing about, so a commit's list is widened by the untracked ones - a
+   * model writing a message for a new file is the case that would otherwise
+   * be handed an empty list.
+   */
+  const changedBy = async (dir: string, args: string[], untracked: boolean): Promise<{ files: string[]; diff: string }> => {
+    const names = (await git(dir, ['diff', '--name-only', ...args]))?.trim() ?? '';
+    const listed = names === '' ? [] : names.split('\n');
+    const others = untracked ? (await git(dir, ['ls-files', '--others', '--exclude-standard']))?.trim() ?? '' : '';
+    const diff = await git(dir, ['diff', ...args]) ?? '';
+    return {
+      files: others === '' ? listed : [...listed, ...others.split('\n')],
+      diff: cutDiff(diff),
+    };
+  };
+
+  /**
    * A title and a body, without a model to write them.
    *
    * The session's own title is the sentence somebody already wrote about this
    * work, and the commits on the branch are what was done; between them a
    * reviewer knows what the request is. A branch with nothing committed yet
-   * has only the first.
+   * has only the first. A commit keeps the subject line alone, because the
+   * body of a commit is not what a row can hold.
    */
-  const words = async (dir: string, subject: string | undefined, at: { branch: string; base: string }): Promise<{ title: string; description: string }> => {
-    const line = (subject ?? '').split('\n')[0]?.trim();
-    const log = (await git(dir, ['log', '--format=%s', `${at.base}..${at.branch}`]))?.trim() ?? '';
+  const wordsFromSession = async (kind: WordsKind, given: WordsGiven): Promise<Words> => {
+    const line = (given.subject ?? '').split('\n')[0]?.trim();
+    if (kind === 'commit') {
+      return {
+        title: line !== undefined && line !== '' ? line : (given.fallback ?? 'Changes from an agent session'),
+        description: '',
+      };
+    }
+    const log = (await git(given.dir, ['log', '--format=%s', `${given.base}..${given.branch}`]))?.trim() ?? '';
     const commits = log === '' ? [] : log.split('\n');
-    const title = line !== undefined && line !== '' && line !== 'New session' ? line : (commits[0] ?? at.branch);
-    const description = commits.length > 0 ? commits.map((one) => `- ${one}`).join('\n') : `Changes from an agent session on \`${at.branch}\`.`;
+    const title = line !== undefined && line !== '' && line !== 'New session' ? line : (commits[0] ?? given.branch ?? '');
+    const description = commits.length > 0
+      ? commits.map((one) => `- ${one}`).join('\n')
+      : `Changes from an agent session on \`${given.branch}\`.`;
     return { title, description };
+  };
+
+  /**
+   * The words for one place, from wherever the host says they come from.
+   *
+   * The one function all three places that write words go through - the commit
+   * operation, the commit `create-pr` makes of a dirty tree before it opens
+   * the request, and the pull request's own title and description - so a
+   * setting cannot be honoured in one of them and forgotten in another.
+   *
+   * The person's own text wins in every mode: the setting says what happens
+   * when they gave none, not whether what they typed is used. In the two modes
+   * that ask, the source builds the prompt here and the host answers it; an
+   * answer that never came, or came back empty, is the session title with a
+   * sentence saying so, which is the reference host's own fallback.
+   */
+  const wordsFor = async (kind: WordsKind, setting: ChangeWords | undefined, given: WordsGiven): Promise<Words> => {
+    const typed = (given.text ?? '').trim();
+    if (typed !== '') return { title: typed, description: '' };
+    const mode = setting?.setting.mode ?? 'session-title';
+    if (mode === 'forced') {
+      /*
+       * A commit with nothing typed is the refusal this mode is for.
+       *
+       * A pull request is the other way round: the form it is prepared from is
+       * how the person gives the text, so an empty form is the question rather
+       * than an answer, and `create-pr` refuses a title that is still empty
+       * when the request is actually opened.
+       */
+      if (kind === 'commit') throw new Error('A commit message is required.');
+      return { title: '', description: '' };
+    }
+    if (mode === 'model' || mode === 'agent') {
+      const said = mode === 'model' ? 'the model did not answer' : 'the agent did not answer';
+      const ask = setting?.ask;
+      if (ask !== undefined) {
+        let answer: string | undefined;
+        try { answer = await ask(await askOf(kind, given)); }
+        catch { answer = undefined; }
+        const words = answer === undefined ? undefined : splitWords(answer);
+        if (words !== undefined) return words;
+        return { ...await wordsFromSession(kind, given), fellBack: `${said}, so the session title was used` };
+      }
+      const why = setting?.why ?? (mode === 'model' ? 'no model is named' : 'no chat can be asked');
+      return { ...await wordsFromSession(kind, given), fellBack: `${why}, so the session title was used` };
+    }
+    return wordsFromSession(kind, given);
+  };
+
+  /**
+   * One commit message out of a title and a body.
+   *
+   * A body is carried when there is one, which is what a model that answered a
+   * subject and a paragraph asked for. The session title has no body, so a
+   * commit under it is the subject line it always was.
+   */
+  const asMessage = (words: Words): string =>
+    words.description === '' ? words.title : `${words.title}\n\n${words.description}`;
+
+  /** The prompt one place sends, over what changed and what was said. */
+  const askOf = async (kind: WordsKind, given: WordsGiven): Promise<string> => {
+    const at = kind === 'commit'
+      ? await changedBy(given.dir, ['HEAD'], true)
+      : await changedBy(given.dir, [`${given.base}...${given.branch}`], false);
+    const what = {
+      ...(given.branch !== undefined ? { branch: given.branch } : {}),
+      ...(given.base !== undefined ? { base: given.base } : {}),
+      files: at.files,
+      diff: at.diff,
+      ...(given.conversation !== undefined ? { conversation: given.conversation } : {}),
+    };
+    return kind === 'commit' ? commitPrompt(what) : pullRequestPrompt(what);
   };
 
   /**
@@ -749,6 +892,8 @@ export function gitChanges(): ChangesetSource {
     meta: Record<string, unknown>,
     base: string | undefined,
     github: { ask: PullRequests; token?: string; owner: string; repo: string },
+    changeWords: ChangeWords | undefined,
+    conversation: string | undefined,
   ): Promise<ChangesetOperationResult> => {
     const asked = (typeof meta[PR_META] === 'object' && meta[PR_META] !== null ? meta[PR_META] : undefined) as Record<string, unknown> | undefined;
     const repo = { owner: github.owner, repo: github.repo };
@@ -760,7 +905,7 @@ export function gitChanges(): ChangesetSource {
     if (operationId === 'prepare-pull-request') {
       if (asked?.validateOnly === true) return {};
       const details = {
-        ...await words(dir, subject, at),
+        ...await wordsFor('pull-request', changeWords, { dir, subject, branch: at.branch, base: at.base, conversation }),
         branchName: at.branch,
         baseBranchName: at.base,
         repository: `${repo.owner}/${repo.repo}`,
@@ -792,8 +937,13 @@ export function gitChanges(): ChangesetSource {
     if (dirty) {
       const staged = await run(dir, ['add', '-A']);
       if (!staged.ok) throw new Error(`Failed to commit changes before creating a pull request: ${staged.err}`);
-      const line = (subject ?? '').split('\n')[0]?.trim();
-      const done = await run(dir, ['commit', '-m', line !== undefined && line !== '' ? line : `Changes on ${branch}`]);
+      // The same setting as the Commit button: this is a commit, and one
+      // written by a different rule would be the setting honoured everywhere
+      // but here.
+      const message = asMessage(await wordsFor('commit', changeWords, {
+        dir, subject, conversation, fallback: `Changes on ${branch}`,
+      }));
+      const done = await run(dir, ['commit', '-m', message]);
       if (!done.ok) throw new Error(`Failed to commit changes before creating a pull request: ${done.err || done.out.trim()}`);
     }
     const ahead = (await git(dir, ['rev-list', '--count', `${at.base}..${branch}`]))?.trim();
@@ -809,33 +959,52 @@ export function gitChanges(): ChangesetSource {
       : ['origin', branch];
     const pushed = await run(dir, ['push', ...(upstream === undefined ? ['-u'] : []), remote, `${branch}:${head}`]);
     if (!pushed.ok) throw new Error(`Failed to push branch '${branch}': ${pushed.err}`);
-    const said = await words(dir, subject, { branch, base: at.base });
+    /*
+     * The words the request goes in with: the form's when somebody filled it
+     * in, and the host's setting when nobody did.
+     *
+     * The setting is not asked when the form already answered. A model asked
+     * to name a pull request somebody has already named is a second answer to
+     * a question nobody asked, and a turn paid for each time.
+     */
+    const filled = typeof asked?.title === 'string' ? asked.title.trim() : '';
+    const said = filled !== ''
+      ? { title: filled, description: typeof asked?.description === 'string' ? asked.description : '' }
+      : await wordsFor('pull-request', changeWords, { dir, subject, branch, base: at.base, conversation });
+    /*
+     * A forced host writes no words and the form carried none either, so there
+     * is nothing to open a request with. Said here rather than earlier,
+     * because a request the branch already has is answered whatever the title
+     * would have been.
+     */
+    if (said.title === '') throw new Error('A pull request title is required.');
+    const why = said.fellBack === undefined ? '' : ` - ${said.fellBack}`;
     const existing = (await github.ask.forBranch(repo, head, github.token, dir)).find((one) => one.state === 'open');
     if (existing !== undefined) {
       return {
-        message: `Pushed ${branch}; its pull request is ${existing.url}`,
+        message: `Pushed ${branch}; its pull request is ${existing.url}${why}`,
         followUp: { content: { uri: existing.url, contentType: 'text/html' }, external: true },
         pullRequest: {
           url: existing.url,
-          // The port's title when it has one, the form's next, the subject's last.
-          title: existing.title ?? (typeof asked?.title === 'string' ? asked.title : undefined) ?? said.title,
+          // The port's title when it has one, and what the request was opened or found under otherwise.
+          title: existing.title ?? said.title,
           branch: head,
         },
       };
     }
     const opened = await github.ask.create(repo, {
-      title: typeof asked?.title === 'string' ? asked.title : said.title,
-      body: typeof asked?.description === 'string' ? asked.description : said.description,
+      title: said.title,
+      body: said.description,
       head,
       base: at.base,
       draft: asked?.draft === true,
     }, github.token, dir);
     return {
-      message: `Opened ${opened.url}`,
+      message: `Opened ${opened.url}${why}`,
       followUp: { content: { uri: opened.url, contentType: 'text/html' }, external: true },
       pullRequest: {
         url: opened.url,
-        title: opened.title ?? (typeof asked?.title === 'string' ? asked.title : undefined) ?? said.title,
+        title: opened.title ?? said.title,
         branch: head,
       },
     };
@@ -1149,11 +1318,11 @@ export function gitChanges(): ChangesetSource {
      * the target against the operation's scopes. What is left is the doing,
      * and saying what git said when it did not work.
      */
-    invoke: async ({ dir, session, scope, operationId, target, subject, meta, base, github }) => {
+    invoke: async ({ dir, session, scope, operationId, target, subject, meta, base, github, changeWords, conversation }) => {
       if (operationId === 'checkout') return checkout(dir, meta ?? {});
       if (operationId === 'prepare-pull-request' || operationId === 'create-pr') {
         if (github === undefined) throw new Error('This directory has no GitHub remote to open a pull request on.');
-        return pullRequest(dir, operationId, subject, meta ?? {}, base, github);
+        return pullRequest(dir, operationId, subject, meta ?? {}, base, github, changeWords, conversation);
       }
       if (operationId === 'commit') {
         /*
@@ -1161,19 +1330,16 @@ export function gitChanges(): ChangesetSource {
          *
          * The protocol has no field for it, so it travels in `_meta` - the bag
          * the reference client already puts a pull request's arguments in.
-         * `message` replaces the session title a client did not get to write;
-         * with neither, the commit keeps the sentence this host always used.
+         * `message` is the person's own words, which win in every mode; with
+         * none, the setting says where the words come from.
          */
         const sent = meta?.['ahpd.commit'];
         const asked = typeof sent === 'object' && sent !== null
           ? sent as Record<string, unknown>
           : undefined;
         const typed = typeof asked?.message === 'string' ? asked.message.trim() : '';
-        // The session's own title, which is the sentence somebody already wrote
-        // about this work. A generated one would need the agent, and running a
-        // turn to commit a turn is a lot of machinery for a subject line.
-        const line = (subject ?? '').split('\n')[0]?.trim();
-        const message = typed !== '' ? typed : line !== undefined && line !== '' ? line : 'Changes from an agent session';
+        const words = await wordsFor('commit', changeWords, { dir, text: typed, subject, conversation });
+        const message = asMessage(words);
         /*
          * What is staged is the selection, and `add -A` is the fallback.
          *
@@ -1193,7 +1359,8 @@ export function gitChanges(): ChangesetSource {
         // The subject line, because the rest of the message is a body a row
         // cannot hold - the same first line `git log --oneline` would show.
         const subject_ = message.split('\n')[0] ?? message;
-        return { message: at ? `Committed ${at}: ${subject_}` : `Committed: ${subject_}` };
+        const why = words.fellBack === undefined ? '' : ` - ${words.fellBack}`;
+        return { message: at ? `Committed ${at}: ${subject_}${why}` : `Committed: ${subject_}${why}` };
       }
 
       const path = target?.resource === undefined ? undefined : await pathIn(dir, target.resource);

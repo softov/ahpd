@@ -4,6 +4,7 @@ import { uriOf } from '../src/fileuri.js';
 import { trusted } from '../src/host/trust.js';
 import { vscodeRootProperties } from '../src/vscoderootconfig.js';
 import { echo } from '../../../examples/echo/agent.js';
+import type { Agent } from '../src/types/agent.js';
 import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Users } from '../src/types/users.js';
@@ -27,7 +28,7 @@ const RESOURCE = 'ahpd://users';
  * and which of the three a key came from is what the cases below read.
  */
 const PUSHED_BY_VSCODE = Object.keys(vscodeRootProperties);
-const HOST_OWN = ['defaultShell', 'workspaceTrust'];
+const HOST_OWN = ['defaultShell', 'workspaceTrust', 'changeWords'];
 const DAEMON_OWN = ['daemonPort', 'advancedTools', 'apiKey'];
 
 /** A directory that knows one admin and one member, by the token each presents. */
@@ -74,6 +75,21 @@ const settle = async (): Promise<void> => {
   for (let i = 0; i < 6; i++) await new Promise((done) => { setTimeout(done, 0); });
 };
 
+/**
+ * A backend that lists one model, beside the echo one.
+ *
+ * The check a `model` mode goes through at the push is about a name the host
+ * already lists, and the echo backend lists nothing - so a host with only that
+ * one accepts any model name, which is the honest answer when there is nothing
+ * to contradict it. This is the same backend with one model, so the refusal has
+ * a list to read.
+ */
+const listing = (): Agent => ({
+  ...echo({ path: DIR, pace: 0 }),
+  provider: 'listing',
+  probe: async () => ({ models: [{ id: 'fast', name: 'Fast' }], commands: [], customizations: [] }),
+});
+
 /** A tool that only a host permitting advanced permission offers. */
 const ADVANCED = {
   definition: { name: 'launch_missiles', description: 'Not without saying so', inputSchema: { type: 'object' as const, properties: {} } },
@@ -115,7 +131,7 @@ function served(withDaemon = true) {
   };
   const host = createHost({
     path: DIR,
-    agents: [echo({ path: DIR, pace: 0 })],
+    agents: [echo({ path: DIR, pace: 0 }), listing()],
     users: directory(),
     ...(withDaemon ? { rootConfig } : {}),
     tools: [ADVANCED],
@@ -298,6 +314,134 @@ it('keeps a pushed workspaceTrust on the connection that pushed it', async () =>
   expect(mine.values.workspaceTrust).toEqual(trust);
   const theirs = (await rootOf(ben.client)).config as { values: Record<string, unknown> };
   expect(theirs.values.workspaceTrust).toBeUndefined();
+});
+
+it('declares changeWords with its four modes and the session title as the default', async () => {
+  const { signedIn, rootOf } = served();
+  const admin = await signedIn('admin', 'admin');
+  const config = (await rootOf(admin.client)).config as { schema: { properties: Record<string, unknown> }; values: Record<string, unknown> };
+  /*
+   * This host's own key, so the reference client pushes nothing for it and
+   * draws whatever is here. The default is the session title because that is
+   * what this host wrote before there was a key: a client that never pushes
+   * one sees no change at all.
+   */
+  expect(config.schema.properties.changeWords).toMatchObject({
+    type: 'object',
+    title: 'Change Words',
+    properties: {
+      mode: { type: 'string', enum: ['session-title', 'forced', 'model', 'agent'], default: 'session-title' },
+      provider: { type: 'string' },
+      model: { type: 'string' },
+    },
+    required: ['mode'],
+  });
+  // Nothing pushed, so no value is held: the default above is the client's to draw.
+  expect(config.values.changeWords).toBeUndefined();
+});
+
+it('keeps a changeWords push, and reads it back as a setting', async () => {
+  const { signedIn, rootOf, heardOnRoot } = served();
+  const admin = await signedIn('admin', 'admin');
+  for (const mode of ['session-title', 'forced']) {
+    await admin.client.handle({
+      method: 'dispatchAction',
+      params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: { mode } } } },
+    });
+    await settle();
+    const held = (await rootOf(admin.client)).config as { values: Record<string, unknown> };
+    expect(held.values.changeWords).toEqual({ mode });
+  }
+  // Whole, as it was pushed, and not one key at a time.
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { changeWords: { mode: 'session-title' } } } }),
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { changeWords: { mode: 'forced' } } } }),
+  ]);
+});
+
+/*
+ * A `model` mode names a backend and a model, and the host refuses one it
+ * cannot ask.
+ *
+ * The refusal is at the push rather than at the commit, because a setting that
+ * reads back and then does nothing is the worst of the three answers. What the
+ * host has to read is what it lists - the boot probe's models - and a provider
+ * that lists none is one nothing can contradict, so its models are accepted.
+ */
+it('refuses a model mode naming a provider this host does not serve', async () => {
+  const { signedIn, heardOnRoot } = served();
+  const admin = await signedIn('admin', 'admin');
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: { mode: 'model', provider: 'nobody', model: 'fast' } } } },
+  });
+  await settle();
+  // The refusal the sender alone hears, as every refusal is: no state moved for
+  // anybody, and no connection was sent a setting this host cannot honour.
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ rejectionReason: 'root config names a provider this host does not serve: nobody' }),
+  ]);
+});
+
+it('refuses a model mode naming a model the provider does not list', async () => {
+  const { signedIn, heardOnRoot } = served();
+  const admin = await signedIn('admin', 'admin');
+  // The probe is what fills the list, and it is answered after the handshake.
+  await settle();
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: { mode: 'model', provider: 'listing', model: 'sluggish' } } } },
+  });
+  await settle();
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ rejectionReason: 'root config names a model listing does not list: sluggish' }),
+  ]);
+});
+
+it('keeps a model mode naming a model the provider lists, and a provider that lists none', async () => {
+  const { signedIn, rootOf } = served();
+  const admin = await signedIn('admin', 'admin');
+  await settle();
+  const listed = { mode: 'model', provider: 'listing', model: 'fast' };
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: listed } } },
+  });
+  await settle();
+  expect(((await rootOf(admin.client)).config as { values: Record<string, unknown> }).values.changeWords).toEqual(listed);
+  // The echo backend lists no models at all, so there is nothing to refuse it by.
+  const quiet = { mode: 'model', provider: 'echo', model: 'anything' };
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: quiet } } },
+  });
+  await settle();
+  expect(((await rootOf(admin.client)).config as { values: Record<string, unknown> }).values.changeWords).toEqual(quiet);
+});
+
+it('refuses a model mode with no provider only when the provider arrives, so a two-part push works', async () => {
+  const { signedIn, rootOf, heardOnRoot } = served();
+  const admin = await signedIn('admin', 'admin');
+  await settle();
+  // The mode alone: nothing named, so nothing to refuse. The commit falls back
+  // to the session title and says why, which is a whole answer.
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: { mode: 'model' } } } },
+  });
+  await settle();
+  expect(((await rootOf(admin.client)).config as { values: Record<string, unknown> }).values.changeWords).toEqual({ mode: 'model' });
+  // And the name in the next push is checked against what the root now holds
+  // as well as what this one carries, which is where the refusal lives.
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { changeWords: { provider: 'nobody', model: 'fast' } } } },
+  });
+  await settle();
+  expect(heardOnRoot(admin.heard)).toEqual([
+    expect.objectContaining({ action: { type: 'root/configChanged', config: { changeWords: { mode: 'model' } } } }),
+    expect.objectContaining({ rejectionReason: 'root config names a provider this host does not serve: nobody' }),
+  ]);
 });
 
 it('reads a folder as trusted from one connection\'s workspaceTrust', () => {

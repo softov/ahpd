@@ -390,6 +390,18 @@ export interface HostOptions {
    */
   clientToolTimeoutMs?: number;
   /**
+   * How long a turn asked for a commit message or a pull request's words is
+   * waited for, in milliseconds.
+   *
+   * With `changeWords` in `model` or `agent` mode, a commit and a pull request
+   * ask for words the person gave none of, and a turn that never ends would
+   * leave the operation waiting with it. Past this the turn is cancelled and
+   * the words fall back to the session title, which is what a failure does.
+   * Unset is two minutes; zero is no limit at all, for a deployment that would
+   * rather wait than cut a model off.
+   */
+  changeWordsTimeoutMs?: number;
+  /**
    * How long a streamed delta waits for the next one before it is sent, in
    * milliseconds.
    *
