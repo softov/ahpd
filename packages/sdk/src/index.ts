@@ -25,11 +25,11 @@
 
 export { createHost, HOST_CLOSE_WAIT_MS, ROOT, refusalReason } from './host.js';
 export { subagentChatUri } from './host/channels.js';
-export { foldHostOptions, pluginHost, raise, routeOf, routePrefix, AGENT_CLASH, ROUTE_ROOT } from './plugins.js';
+export { eachPreset, foldHostOptions, pluginHost, raise, routeOf, routePrefix, AGENT_CLASH, ROUTE_ROOT } from './plugins.js';
 export { frozenCopy, deepFreeze } from './frozen.js';
 export { readJson, readJsonObject, writeJsonAtomic } from './jsonfile.js';
 export type { JsonRead, JsonObjectRead, JsonWriteOptions } from './jsonfile.js';
-export type { FoldedOptions, HostRecording, ServedRoute } from './plugins.js';
+export type { EachPresetOptions, FoldedOptions, HostRecording, ServedRoute } from './plugins.js';
 export { sdkVersion } from './version.js';
 export { listen, overStdio, runtime, serveRequests } from './listen.js';
 export {
@@ -70,7 +70,7 @@ export { checkPolicy, filePolicies, memoryPolicies } from './policies.js';
 export type { FilePoliciesOptions } from './policies.js';
 export { bag, isRecord, ownerOf, reason, str, strings } from './values.js';
 export { absentResource, asFile, bodyText, splitResource } from './records.js';
-export { secretRef, scopeOf, readSecret } from './vault.js';
+export { secretRef, fromEnvRef, scopeOf, readSecret, readSecrets } from './vault.js';
 export type { SecretScope } from './vault.js';
 export { decide } from './decide.js';
 export type { Asked, Decision } from './decide.js';
@@ -87,7 +87,8 @@ export type { Fetcher, GitHubIssuerOptions, IssuerKind, OidcIssuerOptions } from
 export type { Issuer, IssuerAnswer } from './types/users.js';
 export type { NestedRecord, SessionStore, StoredChat } from './types/sessions.js';
 export type { ScheduledOptions } from './scheduled.js';
-export { uriFor, idFor, idOf, Status } from './catalog.js';
+export { uriFor, idFor, idOf, Status, statusOf, activityOf, titleFrom } from './catalog.js';
+export type { Activity, StatusBits } from './catalog.js';
 export { tail, older, PAGE } from './paging.js';
 export { callTimes, withCallTimes, startOf } from './timing.js';
 

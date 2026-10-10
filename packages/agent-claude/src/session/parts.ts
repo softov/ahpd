@@ -1,5 +1,5 @@
 import type { ActiveTurn } from '@microsoft/agent-host-protocol';
-import { Status, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { callTimes, startOf, statusOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag, WireTurn } from '@ahpd/sdk';
 import { bag } from './common.js';
 import type { Scope, SessionContext } from './context.js';
@@ -53,21 +53,6 @@ export interface Parts {
 
 export function createParts(ctx: SessionContext): Parts {
   const touch = (): void => { ctx.modified = new Date().toISOString(); };
-
-  /**
-   * Say what it is doing now, if that has changed.
-   *
-   * On both channels: the chat is where the work happens, and the protocol
-   * says a session mirrors its default chat's activity - which is the one a
-   * catalogue row and a detail pane read.
-   */
-  const doing = (said: string | undefined): void => {
-    if (ctx.activity === said)
-      return;
-    ctx.activity = said;
-    ctx.emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-    ctx.emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-  };
 
   /** One line for a tool that is running. The name alone says too little. */
   const busyWith = (name: string, input: Bag): string => {
@@ -220,11 +205,6 @@ export function createParts(ctx: SessionContext): Parts {
     return spent && !guessed ? { amount, currency: 'USD' } : undefined;
   };
 
-  const status = (): number => (ctx.pending.size > 0 ? Status.InputNeeded
-    : ctx.active ? Status.InProgress
-      : ctx.failed ? Status.Error
-        : Status.Idle);
-
   /** The session-level summary of what is wanted. Set with the tool call, cleared with it. */
   /*
    * One request at a time, named by its id.
@@ -353,8 +333,23 @@ export function createParts(ctx: SessionContext): Parts {
   };
 
   return {
-    touch, doing, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
-    newConversation, status, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
+    touch, busyWith, retitle, usageOf, newTurn, count, sum, sayUsage, costOf,
+    newConversation, inputNeededSet, inputNeededRemoved, openTurn, addPart, holdPart,
     stampStart, stampEnd, untimed, addFailure,
+    // What it is doing, on both channels, the way a session mirrors its chat.
+    doing: ctx.activity.say,
+    /*
+     * `pending` is a question a client or a person is being asked, and a turn is
+     * `active` from the moment it begins.
+     *
+     * Both conditions are read as truthiness here, the way this backend always
+     * read them: an empty `failed` is a turn that failed with nothing to say,
+     * and this backend has always drawn that as no failure at all.
+     */
+    status: (): number => statusOf({
+      waiting: ctx.pending.size > 0,
+      active: Boolean(ctx.active),
+      failed: Boolean(ctx.failed),
+    }),
   };
 }

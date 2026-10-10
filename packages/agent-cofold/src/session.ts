@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { bag, idOf, str, uriOf } from '@ahpd/sdk';
+import { activityOf, bag, idOf, str, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -170,7 +170,7 @@ export function cofoldSession(
     closed: false,
     opening: undefined,
     refused: undefined,
-    activity: undefined,
+    activity: activityOf(start.emit),
   } as SessionContext;
 
   const { methods: toolMethods, ...turnAgent } = createTurnAgent(ctx);
@@ -238,7 +238,7 @@ export function cofoldSession(
     customizations: () => start.seedCustomizations ?? [],
     allTurns: () => turns,
     status: ctx.status,
-    activity: () => ctx.activity,
+    activity: () => ctx.activity.current(),
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(where)],
@@ -254,7 +254,7 @@ export function cofoldSession(
       chats: [{ resource: start.chatUri, title: ctx.title }],
       workingDirectories: [uriOf(where)],
       customizations: start.seedCustomizations ?? [],
-      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
+      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       /*
        * What a client is being asked - the person's questions and the calls a
        * client has to run - so a session channel a client subscribed to
@@ -275,7 +275,7 @@ export function cofoldSession(
       modifiedAt: ctx.modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
+      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       // The protocol's `PendingMessage` is `{ id, message }` and nothing else,
       // so the model a queued turn will run on stays in this session.

@@ -1,4 +1,4 @@
-import { callTimes, withCallTimes } from '@ahpd/sdk';
+import { callTimes, titleFrom, withCallTimes } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
 import { bag, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
@@ -40,9 +40,12 @@ export function createQueue(ctx: SessionContext): Queue {
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     if (ctx.title === UNTITLED && command !== '') {
-      ctx.title = command.slice(0, 60);
-      if (ctx.record !== undefined) ctx.record.title = ctx.title;
-      emit('session', { type: 'session/titleChanged', title: ctx.title });
+      const said = titleFrom(command, UNTITLED);
+      if (said !== ctx.title) {
+        ctx.title = said;
+        if (ctx.record !== undefined) ctx.record.title = said;
+        emit('session', { type: 'session/titleChanged', title: said });
+      }
     }
     const began = Date.now();
     const toolCallId = `${turnId}:command`;
@@ -156,11 +159,20 @@ export function createQueue(ctx: SessionContext): Queue {
     if (ctx.closed || ctx.active !== undefined) return;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
+    /*
+     * The first message titles a session nobody has named.
+     *
+     * A message of nothing but blanks answers the fallback, which is the title
+     * already held - so nothing moves and nothing is said about it.
+     */
     if (ctx.title === UNTITLED && text !== '') {
-      ctx.title = text.slice(0, 60);
-      if (ctx.record !== undefined) ctx.record.title = ctx.title;
-      // Said, because a client that opened the session holds the old one.
-      emit('session', { type: 'session/titleChanged', title: ctx.title });
+      const said = titleFrom(text, UNTITLED);
+      if (said !== ctx.title) {
+        ctx.title = said;
+        if (ctx.record !== undefined) ctx.record.title = said;
+        // Said, because a client that opened the session holds the old one.
+        emit('session', { type: 'session/titleChanged', title: said });
+      }
     }
     ctx.openTurn(turnId, text, from, queuedMessageId);
     void ctx.run(turnId, text, model, attachments);

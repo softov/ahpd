@@ -1,6 +1,6 @@
 ---
 title: One loop registers a plugin's presets
-status: todo
+status: done
 depends: [task-03-a-presets-secrets-and-environment-references-are-read-by-the-sdk.md]
 layer: "sdk, agent-acp, agent-claude"
 refs:
@@ -32,3 +32,23 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/167a4a60`.
+- `eachPreset(host, name, entries, build, { noun, log })` is in `packages/sdk/src/plugins.ts`.
+- It is exported from `@ahpd/sdk` with its `EachPresetOptions` type.
+- It awaits `build(id, given)` per entry and drops a throwing one.
+- A throw says `${name}: ${reason(error)}` through `host.problem`.
+- `log` also logs the same line.
+- Nothing resolved throws `presets names no <noun> left to register an agent for[: <ids>]`.
+- acp's loop is one call over `Object.entries(bag(values.presets))` with `{ noun: 'preset', log: true }`.
+- Each failure is still both logged and said, in that order.
+- claude's loop is one call over `variantsOf(presets)` mapped to `[id, variant]` pairs with `{ noun: 'variant' }`.
+- Its build is the schema check and the `env` read that were the loop's body.
+- The "written per preset" guard stays in each `optionsOf`, with its own key list and noun.
+- The task file says `bagOf`, which no package has.
+- The reader acp already imports is `bag`, so `bag(values.presets)` is what the call passes.
+- `packages/sdk/test/plugin-host.test.ts` has 3 new cases.
+- `agent-acp-presets.test.ts`, `agent-acp-plugin.test.ts`, `agent-acp-machine.test.ts` and `agent-claude-presets.test.ts` are unchanged.
+- Gates: `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` all pass.
+- The full suite passes 4869 of 4870 tests over 272 files.
+- The one failure is `changes-refresh.test.ts`, the load flake, which passes 29 of 29 alone.

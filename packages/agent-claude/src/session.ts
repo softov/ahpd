@@ -1,7 +1,7 @@
 import { rmSync } from 'node:fs';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { optionDefaults, storedSandbox } from './options.js';
-import { tail, uriOf } from '@ahpd/sdk';
+import { activityOf, tail, titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, BoundTool, Session } from '@ahpd/sdk';
 import { bag, list, str } from './session/common.js';
 import { createAsking } from './session/asking.js';
@@ -53,9 +53,9 @@ export function createSession(options: ClaudeSessionOptions): Session {
     offering: [...(options.tools ?? [])] as BoundTool[],
     handle: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,
-    title: str(bag(bag((options.seed ?? [])[0]).message).text)?.slice(0, 60) || 'New session',
+    title: titleFrom(str(bag(bag((options.seed ?? [])[0]).message).text) ?? '', 'New session'),
     modified: new Date().toISOString(),
-    activity: undefined as string | undefined,
+    activity: activityOf(emit),
     startedAt: 0,
     failed: undefined as string | undefined,
     ran: undefined as string | undefined,
@@ -184,7 +184,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
 
     customizations: () => ctx.customizations,
     allTurns: () => ctx.turns,
-    activity: () => ctx.activity,
+    activity: () => ctx.activity.current(),
     title: () => ctx.title,
     modifiedAt: () => ctx.modified,
     workingDirectories: () => [uriOf(cwd), ...ctx.peers.map((one) => uriOf(one))],
@@ -202,7 +202,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       customizations: ctx.customizations,
       // What it is doing, only while it is doing something. The protocol has
       // a session mirror its default chat's, which is where this is set.
-      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
+      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       /*
        * The schema *and* what is in force.
        *
@@ -249,7 +249,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // turns, and the snapshot is what a client waits on before it draws.
       ...tail(ctx.turns),
       ...(ctx.active ? { activeTurn: ctx.active } : {}),
-      ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
+      ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(ctx.draft !== undefined ? { draft: ctx.draft } : {}),
       // Said rather than left to a default: `Full` is what a client assumes
       // when the field is absent, and assuming it is not the same as being

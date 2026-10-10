@@ -8,6 +8,16 @@
 import type { Bag } from '@ahpd/sdk';
 
 /**
+ * The title a pi conversation carries until something better is known.
+ *
+ * `session` gives it to a session nobody has said anything in, and `catalog`
+ * gives it to a row pi itself never named, so the two are here rather than
+ * written twice: a client sent one word for a row and another for the session
+ * behind it would be sent a change that never happened.
+ */
+export const UNTITLED = 'pi session';
+
+/**
  * The permission modes every backend offers, in the order a client reads them.
  *
  * The same six `@ahpd/agent-claude` and `@ahpd/agent-cofold` advertise, because

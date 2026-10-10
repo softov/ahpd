@@ -7,7 +7,7 @@ import { offeredModels, ownModels, type ModelEntry, type OfferedModel } from './
 import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { machineAsked, refuseComputer } from '@ahpd/sdk';
+import { fromEnvRef, machineAsked, refuseComputer } from '@ahpd/sdk';
 import { spawnInside } from './spawn.js';
 import type { Asked, Spawned } from './spawn.js';
 import type { Agent, Bag, Listed, MachineNeed, Start } from '@ahpd/sdk';
@@ -45,8 +45,8 @@ const ANTHROPIC = 'https://api.anthropic.com';
  */
 const baseUrlOf = (preset: Bag | undefined): string | undefined => {
   const said = (preset?.['env'] as Bag | undefined)?.['ANTHROPIC_BASE_URL'];
-  const named = typeof said === 'object' && said !== null ? (said as Bag)['fromEnv'] : undefined;
-  const url = typeof named === 'string' ? process.env[named] : said;
+  const named = fromEnvRef(said);
+  const url = named === undefined ? said : process.env[named];
   return typeof url === 'string' && url !== '' ? url : undefined;
 };
 

@@ -1,5 +1,5 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Bag, BoundTool, Session, SessionOptions, SubagentChat, SubagentRequest } from '@ahpd/sdk';
+import type { Activity, Bag, BoundTool, Session, SessionOptions, SubagentChat, SubagentRequest } from '@ahpd/sdk';
 import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
@@ -97,8 +97,8 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
   active: Bag | undefined;
   title: string;
   modified: string;
-  /** What the session is doing, in one line, or nothing when it is idle. */
-  activity: string | undefined;
+  /** What the session is doing: the one handle that says it, and holds it. */
+  activity: Activity;
   /** When the running turn started, in milliseconds. */
   startedAt: number;
   /**

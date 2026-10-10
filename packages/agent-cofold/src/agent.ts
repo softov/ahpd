@@ -17,7 +17,7 @@ import { EFFORT_LEVELS, PERMISSION_MODES, PERMISSION_MODE_DESCRIPTIONS, createMe
 import type { ModelAdapter, ModelInfo, ModelProvider, Policy, SessionRecord, Store } from '@cofold/agents';
 import { openaiCompat, openaiCompatProvider, splitModel } from '@cofold/model-openai-compat';
 import { createFileStore } from '@cofold/store-file';
-import { uriOf } from '@ahpd/sdk';
+import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Agent, Bag, Listed, MachineNeed, Offered } from '@ahpd/sdk';
 import { harnessConfig, harnessConfigPath } from './config.js';
 import type { HarnessConfig, HarnessProvider } from './config.js';
@@ -106,19 +106,6 @@ export const defaultStoreRoot = (): string =>
 /** A short string, or nothing for a blank or missing one. */
 const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
-
-/**
- * The line a catalogue row draws for a session.
- *
- * The store keeps no title of its own, so the first thing the person said is
- * the honest one; a session that has said nothing is titled by its id. The
- * whitespace is folded and the line bounded, because a title is one row and a
- * first message can be a pasted file.
- */
-const titleOf = (said: string, fallback: string): string => {
-  const line = said.replace(/\s+/g, ' ').trim();
-  return line === '' ? fallback : line.slice(0, 200);
-};
 
 /** The resource a client authenticates against when nothing named one. */
 export const FALLBACK_RESOURCE = 'https://ahpd.dev/agent-cofold';
@@ -640,7 +627,7 @@ export function cofoldAgent(options: CofoldOptions = {}): Agent {
     const first = messages.find((one) => one.role === 'user' && one.source === 'input');
     return {
       id: record.sessionId,
-      title: first === undefined ? record.sessionId : titleOf(textOf(first), record.sessionId),
+      title: first === undefined ? record.sessionId : titleFrom(textOf(first), record.sessionId),
       createdAt: record.createdAt,
       modifiedAt: record.updatedAt,
       workingDirectories: record.workspace === undefined ? [] : [uriOf(record.workspace)],

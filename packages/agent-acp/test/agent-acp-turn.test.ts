@@ -856,3 +856,67 @@ it('completes a turn whose stop reason this bridge does not know', async () => {
   // and a stop it cannot describe is better read as an answer.
   expect((await stoppedWith('something_newer')).type).toBe('chat/turnComplete');
 });
+
+/** The title a client subscribed to the session reads, and how it came to be. */
+const named = async (
+  client: Awaited<ReturnType<typeof talking>>['client'],
+  p: ReturnType<typeof peer>,
+  uri: string,
+): Promise<{ last: string; said: unknown[] }> => {
+  const snapshot = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { title: string } };
+  };
+  return {
+    last: snapshot.snapshot.state.title,
+    said: actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').map((e) => e.action.title),
+  };
+};
+
+it('titles a session after the first line of what was said', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'Fix the build\nand the tests');
+  await until(() => ended(p, chatUri));
+
+  // One line, and the line is the first one: a row that carries the rest of
+  // the message is a row drawn as a paragraph.
+  const title = await named(client, p, uri);
+  expect(title.said).toEqual(['Fix the build']);
+  expect(title.last).toBe('Fix the build');
+});
+
+it('keeps a one-line message of seventy characters whole', async () => {
+  const line = 'a'.repeat(70);
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', line);
+  await until(() => ended(p, chatUri));
+
+  expect((await named(client, p, uri)).last).toBe(line);
+});
+
+it('lets the agent replace the title the first message gave', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  // `name` is the fixture's script for a `session_info_update`, which is what
+  // an agent says instead of answering.
+  begin(client, chatUri, 't1', 'name this one');
+  await until(() => ended(p, chatUri));
+
+  const title = await named(client, p, uri);
+  expect(title.said).toEqual(['name this one', 'Naming the work']);
+  expect(title.last).toBe('Naming the work');
+});
+
+it('keeps a person\'s name when the agent offers one afterwards', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: uri, action: { type: 'session/titleChanged', title: 'Mine, thanks' } },
+  });
+  begin(client, chatUri, 't1', 'name this one');
+  await until(() => ended(p, chatUri));
+
+  // A name somebody chose is not the agent's to replace, so the one title on
+  // the wire is the person's.
+  const title = await named(client, p, uri);
+  expect(title.said).toEqual(['Mine, thanks']);
+  expect(title.last).toBe('Mine, thanks');
+});

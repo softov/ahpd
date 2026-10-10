@@ -304,6 +304,21 @@ it('skips only the preset whose daemon variable is not there, and says which', a
   );
 });
 
+it('refuses a variant env reference that carries anything beside fromEnv', async () => {
+  await withDaemon({ AHPD_PRESET_KEY: 'sk-from-daemon' }, async () => {
+    // One key alone is a reference. An object with anything beside `fromEnv` is
+    // a value of its own, which the one-key rule leaves the CLI to be handed -
+    // and the CLI takes variables as text, so that is refused here instead.
+    const { problems, served } = await load({
+      presets: { claude: {}, router: { env: { ANTHROPIC_AUTH_TOKEN: { fromEnv: 'AHPD_PRESET_KEY', other: 1 } } } },
+    });
+    expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);
+    expect(othersOf(problems)).toEqual([]);
+    expect(skippedOf(problems)).toHaveLength(1);
+    expect(skippedOf(problems)[0]).toMatch(/options\.presets\.router\.env\.ANTHROPIC_AUTH_TOKEN is not a string$/u);
+  });
+});
+
 it('skips only the preset whose extraArgs value reads the daemon environment', async () => {
   const { problems, served } = await load({ presets: { router: { extraArgs: { debug: { fromEnv: 'PATH' } } } } });
   expect((served.agents ?? []).slice(1).map((one) => one.provider)).toEqual(['claude']);

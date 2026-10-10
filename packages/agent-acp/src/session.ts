@@ -24,7 +24,7 @@
  */
 
 import { resolve } from 'node:path';
-import { Status, uriOf } from '@ahpd/sdk';
+import { activityOf, statusOf, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { bag, UNTITLED } from './session/common.js';
 import { createClientCalls } from './session/clientcalls.js';
@@ -76,8 +76,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     return directories.some((dir) => full === dir || full.startsWith(`${dir}/`));
   };
 
-  /** What it is doing, or nothing while it is idle. */
-  let activity: string | undefined;
+  /** What it is doing, and the one handle that says it. */
+  const activity = activityOf(emit);
   let modified = new Date().toISOString();
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
@@ -86,25 +86,6 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     modified = new Date().toISOString();
     if (ctx.record !== undefined) ctx.record.modifiedAt = modified;
   };
-
-  /** Say what it is doing, on both channels, the way a session mirrors its chat. */
-  const doing = (said: string | undefined): void => {
-    if (activity === said) return;
-    activity = said;
-    emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-    emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-  };
-
-  /**
-   * `SessionStatus`: 8 is in progress, 4 waits on a person and 1 is idle.
-   *
-   * A permission the server is blocked on is the session waiting for
-   * somebody, which is what a client draws the input request from.
-   */
-  const status = (): number => (ctx.permissions.size > 0 ? Status.InputNeeded
-    : ctx.active !== undefined ? Status.InProgress
-      : ctx.failed !== undefined ? Status.Error
-        : Status.Idle);
 
   /*
    * The shared state, and then each area's own members assigned onto it.
@@ -121,8 +102,17 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     where,
     inside,
     touch,
-    doing,
-    status,
+    // What it is doing, on both channels, the way a session mirrors its chat.
+    doing: activity.say,
+    /*
+     * A permission the server is blocked on is the session waiting for
+     * somebody, which is what a client draws the input request from.
+     */
+    status: (): number => statusOf({
+      waiting: ctx.permissions.size > 0,
+      active: ctx.active !== undefined,
+      failed: ctx.failed !== undefined,
+    }),
     offering: [...(start.tools ?? [])],
     settings: { ...start.settings },
     turns: [...(start.seed ?? [])],
@@ -177,8 +167,8 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     resumable: () => ctx.loads,
     customizations: () => [...seeds, ...ctx.commands],
     allTurns: () => turns,
-    status,
-    activity: () => activity,
+    status: () => ctx.status(),
+    activity: () => activity.current(),
     title: () => ctx.title,
     /*
      * A person's rename, which the host announces and this only keeps. The
@@ -200,7 +190,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       // `SessionState`, and a client subscribed to this channel named it.
       provider,
       title: ctx.title,
-      status: status(),
+      status: ctx.status(),
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title: ctx.title }],
@@ -217,7 +207,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
        * sometimes empty is not a thing a client has to guess about.
        */
       ...(ctx.calls.entries().length > 0 ? { inputNeeded: ctx.calls.entries() } : {}),
-      ...(activity !== undefined ? { activity } : {}),
+      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       // The schema *and* what is in force: a client reads
       // `config.schema.properties` for the controls and `config.values` for
       // where each one sits. The schema carries the server's modes once they
@@ -228,11 +218,11 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     chatState: () => ({
       resource: start.chatUri,
       title: ctx.title,
-      status: status(),
+      status: ctx.status(),
       modifiedAt: modified,
       turns,
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
-      ...(activity !== undefined ? { activity } : {}),
+      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
@@ -262,7 +252,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
       ctx.cancelRequested = true;
       ctx.settlePermissions();
       ctx.calls.release('The turn was stopped');
-      doing('Cancelling');
+      ctx.doing('Cancelling');
       const connection = ctx.live;
       if (connection !== undefined && ctx.acpSessionId !== undefined) {
         // Fire and forget: the prompt's own resolution is what ends the turn.

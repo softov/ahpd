@@ -1,6 +1,6 @@
 import { run } from '@cofold/agents';
 import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
-import { bag, partsOf, reason, str } from '@ahpd/sdk';
+import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
@@ -99,10 +99,19 @@ export const createTurns = (
     if (ctx.closed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
+    /*
+     * The first message titles a session nobody has named.
+     *
+     * A message of nothing but blanks answers the fallback, which is the title
+     * already held - so nothing moves and nothing is said about it.
+     */
     if (ctx.title === 'Cofold session' && text !== '') {
-      ctx.title = text.slice(0, 60);
-      // Said, because a client that opened the session holds the old one.
-      start.emit('session', { type: 'session/titleChanged', title: ctx.title });
+      const said = titleFrom(text, 'Cofold session');
+      if (said !== ctx.title) {
+        ctx.title = said;
+        // Said, because a client that opened the session holds the old one.
+        start.emit('session', { type: 'session/titleChanged', title: said });
+      }
     }
     // A model named on the turn wins over the session's, and is what the
     // usage report names; it is applied before the agent is built.
@@ -412,8 +421,11 @@ export const createTurns = (
     ctx.cancelRequested = false;
     ctx.failed = undefined;
     if (ctx.title === 'Cofold session' && command !== '') {
-      ctx.title = command.slice(0, 60);
-      start.emit('session', { type: 'session/titleChanged', title: ctx.title });
+      const said = titleFrom(command, 'Cofold session');
+      if (said !== ctx.title) {
+        ctx.title = said;
+        start.emit('session', { type: 'session/titleChanged', title: said });
+      }
     }
     const began = Date.now();
     const toolCallId = `${turnId}:command`;

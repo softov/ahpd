@@ -1,6 +1,6 @@
 ---
 title: Every backend titles a session from the first line, up to 80
-status: todo
+status: done
 depends: []
 layer: "sdk, agent-acp, agent-cofold, agent-pi"
 refs:
@@ -46,3 +46,25 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test`.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/167a4a60`.
+- `titleFrom(text, fallback, max = 80)` is in `packages/sdk/src/catalog.ts`.
+- It answers the first non-blank line, trimmed, cut at `max`.
+- A text with no line in it answers the fallback.
+- pi's `session.ts` and `catalog.ts` both call it, and its local `firstLine` is gone.
+- pi's fallback is the `UNTITLED` constant, now exported from `types.ts`.
+- acp's two title sites in `session/queue.ts` and cofold's two in `turns.ts` call it with their own fallback.
+- cofold's `titleOf` in `agent.ts` is gone, so its catalogue row and its live title are the same `titleFrom`.
+- claude's seeded title and its two derived-title sites call it with the fallback `New session`.
+- The plan's `rg -n "slice\(0, 60\)"` finds nothing in any agent package.
+- The guard around each derived title is unchanged, so only a session nobody has named is titled.
+- A name a person gave is never replaced.
+- acp and pi keep a `renamed` flag; claude and cofold keep the fallback-title guard.
+- That guard is where an agent-given title replaces the derived one.
+- New cases: acp's first-line and 70-character titles, its agent title replacing the derived one, and a person's name surviving the agent's.
+- More cases: cofold's first-line title, its 70-character title, and its catalogue row agreeing with the live session.
+- pi's person's name survives `session_info_changed`.
+- pi's existing title tests are unchanged.
+- Gates: `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` all pass.
+- The full suite passes 4869 of 4870 tests over 272 files.
+- The one failure is `changes-refresh.test.ts`, the load flake, which passes 29 of 29 alone.

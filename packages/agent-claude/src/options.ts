@@ -15,7 +15,7 @@
  */
 
 import type { Bag } from '@ahpd/sdk';
-import { bag, secretRef } from '@ahpd/sdk';
+import { bag, fromEnvRef, secretRef } from '@ahpd/sdk';
 import { modelsProblem } from './models.js';
 
 /**
@@ -240,7 +240,7 @@ const heldTo = (schema: Bag, value: unknown, option: string): string | undefined
   if (schema.type === 'object') {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'is not an object';
     for (const [key, held] of Object.entries(value)) {
-      const named = schema.fromEnv === true ? fromEnvOf(held) : undefined;
+      const named = schema.fromEnv === true ? fromEnvRef(held) : undefined;
       if (named !== undefined) {
         if (process.env[named] === undefined) return `.${key} reads ${named}, which the daemon's environment does not have`;
         continue;
@@ -252,7 +252,7 @@ const heldTo = (schema: Bag, value: unknown, option: string): string | undefined
       // be handed as JSON is held. `{ fromEnv }` is not: it reads the daemon's
       // own variables, which is what `env` is for and no argument has use of.
       if (option === 'extraArgs') {
-        if (fromEnvOf(held) !== undefined) return `.${key} reads the daemon's environment only under env`;
+        if (fromEnvRef(held) !== undefined) return `.${key} reads the daemon's environment only under env`;
         continue;
       }
       if (typeof held !== 'string' && held !== null) return `.${key} is not a string`;
@@ -260,12 +260,6 @@ const heldTo = (schema: Bag, value: unknown, option: string): string | undefined
     return undefined;
   }
   return undefined;
-};
-
-/** The variable a `{ fromEnv }` value names, or nothing for any other value. */
-const fromEnvOf = (value: unknown): string | undefined => {
-  const named = bag(value).fromEnv;
-  return typeof named === 'string' && named !== '' ? named : undefined;
 };
 
 /**
@@ -279,7 +273,7 @@ const fromEnvOf = (value: unknown): string | undefined => {
 const variablesOf = (value: unknown, resolve = false): Record<string, string | null> => Object.fromEntries(
   Object.entries(bag(value))
     .map(([name, one]): [string, unknown] => {
-      const named = resolve ? fromEnvOf(one) : undefined;
+      const named = resolve ? fromEnvRef(one) : undefined;
       return [name, named === undefined ? one : process.env[named]];
     })
     .filter((entry): entry is [string, string | null] => typeof entry[1] === 'string' || entry[1] === null),

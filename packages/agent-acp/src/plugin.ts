@@ -15,7 +15,7 @@
  */
 
 import type { Plugin, PluginHost, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
-import { bag, reason, secretRef } from '@ahpd/sdk';
+import { bag, eachPreset, fromEnvRef, readSecrets, secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { presets as shipped } from './presets.js';
 import type { AcpMachine, AcpOptions } from './types.js';
@@ -109,40 +109,6 @@ const changedOf = (value: unknown): ToolsChanged | undefined =>
 const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'honoursTrust', 'machine'] as const;
 
 /**
- * One preset's `env`, with every `{ "$secret": "<name>" }` read through the host.
- *
- * Read here and not by the loader because a preset's credential is the
- * daemon's, not a person's: the name is in `host:` scope or it belongs to work
- * this load is not doing, and a vault this daemon does not have is a host that
- * cannot answer. Whichever of those it is, the caller is told which preset it
- * was for and the other presets carry on.
- */
-const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, string>> => {
-  const out: Record<string, string> = {};
-  for (const [name, value] of Object.entries(bag(env))) {
-    const referenced = secretRef(value);
-    if (referenced === undefined) {
-      out[name] = value as string;
-      continue;
-    }
-    try {
-      out[name] = await host.secret(referenced);
-    }
-    catch (error) {
-      throw new Error(`${by}.${name} names ${referenced}: ${reason(error)}`);
-    }
-  }
-  return out;
-};
-
-/** The variable a `{ "fromEnv": "<VAR>" }` value names, or nothing for any other value. */
-const fromEnvOf = (value: unknown): string | undefined => {
-  const held = bag(value);
-  const named = held.fromEnv;
-  return Object.keys(held).length === 1 && typeof named === 'string' && named !== '' ? named : undefined;
-};
-
-/**
  * One preset's `machine`, with every `{ fromEnv }` read and every `$secret` kept.
  *
  * A variable read from the daemon's environment is settled here, once, and one
@@ -171,7 +137,7 @@ const machineOf = (said: unknown, by: string): AcpMachine => {
         env[variable] = { $secret: referenced };
         continue;
       }
-      const named = fromEnvOf(value);
+      const named = fromEnvRef(value);
       if (named === undefined) throw new Error(`${at}.env.${variable} is not a string, { fromEnv } or { $secret }`);
       const held = process.env[named];
       if (held === undefined) throw new Error(`${at}.env.${variable} reads ${named}, which the daemon's environment does not have`);
@@ -272,7 +238,9 @@ const presetOf = async (
   // Read before the preset's own `env`, which asks the vault: a block that
   // cannot be used refuses the preset without a secret being read for it.
   const machine = machineUnder(taken?.machine, said.machine === undefined ? undefined : machineOf(said.machine, by));
-  const env = { ...(taken?.env ?? {}), ...await secretsOf(host, said.env, `${by}.env`) };
+  // The shared reader answers what each value was, which the schema has said is
+  // a string wherever it is not a reference the host read into one.
+  const env = { ...(taken?.env ?? {}), ...await readSecrets(host, said.env, `${by}.env`) as Record<string, string> };
   // Checked here rather than by the schema, which says this key is an object
   // and cannot say the id inside it is the sign-in to a method of no name.
   const own = said.authenticate === undefined ? undefined : bag(said.authenticate);
@@ -343,28 +311,10 @@ export const optionsOf = async (host: PluginHost, values: Record<string, unknown
   for (const key of PER_PRESET) {
     if (values[key] !== undefined) throw new Error(`options.${key} is written per preset, as presets.<id>.${key}`);
   }
-  const held: AcpOptions[] = [];
-  const dropped: string[] = [];
-  for (const [id, given] of Object.entries(bag(values.presets))) {
-    try {
-      held.push(await presetOf(host, id, bag(given), values));
-    }
-    catch (error) {
-      // Said twice, once where it is asked for and once where a start reads
-      // what it came up without; the refusal below names the presets, not the
-      // messages.
-      const line = `${name}: ${reason(error)}`;
-      host.log(line);
-      host.problem(line);
-      dropped.push(id);
-    }
-  }
-  if (held.length === 0) {
-    throw new Error(dropped.length === 0
-      ? 'presets names no preset left to register an agent for'
-      : `presets names no preset left to register an agent for: ${dropped.join(', ')}`);
-  }
-  return held;
+  // Each failure is logged as well as said: a start prints the log and the
+  // refusal a client reads names the presets rather than the messages.
+  return eachPreset(host, name, Object.entries(bag(values.presets)), (id, given) =>
+    presetOf(host, id, bag(given), values), { noun: 'preset', log: true });
 };
 
 /** Register one ACP agent per preset, from the options of this one load. */

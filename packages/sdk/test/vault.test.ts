@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readSecret, scopeOf, secretRef } from '../src/vault.js';
+import { fromEnvRef, readSecret, readSecrets, scopeOf, secretRef } from '../src/vault.js';
 import { pluginHost } from '../src/plugins.js';
 import { sdkVersion } from '../src/version.js';
 import type { PluginContext } from '../src/types/plugin.js';
@@ -128,5 +128,48 @@ describe('PluginHost.secret', () => {
   it('says a host with no vault cannot read a name at all', async () => {
     const { host } = pluginHost('probe', context());
     await expect(host.secret('host:x')).rejects.toThrow('host:x cannot be read: this host has no vault');
+  });
+});
+
+/*
+ * The two readers a plugin's preset map is read through.
+ *
+ * `fromEnvRef` is `secretRef`'s sibling and takes its rule: the one key is the
+ * whole of it. `readSecrets` is one preset's `env`, read through the host, so
+ * the loader is not the one asking for a credential - decision
+ * `a-secret-is-named-in-a-host-team-or-user-scope`.
+ */
+
+describe('fromEnvRef', () => {
+  it('answers the variable of a reference', () => {
+    expect(fromEnvRef({ fromEnv: 'X' })).toBe('X');
+  });
+
+  it('answers nothing for anything that is not one reference', () => {
+    // The empty name is not one either: there is no variable called nothing.
+    for (const not of ['X', 3, null, undefined, ['X'], {}, { fromEnv: '' }, { fromEnv: 'X', other: 1 }, { fromEnv: 3 }]) {
+      expect(fromEnvRef(not)).toBeUndefined();
+    }
+  });
+});
+
+describe('readSecrets', () => {
+  const hostWith = (vault?: Vault) => pluginHost('probe', context(), vault === undefined ? {} : { vault: () => vault }).host;
+
+  it('reads a reference and passes anything else through whole', async () => {
+    const host = hostWith(held('host:x'));
+    await expect(readSecrets(host, { KEY: { $secret: 'host:x' } }, 'options.presets.work.env'))
+      .resolves.toEqual({ KEY: 'value-0' });
+    // A value that is not a reference is the caller's to check, not this one's.
+    await expect(readSecrets(host, { A: 'plain', B: null, C: 1 }, 'options.presets.work.env'))
+      .resolves.toEqual({ A: 'plain', B: null, C: 1 });
+    await expect(readSecrets(host, undefined, 'options.presets.work.env')).resolves.toEqual({});
+  });
+
+  it('says which preset and which variable named a secret it could not read', async () => {
+    await expect(readSecrets(hostWith(held('host:x')), { KEY: { $secret: 'host:absent' } }, 'options.presets.work.env'))
+      .rejects.toThrow('options.presets.work.env.KEY names host:absent: the vault holds no host:absent');
+    await expect(readSecrets(hostWith(), { KEY: { $secret: 'host:x' } }, 'options.presets.work.env'))
+      .rejects.toThrow('options.presets.work.env.KEY names host:x: host:x cannot be read: this host has no vault');
   });
 });

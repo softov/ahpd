@@ -25,6 +25,7 @@ import { frozenCopy } from './frozen.js';
 import { holds } from './users.js';
 import { createPair } from './pair.js';
 import type { Pair } from './pair.js';
+import { reason } from './values.js';
 import { readSecret } from './vault.js';
 import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, miss } from './validate.js';
 
@@ -175,6 +176,67 @@ export function routeOf(routes: Readonly<Record<string, Route>>, path: string): 
     if (path === prefix || path === prefix.slice(0, -1) || path.startsWith(prefix)) return { by, handler };
   }
   return undefined;
+}
+
+/** What one plugin's preset loop is told about the entries it is reading. */
+export interface EachPresetOptions {
+  /** What this plugin calls one of its entries: `preset`, `variant`. */
+  noun: string;
+  /**
+   * Whether each dropped entry is logged as well as said.
+   *
+   * A plugin whose load a person watches - one that a start prints as it
+   * applies - has each line in the log; one whose lines are read from the
+   * refusal alone does not, and would only be saying the same thing twice.
+   */
+  log?: boolean;
+}
+
+/**
+ * One entry per preset that resolved, out of a plugin's own option values.
+ *
+ * `presets` is the one option whose contents a JSON Schema cannot check per
+ * key: `additionalProperties` there is a yes or a no and never carries a
+ * schema, so what one preset holds is checked inside `build`, which is the
+ * plugin's own `presetOf`. A failure belongs to the entry it came from, so one
+ * that is wrongly written, whose variable the daemon does not have or whose
+ * `$secret` cannot be read is left out with one line naming it and the rest
+ * register. The load fails only when nothing is left, because a daemon with no
+ * agent of this kind at all is not a daemon somebody configured.
+ *
+ * `noun` is the plugin's own word for an entry and `log` says whether the line
+ * goes to the log as well; every sentence this says is the same otherwise, so
+ * two plugins cannot describe the same load two ways.
+ */
+export async function eachPreset<T>(
+  host: PluginHost,
+  name: string,
+  entries: Iterable<readonly [string, unknown]>,
+  build: (id: string, given: unknown) => Promise<T>,
+  { noun, log }: EachPresetOptions,
+): Promise<T[]> {
+  const held: T[] = [];
+  const dropped: string[] = [];
+  for (const [id, given] of entries) {
+    try {
+      held.push(await build(id, given));
+    }
+    catch (error) {
+      // Said twice where a person is watching, once where the refusal is what
+      // they read: the line says why one entry went, the throw below names the
+      // entries, and neither repeats the other's message.
+      const line = `${name}: ${reason(error)}`;
+      if (log === true) host.log(line);
+      host.problem(line);
+      dropped.push(id);
+    }
+  }
+  if (held.length === 0) {
+    throw new Error(dropped.length === 0
+      ? `presets names no ${noun} left to register an agent for`
+      : `presets names no ${noun} left to register an agent for: ${dropped.join(', ')}`);
+  }
+  return held;
 }
 
 /** What `foldHostOptions` answers: the composed options, and everything that could not be composed. */

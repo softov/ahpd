@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { AGENT_CLASH, foldHostOptions, pluginHost } from '../src/plugins.js';
+import { AGENT_CLASH, eachPreset, foldHostOptions, pluginHost } from '../src/plugins.js';
 import { memorySessions } from '../src/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { usageProvider } from '../src/usage.js';
@@ -619,4 +619,64 @@ it('drops a clashing agent alone, and says which plugin lost the id', () => {
   expect(folded.problems[0]).toMatch(
     new RegExp(`^${AGENT_CLASH} plugin b registers agent y, which plugin a already registered$`, 'u'),
   );
+});
+
+/*
+ * The loop a plugin reads its own preset map with.
+ *
+ * `optionsOf` is not exported from either agent package, so what is checked here
+ * is the loop alone: which entries register, what one failure says, what a load
+ * that leaves nothing says, and whether the line is logged as well as said.
+ */
+
+const LOOPING_CONTEXT: PluginContext = {
+  path: '/tmp/plugin-host',
+  paths: ['/tmp/plugin-host'],
+  version: '0.0.0',
+  hostName: 'host',
+  configDir: '/tmp/plugin-host',
+  log: () => {},
+  say: () => {},
+};
+
+/** A plugin host that keeps what it was told, rather than writing it anywhere. */
+const looping = (problems: string[], lines: string[] = []) => pluginHost(
+  'fixture',
+  { ...LOOPING_CONTEXT, log: (line) => lines.push(line) },
+  { problem: (line) => problems.push(line) },
+).host;
+
+it('registers what builds, and says one line for each entry it dropped', async () => {
+  const problems: string[] = [];
+  const built = await eachPreset(looping(problems), 'plugin', [['one', 1], ['two', 2], ['three', 3]], async (id) => {
+    if (id === 'two') throw new Error('two is not a preset');
+    return id.toUpperCase();
+  }, { noun: 'preset' });
+
+  expect(built).toEqual(['ONE', 'THREE']);
+  // One line, said once, naming the plugin and the entry's own reason.
+  expect(problems).toEqual(['plugin: two is not a preset']);
+});
+
+it('refuses a load that left nothing, naming every entry it dropped', async () => {
+  const problems: string[] = [];
+  const failing = async (id: string): Promise<string> => { throw new Error(`${id} is wrong`); };
+  await expect(eachPreset(looping(problems), 'plugin', [['a', 1], ['b', 2]], failing, { noun: 'variant' }))
+    .rejects.toThrow('presets names no variant left to register an agent for: a, b');
+  expect(problems).toEqual(['plugin: a is wrong', 'plugin: b is wrong']);
+  // Nothing dropped and nothing built is the same refusal without the names.
+  await expect(eachPreset(looping([]), 'plugin', [], failing, { noun: 'preset' }))
+    .rejects.toThrow('presets names no preset left to register an agent for');
+});
+
+it('also logs each line when the caller asks it to', async () => {
+  const problems: string[] = [];
+  const lines: string[] = [];
+  const failing = async (id: string): Promise<string> => { throw new Error(`${id} is wrong`); };
+  await expect(eachPreset(looping(problems, lines), 'plugin', [['a', 1], ['b', 2]], failing, { noun: 'preset', log: true }))
+    .rejects.toThrow('presets names no preset left to register an agent for: a, b');
+  // Both, each once: a log a person reads while it loads and a problem the
+  // refusal is carried beside.
+  expect(lines).toEqual(['plugin: a is wrong', 'plugin: b is wrong']);
+  expect(problems).toEqual(lines);
 });

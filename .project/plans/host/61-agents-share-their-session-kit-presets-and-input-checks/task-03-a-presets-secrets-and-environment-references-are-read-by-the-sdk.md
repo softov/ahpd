@@ -1,6 +1,6 @@
 ---
 title: A preset's secrets and environment references are read by the sdk
-status: todo
+status: done
 depends: []
 layer: "sdk, agent-acp, agent-claude"
 refs:
@@ -39,3 +39,30 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test packages/sdk packages/agent-acp packages/agent-claude`.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/167a4a60`.
+- `packages/sdk/src/vault.ts` holds `fromEnvRef` after `secretRef` and `readSecrets` beside `readSecret`.
+- Both are exported from `@ahpd/sdk`.
+- `fromEnvRef` takes `secretRef`'s rule: an object whose only key is `fromEnv`, holding a non-empty string.
+- `{ fromEnv: '' }`, `{ fromEnv: 'X', other: 1 }` and a bare `'X'` all answer nothing.
+- `readSecrets(host, env, by)` answers `Record<string, unknown>` and reads each `$secret` through the host.
+- Anything that is not a reference passes through whole.
+- The refusal `<by>.<name> names <ref>: <reason>` is kept word for word.
+- acp's `secretsOf` and `fromEnvOf` are gone.
+- Its preset `env` comes from `readSecrets`, narrowed to `Record<string, string>` at that call.
+- The schema has already said those values are strings.
+- `machineOf` reads its `{ fromEnv }` through `fromEnvRef`.
+- claude's `secretsOf` and its local `fromEnvOf` in `options.ts` are gone.
+- `heldTo`, `variablesOf` and `baseUrlOf` all read through `fromEnvRef`.
+- claude now refuses the shape acp refuses: a variant `env` value of `{ fromEnv: 'X', other: 1 }`.
+- That preset fails with `options.presets.<id>.env.<NAME> is not a string`.
+- The case was written first and seen failing.
+- `packages/sdk/test/vault.test.ts` has 4 new cases over the two readers.
+- acp's preset and machine tests are unchanged.
+- One `fromEnv` read is left as it was: `agent-claude/src/models.ts` reads a model entry's `key.fromEnv`.
+- That one allows other keys beside it.
+- The plan's refs count three reads and do not name this fourth one.
+- Its shape is a model's fetch key rather than an `env` value.
+- Gates: `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` all pass.
+- The full suite passes 4869 of 4870 tests over 272 files.
+- The one failure is `changes-refresh.test.ts`, the load flake, which passes 29 of 29 alone.

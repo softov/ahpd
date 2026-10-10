@@ -1,6 +1,6 @@
 import { resume, textOf } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { Status, bag, str } from '@ahpd/sdk';
+import { bag, statusOf, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
@@ -45,23 +45,6 @@ export const createRuns = (ctx: SessionContext): Runs => {
       await store.sessions.truncate({ sessionId, throughMessageId: start.rewindAt });
     }
   };
-
-  /** Say what it is doing, on both channels, the way a session mirrors its chat. */
-  const doing = (said: string | undefined): void => {
-    if (ctx.activity === said) return;
-    ctx.activity = said;
-    start.emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-    start.emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-  };
-
-  /**
-   * `SessionStatus`: 8 is in progress, 1 is idle, 2 is a last turn that
-   * failed, and 24 is waiting on a person and carries the 8.
-   */
-  const status = (): number => (pending.size > 0 ? Status.InputNeeded
-    : ctx.active !== undefined ? Status.InProgress
-      : ctx.failed !== undefined ? Status.Error
-        : Status.Idle);
 
   /**
    * Move the running turn into the history, once the stream has ended.
@@ -111,7 +94,7 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * first time rather than by a second path written for the replay.
    */
   const apply = async (mapping: TurnMapping, turnId: string, event: RunEvent): Promise<void> => {
-    if (event.type === 'run.finished') doing(undefined);
+    if (event.type === 'run.finished') ctx.activity.say(undefined);
     /*
      * A call that will never have a result still owes its `after`.
      *
@@ -264,9 +247,19 @@ export const createRuns = (ctx: SessionContext): Runs => {
     }
     ctx.handle = live;
     read(live, mapping, turnId);
-    doing('Waiting on you');
+    ctx.activity.say('Waiting on you');
     ctx.touch();
   };
 
-  return { cut, doing, status, apply, read, reopen };
+  return {
+    cut, apply, read, reopen,
+    // What it is doing, on both channels, the way a session mirrors its chat.
+    doing: ctx.activity.say,
+    /** A request nobody has answered yet is the session waiting on somebody. */
+    status: (): number => statusOf({
+      waiting: pending.size > 0,
+      active: ctx.active !== undefined,
+      failed: ctx.failed !== undefined,
+    }),
+  };
 };

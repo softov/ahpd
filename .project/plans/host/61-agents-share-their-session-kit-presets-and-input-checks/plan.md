@@ -1,7 +1,7 @@
 ---
 title: The agents share their status, activity, title and preset reading, and the host checks tool inputs and request params one way
 domain: host
-status: active
+status: built
 priority: medium
 created: 2026-10-05
 revalidated: 2026-10-05
@@ -103,10 +103,10 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session's status and activity come from the sdk](task-01-a-sessions-status-and-activity-come-from-the-sdk.md) | todo | - |
-| [02 - Every backend titles a session from the first line, up to 80](task-02-every-backend-titles-a-session-from-the-first-line.md) | todo | - |
-| [03 - A preset's secrets and environment references are read by the sdk](task-03-a-presets-secrets-and-environment-references-are-read-by-the-sdk.md) | todo | - |
-| [04 - One loop registers a plugin's presets](task-04-one-loop-registers-a-plugins-presets.md) | todo | 03 |
+| [01 - A session's status and activity come from the sdk](task-01-a-sessions-status-and-activity-come-from-the-sdk.md) | done | - |
+| [02 - Every backend titles a session from the first line, up to 80](task-02-every-backend-titles-a-session-from-the-first-line.md) | done | - |
+| [03 - A preset's secrets and environment references are read by the sdk](task-03-a-presets-secrets-and-environment-references-are-read-by-the-sdk.md) | done | - |
+| [04 - One loop registers a plugin's presets](task-04-one-loop-registers-a-plugins-presets.md) | done | 03 |
 | [05 - The host's tools read their input one way](task-05-the-hosts-tools-read-their-input-one-way.md) | done | - |
 | [06 - Request params are read one way, and -32602 has a name](task-06-request-params-are-read-one-way.md) | done | - |
 
@@ -121,16 +121,14 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 ## Resume state
 
-- **Done so far:** tasks 05 and 06, reviewed 2026-10-09 and 2026-10-10; the tool-input readers are in `packages/sdk/src/toolinput.ts`, the request-param readers in `packages/sdk/src/rpc.ts`.
-- **Next action:** [task-01-a-sessions-status-and-activity-come-from-the-sdk.md](task-01-a-sessions-status-and-activity-come-from-the-sdk.md), now that host 59 is built.
-- **Open questions:** none.
-- **Watch out for:** `activityOf` must emit nothing when the activity did not change, as all four `doing` do; claude's `status` reads truthiness (`ctx.active ?`) and the other three `!== undefined`, so `statusOf` takes booleans and each caller says what counts; pi's `UNTITLED` is the fallback for a blank message, and acp and cofold have their own.
+- **Done so far:** built 2026-10-10; see [implemented.md](implemented.md).
+- **Next action:** none; see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `rg -n "const doing|const status = \(\)" packages/agent-*/src` finds nothing.
-- [ ] `rg -n "slice\(0, 60\)" packages/agent-*/src` finds nothing.
-- [ ] `rg -n "const secretsOf|const fromEnvOf" packages/agent-*/src` finds nothing.
-- [ ] `rg -n "RpcError\(-32602" packages/sdk/src` finds nothing.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] `rg -n "const doing|const status = \(\)" packages/agent-*/src` finds nothing.
+- [x] `rg -n "slice\(0, 60\)" packages/agent-*/src` finds nothing.
+- [x] `rg -n "const secretsOf|const fromEnvOf" packages/agent-*/src` finds nothing.
+- [x] `rg -n "RpcError\(-32602" packages/sdk/src` finds nothing.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] `plans/index.md` updated.

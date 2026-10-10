@@ -580,3 +580,50 @@ it('starts a queued turn only after the one before it has ended', async () => {
   expect(first).toBeGreaterThanOrEqual(0);
   expect(next).toBeGreaterThan(first);
 });
+
+it('titles a session after the first line of what was said', async () => {
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, uri, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'Fix the build\nand the tests');
+  await until(() => ended(p, chatUri));
+
+  // One line, and the line is the first one: a row that carries the rest of
+  // the message is a row drawn as a paragraph.
+  const snapshot = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { title: string } };
+  };
+  expect(actions(p, uri).filter((e) => e.action.type === 'session/titleChanged').map((e) => e.action.title))
+    .toEqual(['Fix the build']);
+  expect(snapshot.snapshot.state.title).toBe('Fix the build');
+});
+
+it('keeps a one-line message of seventy characters whole', async () => {
+  const line = 'a'.repeat(70);
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, uri, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', line);
+  await until(() => ended(p, chatUri));
+
+  const snapshot = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { title: string } };
+  };
+  expect(snapshot.snapshot.state.title).toBe(line);
+});
+
+it('gives the catalogue row the same title as the live session', async () => {
+  const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
+  const { client, peer: p, uri, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'Fix the build\nand the tests');
+  await until(() => ended(p, chatUri));
+
+  // A row read from the store and a session read live are the same title, or a
+  // client listing once and opening the row sees it named twice.
+  const live = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { title: string } };
+  }).snapshot.state.title;
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { title: string }[];
+  };
+  expect(live).toBe('Fix the build');
+  expect(listed.items.map((one) => one.title)).toContain('Fix the build');
+});

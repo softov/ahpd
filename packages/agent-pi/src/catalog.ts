@@ -15,9 +15,10 @@
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { FileEntry } from '@earendil-works/pi-coding-agent';
-import { uriOf } from '@ahpd/sdk';
+import { titleFrom, uriOf } from '@ahpd/sdk';
 import type { Bag, Listed } from '@ahpd/sdk';
 import { loadedPi, loadPi } from './pi.js';
+import { UNTITLED } from './types.js';
 import type { PiOptions, WatchedSession } from './types.js';
 
 /** What this process watched, by provider and then by pi's own id. */
@@ -185,7 +186,7 @@ export async function catalogue(
     for (const one of found) {
       rows.set(one.id, {
         id: one.id,
-        title: one.name ?? firstLine(one.firstMessage),
+        title: one.name ?? titleFrom(one.firstMessage, UNTITLED),
         createdAt: one.created.toISOString(),
         modifiedAt: one.modified.toISOString(),
         workingDirectories: [uriOf(one.cwd === '' ? directory : one.cwd)],
@@ -268,7 +269,7 @@ function rowOfFile(entries: readonly FileEntry[], directory: string, id: string)
     id: header.id,
     // `(no messages)` is what pi titles a session nobody said anything in, and
     // the title is what pi itself would have called this row.
-    title: name ?? firstLine(words === '' ? '(no messages)' : words),
+    title: name ?? titleFrom(words === '' ? '(no messages)' : words, UNTITLED),
     createdAt: created.toISOString(),
     modifiedAt: (lastActivity !== undefined && lastActivity > 0 ? new Date(lastActivity) : created).toISOString(),
     workingDirectories: [uriOf(cwd === '' ? directory : cwd)],
@@ -321,10 +322,4 @@ export async function findSession(
     if (row !== undefined) return row;
   }
   return undefined;
-}
-
-/** The first line of a message, as a title for a conversation nobody named. */
-function firstLine(text: string): string {
-  const line = text.split('\n').map((one) => one.trim()).find((one) => one !== '') ?? '';
-  return line === '' ? 'pi session' : line.slice(0, 80);
 }

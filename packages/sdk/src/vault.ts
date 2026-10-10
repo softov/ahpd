@@ -8,7 +8,9 @@
  * done.
  */
 
+import type { PluginHost } from './types/plugin.js';
 import type { SecretRef, SecretWork, Vault } from './types/vault.js';
+import { bag, reason } from './values.js';
 
 /** What a name says about who may read it. */
 export type SecretScope =
@@ -65,6 +67,54 @@ export const secretRef = (value: unknown): string | undefined => {
   if (keys.length !== 1 || keys[0] !== '$secret') return undefined;
   const named = (value as SecretRef).$secret;
   return typeof named === 'string' ? named : undefined;
+};
+
+/**
+ * The variable this value reads from the daemon's environment, or `undefined`
+ * when it reads none.
+ *
+ * `secretRef`'s sibling and its rule: an object whose only key is `fromEnv` and
+ * whose value is a non-empty string. An object with anything beside `fromEnv`
+ * is a value of its own rather than a reference, the way one with anything
+ * beside `$secret` is, and an empty name reads a variable that is not there.
+ */
+export const fromEnvRef = (value: unknown): string | undefined => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== 'fromEnv') return undefined;
+  const named = (value as { fromEnv?: unknown }).fromEnv;
+  return typeof named === 'string' && named !== '' ? named : undefined;
+};
+
+/**
+ * One preset's `env`, with every `{ "$secret": "<name>" }` read through the host.
+ *
+ * Read here and not by the loader because a preset's credential is the daemon's,
+ * not a person's: the name is in `host:` scope or it belongs to work this load
+ * is not doing, and a vault this daemon does not have is a host that cannot
+ * answer. Whichever of those it is, the caller is told which preset it was for
+ * and the other presets carry on.
+ *
+ * Everything that is not a reference is passed through whole, as it was
+ * written: whether such a value may be what the option takes is the caller's
+ * check, and this one would only repeat it on the way past.
+ */
+export const readSecrets = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, unknown>> => {
+  const out: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(bag(env))) {
+    const referenced = secretRef(value);
+    if (referenced === undefined) {
+      out[name] = value;
+      continue;
+    }
+    try {
+      out[name] = await host.secret(referenced);
+    }
+    catch (error) {
+      throw new Error(`${by}.${name} names ${referenced}: ${reason(error)}`);
+    }
+  }
+  return out;
 };
 
 /**

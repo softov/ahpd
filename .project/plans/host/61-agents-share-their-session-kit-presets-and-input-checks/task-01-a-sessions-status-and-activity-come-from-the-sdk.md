@@ -1,6 +1,6 @@
 ---
 title: A session's status and activity come from the sdk
-status: todo
+status: done
 depends: []
 layer: "sdk, agent-acp, agent-claude, agent-cofold, agent-pi"
 refs:
@@ -44,3 +44,24 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/167a4a60`.
+- `packages/sdk/src/catalog.ts` holds `statusOf`, `activityOf` and `titleFrom` beside `Status`.
+- The `StatusBits` and `Activity` interfaces are beside them.
+- `statusOf` reads waiting first, then active, then failed.
+- That is the order the four backends already answered in: `InputNeeded`, `InProgress`, `Error`, `Idle`.
+- `activityOf(emit)` holds the last thing said and answers `say` and `current`.
+- `say` emits `chat/activityChanged` then `session/activityChanged`.
+- It carries no `activity` key where it clears, and emits nothing where the value did not change.
+- Each backend keeps one delegation and no local function, so the plan's `rg -n "const doing|const status = \(\)"` finds nothing.
+- No backend repeats the three conditions. acp's are `ctx.doing` and `ctx.status`.
+- claude's and cofold's are properties of the object their area returns.
+- pi has no such object, so its ten call sites say `activity.say(...)`.
+- One local `bits()` is what its three status reads share.
+- Each backend's reading of its own three conditions is unchanged: acp waits on `ctx.permissions`, claude on `ctx.pending`.
+- claude reads all three as truthiness, cofold waits on its `pending` map, and pi reads its own four.
+- `packages/sdk/test/session-kit.test.ts` is 14 cases over the three helpers.
+- Every agent package's tests are unchanged.
+- Gates: `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck` and `pnpm boundary` all pass.
+- The full suite passes 4869 of 4870 tests over 272 files.
+- The one failure is `changes-refresh.test.ts`, the load flake, which passes 29 of 29 alone.

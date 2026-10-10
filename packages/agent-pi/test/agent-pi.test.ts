@@ -422,6 +422,18 @@ it('renames pi too, so the title survives outside this host', async () => {
   expect(pi.asked.find((one) => one.kind === 'rename')?.title).toBe('Something else');
 });
 
+it('keeps a person\'s name when pi offers one afterwards', async () => {
+  const { session, pi } = opened();
+  session.begin('t1', 'hello');
+  await settled();
+  // A person's rename, which the host announces and this only keeps: a name
+  // somebody chose is not pi's to replace, the way ACP's `renamed` guard says.
+  session.setTitle?.('Something else');
+  pi.raise({ type: 'session_info_changed', name: 'Refactor the parser' });
+  await settled();
+  expect(session.title()).toBe('Something else');
+});
+
 it('opens pi under the chat\'s own name, so a second chat is a conversation of its own', async () => {
   /*
    * The session's id names its first chat alone, so a peer chat hands pi a

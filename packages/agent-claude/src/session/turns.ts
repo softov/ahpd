@@ -1,4 +1,5 @@
 import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
+import { titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, OnWire, Ran, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, list, str } from './common.js';
@@ -216,7 +217,13 @@ export function createTurns(ctx: SessionContext): Turns {
       message: ctx.active.message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    if (ctx.title === 'New session' && text) ctx.retitle(text.slice(0, 60));
+    /*
+     * The first message titles a session nobody has named.
+     *
+     * A message of nothing but blanks answers the fallback, which is the title
+     * already held - so nothing moves and nothing is said about it.
+     */
+    if (ctx.title === 'New session' && text) ctx.retitle(titleFrom(text, 'New session'));
     ctx.doing('Thinking');
     /*
      * What the model is given, which is not always what the transcript shows.
@@ -310,7 +317,7 @@ export function createTurns(ctx: SessionContext): Turns {
       type: 'chat/turnStarted', turnId, startedAt: turn.startedAt, message: turn.message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    if (ctx.title === 'New session') ctx.retitle(command.slice(0, 60));
+    if (ctx.title === 'New session') ctx.retitle(titleFrom(command, 'New session'));
     ctx.doing('Running');
     const toolCallId = `${turnId}:command`;
     /*

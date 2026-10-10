@@ -13,7 +13,7 @@
 
 import type { ModelEntry } from './models.js';
 import type { Plugin, PluginHost } from '@ahpd/sdk';
-import { bag, reason, secretRef } from '@ahpd/sdk';
+import { bag, eachPreset, readSecrets } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
@@ -124,33 +124,6 @@ const named = (variant: Record<string, unknown>, fallback: string): string =>
   typeof variant['name'] === 'string' ? variant['name'] : fallback;
 
 /**
- * One preset's `env`, with every `{ "$secret": "<name>" }` read through the host.
- *
- * Read here and not by the loader because a preset's credential is the
- * daemon's, not a person's: the name is in `host:` scope or it belongs to work
- * this load is not doing, and a vault this daemon does not have is a host that
- * cannot answer. Whichever of those it is, the caller is told which preset it
- * was for and the other presets carry on.
- */
-const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, unknown>> => {
-  const out: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(bag(env))) {
-    const referenced = secretRef(value);
-    if (referenced === undefined) {
-      out[name] = value;
-      continue;
-    }
-    try {
-      out[name] = await host.secret(referenced);
-    }
-    catch (error) {
-      throw new Error(`${by}.${name} names ${referenced}: ${reason(error)}`);
-    }
-  }
-  return out;
-};
-
-/**
  * One agent's options per variant, out of values `optionsSchema` has checked.
  *
  * `paths` defaults to the host's, which is the whole configuration in the
@@ -172,33 +145,26 @@ const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Pro
     if (values[key] !== undefined) throw new Error(`options.${key} is written per variant, as presets.<id>.${key}`);
   }
   const said = values as Partial<ClaudeOptions> & { presets?: Record<string, unknown> };
-  const presets = said.presets ?? {};
-  const variants: Variant[] = [];
-  const dropped: string[] = [];
-  for (const one of variantsOf(presets)) {
-    const { id, ...preset } = one;
-    try {
+  // The built-in, then every other key: one variant each, by its own id, which
+  // is the key the loader reads a failure against.
+  const variants = await eachPreset(
+    host,
+    name,
+    variantsOf(said.presets ?? {}).map((one): [string, Variant] => [one.id, one]),
+    async (id, given) => {
+      const one = given as Variant;
+      const { id: _key, ...preset } = one;
       const wrong = presetSchema(preset, `options.presets.${id}`);
       if (wrong !== undefined) throw new Error(wrong);
       // Read once the preset is known to hold, so a wrongly written one says so
       // rather than a name inside it being asked for first.
       const env = preset['env'] === undefined
         ? undefined
-        : await secretsOf(host, preset['env'], `options.presets.${id}.env`);
-      variants.push(env === undefined ? one : { ...one, env });
-    }
-    catch (error) {
-      // Said once, and the terminal prints it above the line that says this
-      // load failed; the refusal below names the presets, not the messages.
-      host.problem(`${name}: ${reason(error)}`);
-      dropped.push(id);
-    }
-  }
-  if (variants.length === 0) {
-    throw new Error(dropped.length === 0
-      ? 'presets names no variant left to register an agent for'
-      : `presets names no variant left to register an agent for: ${dropped.join(', ')}`);
-  }
+        : await readSecrets(host, preset['env'], `options.presets.${id}.env`);
+      return env === undefined ? one : { ...one, env };
+    },
+    { noun: 'variant' },
+  );
   // The options every variant of one load shares, whatever the presets say.
   const paths = said.paths ?? host.paths;
   const shared = {

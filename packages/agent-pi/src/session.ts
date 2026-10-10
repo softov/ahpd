@@ -25,23 +25,23 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, bag, callTimes, createClientCalls, idFor, partsOf, reason, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
+import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, startOf, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Ran, Session, Start, ToolEffects,
+  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Ran, Session, Start, StatusBits, ToolEffects,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf, addUsage, describe, mapEvent, readyRow, untime } from './mapping.js';
+import { activityOf as saidFor, addUsage, describe, mapEvent, readyRow, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
 import { toPiTool } from './tools.js';
 import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
-import { modeOf, PERMISSION_MODES, permissionModeProperty } from './types.js';
+import { modeOf, PERMISSION_MODES, permissionModeProperty, UNTITLED } from './types.js';
 
 /** The space characters pi folds to a plain space before it reads a path. */
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -59,15 +59,6 @@ const EDITS = new Set(['edit', 'write']);
  * own, and then the whole turn lifecycle runs against that backend.
  */
 export type OpenPi = (options: BackendOptions) => Promise<PiBackend>;
-
-/** The title a conversation carries until something better is known. */
-const UNTITLED = 'pi session';
-
-/** The first line of what was said, as a title for a session nobody named. */
-const titleFrom = (text: string): string => {
-  const line = text.split('\n').map((one) => one.trim()).find((one) => one !== '') ?? '';
-  return line === '' ? UNTITLED : line.slice(0, 80);
-};
 
 /**
  * A message, as pi's `prompt` and `steer` take it: one text, and its images.
@@ -144,8 +135,18 @@ export function piSession(
   let unsubscribe: (() => void) | undefined;
   let closed = false;
   let cancelled = false;
-  let activity: string | undefined;
+  /** What it is doing, and the one handle that says it. */
+  const activity = activityOf(emit);
   let title = UNTITLED;
+
+  /**
+   * Whether a person has named this session.
+   *
+   * pi reports a rename of its own back as `session_info_changed`, so this is
+   * what tells a name somebody chose from one the agent gave: the agent's
+   * replaces a title derived from the first message, and never a person's.
+   */
+  let renamed = false;
   let modified = new Date().toISOString();
   /** What a turn failed with, or nothing. Cleared when a turn starts. */
   let failed: string | undefined;
@@ -210,13 +211,6 @@ export function piSession(
 
   const touch = (): void => { modified = new Date().toISOString(); };
 
-  const doing = (said: string | undefined): void => {
-    if (activity === said) return;
-    activity = said;
-    emit('chat', { type: 'chat/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-    emit('session', { type: 'session/activityChanged', ...(said !== undefined ? { activity: said } : {}) });
-  };
-
   /**
    * Calls a client is running for this session, held in one place.
    *
@@ -270,7 +264,7 @@ export function piSession(
   /** Hand a call to the client that provides the tool, and wait for its answer. */
   const ranByClient: RunByClient = async (bound, toolCallId) => {
     const owner = bound.owner ?? '';
-    doing(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
+    activity.say(`Waiting on ${owner}: ${bound.definition.title ?? bound.definition.name}`);
     return await calls.wait(toolCallId);
   };
 
@@ -432,12 +426,14 @@ export function piSession(
    *
    * A call waiting on a person is what the session is doing, ahead of the
    * turn that is running behind it; a running turn is next, whatever it
-   * failed with last.
+   * failed with last. The bits are what the rule reads, and the order they
+   * win in is the sdk's.
    */
-  const status = (): number => (pending.size > 0 ? Status.InputNeeded
-    : active !== undefined ? Status.InProgress
-      : failed !== undefined ? Status.Error
-        : Status.Idle);
+  const bits = (): StatusBits => ({
+    waiting: pending.size > 0,
+    active: active !== undefined,
+    failed: failed !== undefined,
+  });
 
   /**
    * Decide a call and ready its row, asking a person when the policy says to.
@@ -494,7 +490,7 @@ export function piSession(
             : { open: () => { openClientCall(id, event.toolName, turnId, describe(displayName, input), input); } }),
         });
         emit('session', { type: 'session/inputNeededSet', request: entry });
-        doing(`Waiting on you: ${displayName}`);
+        activity.say(`Waiting on you: ${displayName}`);
         touch();
       });
     }
@@ -564,7 +560,7 @@ export function piSession(
     const turnId = String(turn.id);
     // A call cut off before its end still owes the `after` it was announced with.
     for (const callId of [...editing.keys()]) settleEdit(callId);
-    doing(undefined);
+    activity.say(undefined);
     /*
      * A call the model was still writing when the turn ended is one pi never
      * runs, and a client's reducer skips it on the turn's end; the snapshot
@@ -605,8 +601,8 @@ export function piSession(
 
   /** Everything pi says while a turn runs, turned into what a client reads. */
   const heard = (event: AgentSessionEvent): void => {
-    const said = activityOf(event);
-    if (said !== false) doing(said);
+    const said = saidFor(event);
+    if (said !== false) activity.say(said);
 
     // Each new answer replaces the last, so a retried error is forgotten the
     // moment the retry answers.
@@ -641,7 +637,9 @@ export function piSession(
        */
       case 'session_info_changed': {
         const named = event.name;
-        if (named === undefined || named === '' || named === title) return;
+        // Not once a person has named this session: a name somebody chose is
+        // not the agent's to replace, which is where ACP's `renamed` guard sits.
+        if (named === undefined || named === '' || named === title || renamed) return;
         title = named;
         if (record !== undefined) record.title = named;
         emit('session', { type: 'session/titleChanged', title });
@@ -666,7 +664,7 @@ export function piSession(
        * answer that is about to be replaced.
        */
       case 'agent_end': {
-        if (event.willRetry) doing('Retrying');
+        if (event.willRetry) activity.say('Retrying');
         return;
       }
 
@@ -922,10 +920,19 @@ export function piSession(
     watched = { turnId, startedAt, message, parts: active.responseParts as Bag[], state: 'complete' };
     watchedTurns.push(watched);
 
+    /*
+     * The first message titles a session nobody has named.
+     *
+     * A message of nothing but blanks answers the fallback, which is the title
+     * already held - so nothing moves and nothing is said about it.
+     */
     if (title === UNTITLED) {
-      title = titleFrom(text);
-      if (record !== undefined) record.title = title;
-      emit('session', { type: 'session/titleChanged', title });
+      const said = titleFrom(text, UNTITLED);
+      if (said !== title) {
+        title = said;
+        if (record !== undefined) record.title = title;
+        emit('session', { type: 'session/titleChanged', title });
+      }
     }
 
     emit('chat', {
@@ -935,7 +942,7 @@ export function piSession(
       message,
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
-    doing('Thinking');
+    activity.say('Thinking');
     touch();
 
     void (async () => {
@@ -1025,7 +1032,7 @@ export function piSession(
       toolInput: JSON.stringify({ command }),
       _meta: held._meta,
     });
-    doing(`Running ${command}`);
+    activity.say(`Running ${command}`);
 
     void run(toolCallId).then((ran) => {
       held.status = 'completed';
@@ -1065,10 +1072,11 @@ export function piSession(
     customizations: () => [...seeds],
     allTurns: () => turns,
 
-    status,
-    activity: () => activity,
+    status: (): number => statusOf(bits()),
+    activity: () => activity.current(),
     title: () => title,
     setTitle: (next) => {
+      renamed = true;
       title = next;
       if (record !== undefined) record.title = next;
       // pi keeps a name of its own, so the title survives outside this host -
@@ -1082,13 +1090,13 @@ export function piSession(
     sessionState: () => ({
       provider,
       title,
-      status: status(),
+      status: statusOf(bits()),
       lifecycle: 'ready',
       defaultChat: start.chatUri,
       chats: [{ resource: start.chatUri, title }],
       workingDirectories: [uriOf(where)],
       customizations: [...seeds],
-      ...(activity !== undefined ? { activity } : {}),
+      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       // The requests still waiting - the questions and the calls a client has
       // to run - each as `session/inputNeededSet` sent it, so a client that
       // subscribes while one waits can answer it.
@@ -1110,11 +1118,11 @@ export function piSession(
     chatState: () => ({
       resource: start.chatUri,
       title,
-      status: status(),
+      status: statusOf(bits()),
       modifiedAt: modified,
       turns,
       ...(active !== undefined ? { activeTurn: active } : {}),
-      ...(activity !== undefined ? { activity } : {}),
+      ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
@@ -1182,7 +1190,7 @@ export function piSession(
     cancel: (turnId) => {
       if (active === undefined || String(bag(active).id) !== turnId) return;
       cancelled = true;
-      doing('Stopping');
+      activity.say('Stopping');
       // What a client was running for this turn is not coming back, so pi is
       // told the calls failed rather than left waiting on a stopped turn.
       calls.release('The turn was stopped');
@@ -1271,8 +1279,8 @@ export function piSession(
       // Said back like every other action a client originates. Nothing in a
       // client applies its own dispatch, so a row approved here would stay
       // pending on every screen watching it, including the answering one.
-      if (approved) doing(`Running ${String(toolCall.displayName ?? '')}`);
-      else doing('Thinking');
+      if (approved) activity.say(`Running ${String(toolCall.displayName ?? '')}`);
+      else activity.say('Thinking');
       // An allowed call is one a client now has to run, so it is asked here.
       if (approved) held.open?.();
       held.settle(approved ? undefined : { block: true, reason: DECLINED });
