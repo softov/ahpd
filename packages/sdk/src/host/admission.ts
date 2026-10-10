@@ -110,6 +110,28 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
         : {}) as Record<string, unknown>;
       if (computerSource(config.computer) !== undefined) return ['session:create', 'computer:write'];
     }
+    /*
+     * A move into a session that is not the chat's own writes that session as
+     * well as the chat, so both are asked for. A move into a session this host
+     * is to make is a `session:create` on top of the move instead, the way a
+     * session naming a machine is a `computer:write` on top of it: the
+     * destination does not exist, so there is nothing else to ask it for.
+     *
+     * Compared as sessions rather than as strings, because a client may know
+     * the destination under another spelling of the same session - and one this
+     * host cannot resolve is not the chat's own, so it is asked for rather than
+     * waved through.
+     */
+    if (method === 'moveChat') {
+      const destination = (typeof params.destination === 'object' && params.destination !== null
+        ? params.destination
+        : {}) as Record<string, unknown>;
+      const kind = String(destination.kind ?? '');
+      if (kind === 'newSession') return ['chat:move', 'session:create'];
+      const to = String(destination.session ?? '');
+      if (to !== '' && ctx.sessionFor(to) !== ctx.sessionFor(String(params.channel ?? '')))
+        return ['chat:move', 'session:write'];
+    }
     const plain = NEEDS[method];
     if (plain === undefined) {
       /*

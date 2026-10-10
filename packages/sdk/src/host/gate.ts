@@ -62,6 +62,14 @@ export const NEEDS: Record<string, Grant> = {
   // chat
   createChat: 'chat:create',
   disposeChat: 'chat:dispose',
+  /*
+   * `chat:move` rather than the `session:write` the plan named, because
+   * host/46 has landed and this is the operation it reserved for exactly this
+   * method - task 02's table in that plan, row `moveChat`. A chat lives in a
+   * session, so `session:write` still covers it: a role written before there
+   * was a move to grant means what it meant.
+   */
+  moveChat: 'chat:move',
   fetchTurns: 'chat:turns',
 
   // terminal, because opening one is the act; reading one is the channel.

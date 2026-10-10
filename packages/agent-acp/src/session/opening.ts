@@ -369,6 +369,7 @@ export function createOpening(ctx: SessionContext): Opening {
       });
       const handshake = await connection.initialize();
       ctx.closes = advertised(handshake.agentCapabilities?.sessionCapabilities?.close);
+      ctx.loads = handshake.agentCapabilities?.loadSession === true;
       ctx.takes = handshake.agentCapabilities?.promptCapabilities ?? undefined;
       extras = advertised(handshake.agentCapabilities?.sessionCapabilities?.additionalDirectories);
       signIns = (handshake.authMethods ?? []).map((one) => one.id);

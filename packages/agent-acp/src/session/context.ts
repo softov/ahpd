@@ -78,6 +78,14 @@ export interface SessionContext extends Config, Handlers, Opening, Queue, Turn, 
   acpSessionId: string | undefined;
   /** Whether the server said it can be asked to close that conversation. */
   closes: boolean;
+  /**
+   * Whether the server said it can be handed a conversation back by its id.
+   *
+   * The handshake's `loadSession`, kept because a chat is offered as movable
+   * only where a move would work: a server without it holds its conversations
+   * in the process, so one here could not be picked up again.
+   */
+  loads: boolean;
   /** What the server said it can take in a prompt, once the handshake has said it. */
   takes: PromptCapabilities | undefined;
   /**

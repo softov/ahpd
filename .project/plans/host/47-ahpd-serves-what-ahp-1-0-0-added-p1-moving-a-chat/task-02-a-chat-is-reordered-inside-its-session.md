@@ -1,6 +1,6 @@
 ---
 title: A chat is reordered inside its session
-status: todo
+status: done
 depends: [task-04-a-chat-says-when-it-can-move.md]
 layer: "sdk"
 refs:

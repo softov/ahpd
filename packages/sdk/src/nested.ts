@@ -911,6 +911,13 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     models: () => (root?.agents.find((agent) => agent.provider === innerProvider)?.models ?? [])
       .map((model) => ({ id: model.id, name: model.name })),
     agentId: () => sessionId,
+    /*
+     * The id above is the session id from the first breath, and it is not one
+     * the host inside the machine can be asked for again: a start that finds no
+     * session under it makes a new one rather than reopening what was there. So
+     * a chat of a session inside a machine is never movable.
+     */
+    resumable: () => false,
     customizations: () => (session?.customizations ?? start.seedCustomizations ?? []) as unknown as Bag[],
     allTurns: () => (chat?.turns ?? []) as unknown as Bag[],
     status: mine.status,

@@ -34,6 +34,8 @@ export interface ChatRecord {
   recordedChat(id: string, chatUri: string): StoredChat | undefined;
   /** Write down one chat of a session that is running, where it was opened. */
   keepChat(uri: string, chatUri: string, backendId: string | undefined, isDefault: boolean): void;
+  /** Write down a session's chats in a new order, which is the order a restart rebuilds them in. */
+  orderChats(uri: string, order: string[]): void;
   /** A chat a session has dropped, kept in the record or gone from it. */
   dropChat(uri: string, chatUri: string): void;
   /** Every chat of a session, gone with it. */
@@ -140,6 +142,39 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   };
 
   /**
+   * A session's chats written down in a new order.
+   *
+   * Only the order changes: every field of every row is what it was, and a row
+   * the given order does not name keeps the place it holds. Those are the
+   * chats the session has closed, which are not chats the catalogue lists, and
+   * a move is about where the chats are. The order is the one the next process
+   * starts them again in, which is what a reorder has to survive to be a
+   * reorder rather than a thing a client drew once.
+   */
+  const orderChats = (uri: string, order: string[]): void => {
+    const id = idOf(uri);
+    const rows = stored(id);
+    const byUri = new Map(rows.map((one) => [one.uri, one]));
+    const moved: StoredChat[] = [];
+    let next = 0;
+    for (const one of rows) {
+      // A row the order does not name is where it was, and the next name in
+      // the order takes the place of the one this row is.
+      const wanted = order[next];
+      const taken = wanted === undefined ? undefined : byUri.get(wanted);
+      if (one.closed === true || taken === undefined) moved.push(one);
+      else { moved.push(taken); next += 1; }
+    }
+    // Anything the order names that no open row did is appended, so a name in
+    // the order is never silently dropped.
+    for (; next < order.length; next += 1) {
+      const left = byUri.get(order[next] as string);
+      if (left !== undefined) moved.push(left);
+    }
+    kept.setChats(id, moved);
+  };
+
+  /**
    * A chat a session has dropped.
    *
    * Under `closedChats: 'hidden'`, which is the default, the conversation stays
@@ -194,6 +229,6 @@ export function createChatRecord(ctx: HostContext): ChatRecord {
   return {
     homeId: (chat) => chatHome.get(chat),
     chatBackends: () => chatBackends,
-    recordedChats, recordedChat, heldChats, keepChat, dropChat, forgetChats,
+    recordedChats, recordedChat, heldChats, keepChat, orderChats, dropChat, forgetChats,
   };
 }

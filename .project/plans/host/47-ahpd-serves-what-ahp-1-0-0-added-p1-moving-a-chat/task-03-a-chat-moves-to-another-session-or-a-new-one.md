@@ -1,6 +1,6 @@
 ---
 title: A chat moves to another session or a new one
-status: todo
+status: done
 depends: [task-02-a-chat-is-reordered-inside-its-session.md]
 layer: "sdk"
 refs:

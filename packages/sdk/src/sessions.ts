@@ -109,6 +109,54 @@ export function memorySessions(): SessionStore & Held {
     // An empty list is held as that absence, the way an empty artifact list is:
     // a session with no chat left is a session nothing was recorded for.
     setChats: (id, list) => { patch(id, { chats: list.length === 0 ? undefined : [...list] }); },
+    moveChat: (from, to, uri, turns) => {
+      /*
+       * The moving chat's own record, read before either row is written: its
+       * entry on the source's list, the title it was given, and the senders of
+       * the turns it owns. A row is replaced whole, so both rows are built from
+       * what is read here.
+       */
+      const source = rows.get(from);
+      const chat = (source?.chats ?? []).find((one) => one.uri === uri);
+      const titles = new Map(source?.chatTitles);
+      const title = titles.get(uri);
+      titles.delete(uri);
+      const senders = new Map(source?.senders);
+      const ours = new Map<string, Owner>();
+      for (const turn of turns) {
+        const who = senders.get(turn);
+        if (who === undefined) continue;
+        ours.set(turn, who);
+        senders.delete(turn);
+      }
+      const left = (source?.chats ?? []).filter((one) => one.uri !== uri);
+      patch(from, {
+        chats: left.length === 0 ? undefined : left,
+        chatTitles: titles.size === 0 ? undefined : titles,
+        senders: senders.size === 0 ? undefined : senders,
+      });
+      /*
+       * And onto the destination, as one write: the entry appended to its list,
+       * the senders its turns name, and the title. Only the fields this move
+       * changes are handed over, so a `chatTitles` map the destination already
+       * has is not replaced by a copy of itself.
+       *
+       * The entry is copied, because a read answers with the store's own
+       * objects and this one is about to be written into another row.
+       */
+      const target = rows.get(to);
+      const list = [...(target?.chats ?? [])];
+      if (chat !== undefined) list.push({ ...chat });
+      const theirs = new Map(target?.senders);
+      for (const [turn, who] of ours) theirs.set(turn, who);
+      const named = new Map(target?.chatTitles);
+      if (title !== undefined) named.set(uri, title);
+      patch(to, {
+        chats: list.length === 0 ? undefined : list,
+        ...(ours.size === 0 ? {} : { senders: theirs }),
+        ...(title === undefined ? {} : { chatTitles: named }),
+      });
+    },
     // A row is held only while it says something, so this is the sessions
     // something was recorded for and no id that was merely asked about.
     sessions: () => [...rows.keys()],
@@ -585,6 +633,16 @@ export function fileSessions(options: FileSessionOptions): SessionStore {
     setChatFlags: (id, chatUri, value) => { touched(id, () => { inner.setChatFlags(id, chatUri, value); }); },
     chats: (id) => inner.chats(id),
     setChats: (id, list) => { touched(id, () => { inner.setChats(id, list); }); },
+    // Two rows move, so two files have to be written - which is why this is
+    // written out rather than handed to `touched`, which names one.
+    moveChat: (from, to, uri, turns) => {
+      heard.add(from);
+      heard.add(to);
+      inner.moveChat(from, to, uri, turns);
+      dirty.add(from);
+      dirty.add(to);
+      later();
+    },
     // What this store holds is what it read at construction, which is the whole
     // folder, and what it was told since: the composition answers both.
     sessions: () => inner.sessions(),

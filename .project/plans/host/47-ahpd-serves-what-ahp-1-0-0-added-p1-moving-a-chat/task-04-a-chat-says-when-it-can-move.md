@@ -1,6 +1,6 @@
 ---
 title: A chat says when it can move
-status: todo
+status: done
 depends: []
 layer: "sdk, agent-acp"
 refs:

@@ -202,7 +202,12 @@ type Chat = {
   turns: { state?: string; responseParts: Record<string, unknown>[] }[];
   activeTurn?: { responseParts: Record<string, unknown>[] };
 };
-type Session = { inputNeeded?: { id: string; kind: string }[]; status: number };
+type Session = {
+  inputNeeded?: { id: string; kind: string }[];
+  status: number;
+  defaultChat?: string;
+  chats?: { resource: string }[];
+};
 
 it('reduces a whole turn - prose, a tool that ran, and a tool that failed', async () => {
   const { client, peer: p, uri, chatUri, opened } = await running();
@@ -374,6 +379,62 @@ it('reduces a chat\'s background work, and shows it to a client arriving after',
   // The shell exited: the level no longer names it, and it is gone.
   await said({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
   expect((held(p, opened)[chatUri] as { backgroundWork?: unknown[] }).backgroundWork).toEqual([]);
+});
+
+it('reduces a chat reordered inside its session', async () => {
+  const { client, peer: p, uri, opened } = await running();
+  const other = 'ahp-chat:/other';
+  await client.handle({ method: 'createChat', params: { channel: uri, chat: other } });
+  await settle();
+  /*
+   * A turn in the chat that is about to move, which is what gives its backend
+   * a session id to be resumed by: `movable` is only `true` for a chat whose
+   * conversation the backend can be asked for again, so a chat nothing has run
+   * in cannot be moved yet.
+   */
+  dispatch(client, other, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'over here' } });
+  await settle();
+  await said({ type: 'user', session_id: 'sdk-2', uuid: 'prompt-1', message: { role: 'user', content: 'over here' } });
+  await said({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
+  /*
+   * The chat the session hands out, read from the list rather than assumed:
+   * `ahp-chat:/live` is this client's name for it, and the name a client holds
+   * it under is the one the session lists it by.
+   */
+  const before = held(p, opened)[uri] as Session;
+  const lead = before.chats?.[0]?.resource as string;
+  expect(before.chats?.map((one) => one.resource)).toEqual([lead, other]);
+
+  await client.handle({
+    method: 'moveChat',
+    params: { channel: other, destination: { kind: 'session', session: uri } },
+  });
+  await settle();
+
+  /*
+   * The order the client ends on is the one the action named, in the client's
+   * own spelling of the session.
+   *
+   * The reducer replaces the order only when the action names every chat the
+   * client holds exactly once, so a reorder sent in the name this host holds
+   * the session by would leave a client that asked with another one showing
+   * the old order for ever - and no error anywhere to say why.
+   */
+  const after = held(p, opened)[uri] as Session;
+  expect(after.chats?.map((one) => one.resource)).toEqual([other, lead]);
+  // And the chat the session hands a client that names none is still that one:
+  // a reorder is where the chats are, not which of them a client gets.
+  expect(after.defaultChat).toBe(lead);
+});
+
+it('sends a move and a reorder to a 0.9.0 connection', () => {
+  /*
+   * Both were introduced in 0.9.0, so a client that knows only that version is
+   * sent them. A change that reached a 1.0.0 client and not a 0.9.0 one would
+   * leave two windows on one session showing different orders of it.
+   */
+  expect(isActionKnownToVersion({ type: 'session/chatsReordered', chats: [] } as unknown as StateAction, '0.9.0')).toBe(true);
+  expect(isActionKnownToVersion({ type: 'chat/movableChanged', movable: false } as unknown as StateAction, '0.9.0')).toBe(true);
 });
 
 it('sends the background actions to a 0.9.0 connection', () => {

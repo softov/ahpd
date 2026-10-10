@@ -8,7 +8,7 @@ import {
 } from './support/host.js';
 import { fileSessions } from '../src/sessions.js';
 import { idOf } from '../src/catalog.js';
-import { chatUriFor } from '../src/host/channels.js';
+import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
 import type { Agent, HostOptions, Session, Start } from '@ahpd/sdk';
 
@@ -600,10 +600,17 @@ describe('more than one chat in a session', () => {
   const DIR = '/home/softov';
   const UUID = '0f8fad5b-d9cb-469f-a165-70867728950e';
   const PEER = `ahp-chat:/${UUID}`;
+  const THIRD = 'ahp-chat:/third';
   const LIVE = 'ahp-session:/live';
+  const TWO = 'ahp-session:/two';
+  const TAIL = 'ahp-chat:/tail';
+  const OTHERS = 'ahp-session:/others';
+  const ONBOX = 'ahp-session:/onbox';
+  const EXTRA = `${DIR}/extra`;
+  const MORE = `${DIR}/more`;
 
-  const backend = (starts: Start[]): Agent => {
-    const base = echo({ path: DIR, pace: 0 });
+  const backend = (starts: Start[], pace = 0): Agent => {
+    const base = echo({ path: DIR, pace });
     return {
       ...base,
       // A session the host may add a folder to, which is one of the ways a
@@ -653,13 +660,100 @@ describe('more than one chat in a session', () => {
     return { host, client, p };
   };
 
+  /**
+   * A session with two chats, watched on both channels.
+   *
+   * The subscription is what puts a channel's actions on the wire, so a case
+   * that reads them has to have asked for them first - the snapshot a
+   * subscribe answers with says what the state *is*, and the actions after it
+   * are what moved.
+   */
+  const chatty = async (dir: string, agent: Agent) => {
+    const { client, p } = await hostAt(dir, agent);
+    await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+    await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+    await settle();
+    await opened(client, LIVE);
+    await opened(client, PEER);
+    return { client, p };
+  };
+
+  /**
+   * A session with three chats: the one it hands out, and two peers.
+   *
+   * Three, because a reorder is only a reorder where there is a chat between
+   * the one that moved and where it went, and two of them make every position
+   * reachable.
+   */
+  const three = async (dir: string, agent: Agent) => {
+    const { client, p } = await hostAt(dir, agent);
+    await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+    await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+    await client.handle({ method: 'createChat', params: { channel: LIVE, chat: THIRD } });
+    await settle();
+    await opened(client, LIVE);
+    await opened(client, PEER);
+    await opened(client, THIRD);
+    return { client, p };
+  };
+
+  /**
+   * Two sessions, each with a chat of its own, watched on every channel.
+   *
+   * `LIVE` is the session a move leaves and `TWO` the one it lands in, because
+   * a move between sessions changes two catalogues at once - and a client that
+   * hears only one of them is holding a chat in two places or in none.
+   */
+  const apart = async (dir: string, agent: Agent) => {
+    const { client, p } = await hostAt(dir, agent);
+    /*
+     * Both sessions work in `DIR`, which is what a chat's own folder set is
+     * read against: a chat is its session's primary directory plus what it has
+     * narrowed itself to, so a session with no directory has no folders for a
+     * move to carry.
+     */
+    await client.handle({
+      method: 'createSession',
+      params: { channel: LIVE, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+    });
+    await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+    await client.handle({
+      method: 'createSession',
+      params: { channel: TWO, provider: 'echo', workingDirectories: [`file://${DIR}`] },
+    });
+    await client.handle({ method: 'createChat', params: { channel: TWO, chat: TAIL } });
+    await settle();
+    for (const channel of [LIVE, PEER, TWO, TAIL]) await opened(client, channel);
+    return { client, p };
+  };
+
+  /** The same backend, answering that it cannot take a conversation back. */
+  const unresumable = (starts: Start[]): Agent => {
+    const base = backend(starts);
+    return { ...base, create: (start: Start): Session => ({ ...base.create(start), resumable: () => false }) };
+  };
+
+  /** Every `movable` a chat's own channel said, in the order it said them. */
+  const moves = (p: ReturnType<typeof peer>, channel: string) => actions(p, channel)
+    .filter((e) => e.action.type === 'chat/movableChanged')
+    .map((e) => e.action.movable);
+
+  /** Every order a session's channel was told, as the list each one named. */
+  const reorders = (p: ReturnType<typeof peer>, channel: string) => actions(p, channel)
+    .filter((e) => e.action.type === 'session/chatsReordered')
+    .map((e) => e.action.chats as string[]);
+
+  /** The chats a session lists, in the order it lists them. */
+  const listed = (read: Read): (string | undefined)[] => (read.state.chats ?? []).map((one) => one.resource);
+
   /** What a snapshot says, which is all these cases read. */
   interface Read {
     state: {
       resource: string;
       defaultChat?: string;
-      chats?: { resource: string }[];
+      chats?: { resource: string; movable?: boolean }[];
       turns: { message?: { text?: string } }[];
+      movable?: boolean;
     };
   }
 
@@ -1006,6 +1100,706 @@ describe('more than one chat in a session', () => {
       // that is inside it.
       await expect(client.handle({ method: 'subscribe', params: { channel: PEER } }))
         .rejects.toMatchObject({ code: -32001 });
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * Whether a chat may be moved, which is what a client draws a control from.
+   *
+   * The host is authoritative and the protocol reads a missing key as `false`,
+   * so a chat that cannot move carries no `movable` at all rather than the
+   * longer way of saying the same thing.
+   */
+  it('offers a move for a peer chat, and not for the one the session hands out', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client } = await chatty(join(root, 'sessions'), backend([]));
+      const session = await opened(client, LIVE);
+      const rows = session.state.chats ?? [];
+      expect(rows.map((one) => one.resource)).toEqual([session.state.defaultChat, PEER]);
+      /*
+       * The chat a client gets when it names none MUST NOT move: a session
+       * whose default left would have to answer a client naming no chat with a
+       * question.
+       */
+      expect(rows[0]).not.toHaveProperty('movable');
+      expect(rows[1]).toMatchObject({ resource: PEER, movable: true });
+
+      // And the chat's own state, which is the other half of one answer: a
+      // client drawing a row and a client holding the chat agree.
+      expect((await opened(client, PEER)).state.movable).toBe(true);
+      expect((await opened(client, session.state.defaultChat as string)).state.movable).toBeUndefined();
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes the move away for the length of a turn, and gives it back after', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      await send(client, PEER, 't1', 'over here');
+
+      // A move closes the backend and starts it again, and a turn is the one
+      // thing that must not be cut in half - so the chat says so at both ends.
+      expect(moves(p, PEER)).toEqual([false, true]);
+
+      // And the row says it too, because a client watching the list is not
+      // looking at the chat. `false` has to be carried rather than left out: a
+      // partial is spread over the row, and a key that is not there leaves the
+      // client holding the `true` it was handed.
+      const told = actions(p, LIVE)
+        .filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === PEER)
+        .map((e) => (e.action.changes as { movable?: boolean }).movable);
+      expect(told).toContain(false);
+      expect(told.at(-1)).toBe(true);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('holds a chat where it is while a worker of it runs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const { client, p } = await chatty(join(root, 'sessions'), backend(starts));
+      expect((await opened(client, PEER)).state.movable).toBe(true);
+
+      // A worker, opened by the backend on the start the host handed it. A move
+      // takes a chat's workers with it, so one running a turn is the chat's own
+      // delay.
+      const worker = starts.at(-1)?.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
+      await settle();
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      /*
+       * And a worker is not a move of its own. It is a chat of the session and
+       * the catalogue names it, but nothing holds it as a chat a client opened,
+       * so there is nothing to move rather than a move that is refused.
+       */
+      expect(worker).toBeDefined();
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: worker?.uri, destination: { kind: 'session', session: LIVE } },
+      })).rejects.toThrow(/No chat at/);
+
+      worker?.end('complete');
+      await settle();
+      expect((await opened(client, PEER)).state.movable).toBe(true);
+      expect(moves(p, PEER)).toEqual([false, true]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes the move away from a chat that becomes the default', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), backend([]));
+      const first = (await opened(client, LIVE)).state.defaultChat as string;
+      expect((await opened(client, PEER)).state.movable).toBe(true);
+
+      await client.handle({ method: 'disposeChat', params: { channel: first } });
+      await settle();
+
+      // `default` is a role and not a chat, so the chat that took it over is
+      // now the one the session hands out - and it stops being movable without
+      // anybody having to speak to it again.
+      expect((await opened(client, LIVE)).state.defaultChat).toBe(PEER);
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      expect(moves(p, PEER)).toEqual([false]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('offers no move for a chat its backend cannot take back', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await chatty(join(root, 'sessions'), unresumable([]));
+
+      // A move starts the backend again with the id it kept the conversation
+      // under, and this one has said it cannot be asked for one. So the chat is
+      // never offered - and nothing is said about it either, because nothing
+      // about it has moved.
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      await send(client, PEER, 't1', 'over here');
+      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      expect(moves(p, PEER)).toEqual([]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * Where a chat sits in its session, which is the whole of a move that stays
+   * inside one.
+   *
+   * The chat keeps its process, its turns and its folders, so nothing is
+   * started and nothing is read back: the list a client draws is the only thing
+   * that changes, and `session/chatsReordered` is what says so.
+   */
+  it('says the whole new order when a chat is put behind another', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const { client, p } = await three(join(root, 'sessions'), backend(starts));
+      const first = (await opened(client, LIVE)).state.defaultChat as string;
+      /*
+       * A worker on the peer chat, which is a chat of the session without being
+       * one a client opened.
+       *
+       * Every chat has to be named in the order, worker included, and a worker
+       * sits after every peer - so a host that named only the chats it holds
+       * would send a list the reducer takes for a list of the wrong length and
+       * drops. The chat that moves is the third, because a chat carrying a
+       * running worker is one that cannot move.
+       */
+      const worker = starts.find((one) => one.chatId === UUID)
+        ?.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
+      await settle();
+      expect(worker).toBeDefined();
+
+      const answer = await client.handle({
+        method: 'moveChat',
+        params: { channel: THIRD, destination: { kind: 'session', session: LIVE, after: first } },
+      }) as { session: string };
+      await settle();
+
+      /*
+       * One action, naming every chat once, in the new order.
+       *
+       * The reducer takes a list that is any other length or names anything it
+       * does not hold as a no-op, so a host that sent only the movement would
+       * be changing nothing at all - and it has to be one action for the same
+       * reason: a client that drew the list between two of them would show an
+       * order this host never said.
+       */
+      const order = listed(await opened(client, LIVE));
+      expect(order.slice(0, 3)).toEqual([first, THIRD, PEER]);
+      // The worker last, which is where a worker sits: after every chat the
+      // session holds, because the host holds it rather than a `Session`.
+      expect(order[3]).toMatch(/^ahp-chat:\/\/subagent\//);
+      expect(order[3]).toContain('toolu_task');
+      expect(reorders(p, LIVE)).toEqual([order]);
+
+      /*
+       * And the answer names the session the chat is in, under the name this
+       * host publishes it as rather than the alias this client asked with.
+       *
+       * That is where a client that asked for a move between sessions reads the
+       * one it landed in, so it has to be a name the host answers about - the
+       * same one a catalogue row offers.
+       */
+      expect(answer.session).toBe('echo:/live');
+      const published = listed(await opened(client, answer.session));
+      expect(published).toHaveLength(4);
+      expect(published.indexOf(THIRD)).toBeLessThan(published.indexOf(PEER));
+
+      worker?.end('complete');
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('puts a chat first when it was given nothing to sit behind', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await three(join(root, 'sessions'), backend([]));
+      const first = (await opened(client, LIVE)).state.defaultChat as string;
+
+      // `after` is optional and its absence is not "leave it where it is": it
+      // is the beginning of the catalogue, which is the one place no anchor
+      // can name.
+      await client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: LIVE } },
+      });
+      await settle();
+      expect(reorders(p, LIVE)).toEqual([[PEER, first, THIRD]]);
+      expect(listed(await opened(client, LIVE))).toEqual([PEER, first, THIRD]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a move it cannot make, and leaves the order alone', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const { client, p } = await three(join(root, 'sessions'), backend([]));
+      const first = (await opened(client, LIVE)).state.defaultChat as string;
+      const before = listed(await opened(client, LIVE));
+      const ask = (channel: string, destination: unknown) =>
+        client.handle({ method: 'moveChat', params: { channel, destination } });
+
+      // The chat the session hands out, which the protocol says MUST NOT move.
+      await expect(ask(first, { kind: 'session', session: LIVE }))
+        .rejects.toThrow(/cannot be moved/);
+      /*
+       * A chat this host is not running, which is not a chat at all here.
+       *
+       * Read the way every other method reads a chat: one under a session this
+       * host does not know resolves to the first chat that session would have,
+       * which is nothing this host is holding either - so the sentence names
+       * that resolution rather than the URI the client wrote.
+       */
+      await expect(ask('ahp-chat:/nowhere', { kind: 'session', session: LIVE }))
+        .rejects.toThrow(/No chat at/);
+      // A destination this host does not know, and none at all.
+      await expect(ask(PEER, { kind: 'somewhere' }))
+        .rejects.toThrow(/is not one this host serves yet/);
+      await expect(ask(PEER, {}))
+        .rejects.toThrow(/needs a destination/);
+      // A session it is not in, which is a move between sessions - and this
+      // host is not running that session, so there is nowhere to put it.
+      await expect(ask(PEER, { kind: 'session', session: 'ahp-session:/elsewhere' }))
+        .rejects.toThrow(/is not a session this host is running/);
+      // Itself as its own anchor, and an anchor this session does not hold.
+      await expect(ask(PEER, { kind: 'session', session: LIVE, after: PEER }))
+        .rejects.toThrow(/cannot be placed after itself/);
+      await expect(ask(PEER, { kind: 'session', session: LIVE, after: 'ahp-chat:/nowhere' }))
+        .rejects.toThrow(/is not a chat in/);
+
+      // A rejection is a rejection: no action and no reordering, so a client
+      // that was told no holds the list it already had.
+      await settle();
+      expect(reorders(p, LIVE)).toEqual([]);
+      expect(listed(await opened(client, LIVE))).toEqual(before);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('holds a chat where it is while a turn of it is running', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      // One word at a time, so the turn is still in flight when the move is
+      // asked for: a move closes a process and starts another, and there is no
+      // half of a turn to do that in.
+      const { client, p } = await three(join(root, 'sessions'), backend([], 50));
+      void client.handle({
+        method: 'dispatchAction',
+        params: { channel: THIRD, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hold on now' } } },
+      });
+      await settle();
+
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: THIRD, destination: { kind: 'session', session: LIVE } },
+      })).rejects.toThrow(/cannot be moved/);
+      expect(reorders(p, LIVE)).toEqual([]);
+
+      // And it is the turn rather than the chat: once the words are out, the
+      // same move goes through.
+      const until = Date.now() + 10_000;
+      while ((await opened(client, THIRD)).state.movable !== true && Date.now() < until)
+        await new Promise((r) => { setTimeout(r, 10); });
+      expect((await opened(client, THIRD)).state.movable).toBe(true);
+      await client.handle({
+        method: 'moveChat',
+        params: { channel: THIRD, destination: { kind: 'session', session: LIVE } },
+      });
+      await settle();
+      expect(reorders(p, LIVE)).toHaveLength(1);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the order it was given over a restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const agent = backend([]);
+      const first = await three(dir, agent);
+      await send(first.client, LIVE, 't1', 'first');
+      await send(first.client, PEER, 't2', 'second');
+      await send(first.client, THIRD, 't3', 'third');
+      const lead = (await opened(first.client, LIVE)).state.defaultChat as string;
+      await first.client.handle({
+        method: 'moveChat',
+        params: { channel: THIRD, destination: { kind: 'session', session: LIVE, after: lead } },
+      });
+      await settle();
+      // The store writes on the tick after the change, so the second host
+      // starts on a folder that has all of it rather than on a race.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      /*
+       * A second host over the same folder.
+       *
+       * A reorder nobody wrote down is a reorder that lasts until the daemon
+       * is restarted, which a person finds out about days later - so the order
+       * a restart rebuilds the chats in is the one the move asked for, and not
+       * the one they were opened in.
+       */
+      const second = await hostAt(dir, agent);
+      const session = await opened(second.client, 'echo:/live');
+      expect(listed(session)).toEqual([session.state.defaultChat, THIRD, PEER]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  /*
+   * A chat moved into another session, which is the other half of what a move
+   * is.
+   *
+   * The two sessions are two processes and two conversations, so the chat
+   * cannot be carried across in memory: it is closed here and started there,
+   * on the name its backend keeps it under and on the turns it had, in the
+   * folders it was working in. Everything a client holds is what the actions
+   * say, and the store is what a restart reads.
+   */
+  it('moves a chat into another session, with its turns and its own folders', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const { client, p } = await apart(join(root, 'sessions'), backend(starts));
+      /*
+       * Folders for the chat to keep, narrower than its session's.
+       *
+       * A chat works in a subset of its session's folders, so what travels is
+       * the chat's own set: one moved beside a session working somewhere else
+       * goes on where it was, and one narrowed to a folder of its own arrives
+       * narrowed rather than with everything its old session had.
+       */
+      for (const directory of [EXTRA, MORE]) {
+        void client.handle({
+          method: 'dispatchAction',
+          params: { channel: LIVE, action: { type: 'session/workingDirectorySet', directory: `file://${directory}` } },
+        });
+        await settle(20);
+      }
+      void client.handle({
+        method: 'dispatchAction',
+        params: { channel: PEER, action: { type: 'chat/workingDirectoryRemoved', directory: `file://${MORE}` } },
+      });
+      await settle(20);
+      await send(client, PEER, 't1', 'over here');
+      const before = starts.length;
+      const lead = (await opened(client, TWO)).state.defaultChat as string;
+
+      const answer = await client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: TWO, after: TAIL } },
+      }) as { session: string };
+      await settle(20);
+
+      /*
+       * One start, and it is the chat: the destination resumes the
+       * conversation the backend kept under the chat's own name, seeded with
+       * the turns it had, in the folders it was working in.
+       */
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
+      const mine = starts.at(-1) as Start;
+      expect(mine.uri).toBe('echo:/two');
+      expect(mine.workingDirectory).toBe(DIR);
+      expect(mine.additional).toEqual([EXTRA]);
+      // The session it landed in, published under a name a client can ask about.
+      expect(answer.session).toBe('echo:/two');
+
+      // Out of the source's list, and into the destination's after the anchor.
+      const from = await opened(client, LIVE);
+      expect(listed(from)).toEqual([from.state.defaultChat]);
+      const there = await opened(client, TWO);
+      expect(listed(there)).toEqual([lead, TAIL, PEER]);
+      expect(reorders(p, TWO).at(-1)).toEqual([lead, TAIL, PEER]);
+
+      /*
+       * And the actions a client that was watching both channels holds: the
+       * chat leaves one session before it arrives at the other, because a
+       * client told the other way round holds it twice.
+       */
+      const left = actions(p, LIVE).map((e) => e.action);
+      expect(left.some((one) => one.type === 'session/chatRemoved' && one.chat === PEER)).toBe(true);
+      expect(actions(p, TWO).some((one) => one.action.type === 'session/chatAdded'
+        && (one.action.summary as { resource?: string }).resource === PEER)).toBe(true);
+      /*
+       * And the root rows, which is the catalogue both sessions are drawn from.
+       *
+       * A row carries the time of its newest chat, so the chat arriving moves
+       * the destination's row forward and the chat leaving moves the source's
+       * row back to the newest of what it still holds. A row that kept the
+       * moved chat's time is a row a client draws in the wrong place.
+       */
+      const rows = p.notes
+        .filter((n) => n.method === 'root/sessionSummaryChanged')
+        .map((n) => n.params as { session: string; changes: { modifiedAt?: string } });
+      const cameTo = rows.filter((one) => one.session === 'echo:/two');
+      const wentFrom = rows.filter((one) => one.session === 'echo:/live');
+      expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
+      expect(wentFrom.at(-1)?.changes.modifiedAt).toBeDefined();
+      expect((wentFrom.at(-1) as { changes: { modifiedAt: string } }).changes.modifiedAt
+        < (wentFrom.at(-2) as { changes: { modifiedAt: string } }).changes.modifiedAt).toBe(true);
+
+      // Its turns came with it, and it goes on from there.
+      expect(said(await opened(client, PEER))).toEqual(['over here']);
+      await send(client, PEER, 't2', 'and again');
+      expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('takes the workers of a moved chat with it, and answers for them where they are', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const { client, p } = await apart(join(root, 'sessions'), backend(starts));
+      // A worker on the chat that is about to move, which is a chat of the
+      // session that is not one a client opened.
+      const worker = starts.find((one) => one.chatId === UUID)
+        ?.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
+      await settle();
+      expect(worker).toBeDefined();
+      /*
+       * Two spellings of one name. The host mints it from the session it holds,
+       * and a client is answered in the session it knows: this one opened `LIVE`
+       * as `ahp-session:/live`, so a worker announced on that channel is named
+       * with that inside it. The name is the same chat either way, and which
+       * one a client holds is which one it was handed.
+       */
+      const called = subagentChatUri('echo:/live', 'toolu_task');
+      const asSaid = subagentChatUri(LIVE, 'toolu_task');
+      /*
+       * Ended before the move, because a worker mid-turn is the chat's own
+       * delay: the move closes the process the worker runs in, and nothing may
+       * be running when it does.
+       */
+      worker?.end('complete');
+      await settle();
+
+      await client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: TWO, after: TAIL } },
+      });
+      await settle(20);
+
+      /*
+       * A worker is a conversation inside a call of a chat, so it goes where
+       * the call goes - and its name does not change: it names the session the
+       * worker was opened in, and a client holding that name must not be handed
+       * a second one.
+       */
+      const from = await opened(client, LIVE);
+      expect(listed(from)).toEqual([from.state.defaultChat]);
+      const there = await opened(client, TWO);
+      expect(listed(there)).toEqual([there.state.defaultChat, TAIL, PEER, called]);
+      expect(actions(p, LIVE).some((e) => e.action.type === 'session/chatRemoved' && e.action.chat === asSaid)).toBe(true);
+      /*
+       * And it still answers for itself. The session inside its name is the one
+       * it was opened in rather than the one holding it now, so a host that
+       * read the session out of the name would answer a client about a chat of
+       * the session it left.
+       */
+      const openedWorker = await opened(client, called);
+      expect(openedWorker.state.resource).toBe(called);
+      expect(openedWorker.state.turns.length).toBeGreaterThan(0);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a move to another provider, another computer, or a session it is not running', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      /*
+       * Three sessions: the chat's own, one of another backend, and one in a
+       * machine. A session of another backend keeps its conversations in
+       * another format on another disk, and a chat's folders are paths on the
+       * machine it ran on - so neither move is one this host can make, and both
+       * are refused with the difference named.
+       */
+      const host = createHost({
+        path: DIR,
+        agents: [backend(starts), claude({ paths: [DIR] })],
+        ...machine(),
+        sessions: fileSessions({ dir: join(root, 'sessions') }),
+      });
+      const p = peer();
+      p.request = async () => ({ trusted: true });
+      const client = host.accept(p);
+      await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+      await client.handle({ method: 'createSession', params: { channel: LIVE, provider: 'echo' } });
+      await client.handle({ method: 'createChat', params: { channel: LIVE, chat: PEER } });
+      await client.handle({ method: 'createSession', params: { channel: OTHERS, provider: 'claude' } });
+      await client.handle({
+        method: 'createSession',
+        params: { channel: ONBOX, provider: 'echo', config: { computer: 'computer://box' } },
+      });
+      await settle(20);
+      await opened(client, LIVE);
+      const before = starts.length;
+
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: OTHERS } },
+      })).rejects.toThrow(/between providers is not supported yet/);
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: ONBOX } },
+      })).rejects.toThrow(/between computers is not supported yet/);
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: 'ahp-session:/nowhere' } },
+      })).rejects.toThrow(/is not a session this host is running/);
+
+      /*
+       * Nothing was started and nothing moved: a refusal that closed the chat
+       * and left its record in the destination would be a conversation nobody
+       * can open, and one the client was told had not moved.
+       */
+      await settle(20);
+      expect(starts.length).toBe(before);
+      const from = await opened(client, LIVE);
+      expect(listed(from)).toEqual([from.state.defaultChat, PEER]);
+      expect(reorders(p, LIVE)).toEqual([]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a chat in its session when the destination will not start it', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const starts: Start[] = [];
+      const base = backend(starts);
+      // A destination that will not take the conversation: the host asks it to
+      // start the chat, and it says no.
+      const refusing: Agent = {
+        ...base,
+        create: (start: Start): Session => {
+          if (start.chatUri === PEER && start.uri === 'echo:/two')
+            throw new Error('this backend will not work there');
+          return base.create(start);
+        },
+      };
+      const { client, p } = await apart(join(root, 'sessions'), refusing);
+      await send(client, PEER, 't1', 'over here');
+
+      await expect(client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'session', session: TWO } },
+      })).rejects.toThrow(/will not work there/);
+      await settle(20);
+
+      /*
+       * The chat is where it was, with a process behind it again and its turns
+       * read back - and the client was told nothing had moved, so the two have
+       * to agree.
+       */
+      const from = await opened(client, LIVE);
+      expect(listed(from)).toEqual([from.state.defaultChat, PEER]);
+      expect(reorders(p, LIVE)).toEqual([]);
+      expect(reorders(p, TWO)).toEqual([]);
+      await send(client, PEER, 't2', 'and again');
+      expect(said(await opened(client, PEER))).toEqual(['over here', 'and again']);
+
+      // And nowhere has it arrived: the destination holds its own chat only.
+      const there = await opened(client, TWO);
+      expect(listed(there)).toEqual([there.state.defaultChat, TAIL]);
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('makes a session for a moved chat, and it lists once after a restart', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ahpd-chats-'));
+    try {
+      const dir = join(root, 'sessions');
+      const starts: Start[] = [];
+      // One backend behind both hosts, which is what a daemon restarting is: the
+      // process that holds the conversations is the same one, and the listing
+      // it answers from is the same listing.
+      const agent = backend(starts);
+      const first = await chatty(dir, agent);
+      await send(first.client, PEER, 't1', 'over here');
+      /*
+       * And one turn in the session the chat leaves, because a backend holds a
+       * conversation from the turn it ends: a session nothing was ever said to
+       * is a session no listing has a row for, and this one is read back from
+       * one.
+       */
+      const outgoing = (await opened(first.client, LIVE)).state.defaultChat as string;
+      await send(first.client, outgoing, 't0', 'the one it leaves');
+      const before = starts.length;
+
+      const answer = await first.client.handle({
+        method: 'moveChat',
+        params: { channel: PEER, destination: { kind: 'newSession' } },
+      }) as { session: string };
+      await settle(20);
+
+      /*
+       * The session is named after the chat's own conversation, which is the
+       * name a restart resumes it by. A session named anything else would hold
+       * that conversation as a second session beside it, and a listing would
+       * offer the same transcript twice.
+       */
+      expect(answer.session).toBe(`echo:/${UUID}`);
+      expect(resuming(starts.slice(before))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
+      expect(starts.at(-1)?.uri).toBe(`echo:/${UUID}`);
+
+      const there = await opened(first.client, answer.session);
+      expect(there.state.defaultChat).toBe(PEER);
+      expect(listed(there)).toEqual([PEER]);
+      /*
+       * The one chat a session has is the one a client gets when it names none,
+       * and the protocol says that chat MUST NOT move. So the chat that could
+       * be moved a moment ago cannot be now, and the client is told.
+       */
+      expect(moves(first.p, PEER).at(-1)).toBe(false);
+      expect((await opened(first.client, PEER)).state.movable).toBeUndefined();
+      // The session it left has its own chat and no other.
+      const from = await opened(first.client, LIVE);
+      expect(listed(from)).toEqual([from.state.defaultChat]);
+
+      // The store writes on the tick after the change, so the second host
+      // starts on a folder that has all of it rather than on a race.
+      await new Promise((tick) => { setTimeout(tick, 5); });
+
+      /*
+       * A second host over the same folder.
+       *
+       * The chat is a chat of the session it was given, so it comes back as
+       * that session's chat and not as a session of its own - and the turns it
+       * had come back with it.
+       */
+      const second = await hostAt(dir, agent);
+      const rows = await second.client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string }[];
+      };
+      expect(rows.items.map((one) => one.resource).sort()).toEqual([`echo:/${UUID}`, 'echo:/live']);
+      const after = await opened(second.client, `echo:/${UUID}`);
+      expect(after.state.defaultChat).toBe(PEER);
+      expect(listed(after)).toEqual([PEER]);
+      expect(said(await opened(second.client, PEER))).toEqual(['over here']);
+      // And the session it came back with is itself, not a chat of another one.
+      const backAgain = await opened(second.client, 'echo:/live');
+      expect(listed(backAgain)).toEqual([backAgain.state.defaultChat]);
+
+      const was = starts.length;
+      await send(second.client, PEER, 't2', 'and again');
+      expect(resuming(starts.slice(was))).toEqual([{ chatId: UUID, resume: UUID, first: 'over here' }]);
+      expect(said(await opened(second.client, PEER))).toEqual(['over here', 'and again']);
     }
     finally {
       rmSync(root, { recursive: true, force: true });

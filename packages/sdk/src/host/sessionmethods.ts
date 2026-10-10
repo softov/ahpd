@@ -1,5 +1,6 @@
 import { INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
+import { computerId } from '../computers.js';
 import { tail, older } from '../paging.js';
 import { namesOf } from '../scopes.js';
 import { localPath, uriOf } from '../fileuri.js';
@@ -7,7 +8,8 @@ import { CLOSING } from './common.js';
 import { chatIdFor, named, ROOT } from './channels.js';
 import { SEEDS } from './sessionconfig.js';
 import type { Bag } from '../types/common.js';
-import type { Claimed, Held } from './state.js';
+import type { Session } from '../types/session.js';
+import type { Claimed, Held, LiveSubagent } from './state.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
 /**
@@ -24,6 +26,7 @@ export interface SessionMethods {
   listSessions: (params: Record<string, unknown>) => Promise<unknown>;
   createSession: (params: Record<string, unknown>) => Promise<unknown>;
   createChat: (params: Record<string, unknown>) => Promise<unknown>;
+  moveChat: (params: Record<string, unknown>) => Promise<unknown>;
   disposeChat: (params: Record<string, unknown>) => Promise<unknown>;
   disposeSession: (params: Record<string, unknown>) => Promise<unknown>;
   resolveSessionConfig: (params: Record<string, unknown>) => Promise<unknown>;
@@ -33,12 +36,15 @@ export interface SessionMethods {
 export function createSessionMethods(ctx: HostContext, conn: ConnectionContext): SessionMethods {
   const { connection } = conn;
   const {
-    about, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat, charged, chatOf,
-    chatSummary, claimable, claims, dir, dispatch, drafts, dropChat, first, flushDeltas, forWhom, heldAs,
-    isolating, isolated, keepChat, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom, openSession, options,
+    about, activeSessionsMoved, admitted, agents, answeredAs, backendsOwn, beginOrRun, beside, byChat,
+    charged, chatIdOf, chatOf,
+    chatSummary, chatsReordered, claimable, claims, dir, dispatch, drafts, dropChat, first, flushDeltas,
+    forWhom, heldAs,
+    isolating, isolated, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
+    movable, movableMoved, openSession, options, orderChats,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
-    seenBy, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle, snapshotOf,
-    spawn, summaryMoved, unheld, waitingFor, watches, withSender,
+    seenBy, sessionAdded, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle,
+    snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, waitingFor, watches, withSender,
   } = ctx;
 
   /**
@@ -75,6 +81,201 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
   const opened = (cursor: string): string => {
     try { return Buffer.from(cursor, 'base64url').toString('utf8'); }
     catch { return ''; }
+  };
+
+  /**
+   * A chat taken out of the session it is in and started again under another.
+   *
+   * The whole of a move that costs the chat its process, which is the two
+   * destinations the protocol serves beyond a reorder: a session this host is
+   * already running, or one made for the chat. Both are the same act, and the
+   * order the protocol gives for it is the order here - the store and this
+   * host's own maps are changed first, the backend is started under the
+   * destination second, and only then is anything published. So a client that
+   * is told `session/chatRemoved` on the source is looking at a chat the
+   * destination already holds, rather than one that is briefly nowhere.
+   *
+   * `to` is the destination session, or nothing where the move asked for a
+   * session of the chat's own. That one is allocated here the way
+   * `createSession` allocates one, with one difference: its id is the chat's
+   * own backend id, so the session a restart resumes it by is the name the
+   * conversation is already kept under.
+   */
+  const movedTo = async (
+    chatUri: string,
+    found: { uri: string; chat: Session },
+    held: Held,
+    to: string | undefined,
+    anchor: string | undefined,
+  ): Promise<{ session: string }> => {
+    /*
+     * What the chat is, read before its process goes: the name its backend
+     * keeps the conversation under, which is what the destination resumes it
+     * by, and the turns it owns, which the store has to be told because it
+     * cannot find them itself - a sender is kept per session and turn and
+     * every chat of a session writes into the same map.
+     */
+    const own = found.chat.agentId() as string;
+    const all = found.chat.allTurns() as Bag[];
+    const talking = { resume: own, seed: all };
+    const turns = all.map((one) => String(one.id ?? ''));
+    /*
+     * The folders the chat works in, which travel with it: its root is the
+     * session's own and its peers are the ones it was opened with, so a chat
+     * moved beside a session working somewhere else goes on where it was.
+     */
+    const folders = beside.get(chatUri) ?? held.additional;
+    const into = to ?? `${held.agent.provider}:/${own}`;
+    const dest = to === undefined ? undefined : sessions.get(to);
+    if (to === undefined) {
+      named(into, 'session');
+      unheld(into);
+      /*
+       * The owner and the config are the source session's: a session made for
+       * one of its chats is the same person's work under the same settings.
+       * The provider is written down the way a start writes it, and the
+       * folders are the chat's own, which `spawn` is handed below.
+       */
+      kept.setOwner(idOf(into), kept.owner(idOf(found.uri)));
+      kept.setConfig(idOf(into), { ...held.config });
+    }
+    const agent = dest?.agent ?? held.agent;
+    const config = dest?.config ?? held.config;
+    /*
+     * Out of the source, in the store and here: the chat's own record - its
+     * title, its senders and its entry on the session's chat list - and the
+     * two maps that say which session is holding it.
+     *
+     * The claim is set as well as dropped, and the order matters: `drop` keeps
+     * the claim a key already has, and `Claiming.set` will not overwrite one,
+     * so a chat that has just left `byChat` still answers as the source's chat
+     * until this line puts it where it now belongs.
+     */
+    const was = [...held.chats.keys()];
+    kept.moveChat(idOf(found.uri), idOf(into), chatUri, turns);
+    found.chat.close(false);
+    held.chats.delete(chatUri);
+    byChat.drop(chatUri);
+    claims.set(chatUri, { kind: 'chat', of: into });
+    let chat: Session;
+    try {
+      chat = spawn(agent, into, chatUri, chatIdOf(into, chatUri, own), backendsOwn(config), talking,
+        held.workingDirectory, conn.tokensFor(agent.provider), folders, connection);
+    }
+    catch (error) {
+      /*
+       * A destination that will not start the chat leaves it where it was: the
+       * protocol says a refused move changes nothing, and a chat whose process
+       * is gone while its record says another session owns it is a
+       * conversation nobody can open.
+       *
+       * The backend is the thing that decides this, and it has already been
+       * handed the chat's folders and its conversation - so putting it back is
+       * the same start it would have made, one session over. A start that
+       * fails twice is a logged divergence rather than the client's answer,
+       * which is the refusal it asked for.
+       *
+       * The place it held among its session's chats is put back too: a move
+       * out and back is an append, and a chat that came back at the end of a
+       * list it was in the middle of is a catalogue order this host changed
+       * for a move it refused.
+       */
+      kept.moveChat(idOf(into), idOf(found.uri), chatUri, turns);
+      byChat.delete(chatUri);
+      claims.set(chatUri, { kind: 'chat', of: found.uri });
+      if (to === undefined) {
+        // The session the chat was to be given, which no backend answered for:
+        // it never existed, so the record of it goes whole - the owner and the
+        // config included, which were written for a session that is not there.
+        sessions.delete(into);
+        claims.delete(into);
+        kept.forget(idOf(into));
+      }
+      try {
+        spawn(held.agent, found.uri, chatUri, chatIdOf(found.uri, chatUri, own), backendsOwn(held.config),
+          talking, held.workingDirectory, conn.tokensFor(held.agent.provider), folders, connection);
+      }
+      catch (back) {
+        log(`could not put ${chatUri} back in ${found.uri}: ${back instanceof Error ? back.message : String(back)}`);
+      }
+      const putBack = new Map(held.chats);
+      const order = was.filter((one) => putBack.has(one));
+      held.chats.clear();
+      for (const one of order) held.chats.set(one, putBack.get(one) as Session);
+      orderChats(found.uri, order);
+      throw error;
+    }
+    /*
+     * A session that did not exist a moment ago, and is running now. Said
+     * ready before it is announced, which is `openSession`'s order and for its
+     * reason: a client told about a session it cannot subscribe to yet has been
+     * told about something that is not there.
+     */
+    if (to === undefined) {
+      keepProvider(into, agent, chat);
+      dispatch(into, { type: 'session/ready' });
+      sessionAdded(into);
+      activeSessionsMoved();
+    }
+    /*
+     * And every worker chat the moved chat carries, which the protocol says
+     * goes with it: a worker is a conversation inside a call of this chat, and
+     * one left behind would be a chat whose call is in another session.
+     *
+     * Walked to the bottom, because a worker's own call can open another one.
+     * The URI is left exactly as it is - it names the session the worker was
+     * opened in, and a client holding that name must not be handed a second
+     * one. What moves is the claim, which is what a later read of the worker,
+     * and of the session holding it, is answered from.
+     */
+    const carried: string[] = [];
+    const seen = new Set([chatUri]);
+    let frontier = [chatUri];
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const [one, ref] of subagents) {
+        if (ref.session !== found.uri || !frontier.includes(ref.parentChat) || seen.has(one)) continue;
+        seen.add(one);
+        carried.push(one);
+        next.push(one);
+      }
+      frontier = next;
+    }
+    for (const one of carried) {
+      const ref = subagents.get(one) as LiveSubagent;
+      ref.session = into;
+      claims.set(one, { kind: 'chat', of: into });
+    }
+    /*
+     * Where the chat sits in the destination, which is after the anchor or
+     * first: an absent `after` means the beginning, and the order the session
+     * holds is the one the next process starts its chats again in.
+     */
+    const there = sessions.get(into) as Held;
+    const order = [...there.chats.keys()].filter((one) => one !== chatUri);
+    order.splice(anchor === undefined ? 0 : order.indexOf(anchor) + 1, 0, chatUri);
+    const before = new Map(there.chats);
+    there.chats.clear();
+    for (const one of order) there.chats.set(one, before.get(one) as Session);
+    orderChats(into, order);
+    /*
+     * Published in the order the protocol gives: the chat leaves the source,
+     * arrives at the destination, the destination's list is said whole, and
+     * both rows are re-read. Removal first, because a client that hears the
+     * chat arrive before it hears it leave is a client holding it twice.
+     */
+    dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
+    for (const one of carried) dispatch(found.uri, { type: 'session/chatRemoved', chat: one });
+    dispatch(into, { type: 'session/chatAdded', summary: chatSummary(into, chatUri, chat) });
+    for (const one of carried) {
+      const ref = subagents.get(one);
+      if (ref !== undefined) dispatch(into, { type: 'session/chatAdded', summary: subagentSummary(one, ref) });
+    }
+    await chatsReordered(into);
+    summaryMoved(found.uri);
+    summaryMoved(into);
+    log(`moved ${chatUri} from ${found.uri} to ${into}`);
+    return { session: into };
   };
 
   return {
@@ -779,6 +980,118 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       }
       return null;
     },
+    /**
+     * Put a chat where a person wants it.
+     *
+     * The protocol's three destinations, and this host serves all of them: a
+     * `session` naming the chat's own session, which is a reorder of the
+     * catalogue and nothing more; a `session` naming another one, which takes
+     * the chat there; and `newSession`, which makes a session whose default
+     * chat is the moved one.
+     *
+     * A chat that stays in its session keeps its process, its turns and its
+     * folders, so the whole of that move is where it sits. The other two cost
+     * it a backend process, and are one act done twice - see `movedTo` above,
+     * which is where that act is kept in the order the protocol gives.
+     *
+     * Nothing is changed before every refusal has been made, because the
+     * protocol says a rejection leaves ownership, order and state as they
+     * were - so a chat that cannot move is a chat nothing happened to.
+     */
+    moveChat: async (params) => {
+      // Either spelling, like `disposeChat`.
+      const chatUri = chatOf(String(params.channel ?? ''));
+      const found = byChat.get(chatUri);
+      if (!found)
+        throw new RpcError(-32001, `No chat at ${chatUri}`);
+      const held = sessions.get(found.uri);
+      if (!held)
+        throw new RpcError(-32001, `No agent for session ${found.uri}`);
+      /*
+       * The chat's own answer, which the client was handed before it asked:
+       * `movable` is what a move control is drawn from, and a chat that
+       * changed under the client between then and now is refused rather than
+       * moved from a state nobody was shown.
+       */
+      if (!movable(chatUri))
+        throw new RpcError(-32602, `${chatUri} cannot be moved`);
+      const destination = (typeof params.destination === 'object' && params.destination !== null
+        ? params.destination
+        : {}) as Record<string, unknown>;
+      const kind = String(destination.kind ?? '');
+      if (kind !== 'session' && kind !== 'newSession') {
+        throw new RpcError(-32602, kind === ''
+          ? 'a move needs a destination'
+          : `a ${kind} destination is not one this host serves yet`);
+      }
+      /*
+       * The anchor, which the protocol requires to be another chat of the
+       * destination and never the chat itself. Read through `chatOf` for the
+       * same reason the source is: a client may name either spelling.
+       */
+      const anchor = destination.after === undefined ? undefined : chatOf(String(destination.after));
+      if (anchor !== undefined && anchor === chatUri)
+        throw new RpcError(-32602, `${chatUri} cannot be placed after itself`);
+      // A session made for the chat, which has no chats to be placed among yet.
+      if (kind === 'newSession') return await movedTo(chatUri, found, held, undefined, anchor);
+      /*
+       * The source's own session, which is the reorder. Anywhere else is a move
+       * between sessions, and this host makes one only where it can start the
+       * chat there - which is a session of the same agent, on the same machine.
+       */
+      const to = heldAs(String(destination.session ?? ''));
+      if (to === found.uri) {
+        if (anchor !== undefined && !held.chats.has(anchor))
+          throw new RpcError(-32602, `${anchor} is not a chat in ${found.uri}`);
+        /*
+         * The new order, which is the old one with this chat taken out and put
+         * back where it was asked for. First when no anchor was named, which is
+         * what the protocol says an absent `after` means.
+         */
+        const order = [...held.chats.keys()].filter((one) => one !== chatUri);
+        order.splice(anchor === undefined ? 0 : order.indexOf(anchor) + 1, 0, chatUri);
+        const chats = new Map(held.chats);
+        held.chats.clear();
+        for (const one of order) held.chats.set(one, chats.get(one) as Session);
+        /*
+         * And written down, so the order is the one the next process starts
+         * them again in. A move a restart undid would be a move that lasted
+         * until the daemon was restarted, which a person would find out about
+         * days later.
+         */
+        orderChats(found.uri, order);
+        // The catalogue's own list, which names every chat the session lists -
+        // the workers included, because they are chats of the session too.
+        await chatsReordered(found.uri);
+        summaryMoved(found.uri);
+        log(`moved ${chatUri} in ${found.uri}`);
+        return { session: found.uri };
+      }
+      /*
+       * Somewhere else, then: another session this host is running, of the same
+       * agent and on the same machine.
+       *
+       * The same agent because a conversation belongs to the harness that wrote
+       * it, in that harness's own format and on that harness's own disk, and
+       * the same machine because the chat's folders are paths on the machine
+       * its backend ran on. Both are refused with a sentence that names the
+       * difference, and refused before anything has been touched.
+       */
+      const dest = sessions.get(to);
+      if (dest === undefined)
+        throw new RpcError(-32602, `${to === '' ? 'nowhere' : to} is not a session this host is running`);
+      if (held.agent.provider !== dest.agent.provider)
+        throw new RpcError(-32602, `a move between providers is not supported yet: ${chatUri} runs on`
+          + ` ${held.agent.provider} and ${to} on ${dest.agent.provider}`);
+      const mine = computerId(held.config.computer);
+      const theirs = computerId(dest.config.computer);
+      if (mine !== theirs)
+        throw new RpcError(-32602, `a move between computers is not supported yet: ${chatUri} runs on`
+          + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
+      if (anchor !== undefined && !dest.chats.has(anchor))
+        throw new RpcError(-32602, `${anchor} is not a chat in ${to}`);
+      return await movedTo(chatUri, found, held, to, anchor);
+    },
     disposeChat: async (params) => {
       // Either spelling, like `subscribe` and a dispatch.
       const chatUri = chatOf(String(params.channel ?? ''));
@@ -825,12 +1138,24 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // one of them must be the chat a session is resumed as.
         keepChat(found.uri, held.defaultChat, undefined, true);
         dispatch(found.uri, { type: 'session/defaultChatChanged', defaultChat: held.defaultChat });
+        /*
+         * And it is no longer movable, for the reason the chat that was the
+         * default was not: `default` is a role rather than a chat, and the
+         * protocol says the chat holding it MUST NOT move. Said here rather
+         * than left to the next turn, because a chat nobody speaks to again
+         * would go on offering a move that would take the session's own chat
+         * away from it.
+         */
+        movableMoved(held.defaultChat);
       }
       log(`closed ${chatUri}`);
       dispatch(found.uri, { type: 'session/chatRemoved', chat: chatUri });
       // Last, and once: the row's chat list and its default chat both just
       // moved, and one notification carries both rather than one per change.
       summaryMoved(found.uri);
+      // Nothing is holding this chat's answer any more, so nothing is holding
+      // the chat.
+      movableMoved(chatUri);
       return null;
     },
     disposeSession: async (params) => {

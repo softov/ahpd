@@ -68,6 +68,8 @@ export interface Lifecycle {
   moveSession(uri: string, move: Move): Promise<void>;
   /** Start one chat again, in the directories it now has. */
   restartChat(uri: string, chatUri: string, credentials: Record<string, string>, sender?: Connection): void;
+  /** The name a backend is handed for one chat, which is the id a restart resumes it by. */
+  chatIdOf(uri: string, chatUri: string, own: string | undefined): string | undefined;
   /** The backend's own copy of one chat's conversation, gone. */
   deletedChat(backendId: string, agent: Agent, directory: string | undefined): Promise<unknown>;
   /** What the backend is given: everything except what this host answered. */
@@ -1254,7 +1256,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   };
 
   return {
-    removeSession, restart, moveSession, restartChat, deletedChat, backendsOwn, isolated,
+    removeSession, restart, moveSession, restartChat, chatIdOf, deletedChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
   };
 }

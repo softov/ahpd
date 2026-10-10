@@ -135,6 +135,7 @@ export function acpSession(options: AcpOptions, start: Start): Session {
     live: undefined,
     acpSessionId: undefined,
     closes: false,
+    loads: false,
     takes: undefined,
     replay: [],
     loading: false,
@@ -166,6 +167,14 @@ export function acpSession(options: AcpOptions, start: Start): Session {
 
     models: ctx.models,
     agentId: () => ctx.acpSessionId,
+    /*
+     * Read from the handshake rather than from whether the id is set: this
+     * bridge can name the conversation it is running, and a server that never
+     * advertised `loadSession` is one that would start a new one rather than
+     * reopen that. False until the server has spoken, which is also the honest
+     * answer - before that, nothing here has a conversation to be moved.
+     */
+    resumable: () => ctx.loads,
     customizations: () => [...seeds, ...ctx.commands],
     allTurns: () => turns,
     status,

@@ -1,7 +1,7 @@
 ---
 title: A chat is reordered in its session, or moved to another session of the same agent and machine
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -86,9 +86,9 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - moveChat is refused as VS Code refuses it](task-01-movechat-is-refused-as-vs-code-refuses-it.md) | dropped | - |
-| [04 - A chat says when it can move](task-04-a-chat-says-when-it-can-move.md) | todo | host/50 |
-| [02 - A chat is reordered inside its session](task-02-a-chat-is-reordered-inside-its-session.md) | todo | 04 |
-| [03 - A chat moves to another session or a new one](task-03-a-chat-moves-to-another-session-or-a-new-one.md) | todo | 02 |
+| [04 - A chat says when it can move](task-04-a-chat-says-when-it-can-move.md) | done | host/50 |
+| [02 - A chat is reordered inside its session](task-02-a-chat-is-reordered-inside-its-session.md) | done | 04 |
+| [03 - A chat moves to another session or a new one](task-03-a-chat-moves-to-another-session-or-a-new-one.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -97,10 +97,8 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** host/50, then [task-04-a-chat-says-when-it-can-move.md](task-04-a-chat-says-when-it-can-move.md).
-- **Open questions:** none.
-- **Watch out for:** a worker chat's URI is `ahp-chat://subagent/<session>/<toolCallId>` and names the source session; after a move it keeps that URI, so `claims` and `chatOf` must resolve it by the claim, never by parsing the session out of it.
+- **Done so far:** tasks 04, 02 and 03 built 2026-10-09; task 01 dropped.
+- **Next action:** none; see [implemented.md](implemented.md).
 
 ## Final verification checklist
 

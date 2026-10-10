@@ -291,6 +291,23 @@ export interface Session {
   agentId(): string | undefined;
 
   /**
+   * Whether the agent can be asked for this conversation again, by `agentId()`.
+   *
+   * Absent means it can. Moving a chat and restarting one are the same act on a
+   * backend: it is started again with `resume` set to the id it kept the
+   * conversation under, and a backend that cannot take one back would answer
+   * with an empty conversation. So the host asks before it offers a chat as
+   * movable, and a backend that cannot name a conversation it can reopen says
+   * so here rather than being offered and failing.
+   *
+   * Two answer no. A nested session: the host inside the machine makes a fresh
+   * inner session each time it is started, so no id is one it can be resumed by.
+   * And an ACP server that did not advertise `loadSession`, whose conversations
+   * live in the server process rather than anywhere this host can point at.
+   */
+  resumable?(): boolean;
+
+  /**
    * The backend's own name for the last entry a turn left behind, if it has
    * one.
    *

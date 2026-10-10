@@ -404,7 +404,7 @@ Summarised by area rather than by method, one row per area:
 
 **✅ as specified · 🧩 through a host port · 🚧 partial · ➖ declared and not written · 🚫 deliberately not**
 
-The implementation currently covers **31 of 32 declared commands** and **99 of 100 state actions**.
+The implementation currently covers **33 of 33 declared commands** and **102 of 103 state actions**.
 
 An unsupported operation returns `-32601`, not an empty success, so a client is never left waiting for state that will not arrive.
 

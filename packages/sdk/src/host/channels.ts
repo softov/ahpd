@@ -53,9 +53,14 @@ export type ChannelKind = 'session' | 'terminal' | 'other';
  * `subagentChatUri`, the worker chat link this host stamps on a tool call's
  * `_meta`. What `respelledIn` rewrites for a client that knows a session by
  * another name.
+ *
+ * `chats` is the odd one out of those fields: the protocol types it `URI[]`
+ * on `session/chatsReordered` and an array of summaries everywhere else, and
+ * only a string is ever read for a URI here - so the reorder's list is
+ * rewritten and a state's rows, being objects, are left to `spelledFor`.
  */
 export const URI_KEYS = new Set([
-  'automation', 'channel', 'chat', 'cwd', 'defaultChat', 'defaultDirectory', 'destination', 'directory',
+  'automation', 'channel', 'chat', 'chats', 'cwd', 'defaultChat', 'defaultDirectory', 'destination', 'directory',
   'initialSubscriptions', 'logs', 'metrics', 'missing', 'primarySession', 'replacement', 'resource', 'root', 'run',
   'session', 'sessions', 'source', 'src', 'subscriptions', 'traces', 'uri', 'url', 'workingDirectories',
   'workingDirectory', 'uriTemplate', 'subagentChatUri',

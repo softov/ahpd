@@ -709,6 +709,64 @@ it('keeps a session\'s chats across a restart, in order, and forgets them with t
   expect(fileSessions({ dir }).chats('a')).toEqual([]);
 });
 
+it('moves a chat to another session in the store, with its title and the senders of its turns', async () => {
+  const dir = join(root, 'sessions');
+  const store = fileSessions({ dir });
+  const lead = { uri: 'ahp-chat:/one', backendId: 'one', default: true };
+  const peer = { uri: 'ahp-chat:/peer', backendId: 'peer' };
+  const tail = { uri: 'ahp-chat:/tail', backendId: 'tail', default: true };
+  store.setChats('a', [lead, peer]);
+  store.setChats('b', [tail]);
+  store.setChatTitle('a', 'ahp-chat:/peer', 'Kqueue port');
+  /*
+   * A sender is kept per session and per turn, and every chat of a session
+   * writes into the same map - so a move names the turns the chat owns and
+   * takes those alone. The turns it left behind are still the source's, and
+   * the destination's own are still the destination's.
+   */
+  store.setSender('a', 'turn-1', 'user:ana');
+  store.setSender('a', 'turn-2', 'user:bo');
+  store.setSender('b', 'tail-1', 'user:cy');
+
+  store.moveChat('a', 'b', 'ahp-chat:/peer', ['turn-1']);
+  await new Promise((tick) => { setTimeout(tick, 5); });
+
+  expect(row(dir, 'a')).toEqual({ version: 1, id: 'a', senders: { 'turn-2': 'user:bo' }, chats: [lead] });
+  expect(row(dir, 'b')).toEqual({
+    version: 1,
+    id: 'b',
+    senders: { 'tail-1': 'user:cy', 'turn-1': 'user:ana' },
+    chats: [tail, peer],
+    chatTitles: { 'ahp-chat:/peer': 'Kqueue port' },
+  });
+  // Read back by a second store on the same folder, which is what a restart is,
+  // and under the destination rather than beside it.
+  const second = fileSessions({ dir });
+  expect(second.chats('a')).toEqual([lead]);
+  expect(second.chats('b')).toEqual([tail, peer]);
+  expect(second.chatTitle('a', 'ahp-chat:/peer')).toBeUndefined();
+  expect(second.chatTitle('b', 'ahp-chat:/peer')).toBe('Kqueue port');
+  expect(second.sender('a', 'turn-1')).toBeUndefined();
+  expect(second.sender('a', 'turn-2')).toBe('user:bo');
+  expect(second.sender('b', 'turn-1')).toBe('user:ana');
+
+  /*
+   * The same move in the memory store, which is the other half of what the
+   * host is handed: a host built over a folder and one built over nothing
+   * have to move a chat the same way.
+   */
+  const memory = memorySessions();
+  memory.setChats('a', [lead, peer]);
+  memory.setChatTitle('a', 'ahp-chat:/peer', 'Kqueue port');
+  memory.setSender('a', 'turn-1', 'user:ana');
+  memory.moveChat('a', 'b', 'ahp-chat:/peer', ['turn-1']);
+  expect(memory.chats('a')).toEqual([lead]);
+  expect(memory.chats('b')).toEqual([peer]);
+  expect(memory.chatTitle('b', 'ahp-chat:/peer')).toBe('Kqueue port');
+  expect(memory.sender('a', 'turn-1')).toBeUndefined();
+  expect(memory.sender('b', 'turn-1')).toBe('user:ana');
+});
+
 it('names every id it holds, on both stores, and no id it was merely asked about', async () => {
   const dir = join(root, 'sessions');
   const chat = { uri: 'ahp-chat:/one', backendId: 'one' };

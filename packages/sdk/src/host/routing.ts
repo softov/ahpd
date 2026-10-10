@@ -148,6 +148,19 @@ export function createRouting(ctx: HostContext): Routing {
     // it is the same chat.
     const callId = toolCallOfSubagentChat(uri);
     if (callId !== undefined) {
+      /*
+       * A worker this host is holding answers for itself, whatever session its
+       * URI names.
+       *
+       * A move takes a chat's workers with it and leaves their names alone, so
+       * the session inside a worker's URI is the one it was opened in rather
+       * than the one holding it now - and the name a client holds is the name
+       * that answers. The fallback below reaches the same string by reading
+       * that session out of the URI and minting it again, which is the same
+       * answer only while the host still names that session; this one is not
+       * read out of anything.
+       */
+      if (subagents.has(uri)) return uri;
       const owning = sessionOfChat(uri);
       const named = owning === undefined ? undefined : heldAs(owning);
       return named !== undefined && sessions.has(named) ? subagentChatUri(named, callId) : uri;

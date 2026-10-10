@@ -274,6 +274,19 @@ export interface SessionStore {
   /** Replace them. Empty forgets them, which is a session with no chat left. */
   setChats(id: string, list: StoredChat[]): void;
   /**
+   * Move one chat from one session to another, in one write.
+   *
+   * A chat's own record travels with it: its title, its entry on the source's
+   * chat list and its place on the destination's. `turns` names the turns the
+   * store must carry too, because it cannot find them itself - a sender is kept
+   * per session and turn, and every chat of a session writes into the same map,
+   * so which of those turns are the moved chat's is only known to the caller.
+   *
+   * Both ids are session ids, as everywhere in this store. A chat the source
+   * does not hold is not an error here: the caller has already read it.
+   */
+  moveChat(from: string, to: string, uri: string, turns: string[]): void;
+  /**
    * The ids of the sessions this store holds.
    *
    * Every other question here is about a session the caller can already name,

@@ -46,7 +46,7 @@ saying so, is gone: where this host diverges it now says where, in the row.
 
 ## Commands
 
-**31 of the 32 declared**, one row each. `dispatchAction` is the partial one -
+**33 of the 33 declared**, one row each. `dispatchAction` is the partial one -
 what it will and will not act on is [state actions](#state-actions). Anything
 not listed here answers `-32601`, said rather than quietly answered: a host that
 returns an empty success to a method it does not have leaves the client waiting
@@ -84,6 +84,7 @@ is.
 | `disposeSession` | ✅ | Closes every chat, the terminals the session claimed, and its worktree - unless somebody's work is still in it, which is the one thing a daemon cannot judge the value of. A dirty tree is kept where it is and the path is logged. The backend is told too, and deletes its own copy of the conversation: Claude its transcript, pi its session file, cofold its store's record, and an ACP server its session when the server advertised `session/delete`. A row this host only listed is deleted the same way, without a teardown, and a backend whose store cannot delete is left to keep the conversation, which the host says once per provider. Nothing here can be undone. |
 | `createChat` | ✅ | Each chat is its own agent process on one directory set and one config. A `fork` source continues the conversation from a named turn under a new backend id, carrying the turns through as visible history; a `sideChat` copies nothing and hands the model what that turn said, on its first prompt and nowhere else. |
 | `disposeChat` | ✅ | The last chat cannot be disposed, and the refusal says to dispose the session instead - a session with nothing to talk to is not a state a client should be able to reach. |
+| `moveChat` | ✅ | A 1.0.0 addition that VS Code's agent host refuses with `MethodNotFound`. Moves the chat named by `channel` after an anchor in its own session, or first when `after` is absent; a `session` destination names another session this host is running, and `newSession` is one it makes. Only a chat that advertises `movable` is taken: the default chat, one whose backend cannot be resumed by its own id, and one running a turn are each refused `-32602` with the reason, and nothing changes. An anchor that names no chat of the session, or the chat itself, is refused the same way. A move between sessions carries the chat and its workers with it: each is closed and started again under the destination, on the backend id it is held under, with the turns it had and in the folders it was working in, and a worker keeps the URI it was given. The destination has to run the same provider on the same `config.computer` as the source, and a destination this host is not running is refused too, each with a sentence naming the difference. Ownership and catalog order are written before anything is published, so a client is never told the chat is in two places or in none: the source is told `session/chatRemoved`, the destination `session/chatAdded` and `session/chatsReordered`, and both catalogue rows move. A destination whose backend will not take the conversation leaves the chat in its session and answers the backend's own error. `newSession` makes a session whose id is the chat's backend id and whose non-movable default chat is the moved one, under the URI it already had. |
 | `createTerminal` | 🧩 | The `terminals` port. Opens in a directory this host serves, under the URI the client chose. |
 | `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
@@ -160,7 +161,7 @@ handed them again as if it had not.
 
 ## State actions
 
-**99 of the 100 declared, across nine channels**, one row each. The one that is
+**102 of the 103 declared, across nine channels**, one row each. The one that is
 not served is `chat/toolCallResultConfirmed`, and it is refused in its own words
 rather than as unserved - a client that sends it learns why nothing happened.
 
@@ -195,7 +196,7 @@ Three keys VS Code declared before 1.140 are not declared here, because 1.140 dr
 The artifact tools carry the long wording and no other, and every session runs under the deferred title strategy, with no key to change either.
 A client older than 1.140 that still pushes one of the three has that key refused by name, and the rest of its push applied.
 
-### `session/*` — 29 of 29
+### `session/*` — 30 of 30
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -205,6 +206,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/chatRemoved` | host | ✅ | On `disposeChat`. The last chat cannot be removed - that is `disposeSession`, and the refusal says so. |
 | `session/chatUpdated` | host | ✅ | Only when the row actually moved - title, status or activity. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
 | `session/defaultChatChanged` | host | ✅ | When the chat that was the default is disposed and another takes over. |
+| `session/chatsReordered` | host | ✅ | The whole order a session's chats end up in after a move inside that session, and never what a client sends - the host is the one that knows the order. Every chat the session holds is named exactly once, which the canonical reducer checks before it applies anything. Written to the stored chat list as well, so a restart rebuilds the chats where the move left them. |
 | `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames one with `rename_chat`. |
 | `session/serverToolsChanged` | host | ✅ | Full replacement, which is what the action means: it carries the new set rather than a difference. Sent to every running session when `host.setTools()` is called. |
 | `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made - under the `clientId` it introduced itself with rather than the one in the payload. The `customizations` it carries are read as well: each plugin is copied into this host's own directory and reported on the session. A run announces one of these too, as a client called `Automation`, carrying the copies its template named - which is how a plugin a template named reaches a session nobody is connected to. |
@@ -229,7 +231,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
 | `session/metaChanged` | host | ✅ | Replaces `_meta` whole, which is why the git facts are rebuilt rather than patched: a host with two sources of `_meta` would have each take the other's away. |
 
-### `chat/*` — 33 of 34
+### `chat/*` — 34 of 35
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -267,6 +269,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/turnsLoaded` | host | ✅ | The answer to `fetchTurns`, sent on the channel rather than in the result, so every client watching the chat gets the page and not only the one that asked. The action declares no `_meta` of its own, so who sent each turn rides on the turn's message - `turn.message._meta['ahpd.sender']` - and a page of older turns reads the same as the tail window that came before it. |
 | `chat/backgroundWorkSet` | host | ✅ | Upserts one entry by its `id`, which is `shell:<task_id>` or `subagent:<task_id>` off the harness's own task id. Only the Claude backend has anything to report: its `background_tasks_changed` is the whole live set and its `task_started` says what each one is, so one task is said once and again only when what it is changes. A `shell` carries the command of the `Bash` call that started it; a `subagent` carries the worker chat's URI, which is the same chat the spawning call links. A chat running nothing has no `backgroundWork` key rather than an empty one. |
 | `chat/backgroundWorkRemoved` | host | ✅ | One entry that stopped running, by the same `id`, and a no-op for an id this chat was never told about. A task the harness is no longer running leaves the level, and a terminal notification ends one whatever the level says; `ambient` tasks are never listed at all. |
+| `chat/movableChanged` | host | ✅ | Whether this chat may be the source of a move, which is the host's own answer and not the client's. Sent when that answer changed, and the owning session's row follows as `session/chatUpdated` so `ChatSummary.movable` keeps up. Never `true` for the chat its session hands out, because `default` is a role and not a chat. A chat running a turn is not movable, and neither is one whose backend cannot be asked for the conversation again. |
 
 ### `terminal/*` — 11 of 11 🧩
 

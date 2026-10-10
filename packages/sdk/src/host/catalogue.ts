@@ -4,8 +4,10 @@ import type { Summary, SummaryChat } from '../types/catalog.js';
 import type { Agent, Listed } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Session } from '../types/session.js';
+import type { WireTurn } from '../types/wire.js';
 import type { Held, LiveSubagent } from './state.js';
 import type { HostContext } from './context.js';
+import type { Turn } from '@microsoft/agent-host-protocol';
 
 /**
  * A worker chat read back from a backend's own record, and the URI this host
@@ -25,6 +27,12 @@ export interface Catalogue {
   statusOf(uri: string): number;
   startedBy(session: string, chat?: string): Bag;
   chatSummary(session: string, uri: string, chat: Session): Bag;
+  /** Whether a chat may be moved: not the default, resumable, and running nothing. */
+  movable(uri: string): boolean;
+  /** Say that a chat's answer moved, when it did, on the chat and on its session. */
+  movableMoved(uri: string): void;
+  /** Say a session's chats are in a new order, naming every one of them. */
+  chatsReordered(uri: string): Promise<void>;
   subagentSummary(uri: string, ref: LiveSubagent): Bag;
   /**
    * Every chat of one running session, in the order both answers list them.
@@ -65,7 +73,8 @@ export interface Catalogue {
 export function createCatalogue(ctx: HostContext): Catalogue {
   const {
     options, agents, sessions, subagents, owners, kept, names, wheres, births, moves,
-    madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackends,
+    madeFrom, origins, leadOf, about, browsable, recordedChats, chatBackends, sessionHolding,
+    resumedSessions, restoredSubagents,
   } = ctx;
 
   /**
@@ -103,7 +112,148 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     // The same answer the chat's own state gives. A summary that left it out
     // while the state carried it would be two answers to one question.
     interactivity: 'full',
+    /*
+     * Absent when it cannot move, which is what the protocol says absence
+     * means. A row with the key left off is one a client draws no move control
+     * for, and writing `false` would say the same thing in a longer way.
+     */
+    ...(movable(uri) ? { movable: true } : {}),
   });
+
+  /**
+   * Whether a chat may be moved, which is what a client offers a control for.
+   *
+   * Four things, and all of them ask one question - would a move work. The chat
+   * must be one this host is running as a chat of a session, so a worker is
+   * never movable on its own and neither is a conversation read back from a
+   * transcript. It must not be the chat its session hands a client that names
+   * none: the protocol says that one MUST NOT move, and a session whose default
+   * left would have to answer a client naming no chat with a question. Its
+   * backend must be able to take the conversation back by the id it kept it
+   * under, because a move starts the backend again with `resume` set to that
+   * id. And nothing may be running: a move closes a process and starts another,
+   * and the one moment that costs nothing is between turns.
+   */
+  const movable = (uri: string): boolean => {
+    const held = sessions.get(sessionHolding(uri) ?? '');
+    const chat = held === undefined ? undefined : held.chats.get(uri);
+    if (held === undefined || chat === undefined) return false;
+    if (held.defaultChat === uri) return false;
+    const own = chat.agentId();
+    if (own === undefined || own === '') return false;
+    if (chat.resumable?.() === false) return false;
+    return !running(uri);
+  };
+
+  /**
+   * Whether a chat, or any worker chat beneath it, is running a turn.
+   *
+   * A worker's row is this host's own, reduced from what the backend emitted on
+   * its channel, so its status is read there rather than asked of a `Session`
+   * that does not exist. Walked to the bottom because a worker's own call can
+   * open another one, and a move carries all of them: a chat whose worker is
+   * mid-turn is a chat with something in flight.
+   */
+  const running = (uri: string): boolean => {
+    const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
+    if (lead !== undefined && (lead.status() & Status.InProgress) !== 0) return true;
+    const seen = new Set([uri]);
+    const queue = [uri];
+    while (queue.length > 0) {
+      const at = queue.shift() as string;
+      for (const [one, ref] of subagents) {
+        if (ref.parentChat !== at || seen.has(one)) continue;
+        seen.add(one);
+        if ((Number(ref.state.status ?? Status.Idle) & Status.InProgress) !== 0) return true;
+        queue.push(one);
+      }
+    }
+    return false;
+  };
+
+  /**
+   * What each chat's last `movable` answer was, so only a change is sent.
+   *
+   * Per chat and for as long as this host holds it, which is the same span the
+   * answer covers: a chat the host is no longer running is one nothing can
+   * move, and its entry goes when this is next asked about it.
+   */
+  const saidMovable = new Map<string, boolean>();
+  /**
+   * Say that a chat's `movable` moved, if it did.
+   *
+   * Called at the moments the answer can change - a turn starting or ending, a
+   * worker's starting or ending, the default chat moving to another - and
+   * silent for every one of them that changed nothing.
+   *
+   * Two actions, because the protocol keeps the chat's own state and the row in
+   * its session's catalogue in step and says so: `chat/movableChanged` is the
+   * answer to whoever is watching the chat, and `session/chatUpdated` is the
+   * same answer to whoever is watching the list, which is a client that is not
+   * looking at the chat at all. The summary is sent whole, as every other
+   * `session/chatUpdated` here is, and `movable` is written over it because a
+   * partial is applied by spreading: a chat that stopped being movable has to
+   * say so with the key, or the client keeps the `true` it was last handed.
+   *
+   * The first call for a chat is its birth, which says nothing. Every road to a
+   * running backend goes through `spawn`, which asks once as the chat is set
+   * up, so the answer a chat was born with is recorded before anything can
+   * change it - and a chat that can move from the day it is opened is not one
+   * that has to be told so twice.
+   */
+  const movableMoved = (uri: string): void => {
+    const session = sessionHolding(uri);
+    const held = session === undefined ? undefined : sessions.get(session);
+    const chat = held === undefined ? undefined : held.chats.get(uri);
+    if (session === undefined || held === undefined || chat === undefined) {
+      // Gone, so nothing is holding an answer for it any more.
+      saidMovable.delete(uri);
+      return;
+    }
+    const now = movable(uri);
+    const was = saidMovable.get(uri);
+    if (was === now) return;
+    saidMovable.set(uri, now);
+    if (was === undefined) return;
+    ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
+    ctx.dispatch(session, {
+      type: 'session/chatUpdated',
+      chat: uri,
+      changes: { ...chatSummary(session, uri, chat), movable: now },
+    });
+  };
+
+  /**
+   * Say a session's chats are in a new order.
+   *
+   * The action carries the whole catalogue rather than the one chat that
+   * moved, and the reducer ignores a list that is not exactly the one the
+   * session already holds - so every chat has to be named, once. The peers go
+   * in their new order, which is what `held.chats` holds, and the workers
+   * after them, which is where the state puts them: a reorder moves a chat and
+   * not the calls that ran inside it, so a worker keeps its place.
+   *
+   * The restored workers are the same read the session's state makes, and the
+   * same gate: a session this host resumed is the only one with workers it did
+   * not open itself. A worker that is also live is named once, as the live one.
+   */
+  const chatsReordered = async (uri: string): Promise<void> => {
+    const held = sessions.get(uri);
+    const lead = held && leadOf(held);
+    if (!held || !lead) return;
+    const read = held.agent.subagents === undefined || !resumedSessions.has(uri)
+      ? []
+      : await restoredSubagents(idOf(uri), held.agent, lead.allTurns() as unknown as WireTurn<Turn>[]);
+    ctx.dispatch(uri, {
+      type: 'session/chatsReordered',
+      chats: [
+        ...held.chats.keys(),
+        ...[...subagents].filter(([, one]) => one.session === uri).map(([one]) => one),
+        ...read.map((one) => subagentChatUri(uri, String(one.toolCallId ?? '')))
+          .filter((one) => !subagents.has(one)),
+      ],
+    });
+  };
 
   /** A worker chat's catalogue row: read-only, and spawned by a tool call. */
   const subagentSummary = (uri: string, ref: LiveSubagent) => ({
@@ -899,7 +1049,8 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   };
 
   return {
-    statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary, chatCatalogOf,
+    statusOf, startedBy, chatSummary, movable, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
+    chatCatalogOf,
     activityOf, sessionAdded, summaryMoved, forgetSent, activeSessionsMoved, learnModels,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };

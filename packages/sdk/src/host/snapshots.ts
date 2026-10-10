@@ -29,7 +29,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
     mergedConfig, sessionSchema, storedConfig,
-    rootState, waitingFor, statusOf, startedBy, chatSummary, chatCatalogOf, restoredSubagentSummary, activityOf,
+    rootState, waitingFor, statusOf, startedBy, chatSummary, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
     past, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
   } = ctx;
@@ -300,6 +300,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         // which is what its catalogue row says too: a chat's state and its row
         // are two answers to one question.
         status: talking.chat.status() | kept.chatFlags(idOf(talking.uri), channel),
+        // Whether a client may offer a move for this chat, which is the
+        // session's answer and not the backend's - so it is read here and left
+        // off when it cannot move, as the protocol's absence-means-false has it.
+        ...(movable(channel) ? { movable: true } : {}),
       };
       if (Array.isArray(state.turns)) {
         const turns = linkedTurns(talking.uri, state.turns as Bag[], restored);

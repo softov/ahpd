@@ -119,6 +119,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     sessionHolding, respell, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, learnModels,
+    movableMoved,
   } = ctx;
 
   /**
@@ -207,6 +208,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     const action = withWorkerUri(uri, given);
+    const was = { status: ref.state.status };
     absorb(ref, action);
     dispatch(uri, action);
     const summary = subagentSummary(uri, ref);
@@ -222,6 +224,19 @@ export function createSpawn(ctx: HostContext): Spawn {
      * chat's own summary moved rather than on a list of fields kept here.
      */
     summaryMoved(ref.session);
+    /*
+     * And whether the chat that carries it may still be moved.
+     *
+     * A move takes a chat's workers with it, so one running a turn holds its
+     * chat where it is. Walked up to the chat a client sees, because a worker's
+     * own call can be inside another worker and only the top one is a chat of
+     * the session.
+     */
+    if (ref.state.status !== was.status) {
+      let at = ref.parentChat;
+      for (let up = subagents.get(at); up !== undefined && up.parentChat !== at; up = subagents.get(at)) at = up.parentChat;
+      movableMoved(at);
+    }
   };
 
   /**
@@ -828,6 +843,15 @@ export function createSpawn(ctx: HostContext): Spawn {
         // itself - so it has to be said here or it is never said.
         if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
           || action.type === 'chat/turnCancelled') operationsMoved(uri);
+        /*
+         * And whether this chat may be moved, which a turn is the whole of.
+         *
+         * `chat/error` is here with the two endings the protocol names: it is
+         * how a turn that failed ends, and a chat left unmovable by one would
+         * be a chat nobody could ever move again.
+         */
+        if (action.type === 'chat/turnStarted' || action.type === 'chat/turnComplete'
+          || action.type === 'chat/turnCancelled' || action.type === 'chat/error') movableMoved(chatUri);
         // And a move the agent asked for is made now, once its turn is over:
         // the one moment the backend can be started again without losing
         // anything.
@@ -942,6 +966,17 @@ export function createSpawn(ctx: HostContext): Spawn {
     // other answer about it uses that same string.
     names.set(idOf(uri), uri);
     byChat.set(chatUri, { uri, chat: session });
+    /*
+     * The answer this chat is born with, written down and not said.
+     *
+     * A move is offered for a chat by its own state and by its session's row,
+     * and both are built from `movable` read now - so nothing has been
+     * announced for a change to be compared against, and a chat that can move
+     * from its first moment needs no `chat/movableChanged` to say so. This is
+     * the one road every start of a backend goes through, so it is also the
+     * only place the baseline can be set without a second one to keep in step.
+     */
+    movableMoved(chatUri);
     /*
      * The draft somebody left on this chat before it was running.
      *
