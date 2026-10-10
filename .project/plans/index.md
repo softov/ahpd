@@ -162,6 +162,7 @@ Reference: [00-host.md](host/00-host.md)
 | [76 - A commit and a pull request get their words as the host is configured](host/76-a-commit-and-a-pull-request-get-their-words-as-configured/plan.md) | medium | built 2026-10-09 ([implemented.md](host/76-a-commit-and-a-pull-request-get-their-words-as-configured/implemented.md)) | - | - |
 | [77 - A client plugin lists its parts, and a part can be switched off](host/77-a-client-plugin-lists-its-parts/plan.md) | medium | built 2026-10-09 ([implemented.md](host/77-a-client-plugin-lists-its-parts/implemented.md)) | host/49 | - |
 | [78 - Completions offer each slash command once](host/78-completions-offer-each-command-once/plan.md) | medium | built 2026-10-09 ([implemented.md](host/78-completions-offer-each-command-once/implemented.md)) | - | - |
+| [79 - A quiet session sleeps, and wakes when something needs it](host/79-a-quiet-session-sleeps-and-wakes/plan.md) | high | planned 2026-10-10 | host/71 | 21 idle claude processes, out of swap |
 
 Next free number in `host`: `79`.
 
