@@ -43,7 +43,7 @@ jobs:
       # log at all - which is how a shell test killing this process group came
       # to look like a hang for an afternoon.
       - name: Tests
-        run: timeout 300 pnpm test
+        run: timeout 300 pnpm test:unit
 
       # Last, because it is the slowest and the only one that writes anything.
       - run: pnpm build
@@ -52,6 +52,28 @@ jobs:
       # something has packed it: `ahpd` ships no `src`, the libraries do.
       - name: Pack each package
         run: pnpm -r exec pnpm pack --pack-destination ${{ runner.temp }}
+
+  # The cases that start real processes and Docker containers: the daemon's
+  # command line, the HTTP server, the computer plugin and a nested host. They
+  # are most of the test time, so they run beside `check` on a runner of their
+  # own, under the same bound.
+  processes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Tests
+        run: timeout 300 pnpm test:processes
 
   # `resourceWrite` is symmetrical, so this host implements the whole of it and
   # so does `ahpc`. `packages/sdk/test/fixtures/resource-write.json` is the same file in both
