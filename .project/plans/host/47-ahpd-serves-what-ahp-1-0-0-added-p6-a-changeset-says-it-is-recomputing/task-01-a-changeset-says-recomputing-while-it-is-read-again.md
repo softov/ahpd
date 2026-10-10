@@ -1,6 +1,6 @@
 ---
 title: A changeset says recomputing while it is read again
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -32,3 +32,10 @@ When `contentMoved` re-reads a changeset whose watchers were last told `ready` o
 - `pnpm test` passes.
 
 ## Resume
+
+- `contentMoved` says `changeset/statusChanged` with `recomputing` before a re-read whose watchers already hold a result, and records the mark in `shown`.
+- The read then goes through `told` as before, so `ready` and any file action follow.
+- A read that answers nothing, or throws, dispatches the status from before the mark and records it again, in a `finally`. The failure goes on to `refreshWatched`'s catch.
+- Four cases in `packages/sdk/test/changes-refresh.test.ts`: an unchanged re-read, one that finds a file, one whose read throws, and a channel nobody watches.
+- The `changeset/statusChanged` row in `docs/AHP.md` says when each status is sent.
+- Found that the plan did not know: one expectation in `packages/sdk/test/operations.test.ts` had to change. That case now sees `recomputing` then `computing`, because the operation path also re-reads through `contentMoved`.

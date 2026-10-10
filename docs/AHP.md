@@ -286,7 +286,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
-| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. |
+| `changeset/statusChanged` | host | ✅ | When only the status moved and the files did not. `recomputing` goes out before a changeset is read again, so a client keeps the files it has. `ready` follows when the read comes back, and a read that gives nothing puts the previous status back. |
 | `changeset/fileSet` | host | ✅ | Chosen when fewer actions than files moved. |
 | `changeset/fileRemoved` | host | ✅ | The same choice, for a file that left the set. |
 | `changeset/filesReviewChanged` | client | ✅ | A client marking files reviewed. The one changeset action a client originates. |

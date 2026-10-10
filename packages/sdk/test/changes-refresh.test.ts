@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync, type FSWatcher } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
+import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { gitChanges } from '../src/changes.js';
 import { gitBranches } from '../src/repo/git.js';
 import { createHost } from '../src/host.js';
@@ -180,6 +181,165 @@ it('re-reads a changeset when git is changed outside the host', async () => {
     .at(-1)?.operations as { id: string; confirmation?: string }[] | undefined;
   await waitFor(() => carried()?.find((one) => one.id === 'commit')?.confirmation
     === "Commit 1 staged file as 'Echo session'?");
+});
+
+/** The actions that carry files, which a recomputation must not send. */
+const FILE_ACTIONS = [
+  'changeset/contentChanged', 'changeset/fileSet', 'changeset/fileRemoved', 'changeset/cleared',
+];
+
+/** Each action as one word, with a status named where the status is the point. */
+const kindsOf = (actions: Record<string, unknown>[]): string[] => actions
+  .map((one) => (one.type === 'changeset/statusChanged' ? `status:${String(one.status)}` : String(one.type)));
+
+/**
+ * The git source with its watch the test fires, and a re-read that always says
+ * something moved.
+ *
+ * The triggers are not what these cases are about, so nothing has to move in
+ * the tree for a re-read to be asked for.
+ */
+const reReads = (): { calls: Calls; source: ChangesetSource } => {
+  const base = gitChanges();
+  const calls: Calls = { refresh: 0, finished: 0, watched: undefined, stopped: 0, watches: 0 };
+  return {
+    calls,
+    source: {
+      ...base,
+      refresh: async (dir) => {
+        calls.refresh += 1;
+        try {
+          await base.refresh?.(dir);
+          return true;
+        }
+        finally {
+          calls.finished += 1;
+        }
+      },
+      watch: (_dir, onChange) => {
+        calls.watches += 1;
+        calls.watched = onChange;
+        return (): void => {
+          calls.stopped += 1;
+          calls.watched = undefined;
+        };
+      },
+    },
+  };
+};
+
+it('says recomputing before a re-read that finds the same files, and ready after', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { calls, source } = reReads();
+  const { client, peer: p } = await open(dir, source);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = channelActions(p, CHANGESET).length;
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
+
+  const after = channelActions(p, CHANGESET).slice(before);
+  // The status is the whole of what moved, so the two are all that arrives.
+  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
+});
+
+it('says recomputing before a re-read that finds a file, and the old files stay until ready', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { client, peer: p } = await open(dir, gitChanges());
+  const answer = await client.handle({ method: 'subscribe', params: { channel: CHANGESET } }) as {
+    snapshot: { state: { status: string; files: { id: string }[] } };
+  };
+  await settle(8);
+  const before = channelActions(p, CHANGESET).length;
+
+  writeFileSync(join(dir, 'b.txt'), 'b\n');
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:recomputing'));
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
+
+  const after = channelActions(p, CHANGESET).slice(before);
+  const kinds = kindsOf(after);
+  const recomputing = kinds.indexOf('status:recomputing');
+  const ready = kinds.indexOf('status:ready');
+  const file = kinds.findIndex((one) => FILE_ACTIONS.includes(one));
+  expect(kinds.slice(recomputing, ready + 1)).toEqual(['status:recomputing', 'status:ready']);
+  expect(file).toBeGreaterThan(ready);
+
+  // A client replaying these keeps the files it had while the read ran, which
+  // is what `recomputing` is for.
+  let state = answer.snapshot.state as unknown as Parameters<typeof changesetReducer>[0];
+  const held: { id: string }[] = answer.snapshot.state.files;
+  let during: { status: string; files: { id: string }[] } | undefined;
+  for (const one of after) {
+    state = changesetReducer(state, one as unknown as Parameters<typeof changesetReducer>[1]);
+    if (one.type === 'changeset/statusChanged' && one.status === 'recomputing') {
+      during = state as unknown as { status: string; files: { id: string }[] };
+    }
+  }
+  expect(during?.status).toBe('recomputing');
+  expect(during?.files.map((one) => one.id)).toEqual(held.map((one) => one.id));
+  expect(during?.files.map((one) => one.id)).not.toContain('b.txt');
+});
+
+it('puts the status back when a re-read gives nothing', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { calls, source } = reReads();
+  const base = gitChanges();
+  let reads = 0;
+  const changes: ChangesetSource = {
+    ...source,
+    // The subscribe's own read answers, so the changeset is on screen; the
+    // re-read that follows is the one that fails.
+    state: async (at, session, scope) => {
+      reads += 1;
+      if (reads > 1) throw new Error('the read failed');
+      return await base.state(at, session, scope);
+    },
+  };
+  const { client, peer: p } = await open(dir, changes);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = channelActions(p, CHANGESET).length;
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
+
+  const after = channelActions(p, CHANGESET).slice(before);
+  expect(reads).toBeGreaterThan(1);
+  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
+  expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
+});
+
+it('says nothing on a changeset channel nobody watches', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const second = 'ahp-session:/t';
+  const secondChangeset = `${second}/changeset/uncommitted`;
+  const { calls, source } = reReads();
+  const host = createHost({
+    path: dir, agents: [echo({ path: dir })], resources: fileResources(), terminals: shellTerminals(), changes: source,
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await client.handle({ method: 'createSession', params: { channel: second, provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: URI } });
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET)).includes('status:ready'));
+  // The second session is in the same directory and its changeset is nobody's
+  // screen, so the re-read says nothing about it.
+  expect(channelActions(p, secondChangeset)).toEqual([]);
 });
 
 it('moves the changeset when a client writes a file through the host', async () => {

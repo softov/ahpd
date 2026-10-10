@@ -265,6 +265,11 @@ export function createChangesets(ctx: HostContext): Changesets {
    * file has changed that list - which nothing else here says, because the
    * catalogue action carries the *set* of changesets a session offers and not
    * what is in any of them.
+   *
+   * A watcher that already holds a completed result is told `recomputing`
+   * before the read and keeps its files while it runs, which on a large
+   * repository is seconds of `git status` and `git diff`. A changeset with no
+   * completed result - a first read - has nothing to keep and is told nothing.
    */
   const contentMoved = async (uri: string): Promise<void> => {
     const done = new Set<string>();
@@ -274,10 +279,32 @@ export function createChangesets(ctx: HostContext): Changesets {
         done.add(channel);
         const at = changesetAt(channel);
         if (!at) continue;
-        const state = await options.changes?.state(at.dir, at.owner, at.scope);
-        if (!state) continue;
-        const operations = operationsOf(channel);
-        told(channel, state, operations);
+        const was = shown.get(channel);
+        const marked = was !== undefined && was.status !== 'computing' && was.status !== 'recomputing';
+        if (was && marked) {
+          dispatch(channel, { type: 'changeset/statusChanged', status: 'recomputing' });
+          // The files stay as they are, which is what the protocol asks of a
+          // recomputation and what keeps them on screen while it runs.
+          shown.set(channel, { files: was.files, status: 'recomputing' });
+        }
+        let settled = false;
+        try {
+          const state = await options.changes?.state(at.dir, at.owner, at.scope);
+          if (state) {
+            const operations = operationsOf(channel);
+            told(channel, state, operations);
+            settled = true;
+          }
+        }
+        finally {
+          // A read that gave nothing or threw leaves the status it found, so
+          // nobody is left holding a spin that ended. The failure goes on to
+          // the caller either way.
+          if (was && marked && !settled) {
+            dispatch(channel, { type: 'changeset/statusChanged', status: was.status });
+            shown.set(channel, was);
+          }
+        }
       }
     }
   };

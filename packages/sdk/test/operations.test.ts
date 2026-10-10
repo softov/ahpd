@@ -295,7 +295,10 @@ it('says the status moved without re-sending a list that did not', async () => {
   held.status = 'computing';
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'look' } });
   const said = actions(p, changeset).slice(start);
-  expect(said.filter((a) => a.type === 'changeset/statusChanged').map((a) => a.status)).toEqual(['computing']);
+  // `recomputing` first, because the watchers held a finished result and the
+  // re-read takes a moment; then whatever status the read came back with.
+  expect(said.filter((a) => a.type === 'changeset/statusChanged').map((a) => a.status))
+    .toEqual(['recomputing', 'computing']);
   expect(said.some((a) => a.type === 'changeset/contentChanged')).toBe(false);
 });
 

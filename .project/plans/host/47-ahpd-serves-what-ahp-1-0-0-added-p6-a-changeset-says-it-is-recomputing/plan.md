@@ -1,7 +1,7 @@
 ---
 title: A changeset being recomputed says so, and keeps its files
 domain: host
-status: planned
+status: built
 priority: low
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -50,7 +50,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A changeset says recomputing while it is read again](task-01-a-changeset-says-recomputing-while-it-is-read-again.md) | todo | - |
+| [01 - A changeset says recomputing while it is read again](task-01-a-changeset-says-recomputing-while-it-is-read-again.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -58,10 +58,10 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-changeset-says-recomputing-while-it-is-read-again.md](task-01-a-changeset-says-recomputing-while-it-is-read-again.md).
+- **Done so far:** task 01, implemented 2026-10-09. `contentMoved` says `changeset/statusChanged` with `recomputing` before a re-read whose watchers already hold a result. The files stay as they are through the read, and the read moves them on as today. A read that gives nothing or throws puts the previous status back. `docs/AHP.md` says so under `changeset/statusChanged`.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** `told` treats a status change with the same files as the whole update; after a `recomputing`, an unchanged read must still send `ready`, which it does because `shown` now says `recomputing`.
+- **Watch out for:** `told` treats a status change with the same files as the whole update; after a `recomputing`, an unchanged read must still send `ready`, which it does because `shown` now says `recomputing`. `packages/sdk/test/operations.test.ts` has an expectation that changed with this, because the operation path re-reads through `contentMoved` too.
 
 ## Final verification checklist
 
