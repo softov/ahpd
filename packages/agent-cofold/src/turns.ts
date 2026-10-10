@@ -1,5 +1,7 @@
 import { run } from '@cofold/agents';
-import type { Bag, Chosen, MessageFrom, Ran, Session } from '@ahpd/sdk';
+import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
+import { partsOf } from '@ahpd/sdk';
+import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
@@ -10,16 +12,69 @@ import type { SessionContext } from './context.js';
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
+/** The attachments a message a client sent carries, where it carries any. */
+const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
+  const kept = bag(message).attachments;
+  return Array.isArray(kept) ? kept as MessageAttachment[] : undefined;
+};
+
+/**
+ * A message's text and attachments, as the content parts cofold takes.
+ *
+ * `partsOf` decides what each attachment is - an image, an inlined text, or a
+ * line in the one reference block at the end - within the limits every backend
+ * shares, and `images` is the model in force, so a picture is sent as bytes
+ * only to a model that takes one.
+ *
+ * What is added here is cofold's own two shapes. The `source` the helper keeps
+ * for a backend whose block names what it carries is dropped: cofold sends the
+ * part itself, and a second copy of a pasted file's text in the transcript is
+ * a copy nothing reads.
+ */
+export const partsFor = async (
+  text: string,
+  attachments: MessageAttachment[],
+  images: boolean,
+): Promise<(TextPart | ImagePart)[]> => {
+  const parts = await partsOf(text, attachments, { images });
+  return parts.map((one) => (one.type === 'image'
+    ? { type: 'image', mimeType: one.mimeType, data: one.data }
+    : { type: 'text', text: one.text }));
+};
+
 /** What opening a turn and running the queue offer the other areas. */
 export interface Turns {
-  beginTurn: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string) => void;
+  beginTurn: (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    queuedMessageId?: string,
+    attachments?: MessageAttachment[],
+  ) => void;
   startNext: () => void;
+  /**
+   * Whether the model the running turn was built on takes an image.
+   *
+   * Read by `steer`, which has no agent of its own: a correction reaches the
+   * model the turn is already running on, and a picture sent to one that
+   * refuses images is a turn that fails rather than a correction.
+   */
+  takesImages: () => boolean;
 }
 
 export const createTurns = (
   ctx: SessionContext,
 ): Turns & { methods: Pick<Session, 'ran' | 'queue' | 'unqueue' | 'reorder'> } => {
   const { start, options, harness, sessionId, where, settings, turns, queued } = ctx;
+
+  /**
+   * Whether the model the turn now running was built on takes an image.
+   *
+   * Set where the agent is built, because that is the one place the adapter in
+   * force is known, and read by `steer` for a message sent into that same run.
+   */
+  let takesImages = false;
 
   /**
    * Open a turn on the wire, before anything runs it.
@@ -42,6 +97,7 @@ export const createTurns = (
     model?: Chosen,
     from?: MessageFrom,
     queuedMessageId?: string,
+    attachments?: MessageAttachment[],
   ): { mapping: TurnMapping; values: Record<string, unknown>; reference: string | undefined } | undefined => {
     if (ctx.closed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
@@ -66,6 +122,10 @@ export const createTurns = (
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        // The message's own, so a client reopening the chat reads the picture
+        // beside the words the turn was accepted with - and so a message the
+        // queue handed over keeps what was pasted into it.
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
         // The protocol's `Message.model`: the model this turn runs on, so a
         // client that reconnects shows it. The client's own `config` travels
         // with it, as a claude turn's does.
@@ -100,9 +160,23 @@ export const createTurns = (
 
   /**
    * Start a turn, whoever asked for it.
+   *
+   * A message with nothing attached runs in the tick the turn was opened in,
+   * on the text it arrived with. One with attachments waits a turn of the
+   * event loop first: `partsOf` reads the files the host wrote beside the
+   * message, and only then is the model given parts rather than words. The
+   * turn is open on the wire for that moment, so a stop or a close landing
+   * inside it is answered here rather than left to a run that never started.
    */
-  const startTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId);
+  const startTurn = (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    queuedMessageId?: string,
+    attachments?: MessageAttachment[],
+  ): void => {
+    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
     if (opened === undefined) return;
     /*
      * A turn that cannot start fails that turn, not the process.
@@ -113,25 +187,64 @@ export const createTurns = (
      * every other session with it; answered, it is one failed turn with the
      * reason on it.
      */
-    let live: ReturnType<typeof run>;
+    let agent: CofoldAgent;
     try {
-      const agent = ctx.agentOf(opened.values);
-      live = run({
-        agent,
-        session: sessionId,
-        workspace: where,
-        input: text,
-        // Kept on the run record, which is where a rebuilt turn reads its model.
-        ...(opened.reference !== undefined ? { model: opened.reference } : {}),
-      });
+      agent = ctx.agentOf(opened.values);
     }
     catch (error) {
       void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
       return;
     }
-    ctx.handle = live;
-    ctx.read(live, opened.mapping, turnId);
-    ctx.touch();
+    // Before the run, so a correction sent the moment the turn appears is read
+    // on the model this turn is about to run on.
+    takesImages = agent.model.features.images;
+
+    const launch = (input: string | ContentPart[]): void => {
+      let live: ReturnType<typeof run>;
+      try {
+        live = run({
+          agent,
+          session: sessionId,
+          workspace: where,
+          input,
+          // Kept on the run record, which is where a rebuilt turn reads its model.
+          ...(opened.reference !== undefined ? { model: opened.reference } : {}),
+        });
+      }
+      catch (error) {
+        void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
+        return;
+      }
+      ctx.handle = live;
+      ctx.read(live, opened.mapping, turnId);
+      ctx.touch();
+    };
+
+    if (attachments === undefined || attachments.length === 0) {
+      launch(text);
+      return;
+    }
+    /*
+     * `images` is what the model this turn resolves takes, never assumed: an
+     * image part to a model without the feature throws, and the message is
+     * stored, so every later turn of the session would fail on it too.
+     */
+    void (async (): Promise<void> => {
+      try {
+        const parts = await partsFor(text, attachments, agent.model.features.images);
+        // A turn somebody else settled while the files were being read is not
+        // this call's to start, and not this call's to fail either.
+        if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+        if (ctx.cancelRequested || ctx.closed) {
+          await ctx.apply(opened.mapping, turnId, stopped(turnId));
+          return;
+        }
+        launch(parts);
+      }
+      catch (error) {
+        await ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
+      }
+    })();
   };
 
   /** The `run.finished` a turn that never ran ends with. */
@@ -145,6 +258,31 @@ export const createTurns = (
     outcome: {
       status: 'failed' as const,
       error: { code, message: why instanceof Error ? why.message : String(why) },
+      usage: { inputTokens: 0, outputTokens: 0 },
+      steps: 0,
+      denials: [],
+    },
+  });
+
+  /**
+   * The `run.finished` a turn that was stopped before it ran ends with.
+   *
+   * A cancel reaches a run through its handle, and a turn whose message is
+   * still being read has no handle yet, so the stop finds nothing to stop. The
+   * turn is already open on the wire, though, and one that never settles is a
+   * spinner nothing can clear - so the ending it would have had is handed to
+   * the mapping, the way a turn that cannot start is.
+   */
+  const stopped = (turnId: string) => ({
+    seq: 0,
+    runId: `${turnId}:stopped`,
+    sessionId,
+    agentId: AGENT_ID,
+    at: new Date().toISOString(),
+    type: 'run.finished' as const,
+    outcome: {
+      status: 'cancelled' as const,
+      reason: 'the turn was stopped before it ran',
       usage: { inputTokens: 0, outputTokens: 0 },
       steps: 0,
       denials: [],
@@ -168,9 +306,10 @@ export const createTurns = (
     model: Chosen | undefined,
     from: MessageFrom | undefined,
     queuedMessageId: string | undefined,
+    attachments: MessageAttachment[] | undefined,
     why: unknown,
   ): void => {
-    const opened = openTurn(turnId, text, model, from, queuedMessageId);
+    const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
     if (opened === undefined) return;
     void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
   };
@@ -190,13 +329,20 @@ export const createTurns = (
    * asked to carry on from a point, and carrying on from somewhere else
    * without saying so is the one answer that is worse than an error.
    */
-  const beginTurn = (turnId: string, text: string, model?: Chosen, from?: MessageFrom, queuedMessageId?: string): void => {
+  const beginTurn = (
+    turnId: string,
+    text: string,
+    model?: Chosen,
+    from?: MessageFrom,
+    queuedMessageId?: string,
+    attachments?: MessageAttachment[],
+  ): void => {
     const start = (): void => {
       if (ctx.refused !== undefined) {
-        failTurn(turnId, text, model, from, queuedMessageId, ctx.refused);
+        failTurn(turnId, text, model, from, queuedMessageId, attachments, ctx.refused);
         return;
       }
-      startTurn(turnId, text, model, from, queuedMessageId);
+      startTurn(turnId, text, model, from, queuedMessageId, attachments);
     };
     if (ctx.refused !== undefined) {
       start();
@@ -242,6 +388,7 @@ export const createTurns = (
       next.model as Chosen | undefined,
       next.from as MessageFrom | undefined,
       String(next.id),
+      attachmentsOf(message),
     );
   };
 
@@ -368,11 +515,15 @@ export const createTurns = (
     runCommand(turnId, command, run, queuedAs);
   };
 
-  const queue: Session['queue'] = (id, text, model, from) => {
+  const queue: Session['queue'] = (id, text, model, from, attachments) => {
     const message: Bag = {
       text,
       ...(from?.origin !== undefined ? { origin: from.origin } : {}),
       ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+      // Held with the message, so a picture pasted into one that waits is
+      // still a picture when its turn comes - and so a client draws it while
+      // it waits rather than only after it runs.
+      ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
     };
     const entry: Bag = {
       id,
@@ -414,5 +565,10 @@ export const createTurns = (
     ctx.touch();
   };
 
-  return { beginTurn, startNext, methods: { ran, queue, unqueue, reorder } };
+  return {
+    beginTurn,
+    startNext,
+    takesImages: () => takesImages,
+    methods: { ran, queue, unqueue, reorder },
+  };
 };

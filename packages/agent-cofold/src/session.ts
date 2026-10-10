@@ -30,7 +30,7 @@ import type { SessionContext } from './context.js';
 import { createTurnAgent } from './turnagent.js';
 import { createRuns } from './runs.js';
 import { createPauses } from './pauses.js';
-import { createTurns } from './turns.js';
+import { createTurns, partsFor } from './turns.js';
 
 const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
@@ -285,7 +285,8 @@ export function cofoldSession(
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
-    begin: (turnId, text, model, from) => ctx.beginTurn(turnId, text, model, from),
+    begin: (turnId, text, model, from, attachments) =>
+      ctx.beginTurn(turnId, text, model, from, undefined, attachments),
 
     ...queueMethods,
 
@@ -311,13 +312,25 @@ export function cofoldSession(
      * transcript before the next model step. Answers whether there was a turn
      * to steer, because a chat with nothing running has nothing to inject
      * into.
+     *
+     * A correction with something attached is read the way a turn's own message
+     * is, on the model the running turn was built on - the turn is the one that
+     * answers, and a picture it cannot take would fail it. cofold takes the
+     * text and then the parts, and the first part is always that text, so only
+     * what follows it is handed over.
      */
-    steer: (_id, text) => {
+    steer: (_id, text, attachments) => {
       const live = ctx.handle;
       if (live === undefined) return false;
       // Fire and forget: the answer is whether a turn was running, which is
       // known here, and the submit settles when the transcript takes it.
-      void live.submit({ type: 'steer', text }).catch(() => {});
+      if (attachments === undefined || attachments.length === 0) {
+        void live.submit({ type: 'steer', text }).catch(() => {});
+        return true;
+      }
+      void partsFor(text, attachments, ctx.takesImages())
+        .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }))
+        .catch(() => {});
       return true;
     },
 

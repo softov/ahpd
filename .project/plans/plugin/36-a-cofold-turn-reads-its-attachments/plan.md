@@ -1,7 +1,7 @@
 ---
 title: A cofold turn reads its message's attachments, and sends an image only to a model that takes images
 domain: plugin
-status: planned
+status: built
 priority: medium
 created: 2026-10-06
 revalidated: 2026-10-07
@@ -62,7 +62,7 @@ Session.begin / queue / steer (host 68) -> partsOf(text, attachments, { images: 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - begin, queue and steer send their attachments to the run](task-01-begin-queue-and-steer-send-attachments.md) | todo | host 68 |
+| [01 - begin, queue and steer send their attachments to the run](task-01-begin-queue-and-steer-send-attachments.md) | done | host 68 |
 
 ## Risks and tradeoffs
 
@@ -70,13 +70,11 @@ Session.begin / queue / steer (host 68) -> partsOf(text, attachments, { images: 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** host 68, then task 01.
-- **Open questions:** none.
-- **Watch out for:** if cofold's run steer takes only a string, ask before changing `@cofold/agents`.
+- **Done so far:** task 01, built 2026-10-09.
+- **Next action:** none; see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] A test reads the `input` a run was started with for a small image on an images model, the same image on a text-only model, pasted text and a picked file.
-- [ ] `pnpm` gates green.
-- [ ] `plans/index.md` updated.
+- [x] A test reads the `input` a run was started with for a small image on an images model, the same image on a text-only model, pasted text and a picked file.
+- [x] `pnpm` gates green. `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and the full `npx vitest run --maxWorkers=2 --testTimeout=10000` - 267 files, 4733 passed. One file failed and passes alone: `packages/sdk/test/changes-refresh.test.ts`, which is host/47 p6's watcher wait and a load flake, not this plan's.
+- [x] `plans/index.md` updated.
