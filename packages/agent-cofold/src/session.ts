@@ -19,7 +19,7 @@
  */
 
 import type { ModelInfo, Store } from '@cofold/agents';
-import { idOf, uriOf } from '@ahpd/sdk';
+import { bag, idOf, str, uriOf } from '@ahpd/sdk';
 import type { Bag, Session, Start } from '@ahpd/sdk';
 import { rowOf, storeOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
@@ -31,9 +31,6 @@ import { createTurnAgent } from './turnagent.js';
 import { createRuns } from './runs.js';
 import { createPauses } from './pauses.js';
 import { createTurns, partsFor } from './turns.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /**
  * The cofold session id an AHP session URI names.

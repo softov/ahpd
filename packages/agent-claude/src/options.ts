@@ -15,7 +15,7 @@
  */
 
 import type { Bag } from '@ahpd/sdk';
-import { secretRef } from '@ahpd/sdk';
+import { bag, secretRef } from '@ahpd/sdk';
 import { modelsProblem } from './models.js';
 
 /**
@@ -262,12 +262,9 @@ const heldTo = (schema: Bag, value: unknown, option: string): string | undefined
   return undefined;
 };
 
-/** An object, or nothing: the shape both `env` and `extraArgs` are written in. */
-const bagOf = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Bag : {});
-
 /** The variable a `{ fromEnv }` value names, or nothing for any other value. */
 const fromEnvOf = (value: unknown): string | undefined => {
-  const named = bagOf(value).fromEnv;
+  const named = bag(value).fromEnv;
   return typeof named === 'string' && named !== '' ? named : undefined;
 };
 
@@ -280,7 +277,7 @@ const fromEnvOf = (value: unknown): string | undefined => {
  * the time this runs.
  */
 const variablesOf = (value: unknown, resolve = false): Record<string, string | null> => Object.fromEntries(
-  Object.entries(bagOf(value))
+  Object.entries(bag(value))
     .map(([name, one]): [string, unknown] => {
       const named = resolve ? fromEnvOf(one) : undefined;
       return [name, named === undefined ? one : process.env[named]];
@@ -298,6 +295,6 @@ const variablesOf = (value: unknown, resolve = false): Record<string, string | n
  * as it is, which is why it is neither stringified nor dropped.
  */
 const argValuesOf = (value: unknown): Record<string, string | null> => Object.fromEntries(
-  Object.entries(bagOf(value))
+  Object.entries(bag(value))
     .map(([name, one]): [string, string | null] => [name, one === null || typeof one === 'string' ? one : JSON.stringify(one)]),
 );

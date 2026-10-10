@@ -1,13 +1,10 @@
 import { resume, textOf } from '@cofold/agents';
 import type { RunEvent, RunHandle } from '@cofold/agents';
-import { Status } from '@ahpd/sdk';
+import { Status, bag, str } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
 import type { SessionContext } from './context.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /** What reading and reopening a run offers the other areas. */
 export interface Runs {

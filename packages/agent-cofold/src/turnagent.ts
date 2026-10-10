@@ -2,7 +2,7 @@ import { PERMISSION_MODES, createAgent, createAskUserTool, policyOf } from '@cof
 import type { Agent as CofoldAgent, PermissionMode, Tool } from '@cofold/agents';
 import { resolveWithin } from '@cofold/tools';
 import { workspaceSlug } from '@cofold/store-file';
-import { createClientCalls } from '@ahpd/sdk';
+import { createClientCalls, str } from '@ahpd/sdk';
 import type { Bag, ClientCallAnswer, Session } from '@ahpd/sdk';
 import { join } from 'node:path';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
@@ -116,8 +116,6 @@ export const AGENT_ID = 'cofold';
 
 /** What the model is told when neither the package nor the session named a prompt. */
 const DEFAULT_INSTRUCTIONS = 'You are a helpful assistant.';
-
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /** The tool's own name, off the `<clientId>__<name>` the model was offered. */
 const bareName = (name: string, owner: string): string =>

@@ -18,6 +18,7 @@
 import type { Capability } from '@cofold/agents';
 import { standardCapabilities } from '@cofold/tools';
 import type { SearchConfig, ToolsConfig } from '@cofold/tools';
+import { bag, isRecord } from '@ahpd/sdk';
 
 export type { SearchConfig, ToolsConfig } from '@cofold/tools';
 
@@ -50,26 +51,22 @@ export function capabilitiesOf(
   return names.length === 0 ? built : built.map((capability) => ({ ...capability, exclude: names }));
 }
 
-/** One value that is a plain object, or nothing for anything else. */
-const bag = (value: unknown): Record<string, unknown> | undefined =>
-  (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined);
-
 /** One non-empty string, or nothing for a value this package cannot use. */
 const text = (value: unknown): string | undefined =>
   (typeof value === 'string' && value.trim() !== '' ? value : undefined);
 
 /** The providers a `web.search` value names, in the order it lists them, or nothing for one that names none. */
 const searchOf = (value: unknown): SearchConfig | undefined => {
-  const held = bag(value);
-  if (held === undefined) return undefined;
+  if (!isRecord(value)) return undefined;
+  const held = value;
   const search: SearchConfig = {};
   for (const name of Object.keys(held)) {
     if (name === 'brave') {
-      const apiKey = text(bag(held.brave)?.apiKey);
+      const apiKey = text(bag(held.brave).apiKey);
       if (apiKey !== undefined) search.brave = { apiKey };
     }
     else if (name === 'tavily') {
-      const apiKey = text(bag(held.tavily)?.apiKey);
+      const apiKey = text(bag(held.tavily).apiKey);
       if (apiKey !== undefined) search.tavily = { apiKey };
     }
     else if (name === 'duckduckgo' && typeof held.duckduckgo === 'boolean') {
@@ -92,19 +89,19 @@ const searchOf = (value: unknown): SearchConfig | undefined => {
  * that is not a boolean is dropped, which leaves the rule on, as its default is.
  */
 export const toolsOf = (value: unknown): ToolsConfig | undefined => {
-  const held = bag(value);
-  if (held === undefined) return undefined;
+  if (!isRecord(value)) return undefined;
+  const held = value;
   const tools: ToolsConfig = {};
   if (typeof held.files === 'boolean') tools.files = held.files;
-  else if (bag(held.files) !== undefined) {
-    const requireRead = bag(held.files)?.requireRead;
+  else if (isRecord(held.files)) {
+    const requireRead = held.files.requireRead;
     tools.files = typeof requireRead === 'boolean' ? { requireRead } : {};
   }
   if (typeof held.shell === 'boolean') tools.shell = held.shell;
   if (typeof held.memory === 'boolean') tools.memory = held.memory;
   if (typeof held.web === 'boolean') tools.web = held.web;
-  else if (bag(held.web) !== undefined) {
-    const search = searchOf(bag(held.web)?.search);
+  else if (isRecord(held.web)) {
+    const search = searchOf(held.web.search);
     tools.web = search === undefined ? {} : { search };
   }
   return tools;

@@ -17,7 +17,7 @@
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
@@ -142,8 +142,6 @@ const failurePart = (message: string): Bag => ({
   kind: 'error',
   error: { errorType: 'turnFailed', message },
 });
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** One tool call as it is held between its proposal and its result. */
 interface OpenCall {

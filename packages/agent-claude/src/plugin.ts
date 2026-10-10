@@ -13,7 +13,7 @@
 
 import type { ModelEntry } from './models.js';
 import type { Plugin, PluginHost } from '@ahpd/sdk';
-import { secretRef } from '@ahpd/sdk';
+import { bag, reason, secretRef } from '@ahpd/sdk';
 import { claude } from './claude.js';
 import type { ClaudeOptions } from './claude.js';
 import { sharedCatalogue as oneListing } from './catalog.js';
@@ -109,19 +109,15 @@ const BUILT_IN = 'claude';
  */
 const variantsOf = (presets: Record<string, unknown>): Variant[] => {
   const out: Variant[] = [];
-  const builtIn = bagOf(presets[BUILT_IN]);
+  const builtIn = bag(presets[BUILT_IN]);
   if (presets[BUILT_IN] !== false) out.push({ ...builtIn, id: BUILT_IN, name: named(builtIn, 'Claude Code') });
   for (const [id, given] of Object.entries(presets)) {
     if (id === BUILT_IN || given === false) continue;
-    const variant = bagOf(given);
+    const variant = bag(given);
     out.push({ ...variant, id, name: named(variant, id) });
   }
   return out;
 };
-
-/** A preset as an object, however it was written. */
-const bagOf = (value: unknown): Record<string, unknown> =>
-  (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
 
 /** The name a variant was given, or the one it defaults to. */
 const named = (variant: Record<string, unknown>, fallback: string): string =>
@@ -138,7 +134,7 @@ const named = (variant: Record<string, unknown>, fallback: string): string =>
  */
 const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, unknown>> => {
   const out: Record<string, unknown> = {};
-  for (const [name, value] of Object.entries(bagOf(env))) {
+  for (const [name, value] of Object.entries(bag(env))) {
     const referenced = secretRef(value);
     if (referenced === undefined) {
       out[name] = value;
@@ -148,7 +144,7 @@ const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Re
       out[name] = await host.secret(referenced);
     }
     catch (error) {
-      throw new Error(`${by}.${name} names ${referenced}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${by}.${name} names ${referenced}: ${reason(error)}`);
     }
   }
   return out;
@@ -194,7 +190,7 @@ const optionsOf = async (host: PluginHost, values: Record<string, unknown>): Pro
     catch (error) {
       // Said once, and the terminal prints it above the line that says this
       // load failed; the refusal below names the presets, not the messages.
-      host.problem(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      host.problem(`${name}: ${reason(error)}`);
       dropped.push(id);
     }
   }

@@ -1,8 +1,7 @@
 import type { RunCommand } from '@cofold/agents';
+import { bag } from '@ahpd/sdk';
 import type { Bag, Session } from '@ahpd/sdk';
 import type { SessionContext } from './context.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** What a person is told the model was told when they turn a tool down. */
 const DECLINED = 'The person declined this action';

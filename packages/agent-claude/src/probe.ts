@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { customizationsOf, EFFORT_LABELS, EFFORTS } from './session.js';
-import type { Bag, Offered } from '@ahpd/sdk';
+import type { Offered } from '@ahpd/sdk';
+import { bag, str } from '@ahpd/sdk';
 
 /**
  * Reads what the agent backend offers, once, without creating a session.
@@ -11,9 +12,7 @@ import type { Bag, Offered } from '@ahpd/sdk';
  * and closes it. No prompt is sent and no transcript is written.
  */
 
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /**
  * How hard *this* model can be told to think, as its own config schema.

@@ -1,6 +1,6 @@
 import { run } from '@cofold/agents';
 import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
-import { partsOf } from '@ahpd/sdk';
+import { bag, partsOf, reason, str } from '@ahpd/sdk';
 import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
@@ -8,9 +8,6 @@ import type { TurnMapping } from './mapping.js';
 import { toolCallPart, toolReadyAction, toolStartAction } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /** The attachments a message a client sent carries, where it carries any. */
 const attachmentsOf = (message: unknown): MessageAttachment[] | undefined => {
@@ -257,7 +254,7 @@ export const createTurns = (
     type: 'run.finished' as const,
     outcome: {
       status: 'failed' as const,
-      error: { code, message: why instanceof Error ? why.message : String(why) },
+      error: { code, message: reason(why) },
       usage: { inputTokens: 0, outputTokens: 0 },
       steps: 0,
       denials: [],

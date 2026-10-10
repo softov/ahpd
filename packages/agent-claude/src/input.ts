@@ -1,4 +1,5 @@
 import type { Bag, OnWire } from '@ahpd/sdk';
+import { bag, str } from '@ahpd/sdk';
 import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMarkdown } from '@microsoft/agent-host-protocol';
 
 /**
@@ -8,8 +9,6 @@ import type { ChatInputAnswer, ChatInputQuestion, ChatInputRequest, StringOrMark
  * reads, and the input a client parses.
  */
 
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
 
 /**

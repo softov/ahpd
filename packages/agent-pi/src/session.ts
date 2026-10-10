@@ -25,7 +25,7 @@ import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Status, callTimes, createClientCalls, idFor, partsOf, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
+import { Status, bag, callTimes, createClientCalls, idFor, partsOf, reason, startOf, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
   Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Ran, Session, Start, ToolEffects,
 } from '@ahpd/sdk';
@@ -42,8 +42,6 @@ import { toPiTool } from './tools.js';
 import type { RunByClient } from './tools.js';
 import type { PiOptions, PiTurn, WatchedSession, WatchedTurn } from './types.js';
 import { modeOf, PERMISSION_MODES, permissionModeProperty } from './types.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** The space characters pi folds to a plain space before it reads a path. */
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -966,7 +964,7 @@ export function piSession(
          */
       }
       catch (error) {
-        finish('error', error instanceof Error ? error.message : String(error));
+        finish('error', reason(error));
       }
     })();
   };
@@ -1050,7 +1048,7 @@ export function piSession(
       });
       finish('complete');
     }).catch((error: unknown) => {
-      finish('error', error instanceof Error ? error.message : String(error));
+      finish('error', reason(error));
     });
   };
 
@@ -1173,7 +1171,7 @@ export function piSession(
             turnId: String(bag(active).id ?? ''),
             part: {
               kind: 'error',
-              error: { errorType: 'turnFailed', message: error instanceof Error ? error.message : String(error) },
+              error: { errorType: 'turnFailed', message: reason(error) },
             },
           });
         });

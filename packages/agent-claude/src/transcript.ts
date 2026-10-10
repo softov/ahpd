@@ -1,7 +1,7 @@
 import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
-import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -23,9 +23,7 @@ import { ranOn } from './models.js';
  * backend's turns.
  */
 
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 const list = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 function resultText(content: unknown): string | undefined {
   if (typeof content === 'string') return content;

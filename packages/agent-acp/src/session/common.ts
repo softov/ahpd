@@ -1,10 +1,9 @@
-import type { Bag } from '@ahpd/sdk';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
+import { bag, reason } from '@ahpd/sdk';
 
 /** The title a session carries until somebody says something. */
 const UNTITLED = 'ACP session';
 
-const messageOf = (why: unknown): string => (why instanceof Error ? why.message : String(why));
+/** One error, read by the sdk's reader and named as this package names it. */
+const messageOf = reason;
 
 export { bag, UNTITLED, messageOf };

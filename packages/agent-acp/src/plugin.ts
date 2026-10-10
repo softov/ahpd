@@ -15,7 +15,7 @@
  */
 
 import type { Plugin, PluginHost, SecretRef, Seed, ToolsChanged } from '@ahpd/sdk';
-import { secretRef } from '@ahpd/sdk';
+import { bag, reason, secretRef } from '@ahpd/sdk';
 import { acpAgent } from './agent.js';
 import { presets as shipped } from './presets.js';
 import type { AcpMachine, AcpOptions } from './types.js';
@@ -108,10 +108,6 @@ const changedOf = (value: unknown): ToolsChanged | undefined =>
 /** The keys that belong to a preset rather than to the load, and are refused above one. */
 const PER_PRESET = ['command', 'args', 'env', 'cwd', 'provider', 'displayName', 'description', 'model', 'authenticate', 'honoursTrust', 'machine'] as const;
 
-/** A preset as an object, however it was written. */
-const bagOf = (value: unknown): Record<string, unknown> =>
-  (typeof value === 'object' && value !== null && !Array.isArray(value) ? value : {}) as Record<string, unknown>;
-
 /**
  * One preset's `env`, with every `{ "$secret": "<name>" }` read through the host.
  *
@@ -123,7 +119,7 @@ const bagOf = (value: unknown): Record<string, unknown> =>
  */
 const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Record<string, string>> => {
   const out: Record<string, string> = {};
-  for (const [name, value] of Object.entries(bagOf(env))) {
+  for (const [name, value] of Object.entries(bag(env))) {
     const referenced = secretRef(value);
     if (referenced === undefined) {
       out[name] = value as string;
@@ -133,7 +129,7 @@ const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Re
       out[name] = await host.secret(referenced);
     }
     catch (error) {
-      throw new Error(`${by}.${name} names ${referenced}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${by}.${name} names ${referenced}: ${reason(error)}`);
     }
   }
   return out;
@@ -141,7 +137,7 @@ const secretsOf = async (host: PluginHost, env: unknown, by: string): Promise<Re
 
 /** The variable a `{ "fromEnv": "<VAR>" }` value names, or nothing for any other value. */
 const fromEnvOf = (value: unknown): string | undefined => {
-  const held = bagOf(value);
+  const held = bag(value);
   const named = held.fromEnv;
   return Object.keys(held).length === 1 && typeof named === 'string' && named !== '' ? named : undefined;
 };
@@ -186,7 +182,7 @@ const machineOf = (said: unknown, by: string): AcpMachine => {
   if (block.copy !== undefined) {
     if (!Array.isArray(block.copy)) throw new Error(`${at}.copy is not a list`);
     block.copy.forEach((one: unknown, index) => {
-      const { source, target } = bagOf(one);
+      const { source, target } = bag(one);
       if (typeof source !== 'string' || source === '' || typeof target !== 'string' || target === '') {
         throw new Error(`${at}.copy[${String(index)}] needs a source and a target`);
       }
@@ -218,7 +214,7 @@ const PART_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const seedsOf = (said: unknown, at: string): Seed[] => {
   if (!Array.isArray(said)) throw new Error(`${at} is not a list`);
   return said.map((one: unknown, index): Seed => {
-    const { source, target, keep, drop } = bagOf(one);
+    const { source, target, keep, drop } = bag(one);
     const where = `${at}[${String(index)}]`;
     if (typeof source !== 'string' || source === '') throw new Error(`${where} needs a source`);
     if (target !== undefined && typeof target !== 'string') throw new Error(`${where}.target is not a string`);
@@ -279,7 +275,7 @@ const presetOf = async (
   const env = { ...(taken?.env ?? {}), ...await secretsOf(host, said.env, `${by}.env`) };
   // Checked here rather than by the schema, which says this key is an object
   // and cannot say the id inside it is the sign-in to a method of no name.
-  const own = said.authenticate === undefined ? undefined : bagOf(said.authenticate);
+  const own = said.authenticate === undefined ? undefined : bag(said.authenticate);
   if (own !== undefined && (typeof own.methodId !== 'string' || own.methodId === '')) {
     throw new Error(`${by}.authenticate.methodId is required`);
   }
@@ -349,15 +345,15 @@ export const optionsOf = async (host: PluginHost, values: Record<string, unknown
   }
   const held: AcpOptions[] = [];
   const dropped: string[] = [];
-  for (const [id, given] of Object.entries(bagOf(values.presets))) {
+  for (const [id, given] of Object.entries(bag(values.presets))) {
     try {
-      held.push(await presetOf(host, id, bagOf(given), values));
+      held.push(await presetOf(host, id, bag(given), values));
     }
     catch (error) {
       // Said twice, once where it is asked for and once where a start reads
       // what it came up without; the refusal below names the presets, not the
       // messages.
-      const line = `${name}: ${error instanceof Error ? error.message : String(error)}`;
+      const line = `${name}: ${reason(error)}`;
       host.log(line);
       host.problem(line);
       dropped.push(id);

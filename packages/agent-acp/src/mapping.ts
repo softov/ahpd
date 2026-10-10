@@ -15,11 +15,9 @@
  */
 
 import type { ContentBlock, Diff, PermissionOption, PlanEntry, SessionUpdate, ToolCall, ToolCallStatus, ToolCallUpdate } from '@agentclientprotocol/sdk';
-import { callTimes, uriOf, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, uriOf, withCallTimes } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 import type { AcpCall, AcpTurn, ConfirmationOption } from './types.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** The text of a content block, or nothing for a kind this bridge does not carry. */
 const textOf = (content: ContentBlock): string | undefined =>

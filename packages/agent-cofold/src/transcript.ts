@@ -21,7 +21,7 @@
 import { textOf } from '@cofold/agents';
 import type { Message, Store, ToolCallPart, ToolResultPart, Usage } from '@cofold/agents';
 import type { Agent, Bag } from '@ahpd/sdk';
-import { callTimes } from '@ahpd/sdk';
+import { bag, callTimes, str } from '@ahpd/sdk';
 import { compactionNotice } from './mapping.js';
 import { describe, toolMetaOf } from './tools.js';
 
@@ -40,9 +40,6 @@ export type TranscriptTurn = Transcript[number];
 type WireMessage = TranscriptTurn['message'];
 type WireUsage = NonNullable<TranscriptTurn['usage']>;
 type WireState = TranscriptTurn['state'];
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
-const str = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
 /** How a tool call moved, as its events recorded it. */
 interface Timing {

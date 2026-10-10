@@ -24,10 +24,8 @@
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag } from '@ahpd/sdk';
-import { callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
-
-const bag = (value: unknown): Bag => (typeof value === 'object' && value !== null ? value as Bag : {});
 
 /** The part this turn already holds under an id. */
 const partOf = (turn: PiTurn, id: string): Bag | undefined => turn.parts.find((held) => held.id === id);

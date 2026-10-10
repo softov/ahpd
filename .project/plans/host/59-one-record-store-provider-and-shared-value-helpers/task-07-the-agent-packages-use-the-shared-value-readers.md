@@ -1,6 +1,6 @@
 ---
 title: The agent packages use the shared value readers
-status: todo
+status: done
 depends: [task-05-the-plugins-sdk-peer-range-names-the-sdk-that-exports-the-helpers.md]
 layer: "agent-acp, agent-claude, agent-cofold, agent-pi"
 refs:
@@ -39,6 +39,22 @@ No agent package defines `bag`, `bagOf`, `str` or an error-message reader of its
 
 ## Resume
 
-Not started, and it cannot be: this task's Files name `packages/agent-cofold/src/session.ts`, `runs.ts` and `pauses.ts`, and the build's own rule is that those three (and `context.ts`) are being changed by another build right now - "if a task needs them, stop and report". Three of the eight `agent-cofold` files it would edit are those, and the task is one sweep whose validation (`rg -n "^(export )?const (bag|bagOf|str) =" packages/agent-*/src` finding nothing) only holds when all of it is done, so a partial pass over the other three packages would leave the sweep half-applied rather than closer.
+Built, awaiting review, in nineteen files: 54 insertions and 98 deletions. Every agent package takes `bag`, `str` and `reason` from `@ahpd/sdk`, and no package defines them any more. Every call site kept its own name, so the diff is imports and deletions. The refs and Files above name definitions that have since moved (`agent-acp/src/plugin.ts`'s `bagOf` was L94-95, and was L112 when this task ran), and the sweep is the same either way.
 
-The status stays `todo`. What is left is exactly what the task says: the four agent packages' `bag`, `bagOf`, `str` and error-message copies, replaced by imports from `@ahpd/sdk`, with the three array-refusing `bagOf` (agent-acp `plugin.ts:94`, agent-claude `options.ts:241` and `plugin.ts:107`) keeping their refusal. The `rg` agrees with the task's scope: it matches `bag`/`bagOf`/`str` definitions only under `packages/agent-claude`, `packages/agent-acp`, `packages/agent-pi` and `packages/agent-cofold`, so nothing outside those four is left over from task 01.
+`agent-acp`: `session/common.ts` imports `bag` and re-exports it, and `messageOf` is the one line `const messageOf = reason;`, so its four importers stay as they are. `mapping.ts` takes `bag` from the sdk. `plugin.ts`'s `bagOf` was the shared `bag` written out (`isRecord(value) ? value : {}`), so its seven call sites read `bag(...)` and the definition went.
+
+`agent-claude`: `probe.ts`, `transcript.ts`, `input.ts` and `session/common.ts` import `bag` and `str`, and the last re-exports both. `options.ts` and `plugin.ts` take `bag` for their `bagOf`. The local `list` stays in each of those four: it answers `unknown[]`, which is what its callers iterate, and `strings` answers `string[]`.
+
+`agent-cofold`: eight files take their readers from the sdk now, seven of them `bag` and five `str` too (`turnagent.ts` had only a `str`). `capabilities.ts`'s `bag` answered `undefined` for a value that is not a plain object, and its callers test for exactly that, so it is `isRecord` there: both guards are `if (!isRecord(value)) return undefined;`, and the two tests are `isRecord(held.files)` and `isRecord(held.web)`. Its two value reads take the shared `bag`.
+
+`agent-pi`: `session.ts` and `mapping.ts` import `bag` for their copies, and `session.ts` `reason` for its three inline readers.
+
+The shared `bag` refuses an array, where sixteen of the copies it replaces admitted one. That is the one behaviour this change can move, so every call site was read first. None passes a list. The only structural uses are five spreads, of `_meta`, a preset's `settings` and a JSON-Schema `permissionMode`, each an object by protocol. `agent-cofold`'s `capabilities.ts` is the one place a non-object answer was tested for, and it tests with `isRecord` now.
+
+The three array-refusing `bagOf` keep that refusal, because the shared `bag` is that refusal written once. The non-empty readers stay where they are, as step 3 and the plan's decision ask: `text` in `agent-cofold`'s `capabilities.ts` and `agent.ts`, `word` in its `config.ts`, and `text` in `agent-pi/src/mapping.ts`.
+
+The plan's risk line about the inline error messages was applied where a file was already open: `agent-acp/src/plugin.ts` twice, `agent-claude/src/plugin.ts` twice, `agent-cofold/src/turns.ts` once and `agent-pi/src/session.ts` three times now read `reason(error)`. The copies in files this task did not open (`agent-claude/src/models.ts`, `session/query.ts`, `session/config.ts`, `session/clienttools.ts`) stay, because a sweep of the rest is not this plan.
+
+This task's own Resume said it could not start: its Files name `packages/agent-cofold/src/session.ts`, `runs.ts` and `pauses.ts`, which plugin/40 held. plugin/40 merged as commit 9c5491e, and the three files are on this branch, so that block is gone and the one sweep holds.
+
+Gates: `pnpm install` answered `Already up to date`, `node tools/schema.mjs` passed, `pnpm build` clean, `pnpm typecheck` clean, `pnpm boundary` clean (9 packages, none undeclared), `npx vitest run --maxWorkers=2 --testTimeout=10000` 269 files and 4788 tests passed. `rg -n "^(export )?const (bag|bagOf|str) =" packages/agent-*/src` finds nothing, and the plan's checklist grep over `packages/*/src` finds only `packages/sdk/src/values.ts`.
