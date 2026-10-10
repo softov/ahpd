@@ -249,14 +249,16 @@ it('says recomputing before a re-read that finds the same files, and ready after
 it('says recomputing before a re-read that finds a file, and the old files stay until ready', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
-  const { client, peer: p } = await open(dir, gitChanges());
+  const { calls, source } = counting();
+  const { client, peer: p } = await open(dir, source);
   const answer = await client.handle({ method: 'subscribe', params: { channel: CHANGESET } }) as {
     snapshot: { state: { status: string; files: { id: string }[] } };
   };
-  await settle(8);
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
   const before = channelActions(p, CHANGESET).length;
 
   writeFileSync(join(dir, 'b.txt'), 'b\n');
+  calls.watched?.();
   await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:recomputing'));
   await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
