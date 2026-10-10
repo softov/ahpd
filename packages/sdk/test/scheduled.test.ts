@@ -7,6 +7,7 @@ import { echo } from '../../../examples/echo/agent.js';
 import { scheduledAutomations } from '../src/scheduled.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { AutomationStore } from '../src/types/automations.js';
+import type { CapturedPlugin } from '../src/types/clientplugins.js';
 import type { Bag } from '../src/types/common.js';
 
 /*
@@ -294,6 +295,35 @@ describe('across a restart', () => {
     store = scheduledAutomations({ file, now: second.now, timer: second.timer });
     expect(store.get(ONE)?.definition.title).toBe('Nightly review');
     expect(store.get(ONE)?.nextRunAt).toBe('2026-09-01T09:00:00.000Z');
+  });
+
+  it('brings back the client plugins a template had copied', () => {
+    const copy: CapturedPlugin = { type: 'plugin', id: 'p1', uri: 'file:///copies/one', name: 'one', load: { kind: 'loaded' } };
+    const first = clockwork();
+    const one = scheduledAutomations({ file, now: first.now, timer: first.timer });
+    one.create(ONE, nightly(), undefined, undefined, [copy]);
+    one.close?.();
+
+    const second = clockwork();
+    store = scheduledAutomations({ file, now: second.now, timer: second.timer });
+    // A copy is a directory on this machine, so a host that forgot them across
+    // a restart would run the automation with none of what its template names.
+    expect(store.get(ONE)?.customizations).toEqual([copy]);
+  });
+
+  it('reads a stored copy that names no id or no place as none at all', () => {
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      automations: [{
+        resource: ONE,
+        definition: nightly(),
+        customizations: [{ id: 'p1' }, { id: 'p2', uri: 'file:///copies/two', name: 'two', type: 'plugin' }],
+      }],
+    }));
+    const clock = clockwork();
+    store = scheduledAutomations({ file, now: clock.now, timer: clock.timer });
+    // What a run can load is a directory, so a row without one is not a copy.
+    expect(store.get(ONE)?.customizations).toEqual([{ id: 'p2', uri: 'file:///copies/two', name: 'two', type: 'plugin' }]);
   });
 
   it('writes the file owner-only, because it names whose work an automation is', () => {

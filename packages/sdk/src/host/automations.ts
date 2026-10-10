@@ -3,6 +3,7 @@ import { Status, idOf } from '../catalog.js';
 import { RpcError } from '../rpc.js';
 import { EVENT_TRIGGERS, pluginTriggerTypes } from '../automations.js';
 import { presetById } from '../triggerpresets.js';
+import { localPath } from '../fileuri.js';
 import { createRuleEngine } from '../triggers.js';
 import { wakeMessage } from '../wakemessage.js';
 import { bag } from '../values.js';
@@ -30,6 +31,14 @@ const OVERLAPS = ['queue', 'steer', 'parallel', 'skip'];
 /** The kinds that end a session's turn, which is when its chat is free again. */
 const ENDING = new Set<SessionEventKind>(['turnCompleted', 'turnFailed', 'turnCancelled']);
 
+/**
+ * Who a run's own plugins are announced as.
+ *
+ * An active client, as a person's window is, and named for what it is rather
+ * than for anybody: the plugins it carries are the automation's, and a client
+ * reading a session that began at nine is owed something that says so.
+ */
+const AUTOMATION_CLIENT = 'Automation';
 
 /** The event ids a saved trigger names, in the order the client put them. */
 const eventsOf = (trigger: Bag): string[] => (Array.isArray(trigger.events) ? trigger.events : [])
@@ -633,6 +642,38 @@ export function createAutomations(ctx: HostContext): Automations {
     // A source in the config is made into a machine before anything runs, the
     // same step a client's `createSession` takes.
     await placedIn(uri, provider, config, where, wanted.owner);
+    /*
+     * The plugins this automation captured, put on the session before it is.
+     *
+     * The same path a client announcing itself takes - the active client goes
+     * into the presence a session's state is built from, and the chats are
+     * retooled - because what loads a client plugin is one route and a run may
+     * not take a shorter one. It is the host that is the client here, which is
+     * the whole point: nobody is at the keyboard when nine o'clock comes.
+     *
+     * Awaited, which a client's own announcement never is. A backend takes its
+     * plugins when it starts and offers no way to add one after, so a session
+     * opened while the copy was still being made would run with none of them.
+     *
+     * The copies' URIs are this host's own paths, under the directory they were
+     * copied into, so the copy a session makes of them is the directory it is
+     * already in and no client is asked for a byte.
+     *
+     * And they are this run's for as long as it lasts, which is said here for
+     * the same reason: an automation removed while this turn is still working
+     * would otherwise take the directory out from under it.
+     */
+    if (wanted.customizations !== undefined && wanted.customizations.length > 0) {
+      options.clientPlugins?.spare(wanted.customizations.map((one) => localPath(one.uri)));
+      ctx.presence.set(idOf(uri), new Map([[AUTOMATION_CLIENT, {
+        clientId: AUTOMATION_CLIENT,
+        displayName: AUTOMATION_CLIENT,
+        tools: [],
+        customizations: wanted.customizations,
+      }]]));
+      ctx.retool(uri);
+      await ctx.pluginsSettled(uri);
+    }
     openSession(
       uri,
       provider,

@@ -2,6 +2,7 @@
 
 import type { AutomationOperation, AutomationTriggerDefinition, SessionOriginKind } from '@microsoft/agent-host-protocol';
 
+import type { CapturedPlugin } from './clientplugins.js';
 import type { Bag } from './common.js';
 import type { Owner } from './usage.js';
 
@@ -17,6 +18,21 @@ export interface Automation {
   resource: string;
   /** What the client asked for. Opaque here except for `enabled` and `title`. */
   definition: Bag;
+  /**
+   * The client plugins this automation's template names, as this host's own copies.
+   *
+   * The store's field rather than the definition's, and the whole reason it is
+   * one: a template names a plugin by the client's URI, and a client is not
+   * there when the automation runs at nine. So the host copies each one while
+   * the client that wrote it is still connected, and what a run loads is a
+   * path here.
+   *
+   * Absent means the automation names none, which is every automation written
+   * before a host could capture them and every one whose template says nothing
+   * about plugins. A definition naming plugins that this host could not copy
+   * is a write that was refused, so the two never disagree.
+   */
+  customizations?: CapturedPlugin[];
   /**
    * Who made it - decision `work-is-owned-by-a-typed-reference`.
    *
@@ -130,6 +146,16 @@ export interface StartSession {
   /** The model the session template names, as the protocol's `ModelSelection`. */
   model?: unknown;
   /**
+   * The plugins the session is handed, as the automation's own copies.
+   *
+   * Read off the automation rather than off its definition, because what the
+   * template names lives on a client and what a run can load is what the host
+   * copied. The host sets these on the session as an `Automation` active
+   * client - the same thing a client announcing itself in a session does - so
+   * one path loads them whether a person or a clock started the run.
+   */
+  customizations?: CapturedPlugin[];
+  /**
    * What the session is called, where whoever started it already knows.
    *
    * Written down before the session is announced, so a row that appears as
@@ -222,10 +248,22 @@ export interface AutomationStore {
    * arriving from a client has used none of its allowance yet, and a store that
    * let a create carry a count would be letting a client write a run history
    * nobody ran.
+   *
+   * `customizations` is the copies the host made of what the template names,
+   * and is handed in for the same reason the definition is: only the host can
+   * read a client, and a store that copied a plugin would be a second thing
+   * that knows what a client is. Absent means the template names none.
    */
-  create(resource: string, definition: Bag, owner?: Owner, runCount?: number): AutomationEntry;
-  /** Patch one. Absent keys are left alone, which is what a patch means. */
-  update(resource: string, changes: Bag): AutomationEntry | undefined;
+  create(resource: string, definition: Bag, owner?: Owner, runCount?: number, customizations?: CapturedPlugin[]): AutomationEntry;
+  /**
+   * Patch one. Absent keys are left alone, which is what a patch means.
+   *
+   * `customizations` follows the same rule and is the reason it is not a
+   * parameter of its own: a patch whose template says nothing about plugins is
+   * a patch about something else, so the copies it already has stay - while an
+   * empty list is a template that names none now, and takes them all away.
+   */
+  update(resource: string, changes: Bag, customizations?: CapturedPlugin[]): AutomationEntry | undefined;
   /** Forget one, and everything it ever did. */
   remove(resource: string): boolean;
 

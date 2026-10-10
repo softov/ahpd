@@ -235,8 +235,16 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
          * - a run here is a session, and disposing it is how it stops - and
          * `runHistoryLimit` because retention is the store's, which is what
          * an absent one means.
+         *
+         * `customizations` says a template may name client plugins and this
+         * host will copy them, which needs the port that copies a client's
+         * plugin at all. It is advertised only where there is one: a host with
+         * nowhere to put a copy refuses a template naming any, and a client
+         * told otherwise would be a client writing one that never runs.
          */
-        ...(options.automations ? { automations: { create: {}, schedules: {} } } : {}),
+        ...(options.automations
+          ? { automations: { create: {}, schedules: {}, ...(options.clientPlugins ? { customizations: {} } : {}) } }
+          : {}),
         /*
          * `!` at the start of a message means "run this", not "answer this".
          *

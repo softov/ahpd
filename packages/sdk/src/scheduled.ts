@@ -4,6 +4,7 @@ import { disableConditionsOf, memoryAutomations } from './automations.js';
 import { readJson, writeJsonAtomic } from './jsonfile.js';
 import { nextOccurrence, parseCron, type Cron } from './cron.js';
 import type { Automation, AutomationEntry, AutomationStore } from './types/automations.js';
+import type { CapturedPlugin } from './types/clientplugins.js';
 import type { Bag } from './types/common.js';
 import { bag, ownerOf } from './values.js';
 
@@ -47,6 +48,16 @@ interface Saved {
      * A row without it - every row written before this - reads as none used.
      */
     runCount?: number;
+    /**
+     * The copies of the client plugins the template names, as the host made
+     * them.
+     *
+     * Written down because a restart does not bring the client back: the copy
+     * is on this disk already, and an automation that came back without it
+     * would be one whose every run the host then refuses for a plugin it
+     * cannot capture.
+     */
+    customizations?: CapturedPlugin[];
     createdAt: string;
     modifiedAt: string;
     /** The occurrence this was waiting for when it was written. What catch-up reads. */
@@ -188,6 +199,7 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
           // entry carries too - a count written for an automation that has none
           // is a number nothing will ever read.
           ...(one.runCount === undefined ? {} : { runCount: one.runCount }),
+          ...(one.customizations === undefined ? {} : { customizations: one.customizations }),
           ...(stamps.get(one.resource) ?? { createdAt: one.createdAt, modifiedAt: one.modifiedAt }),
           ...(at ? { nextRunAt: at.toISOString() } : {}),
         };
@@ -338,7 +350,14 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       // What an allowance has paid for survives with the definition, because
       // the protocol says it is not reconstructed from the runs.
       const runCount = typeof one.runCount === 'number' ? one.runCount : undefined;
-      inner.create(one.resource, bag(one.definition), ownerOf(one.owner), runCount);
+      // Read for what a copy has to be, and nothing more: this is the host's
+      // own file, but a copy without an id or a URI is one no session could be
+      // handed, and one of those in the file is not a reason to lose the
+      // definition it sits beside.
+      const customizations = Array.isArray(one.customizations)
+        ? one.customizations.filter((copy) => typeof copy?.id === 'string' && typeof copy.uri === 'string')
+        : undefined;
+      inner.create(one.resource, bag(one.definition), ownerOf(one.owner), runCount, customizations);
       stamps.set(one.resource, {
         createdAt: String(one.createdAt ?? now().toISOString()),
         modifiedAt: String(one.modifiedAt ?? now().toISOString()),
@@ -395,8 +414,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
      */
     triggers: (options) => inner.triggers(options),
 
-    create: (resource, definition, owner) => {
-      const made = inner.create(resource, definition, owner);
+    create: (resource, definition, owner, runCount, customizations) => {
+      const made = inner.create(resource, definition, owner, runCount, customizations);
       stamps.set(resource, { createdAt: made.createdAt, modifiedAt: made.modifiedAt });
       // `onChanged` above has already rearmed and written; the stamp is set
       // before this returns so what it wrote carries the right one.
@@ -404,8 +423,8 @@ export function scheduledAutomations(options: ScheduledOptions): AutomationStore
       return dressed(inner.get(resource) ?? made);
     },
 
-    update: (resource, changes) => {
-      const after = inner.update(resource, changes);
+    update: (resource, changes, customizations) => {
+      const after = inner.update(resource, changes, customizations);
       if (!after) return undefined;
       const stamp = stamps.get(resource);
       if (stamp) stamps.set(resource, { ...stamp, modifiedAt: after.modifiedAt });

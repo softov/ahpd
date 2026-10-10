@@ -17,14 +17,25 @@
  * to fill a disk: the copies least recently used go first, a per-plugin limit
  * before the whole-directory one, and a directory that will not go is left
  * where it is.
+ *
+ * An automation's plugins are copied in here too, under `automations/`, and
+ * they are deliberately outside all of that. A run happens with nobody
+ * connected, so what it loads has to outlive the client that wrote the
+ * automation and may not be evicted by a session that announced more plugins
+ * than it did - so these copies are not in the order, and what removes them is
+ * the automation that named them going away, once no run is reading one and no
+ * write is still capturing one.
  */
 
-import { mkdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readdirSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import { localPath } from './fileuri.js';
+import { localPath, uriOf } from './fileuri.js';
 import { readJsonObject, writeJsonAtomic } from './jsonfile.js';
 import { bag, reason, str } from './values.js';
-import type { AnnouncedPlugin, ClientPlugins, SyncedPlugin } from './types/clientplugins.js';
+import type {
+  AnnouncedPlugin, CapturedPlugin, ClientPlugins, HeldCopies, SyncedPlugin, TemplatePlugin,
+} from './types/clientplugins.js';
 import type { Clients } from './types/host.js';
 
 /** How many copies the directory holds in all, over every client and every plugin. */
@@ -37,6 +48,8 @@ const KEY_CHARS = 128;
 const NO_NONCE = 'default';
 /** What a half-built copy is named, beside the name it is moved to. */
 const BUILDING = '.building';
+/** The folder under the copies' directory where an automation's plugins live. */
+const AUTOMATIONS = 'automations';
 
 /**
  * What one URI or one nonce is filed under.
@@ -185,6 +198,154 @@ export function clientPluginsIn(dir: string, clients: () => Clients): ClientPlug
     return answers;
   };
 
+  /** Where an automation's copies live, under the same directory and outside the order. */
+  const automations = join(dir, AUTOMATIONS);
+
+  /**
+   * What one plugin a template named is filed under.
+   *
+   * The URI and the nonce, hashed, and nothing else: a template saved twice
+   * with the same pair names the same copy, so the second save reads nothing
+   * from the client - and a pair that moved is a name beside the old one
+   * rather than a directory rewritten under a run already reading it. The
+   * hash is also what keeps a client's URI off the filesystem: nothing a
+   * client wrote is a path here.
+   */
+  const placeIn = (uri: string, nonce: string): string =>
+    join(automations, createHash('sha256').update(`${uri}\n${nonce}`).digest('hex'));
+
+  const capture = async (client: string, plugins: TemplatePlugin[]): Promise<HeldCopies> => {
+    const ids = new Set<string>();
+    for (const one of plugins) {
+      const id = str(one.id)?.trim() ?? '';
+      if (id === '' || ids.has(id)) throw new Error('Every plugin a template names needs an id of its own');
+      ids.add(id);
+    }
+    // A copy is the client's tree read over its connection, so a template with
+    // plugins and no client to read them from is a copy of nothing.
+    if (plugins.length > 0 && client === '') {
+      throw new Error('A template\'s plugins are copied from the client that asked for it, and this one named none');
+    }
+    /** What this capture has decided on, held back from a prune until it lets go. */
+    const mine = new Set<string>();
+    const hold = (path: string): void => {
+      mine.add(path);
+      holding.set(path, (holding.get(path) ?? 0) + 1);
+    };
+    const release = (): void => {
+      for (const path of mine) {
+        const left = (holding.get(path) ?? 1) - 1;
+        if (left > 0) holding.set(path, left);
+        else holding.delete(path);
+      }
+      mine.clear();
+    };
+    try {
+      const captured: CapturedPlugin[] = [];
+      for (const one of plugins) {
+        const id = (str(one.id) ?? '').trim();
+        const uri = str(one.uri) ?? '';
+        if (uri === '') throw new Error(`${id} names no URI, so there is nothing to copy`);
+        // An empty nonce names no revision, as it does in `sync`.
+        const nonce = one.nonce === undefined || one.nonce === '' ? NO_NONCE : one.nonce;
+        const at = placeIn(uri, nonce);
+        /*
+         * Held from here, before a byte moves. A prune from another write runs
+         * while this one is between two reads, and what it would find at this
+         * name is a copy no automation names yet - which is exactly what it
+         * removes. The name it is built under is held with it, or a prune
+         * would take the half-written directory out from under the copy.
+         */
+        hold(at);
+        if (!isDir(at)) {
+          /*
+           * Built beside the name it is moved to, as a session's copy is, and
+           * for the same reason: a copy cut short leaves nothing rather than a
+           * directory that looks like the plugin and is missing a file. There
+           * is no `note` here - these copies are not in the order, which is
+           * what keeps a session from evicting a run's plugins.
+           */
+          const building = `${at}${BUILDING}`;
+          hold(building);
+          try {
+            rmSync(building, { recursive: true, force: true });
+            await copy(client, uri, building);
+            renameSync(building, at);
+          } catch (error) {
+            rmSync(building, { recursive: true, force: true });
+            throw error;
+          }
+        }
+        const named = str(one.name);
+        captured.push({
+          type: 'plugin',
+          id,
+          uri: uriOf(at),
+          // A plugin the template did not name is named by where it came from,
+          // as a session's own list names one.
+          name: named === undefined || named === '' ? uri : named,
+          load: { kind: 'loaded' },
+        });
+      }
+      return { copies: captured, release };
+    } catch (error) {
+      // A copy that half-arrived is this capture's to let go of, and there is
+      // no write left to hand it to.
+      release();
+      throw error;
+    }
+  };
+
+  /**
+   * The copies a run session in this process was handed.
+   *
+   * A run reads its plugins where they are for as long as it is going, and the
+   * automation that named them may be gone by then: a turn that loaded a
+   * plugin in its first message still has it open when somebody removes the
+   * automation, and the directory under that turn is not this host's to pull
+   * away. So what a run was handed is held here, and `prune` leaves it - for
+   * as long as the process, which is as long as anything reading it lasts.
+   */
+  const inUse = new Set<string>();
+
+  /**
+   * The copies a capture has decided on and not yet let go of.
+   *
+   * A capture reads a client several times over one connection, and a prune
+   * from another write may run between two of those reads. A copy that is
+   * placed and not yet stored is named by no automation, so without this it
+   * looks like one to remove - and the entry about to name it would point at a
+   * folder that is gone. Counted rather than listed, because two writes may
+   * capture the same plugin at once and the first to finish is not the last to
+   * let go.
+   */
+  const holding = new Map<string, number>();
+
+  /**
+   * Remove every copy under `automations/` that no automation names, no run
+   * session was handed and no capture is still making.
+   *
+   * A child that is none of those goes whole, and one that will not go is left
+   * where it is: this runs beside a write that has already been made, and a
+   * copy nobody can delete is not a reason to fail it.
+   */
+  const prune = (kept: readonly string[]): void => {
+    let children: string[];
+    try { children = readdirSync(automations); }
+    catch { return; }
+    const held = [...kept, ...inUse, ...holding.keys()];
+    for (const child of children) {
+      const at = join(automations, child);
+      if (held.some((one) => one === at || under(one, at))) continue;
+      try { rmSync(at, { recursive: true, force: true }); }
+      catch { /* left where it is */ }
+    }
+  };
+
+  const spare = (paths: readonly string[]): void => {
+    for (const one of paths) inUse.add(one);
+  };
+
   load();
-  return { sync };
+  return { sync, capture, prune, spare };
 }

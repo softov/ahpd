@@ -96,6 +96,16 @@ export interface Tooling {
    * and this is where every one of them arrives.
    */
   retool(uri: string): void;
+  /**
+   * Wait for the copy a session's clients' plugins are still making.
+   *
+   * `retool` starts a copy and answers at once, because a session whose list
+   * waited on a client's whole tree would show nothing while it read. The one
+   * caller that may not wait is a run: its plugins are set on the session
+   * before the session exists, and a backend takes its plugins when it starts
+   * and offers no way to add one after.
+   */
+  pluginsSettled(uri: string): Promise<void>;
   /** The chat a tool means in a session: the one with that id, or the default. */
   chatMeant(held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined;
   /** A move a session's agent asked for, waiting for its turn to end. */
@@ -616,6 +626,18 @@ export function createTooling(ctx: HostContext): Tooling {
     }
   };
 
+  /**
+   * Wait for the copy this session's plugins are still making.
+   *
+   * The one that was already going when this was asked for, and not one a
+   * later announcement starts - `retool` and this are called together, and
+   * what is being waited for is the copy the first of them began.
+   */
+  const pluginsSettled = async (uri: string): Promise<void> => {
+    const held = copying.get(uri);
+    if (held !== undefined) await held;
+  };
+
   /** The chat a tool means in a session: the one with that id, or the default. */
   const chatMeant = (held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined => {
     if (chatId === undefined) {
@@ -981,7 +1003,7 @@ export function createTooling(ctx: HostContext): Tooling {
 
   return {
     permitted, strategyOf, shapedDefinition, toolDefinitions,
-    clientTools, clientPluginsOf, toggleClientPlugin, retool, chatMeant, renameChat, toolContext,
+    clientTools, clientPluginsOf, toggleClientPlugin, retool, pluginsSettled, chatMeant, renameChat, toolContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, instructions,
     moving, served,

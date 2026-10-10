@@ -480,7 +480,7 @@ export function memoryAutomations(): AutomationStore {
      */
     triggers: () => EVENT_TRIGGERS,
 
-    create: (resource, definition, owner, runCount) => {
+    create: (resource, definition, owner, runCount, customizations) => {
       checkTriggers(definition);
       checkWake(definition);
       const at = now();
@@ -491,6 +491,7 @@ export function memoryAutomations(): AutomationStore {
         // What a store reading its own file restores, and what a definition
         // arriving from a client never carries: a new allowance has used none.
         ...(runCount === undefined ? {} : { runCount }),
+        ...(customizations === undefined ? {} : { customizations }),
         runs: [],
         operations: [],
         createdAt: at,
@@ -501,7 +502,7 @@ export function memoryAutomations(): AutomationStore {
       return entry(made);
     },
 
-    update: (resource, changes) => {
+    update: (resource, changes, customizations) => {
       const found = held.get(resource);
       if (!found) return undefined;
       // Only a patch that carries triggers is a patch about them: an
@@ -536,6 +537,9 @@ export function memoryAutomations(): AutomationStore {
         ...found,
         definition,
         ...(fresh ? { runCount: 0 } : {}),
+        // The copies follow the same rule the definition does: a patch that
+        // says nothing about them leaves the ones this automation has.
+        ...(customizations === undefined ? {} : { customizations }),
         modifiedAt: now(),
       };
       held.set(resource, after);
@@ -628,6 +632,13 @@ export function memoryAutomations(): AutomationStore {
           ? { config: template.config as Record<string, string> }
           : {}),
         ...(template.model !== undefined ? { model: template.model } : {}),
+        // The host's copies of what the template named, so a run loads them
+        // with nobody connected. Off the automation and not off the
+        // definition: what a template names is a client's URI, and what this
+        // host can hand a session is a path of its own.
+        ...(found.customizations === undefined || found.customizations.length === 0
+          ? {}
+          : { customizations: found.customizations }),
         text: typeof message.text === 'string' ? message.text : String(found.definition.title ?? ''),
         origin: { kind: 'automation', automation: resource, run: run.resource },
         ...(found.owner === undefined ? {} : { owner: found.owner }),

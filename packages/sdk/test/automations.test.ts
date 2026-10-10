@@ -1,8 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
 import { memoryAutomations } from '../src/automations.js';
 import { memorySessions } from '../src/sessions.js';
+import { clientPluginsIn } from '../src/clientplugins.js';
 import { idOf } from '../src/catalog.js';
+import { localPath } from '../src/fileuri.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -352,6 +357,393 @@ describe('a definition that disables itself', () => {
     const renamed = (await entries(client))[0] as { definition: { title: string; disableConditions: unknown } };
     expect(renamed.definition.title).toBe('Renamed');
     expect(renamed.definition.disableConditions).toEqual(RULES);
+  });
+});
+
+/*
+ * Client plugins on a template.
+ *
+ * The protocol asks a client not to set `customizations` until the host
+ * advertises the capability, and this host advertises none - it has nowhere to
+ * load them. So a create or a patch carrying a non-empty list is refused
+ * before the store, rather than kept as a definition whose runs load nothing.
+ */
+describe('a template that names client plugins', () => {
+  const PLUGINS = [{ id: 'p1', type: 'plugin', uri: 'vscode-file:///plugin', nonce: 'n1' }];
+  const TEMPLATE = { ...DEFINITION.session, customizations: PLUGINS };
+
+  it('refuses a create whose template carries one, and keeps nothing', async () => {
+    const { client, peer: p } = await connected();
+    await client.handle({ method: 'subscribe', params: { channel: AUTOMATIONS } });
+    await write(client, { ...DEFINITION, session: TEMPLATE });
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('does not load client plugins');
+    // Refused before the store, so nothing was made and nothing announced.
+    expect(actions(p, AUTOMATIONS).filter((one) => one.type === 'automation/set')).toEqual([]);
+    expect(await entries(client)).toEqual([]);
+  });
+
+  it('refuses a patch that adds one, and leaves the entry as it held it', async () => {
+    const { client, peer: p } = await connected();
+    await write(client, DEFINITION);
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: AUTOMATIONS, action: { type: 'automation/updateRequested', resource: ONE, changes: { session: TEMPLATE } } },
+    });
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('does not load client plugins');
+    const kept = (await entries(client))[0] as { definition: { session: Record<string, unknown> } };
+    expect('customizations' in kept.definition.session).toBe(false);
+  });
+
+  it('takes an empty list, and takes no list at all', async () => {
+    const empty = await connected();
+    await write(empty.client, { ...DEFINITION, session: { ...DEFINITION.session, customizations: [] } });
+    expect(await entries(empty.client)).toHaveLength(1);
+
+    const none = await connected();
+    await write(none.client, DEFINITION);
+    expect(await entries(none.client)).toHaveLength(1);
+  });
+
+  it('advertises no customizations capability, so a client is not offered one', async () => {
+    const host = createHost({ path: DIR, agents: [echo({ path: DIR })], automations: memoryAutomations() });
+    const answer = await host.accept(peer()).handle({
+      method: 'initialize',
+      params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    }) as { automations?: Record<string, unknown> };
+    expect(answer.automations).toEqual({ create: {}, schedules: {} });
+    expect('customizations' in (answer.automations ?? {})).toBe(false);
+  });
+});
+
+/*
+ * The same template, on a host that keeps client plugins.
+ *
+ * A plugin a template names lives on the machine of the client that wrote it,
+ * and the run happens with nobody connected - so the host copies each one
+ * while that client is still here, and a run loads a path of this host's.
+ *
+ * The client side is a fake answering the two `resource*` methods a copy is
+ * made of, over a tree held in memory, and what is counted is what it was
+ * asked for: a template saved twice with the same revision is a plugin this
+ * host already has and reads nothing for.
+ */
+describe('a host that keeps client plugins', () => {
+  const PLUGIN = 'virtual://plugin/one';
+  const TREE: Record<string, string> = {
+    [`${PLUGIN}/plugin.json`]: '{"name":"one"}',
+    [`${PLUGIN}/agents/one.md`]: 'agent one',
+  };
+  const ONE_PLUGIN = [{ id: 'p1', type: 'plugin', uri: PLUGIN, nonce: 'n1', name: 'one' }];
+
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** What a client would list for one URI, worked out from the tree it holds. */
+  const listing = (uri: string, tree: Record<string, string>): unknown => {
+    const prefix = uri.endsWith('/') ? uri : `${uri}/`;
+    const entries: { name: string; type: string }[] = [];
+    for (const path of Object.keys(tree)) {
+      if (!path.startsWith(prefix)) continue;
+      const rest = path.slice(prefix.length);
+      const slash = rest.indexOf('/');
+      const name = slash === -1 ? rest : rest.slice(0, slash);
+      if (entries.some((one) => one.name === name)) continue;
+      entries.push({ name, type: slash === -1 ? 'file' : 'directory' });
+    }
+    return { entries };
+  };
+
+  /** A client that serves one tree, says what it was asked to read, and may be held open. */
+  const reading = (
+    tree: Record<string, string>,
+    asked: string[],
+    gone: Set<string> = new Set(),
+    before?: (method: string, uri: string) => Promise<void> | undefined,
+  ): Peer & { notes: { method: string; params: unknown }[] } => {
+    const notes: { method: string; params: unknown }[] = [];
+    return {
+      notes,
+      send: () => {},
+      notify: (method, params) => notes.push({ method, params }),
+      request: async (method: string, params: unknown) => {
+        const uri = String((params as { uri?: unknown }).uri ?? '');
+        if (gone.has(uri)) throw new Error(`${uri} is not there`);
+        // A call a test holds open, so what a capture is doing while it is
+        // still doing it can be looked at.
+        const waiting = before?.(method, uri);
+        if (waiting !== undefined) await waiting;
+        if (method === 'resourceList') { asked.push(uri); return listing(uri, tree); }
+        if (method === 'resourceRead') {
+          asked.push(uri);
+          const data = tree[uri];
+          if (data === undefined) throw new Error(`${uri} is not there`);
+          return { data, encoding: 'utf-8' };
+        }
+        return {};
+      },
+      answered: () => {},
+      close: () => {},
+    };
+  };
+
+  /** A host with a directory for its copies, and the calls its backend was started with. */
+  async function serving(
+    tree: Record<string, string> = TREE,
+    gone?: Set<string>,
+    before?: (method: string, uri: string) => Promise<void> | undefined,
+  ) {
+    const dir = mkdtempSync(join(tmpdir(), 'ahpd-automation-plugins-'));
+    dirs.push(dir);
+    const copies = join(dir, 'copies');
+    const asked: string[] = [];
+    const started: { path: string }[][] = [];
+    const base = echo({ path: dir, pace: 0 });
+    const agent: Agent = {
+      ...base,
+      create: (start) => {
+        started.push(start.plugins ?? []);
+        return base.create(start);
+      },
+    };
+    let host: ReturnType<typeof createHost>;
+    host = createHost({
+      path: dir,
+      agents: [agent],
+      automations: memoryAutomations(),
+      clientPlugins: clientPluginsIn(copies, () => host.clients),
+    });
+    const p = reading(tree, asked, gone, before);
+    const client = host.accept(p);
+    await client.handle({
+      method: 'initialize',
+      params: { clientId: 'a', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+    });
+    return { host, client, peer: p, copies, asked, started };
+  }
+
+  /** A template whose session names these plugins. */
+  const naming = (plugins: unknown[]) => ({ ...DEFINITION, session: { ...DEFINITION.session, customizations: plugins } });
+
+  /** Patch the automation's session, the way a client editing it does. */
+  const patch = async (
+    client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> },
+    session: Record<string, unknown>,
+  ) => client.handle({
+    method: 'dispatchAction',
+    params: { channel: AUTOMATIONS, action: { type: 'automation/updateRequested', resource: ONE, changes: { session } } },
+  });
+
+  /** The copies one automation's entry reports, and the paths on this disk behind them. */
+  const kept = async (client: Parameters<typeof entries>[0]) => {
+    const found = (await entries(client))[0] as { customizations?: { id: string; uri: string; name: string }[] };
+    return (found.customizations ?? []).map((one) => ({ ...one, path: localPath(one.uri) }));
+  };
+
+  it('copies what a template names, and off its own disk rather than the client\'s', async () => {
+    const { client, asked, copies: under } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const held = await kept(client);
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatchObject({ id: 'p1', name: 'one' });
+    // Under the folder the client plugins port was given, in `automations/`,
+    // and holding the client's own files: a run loads this path, with nobody
+    // connected to serve the URI the template named.
+    expect(held[0]?.uri.startsWith('file://')).toBe(true);
+    expect(held[0]?.path.startsWith(join(under, 'automations'))).toBe(true);
+    expect(existsSync(join(held[0]?.path ?? '', 'plugin.json'))).toBe(true);
+    expect(existsSync(join(held[0]?.path ?? '', 'agents', 'one.md'))).toBe(true);
+    expect(asked).toContain(PLUGIN);
+  });
+
+  it('reads nothing from the client when the same revision is saved again', async () => {
+    const { client, asked } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const before = asked.length;
+    await patch(client, { ...DEFINITION.session, customizations: ONE_PLUGIN });
+    await settle();
+    expect(asked.length).toBe(before);
+    expect(await kept(client)).toHaveLength(1);
+  });
+
+  it('copies again when the revision moved, and keeps only the copy it names', async () => {
+    const { client } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [first] = await kept(client);
+    await patch(client, { ...DEFINITION.session, customizations: [{ ...ONE_PLUGIN[0], nonce: 'n2' }] });
+    await settle();
+
+    const [second] = await kept(client);
+    expect(second?.uri).not.toBe(first?.uri);
+    expect(existsSync(join(second?.path ?? '', 'plugin.json'))).toBe(true);
+    // No automation names the first one any more, so it is not left behind.
+    expect(existsSync(first?.path ?? '')).toBe(false);
+  });
+
+  it('takes an empty list as the template having none, and drops the copies', async () => {
+    const { client, asked } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [copy] = await kept(client);
+    const before = asked.length;
+
+    await patch(client, { ...DEFINITION.session, customizations: [] });
+    await settle();
+    // A list saying "none" is a template with no plugins, which is the copies
+    // going - not a patch about something else, which leaves them where they
+    // are. And nothing is read from the client to say so.
+    expect(existsSync(copy?.path ?? '')).toBe(false);
+    expect(await kept(client)).toEqual([]);
+    expect(asked.length).toBe(before);
+  });
+
+  it('refuses the whole action when a copy fails, and keeps what it had', async () => {
+    const { client, peer: p } = await serving(TREE, new Set([`${PLUGIN}/agents/one.md`]));
+    await write(client, DEFINITION);
+    await settle();
+    await patch(client, { ...DEFINITION.session, customizations: ONE_PLUGIN });
+    await settle();
+
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain(`${PLUGIN}/agents/one.md`);
+    // The entry is the one it was: the copy half made is not a template this
+    // host kept, because every run of it would load half of what it names.
+    expect(await kept(client)).toEqual([]);
+  });
+
+  it('refuses a template whose plugins share an id, which nothing could read', async () => {
+    const { client, peer: p } = await serving();
+    await write(client, naming([...ONE_PLUGIN, { id: 'p1', type: 'plugin', uri: PLUGIN, nonce: 'n2' }]));
+    await settle();
+    expect(refusals(p, AUTOMATIONS).at(-1)).toContain('an id of its own');
+    expect(await entries(client)).toEqual([]);
+  });
+
+  it('starts a run with the copies, as an active client of the run\'s own session', async () => {
+    const { client, asked, started } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const run = await client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
+    }) as { resource: string };
+    await until(() => started.length > 0);
+    await settle();
+
+    // The backend was handed the copy, which is the whole point: a plugin is
+    // loaded when a session starts and cannot be added to one after.
+    const given = started.at(-1) ?? [];
+    expect(given).toHaveLength(1);
+    expect(existsSync(join(given[0]?.path ?? '', 'plugin.json'))).toBe(true);
+
+    // And the run asks the client for nothing: what it loads is this host's
+    // own copy, so a run at nine o'clock needs nobody connected.
+    const before = asked.length;
+    const state = await runState(client, run.resource);
+    const opened = await client.handle({
+      method: 'subscribe', params: { channel: state.sessions[0] ?? '' },
+    }) as { snapshot: { state: { activeClients?: { clientId: string; customizations?: { uri?: string }[] }[] } } };
+    const mine = (opened.snapshot.state.activeClients ?? []).find((one) => one.clientId === 'Automation');
+    expect(mine?.customizations).toHaveLength(1);
+    expect(localPath(mine?.customizations?.[0]?.uri ?? '')).toBe(given[0]?.path);
+    expect(asked.length).toBe(before);
+  });
+
+  it('removes the copies when the automation goes', async () => {
+    const { client } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [copy] = await kept(client);
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: AUTOMATIONS, action: { type: 'automation/removed', resource: ONE } },
+    });
+    await settle();
+    expect(existsSync(copy?.path ?? '')).toBe(false);
+    expect(await entries(client)).toEqual([]);
+  });
+
+  it('keeps a copy a run was handed, after the automation that named it goes', async () => {
+    const { client, started } = await serving();
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    await client.handle({
+      method: 'runAutomation', params: { channel: AUTOMATIONS, automation: ONE, requestId: 'r' },
+    });
+    await until(() => started.length > 0);
+    await settle();
+    const [copy] = await kept(client);
+
+    // The run's session is open and reading the copy where it is, so removing
+    // the automation is not the host's to answer by taking the directory out
+    // from under a turn.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: AUTOMATIONS, action: { type: 'automation/removed', resource: ONE } },
+    });
+    await settle();
+    expect(await entries(client)).toEqual([]);
+    expect(existsSync(join(copy?.path ?? '', 'plugin.json'))).toBe(true);
+  });
+
+  it('keeps a copy a capture is still making, while another write prunes', async () => {
+    const other = 'virtual://plugin/other';
+    let letGo: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => { letGo = resolve; });
+    const { host, client } = await serving(
+      { ...TREE, [`${other}/plugin.json`]: '{"name":"other"}' },
+      undefined,
+      (method, uri) => (method === 'resourceRead' && uri.startsWith(other) ? blocked : undefined),
+    );
+    /*
+     * A second connection, because a dispatch that waits holds this
+     * connection's later dispatches behind it - and the write that prunes has
+     * to happen while the first one is still capturing.
+     */
+    const second = host.accept(peer());
+    await second.handle({
+      method: 'initialize',
+      params: { clientId: 'b', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    });
+
+    // One plugin is already this automation's, so the patch below has a copy
+    // of its own to prune away and the test is about the second one alone.
+    await write(client, naming(ONE_PLUGIN));
+    await settle();
+    const [first] = await kept(client);
+    expect(first?.path).toBeTruthy();
+
+    // A patch naming a second plugin, whose copy the client is still serving.
+    // Its entry is not stored yet, so no automation names that copy.
+    await patch(client, naming([{ id: 'p2', type: 'plugin', uri: other, nonce: 'n2', name: 'other' }]).session);
+    await settle();
+
+    // And a write that prunes while that capture is still going. It takes the
+    // copy the entry no longer names, and leaves the one being made.
+    await patch(second, naming([]).session);
+    await settle();
+    expect(existsSync(first?.path ?? '')).toBe(false);
+
+    letGo?.();
+    await until(async () => (await kept(client)).some((one) => one.id === 'p2'));
+    await settle();
+
+    const copy = await kept(client);
+    expect(copy.map((one) => one.id)).toEqual(['p2']);
+    expect(existsSync(join(copy[0]?.path ?? '', 'plugin.json'))).toBe(true);
+  });
+
+  it('advertises the customizations capability, so a client may name one', async () => {
+    const { host } = await serving();
+    const answer = await host.accept(peer()).handle({
+      method: 'initialize',
+      params: { clientId: 'b', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+    }) as { automations?: Record<string, unknown> };
+    expect(answer.automations).toEqual({ create: {}, schedules: {}, customizations: {} });
   });
 });
 

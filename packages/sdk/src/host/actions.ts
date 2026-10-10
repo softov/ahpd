@@ -2,11 +2,14 @@ import { annotationsReducer, IS_CLIENT_DISPATCHABLE } from '@microsoft/agent-hos
 import type { AnnotationsAction } from '@microsoft/agent-host-protocol';
 import { idOf, Status } from '../catalog.js';
 import { disableConditionsProblem } from '../automations.js';
+import { localPath } from '../fileuri.js';
+import { reason } from '../values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, PER_CONNECTION } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { claimOf } from './terminals.js';
+import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
 import type { Grant } from '../types/users.js';
 import type { Origin } from './state.js';
@@ -475,14 +478,76 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const written = keyed(type === 'automation/createRequested' ? action.definition : action.changes);
       const problem = disableConditionsProblem(written['disableConditions']);
       if (problem !== undefined) { no(problem); return; }
-      const made = type === 'automation/createRequested'
-        ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection))
-        : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag));
-      // `onChanged` is what dispatches. A store that told the host
-      // nothing would be one whose own timers were invisible, so
-      // everything goes out the same way.
-      if (!made) no(`No automation at ${resource}`);
-      return;
+      /*
+       * Client plugins on the template, copied while the client that named
+       * them is still here.
+       *
+       * A template names a plugin by the client's own URI and a run happens
+       * with nobody connected, so the host copies each one now and the run
+       * loads a path of this host's. That needs somewhere to put a copy, which
+       * is exactly what the client plugins port is: a host with no port keeps
+       * no client plugins anywhere, so it cannot honour a template naming one -
+       * and it says that rather than keeping a definition whose every run
+       * loads nothing.
+       */
+      const port = options.clientPlugins;
+      const named = templatePlugins(keyed(written['session'])['customizations']);
+      // A list with something in it is what cannot be honoured - an empty one
+      // names no plugin, and a host that refuses it would be refusing a
+      // template for saying it has none.
+      if (named !== undefined && named.length > 0 && port === undefined) {
+        no('This host does not load client plugins, so an automation cannot carry them');
+        return;
+      }
+      /*
+       * Nothing to copy. A patch that says nothing about plugins is a patch
+       * about something else, so the copies this automation already has stay -
+       * which is the `undefined` the store reads as "leave them alone". An
+       * empty list is not that: it says the template has no plugins, so the
+       * copies it had go with the last one.
+       */
+      if (named === undefined || port === undefined) {
+        const kept = type === 'automation/createRequested'
+          ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection))
+          : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag));
+        // `onChanged` is what dispatches. A store that told the host
+        // nothing would be one whose own timers were invisible, so
+        // everything goes out the same way.
+        if (!kept) no(`No automation at ${resource}`);
+        return;
+      }
+      /*
+       * The copies are made before the store is asked, because a template
+       * whose plugins would not copy is a write this host refuses whole: what
+       * the client keeps is the automation it had, and not one whose every run
+       * loads half of what its template names.
+       */
+      return (async (): Promise<void> => {
+        let held: HeldCopies;
+        try {
+          held = await port.capture(connection.clientId, named);
+        }
+        catch (error) {
+          no(reason(error));
+          return;
+        }
+        /*
+         * The copies are this write's until it has been stored or refused.
+         * Another write's prune may run in between, and what it would find at
+         * their names is a copy no automation names yet - which is what it
+         * removes, and what would leave this entry pointing at nothing.
+         */
+        try {
+          const made = type === 'automation/createRequested'
+            ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection), undefined, held.copies)
+            : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag), held.copies);
+          if (!made) { no(`No automation at ${resource}`); return; }
+          pruneCopies();
+        }
+        finally {
+          held.release();
+        }
+      })();
     }
 
     /*
@@ -506,6 +571,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
       store.remove(resource);
+      // And the copies its template named, which nothing names any more.
+      pruneCopies();
       return;
     }
 
@@ -640,6 +707,49 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
   const keyed = (value: unknown): Bag => (typeof value === 'object' && value !== null && !Array.isArray(value)
     ? value as Bag
     : {});
+
+  /**
+   * The client plugins a template names, in the shape the port is handed them.
+   *
+   * Nothing where the template says nothing about plugins, which is not the
+   * same as an empty list: a create that mentions none has none, while a patch
+   * that mentions none is a patch about something else and leaves this
+   * automation's copies where they are.
+   *
+   * Every entry of a list that *is* there is kept, even a malformed one, so
+   * that the check for a usable id is the port's and answers in its own words -
+   * dropping one here would be this host quietly storing a template it cannot
+   * honour.
+   */
+  const templatePlugins = (value: unknown): TemplatePlugin[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    return value.map((one) => {
+      const held = keyed(one);
+      return {
+        id: typeof held.id === 'string' ? held.id : '',
+        uri: typeof held.uri === 'string' ? held.uri : '',
+        ...(typeof held.name === 'string' ? { name: held.name } : {}),
+        ...(typeof held.nonce === 'string' ? { nonce: held.nonce } : {}),
+      };
+    });
+  };
+
+  /**
+   * Remove the copies of a template's plugins that nothing names any more.
+   *
+   * Called after a write and after a removal, which are the two ways a copy
+   * stops being one an automation names: a template that dropped a plugin, and
+   * an automation that went. What is kept is what the automations this host
+   * holds still reference, read back off them rather than remembered here - a
+   * host that restarted holds the same answer.
+   */
+  const pruneCopies = (): void => {
+    const port = options.clientPlugins;
+    if (port === undefined) return;
+    const kept = (options.automations?.list() ?? [])
+      .flatMap((one) => (one.customizations ?? []).map((copy) => localPath(copy.uri)));
+    port.prune(kept);
+  };
 
   /**
    * A definition a client wrote, with the host's own chat kept where it is.
