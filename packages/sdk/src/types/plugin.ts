@@ -18,7 +18,7 @@ import type { Agent } from './agent.js';
 import type { StartSession } from './automations.js';
 import type { SessionConfigAnswerer } from './completions.js';
 import type { EventHandler, EventName, HostHandlers } from './events.js';
-import type { HostOptions, HostTool } from './host.js';
+import type { Host, HostOptions, HostTool } from './host.js';
 import type { MachineNeed } from './machine.js';
 import type { ResourceProvider } from './resources.js';
 import type { Owner, UsageEntry } from './usage.js';
@@ -129,6 +129,81 @@ export interface PluginStarts {
 }
 
 /**
+ * One plugin's end of the connection to its own host.
+ *
+ * The host's end is a `Peer` handed to `Host.accept`, and this is what the
+ * plugin holds on the other side of the same in-memory pair: `request` and
+ * `notify` are the `Peer`'s, `onMessage` is where what the host says arrives,
+ * and `close` ends the connection from this side. There is no typed client and
+ * no second layer over the protocol, so what a plugin writes here is AHP,
+ * spelled with the protocol's own types. A plugin that wants to watch a running
+ * host is a client of it, which is what decision `plugin-contributes-host-options`
+ * says and what this end is for.
+ */
+export interface PluginPeer {
+  /** Send a complete JSON-RPC message. Dropped if the connection has closed. */
+  send(message: Record<string, unknown>): void;
+  /** Send the host a notification: one that carries no id and gets no reply. */
+  notify(method: string, params: unknown): void;
+  /**
+   * Ask the host something, and wait for what it says.
+   *
+   * Rejects with an `RpcError` the host sent, an `RpcTimeout` when nothing came
+   * back inside `timeoutMs`, or an `RpcClosed` when the connection went away
+   * with the question still in flight.
+   */
+  request(method: string, params: unknown, timeoutMs?: number): Promise<unknown>;
+  /**
+   * Take what the host says of its own accord: its notifications, and its own
+   * questions to this client.
+   *
+   * The answers to this connection's `request`s are not here - they settle the
+   * promise that asked - and the difference is the one JSON-RPC draws: a frame
+   * with a `method` is the host speaking, and one without is a reply to
+   * something this side asked. A question carries its `id`, and `send` is how
+   * it is answered.
+   *
+   * The handler is called for every frame from the moment it is set, and the
+   * last one set is the one that is called. A frame that arrives before there
+   * is one is dropped, which is a connection nothing is reading yet.
+   */
+  onMessage(handle: (message: Record<string, unknown>) => void): void;
+  /** Close the connection, rejecting every question still unanswered. */
+  close(): void;
+}
+
+/**
+ * One plugin's connections to its own host, and where they come from.
+ *
+ * Built by the plugin host and carried through the fold rather than copied, for
+ * the same reason `PluginStarts` is: a plugin connects from a route or a timer
+ * long after `apply` returned, so the object its closure holds has to be the
+ * one the daemon fills in. `host` is that place and `close` is what the daemon
+ * calls when it stops.
+ */
+export interface PluginConnects {
+  /** The plugin that connects. */
+  by: string;
+  /**
+   * The host a connection is accepted by, set by the daemon once it exists.
+   *
+   * Absent until then, which is a plugin asking while `apply` runs or from its
+   * own unit test with no host built over it. Unlike a fire, which is about
+   * what is happening now, this is a call that owes an answer - so a plugin
+   * that asks too early is told rather than dropped.
+   */
+  host?: Host;
+  /**
+   * Close every connection this plugin has open.
+   *
+   * Called when the daemon raises `stopping`: a plugin that never closed its
+   * own connection would otherwise outlive the listeners, and a connection
+   * still subscribed to a session is one the host keeps telling.
+   */
+  close(): void;
+}
+
+/**
  * The `HostOptions` keys that hold one value, one plugin at a time.
  *
  * The closed set of `set` keys, and deliberately not every key: `agents` and
@@ -178,9 +253,10 @@ export type Route = (request: globalThis.Request) => Promise<globalThis.Response
  * One plugin, as configuration or the command line names it.
  *
  * A bare string is the module specifier and carries no options. The object form
- * adds what only the person naming it knows: the options `apply` receives, and
+ * adds what only the person naming it knows: the options `apply` receives,
  * whether it is switched on at all - which is what lets one configuration keep
- * a plugin installed and turned off.
+ * a plugin installed and turned off - and what it may do when it acts on this
+ * host as a client of its own.
  */
 export type PluginSpec = string | {
   /** The module specifier, or a path to a directory or a file. */
@@ -189,6 +265,20 @@ export type PluginSpec = string | {
   options?: Record<string, unknown>;
   /** `false` drops the spec before it is resolved. Absent means on. */
   enabled?: boolean;
+  /**
+   * What this plugin's own connection may do, as `<subject>:<operation>`.
+   *
+   * None by default, which is a plugin that may read nothing and change
+   * nothing on this host: every gated command its connection sends is refused.
+   * A plugin that never connects is unaffected by the list either way, so this
+   * is the one line an operator writes to let a plugin act - and on a host with
+   * no user directory nothing is gated, exactly as for every other connection.
+   *
+   * A string rather than a `Grant` because it is read off a file, which holds
+   * whatever was typed: the loader checks each one and drops what is not a
+   * grant, rather than the type promising something nothing verified.
+   */
+  grants?: string[];
 };
 
 /**
@@ -388,6 +478,25 @@ export interface PluginHost extends PluginContext {
    * plugin throws rather than being kept for later.
    */
   startSession(wanted: SessionRequest): Promise<string>;
+  /**
+   * This plugin's own connection to its host: one AHP client, in process.
+   *
+   * A plugin that has to act rather than contribute - start a session, send a
+   * turn, answer what a session asks, read what a client does - is a client of
+   * this host, and this is its socket. What comes back is the raw peer:
+   * `request`, `notify` and `onMessage`, with AHP written in the protocol's own
+   * types. There is no typed client here and a plugin that wants one builds it
+   * on this.
+   *
+   * One connection per call, and it is the plugin's to close. Every one still
+   * open when the daemon raises `stopping` is closed for it.
+   *
+   * Available from `listening` on, which is once a host has been built over
+   * this plugin. A plugin that asks while `apply` runs is told rather than
+   * dropped, because there is nothing yet to accept the connection - the same
+   * answer `startSession` gives for the same reason.
+   */
+  connect(): PluginPeer;
   /** Add one backend to `HostOptions.agents`. */
   registerAgent(agent: Agent): void;
   /** Add one tool to `HostOptions.tools`. */
@@ -663,6 +772,14 @@ export interface Contribution {
    * a session, so the fold can read it without a case.
    */
   starts: PluginStarts;
+  /**
+   * Where this plugin's connections to the host come from.
+   *
+   * Carried through rather than copied, exactly as `starts` is, so the object
+   * `pluginHost` built is the one the daemon fills in. Always here, whether or
+   * not the plugin ever connects, so the fold can read it without a case.
+   */
+  connects: PluginConnects;
   /**
    * The one route this plugin registered, when it registered one.
    *

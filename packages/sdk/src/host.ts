@@ -41,6 +41,7 @@ import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { Peer } from './types/rpc.js';
 import type { Owner } from './types/usage.js';
+import { ownerOfPrincipal } from './values.js';
 import { reason } from './host/common.js';
 import {
   ROOT, isRootChannel, AUTOMATIONS, MARKS, spaceOf, baseOf, URI_KEYS, named,
@@ -1109,15 +1110,17 @@ export function createHost(options: HostOptions): Host {
         ...(root === true ? { root: true } : {}),
       };
       /*
-       * A person this host was given rather than one that signed in.
+       * A person or a plugin this host was given rather than one that signed in.
        *
        * `principals` is how an owner is resolved to the memberships behind the
        * name, and it is filled from `authenticate`. A socket handed a principal
        * never sends one, so without this a session it owns has no principal and
        * every check against it is skipped - the work runs unchecked rather than
-       * refused, which is the worse of the two answers.
+       * refused, which is the worse of the two answers. The key is the owner
+       * `ownerFor` answers, which is what makes it the one a later read of that
+       * owner finds.
        */
-      if (principal !== undefined) principals.set(`user:${principal.id}`, principal);
+      if (principal !== undefined) principals.set(ownerOfPrincipal(principal), principal);
       connections.add(connection);
 
       const conn = { connection, alive: true, containers: new Map() } as ConnectionContext;

@@ -63,6 +63,14 @@ export interface Principal {
    */
   standing?(): boolean;
   /**
+   * The plugin this principal is, when it is one.
+   *
+   * Set only on the principal a plugin's own connection is served as, and
+   * never by sign-in, so it and not the id makes the work `plugin:<name>`: a
+   * user id may be any string, `plugin:bot` among them.
+   */
+  readonly plugin?: string;
+  /**
    * Whether this person's connection token is their authorization as well.
    *
    * The door admits and says nobody; `authenticate` is what authorizes a

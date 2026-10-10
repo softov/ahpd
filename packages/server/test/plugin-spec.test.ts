@@ -24,6 +24,11 @@ describe('asSpec', () => {
     expect(asSpec({ name: 'x', options: {}, enabled: true })).toEqual({ name: 'x', options: {}, enabled: true });
   });
 
+  it('keeps a list of grants, whose shape the loader checks rather than this', () => {
+    expect(asSpec({ name: 'x', grants: [] })).toEqual({ name: 'x', grants: [] });
+    expect(asSpec({ name: 'x', grants: ['session:write'] })).toEqual({ name: 'x', grants: ['session:write'] });
+  });
+
   it('returns nothing for an empty string, a number, or a missing or non-string name', () => {
     expect(asSpec('')).toBeUndefined();
     expect(asSpec('   ')).toBeUndefined();
@@ -39,5 +44,14 @@ describe('asSpec', () => {
     expect(asSpec({ name: 'x', enabled: 'yes' })).toBeUndefined();
     expect(asSpec(null)).toBeUndefined();
     expect(asSpec(['x'])).toBeUndefined();
+  });
+
+  it('refuses the whole entry when the grants are not a list of strings', () => {
+    // One grant of the wrong kind is a list half read, and the person who
+    // typed it meant a list: the entry goes rather than the one bad entry of
+    // it, so what they are told is about the line they wrote.
+    expect(asSpec({ name: 'x', grants: 'session:write' })).toBeUndefined();
+    expect(asSpec({ name: 'x', grants: ['session:write', 7] })).toBeUndefined();
+    expect(asSpec({ name: 'x', grants: null })).toBeUndefined();
   });
 });

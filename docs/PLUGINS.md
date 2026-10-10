@@ -437,6 +437,33 @@ nothing behaves exactly as it did before the field existed.
 
 `problem(line)` is how a plugin that handles many items says which one it could not register: `ahpd start` and `ahpd restart` print each line as `skipped: <line>` before the line that says the daemon is up, beside the problems the loader found itself. Saying one costs the item and not the plugin, which keeps the rest of your contribution and does not fail the load. Unlike the two above it is on `PluginHost` and not on the event context, because an item is dropped while `apply` runs.
 
+### A plugin is a client of its own host
+
+A daemon answers connections and never opens one, so a plugin with work to do on the sessions of its own host arrives as a client does.
+`host.connect()` answers the plugin's end of an in-memory connection, served by the same door a socket is, and hands back a peer: `request`, `notify` and `onMessage`.
+The plugin speaks the protocol with those three and the types `@ahpd/sdk` already carries for it, so no client library is needed.
+
+Call it from `listening` or later, which is when a host exists to accept a connection.
+Asked for during `apply`, it throws a sentence saying so rather than answering a connection to nothing.
+Every call answers a connection of its own, and the daemon closes each one when `stopping` is raised, so a plugin that wants a shorter life closes its own.
+
+```ts
+host.on('listening', async () => {
+  const conn = host.connect();
+  await conn.request('initialize', { clientId: 'bot', protocolVersions: ['0.9.0'] });
+  await conn.request('createSession', { channel: 'ahp-session:/bot', provider: 'claude' });
+  await conn.request('subscribe', { channel: 'ahp-chat:/bot' });
+  conn.notify('dispatchAction', {
+    channel: 'ahp-chat:/bot',
+    action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'Say hello.' } },
+  });
+});
+```
+
+The connection is served as the principal `plugin:<name>`, and it may do what its configuration entry's `grants` say and nothing else.
+On a host with no user directory nothing is gated, as for any other connection.
+What the host says reaches the plugin through `onMessage`, and what the plugin asks for settles a promise, so the connection is used exactly as a client's socket is.
+
 ### Starting a session as an owner
 
 A plugin that needs a session of its own - a bot, a machine that has to be talked to - has nobody at the keyboard to be, so `host.startSession(wanted)` starts one for an owner it names and answers its URI. It is the same road a client's `createSession` takes rather than a second one: the tree is isolated, the owner's grants and policies are asked about, the machine the config names is made, and the session lands in the catalogue as that owner's, which is where the person finds it afterwards.
@@ -632,7 +659,8 @@ Or in the configuration file:
 {
   "plugins": [
     "@acme/agent-mine",
-    { "name": "./my-plugin", "options": { "token": "…" }, "enabled": false }
+    { "name": "./my-plugin", "options": { "token": "…" }, "enabled": false },
+    { "name": "@ahpd/bot", "grants": ["session:write"] }
   ]
 }
 ```
@@ -642,6 +670,15 @@ Or in the configuration file:
 way `--path` replaces `paths`. `--no-plugins` beside a `--plugin` is refused as
 contradictory. The options an object names are merged over the plugin's own
 `defaults`, so the configuration wins.
+
+An object may also carry `grants`, what the plugin's own connection to this
+host may do. Each one is `<subject>:<operation>`, the grammar a role's grants
+use - decision
+[`a-grant-names-an-operation-and-read-and-write-are-its-groups`](../.project/decisions/a-grant-names-an-operation-and-read-and-write-are-its-groups.md).
+None is the default, so a plugin given no `grants` may not start a session,
+send a turn or run an automation. A grant that names no operation is dropped
+where the plugin is loaded, and the daemon says which line it was. See
+[a plugin is a client of its own host](#a-plugin-is-a-client-of-its-own-host).
 
 ### Where a spec is resolved
 

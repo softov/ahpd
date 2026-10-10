@@ -1,6 +1,7 @@
 import { namesOf, scopeFor } from '../scopes.js';
 import { decide } from '../decide.js';
 import { idOf } from '../catalog.js';
+import { ownerOfPrincipal } from '../values.js';
 import type { Scope, ScopeAnswer } from '../scopes.js';
 import type { Asked } from '../decide.js';
 import type { PolicyKind } from '../types/policies.js';
@@ -41,13 +42,14 @@ export function createOwners(ctx: HostContext): Owners {
    *
    * A typed reference, the spelling the usage rules use - decision
    * `work-is-owned-by-a-typed-reference`. A person who has signed in owns what
-   * they start, and a root connection is the host itself rather than somebody.
-   * A host with no users directory has nobody to name at all, so a session
-   * there records no owner rather than one that says nothing.
+   * they start, a plugin owns what it starts as `plugin:<name>`, and a root
+   * connection is the host itself rather than somebody. A host with no users
+   * directory has nobody to name at all, so a session there records no owner
+   * rather than one that says nothing.
    */
   const ownerFor = (connection: Connection): Owner | undefined => {
     if (options.users === undefined) return undefined;
-    if (connection.principal !== undefined) return `user:${connection.principal.id}`;
+    if (connection.principal !== undefined) return ownerOfPrincipal(connection.principal);
     return connection.root === true ? `root:${options.hostName ?? 'host'}` : undefined;
   };
 

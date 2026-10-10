@@ -1,0 +1,7 @@
+{
+  "name": "plugin-connect",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "ahpd": { "entry": "./index.ts", "title": "Connect plugin" }
+}

@@ -14,9 +14,12 @@
 /**
  * Who a piece of work belongs to - decision `work-is-owned-by-a-typed-reference`.
  *
- * `root:<host>` is a root connection on the named daemon.
+ * `root:<host>` is a root connection on the named daemon, and `plugin:<name>` is
+ * a plugin acting on its own host as the principal it was configured as - a
+ * plugin is not a person, so its work is nobody's but its own. Decision
+ * `plugin-contributes-host-options`.
  */
-export type Owner = `user:${string}` | `team:${string}` | `project:${string}` | `root:${string}`;
+export type Owner = `user:${string}` | `team:${string}` | `project:${string}` | `root:${string}` | `plugin:${string}`;
 
 /** What a record cost, and whether the provider said it or a price list did. */
 export interface Cost {

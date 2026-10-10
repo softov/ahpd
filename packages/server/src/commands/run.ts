@@ -815,6 +815,17 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   }
 
   const host = createHost(folded);
+  /*
+   * The host the plugins were loaded for, handed over now that it exists.
+   *
+   * A plugin that acts on this host is a client of it, and its connection is
+   * `Host.accept` over an in-memory pair - so what it needs is this object, and
+   * nothing can give it earlier: every `apply` ran before `createHost` did.
+   * Bound here rather than inside the host because the host does not know which
+   * of its options came from plugins; a plugin that asked during `apply` was
+   * already told to ask from `listening` or later.
+   */
+  for (const one of folded.pluginConnects ?? []) one.host = host;
   turning = () => host.turning();
   // What the host was finally built over, which is what a served `ahpd usage`
   // reads: a plugin that registered a store of its own is the one the records
@@ -980,6 +991,17 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const way = lifecycle({
     down: async () => {
       await raise(folded.events, { type: 'stopping' }, stamp);
+      /*
+       * And every connection the plugins opened, after `stopping` and before
+       * the listeners go.
+       *
+       * After, because a plugin that stands something down here may still have
+       * a session to tell about it, and the connection is how it tells. Before,
+       * because `host.close()` below is what the host's own work ends in: a
+       * connection left open past it is one still watching a session nothing
+       * will ever mention again.
+       */
+      for (const one of folded.pluginConnects ?? []) one.close();
       // The API first, and awaited, so a request in flight is not left holding
       // a listener the daemon is no longer behind, and a successor does not
       // find its port still bound.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bag, isRecord, ownerOf, reason, str, strings } from '../src/values.js';
+import { bag, isRecord, ownerOf, ownerOfPrincipal, reason, str, strings } from '../src/values.js';
 
 /*
  * The readers every package had its own copy of.
@@ -95,5 +95,16 @@ describe('ownerOf', () => {
     expect(ownerOf('a')).toBeUndefined();
     expect(ownerOf(3)).toBeUndefined();
     expect(ownerOf(undefined)).toBeUndefined();
+  });
+});
+
+describe('ownerOfPrincipal', () => {
+  it('owns a person\'s work as the person', () => {
+    expect(ownerOfPrincipal({ id: 'ana' })).toBe('user:ana');
+  });
+
+  it('owns a plugin\'s work as the plugin, by its field and not its id', () => {
+    expect(ownerOfPrincipal({ id: 'plugin:bot', plugin: 'bot' })).toBe('plugin:bot');
+    expect(ownerOfPrincipal({ id: 'plugin:bot' })).toBe('user:plugin:bot');
   });
 });

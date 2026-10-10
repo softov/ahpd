@@ -11,7 +11,7 @@ import type { ChangesetSource } from './changes.js';
 import type { Worktrees } from './worktrees.js';
 import type { PullRequests } from './github.js';
 import type { AutomationStore } from './automations.js';
-import type { PluginStarts, PluginTriggers } from './plugin.js';
+import type { PluginConnects, PluginStarts, PluginTriggers } from './plugin.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort } from './computers.js';
 import type { ContainerPort } from './containers.js';
@@ -473,6 +473,16 @@ export interface HostOptions {
    * removing it would take.
    */
   pluginStarts?: PluginStarts[];
+  /**
+   * Every plugin that may connect to this host, one entry each.
+   *
+   * The fold fills this from every contribution, and the daemon does two things
+   * with it: it sets each entry's `host` once `createHost` has answered, so a
+   * plugin's `connect` reaches the live host from wherever it is called, and it
+   * closes every one of them when it raises `stopping`. Kept by plugin, so a
+   * plugin's own entry is the whole of what removing it would take.
+   */
+  pluginConnects?: PluginConnects[];
 }
 
 /**

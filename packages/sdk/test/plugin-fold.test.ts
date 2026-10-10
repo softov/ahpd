@@ -61,6 +61,7 @@ const contribution = (
   events: {},
   triggers: { by, types: {} },
   starts: { by },
+  connects: { by, close: () => {} },
   closers: parts.closers ?? [],
   ...(parts.routes === undefined ? {} : { routes: parts.routes }),
 });

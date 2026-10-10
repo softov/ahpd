@@ -74,7 +74,7 @@ export { secretRef, scopeOf, readSecret } from './vault.js';
 export type { SecretScope } from './vault.js';
 export { decide } from './decide.js';
 export type { Asked, Decision } from './decide.js';
-export { fileUsers, signInRecord } from './users.js';
+export { fileUsers, grantProblem, signInRecord } from './users.js';
 export type { FileUserOptions } from './users.js';
 export { peopleProviders } from './people.js';
 export type { PeopleProvider } from './people.js';

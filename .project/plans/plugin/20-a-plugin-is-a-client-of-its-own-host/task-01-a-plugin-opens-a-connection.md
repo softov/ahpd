@@ -1,6 +1,6 @@
 ---
 title: A plugin opens an in-memory connection to its host
-status: todo
+status: done
 depends: []
 layer: "sdk, server"
 refs:
@@ -37,3 +37,14 @@ refs:
 
 ## Resume
 
+- `packages/sdk/src/pair.ts` is new: `createPair()` answers a `Pair` - `host` (the `Peer` handed to `Host.accept`), `plugin` (the end the plugin keeps), `served(connection)` and `close()`. Each `send` is the other end's input through `receive`, delivered on one `setTimeout(..., 0)`, so a socket's asynchrony is kept and a plugin cannot settle its own question inside its own turn.
+- A frame with no `method` goes to `pluginPeer.answered` and one with a `method` to `onMessage`, which is the rule `receive` itself uses - both counters start at the same place, so reading a host question as an answer would settle a promise about something else and leave the real question waiting out its timeout.
+- Both ends close together and once: `shut()` is guarded, closes the two peers and hands the host's connection back through its own `close`, which is what takes the connection out of the host's set, stops its turns being attributed to it and tells every client it went. `handle` before `served` throws `-32601` rather than answering nothing.
+- `packages/sdk/src/types/plugin.ts` gains `PluginPeer` (`send`, `notify`, `request`, `onMessage`, `close`), `PluginConnects` (`by`, `host?`, `close()`) and `PluginHost.connect(): PluginPeer`; `Contribution.connects` is required, because the fold reads it without a case, as it reads `starts`.
+- `pluginHost` keeps the open pairs in a closed-over `opened` list and answers `connect()` with a fresh pair served by `host.accept(pair.host, principal)`. With `connects.host` absent it throws `miss(by, 'connect', 'a connection', 'asked for once a host is built over this plugin; connect from `listening` or later')`.
+- `foldHostOptions` carries `options.pluginConnects`, one entry per contribution, whole and unnamed, exactly as `pluginStarts` is - connecting is not a claim on a name two plugins could disagree about. `HostOptions.pluginConnects` is new in `types/host.ts`, and `types/index.ts` exports `PluginPeer` and `PluginConnects`.
+- `run.ts` sets `one.host = host` on every entry the moment `createHost` answers, and closes every one of them on `down` after `stopping` is raised and before the listeners go.
+- `packages/server/test/plugin-connect.test.ts` is new, with the fixture `packages/server/test/fixtures/plugin-connect/index.ts`: the plugin connects at `listening`, `initialize`s itself, opens a session of the `echo` backend and sends a turn once a client that is not itself is in the room. The test reads the plugin's own account off the daemon's log, since a loaded fixture cannot be asked directly.
+- **Departure 1.** `HostOptions.pluginConnects` and the `Contribution.connects` field are not named by this task's Files list, which stops at `pluginHost` and `run.ts`. The field is how the built host reaches the plugin, and the daemon is the only thing that can set it, so it has to be on the options rather than held by the plugin.
+- **Departure 2.** `packages/sdk/test/plugin-fold.test.ts` and `packages/sdk/test/plugin-host.test.ts` gained `connects: { by, close: () => {} }` on their `Contribution` fixtures. The field is required, so every fixture constructing one is otherwise a compile error; no test case was added or retitled.
+- Verified: `npx vitest run --maxWorkers=2 --testTimeout=10000` green over the whole repository (272 files, 4842 tests), `pnpm typecheck`, `pnpm boundary` green.

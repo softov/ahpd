@@ -1,7 +1,7 @@
 ---
 title: A plugin is a client of its own host, as a principal of its own
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-09-26
 revalidated: 2026-10-04
@@ -13,6 +13,7 @@ creates: []
 decisions:
   - decisions/plugin-contributes-host-options.md
   - decisions/a-grant-is-a-subject-and-a-verb.md
+  - decisions/a-plugin-principal-is-marked-not-read-from-its-id.md
 refs:
   - "[code://packages/sdk/src/types/plugin.ts#L139-L279](../../../../packages/sdk/src/types/plugin.ts#L139-L279) - `PluginHost`, which gains one method"
   - "[code://packages/sdk/src/types/plugin.ts#L66-L73](../../../../packages/sdk/src/types/plugin.ts#L66-L73) - `PluginSpec`, which gains `grants`"
@@ -65,6 +66,7 @@ createHost -> listen -> a plugin calls its connection
 | --- | --- | --- |
 | 1 | [A plugin contributes the host's own options, and there is no service container](../../../decisions/plugin-contributes-host-options.md) | "a plugin that wants to watch a running host is a client instead" |
 | 2 | [A grant is a subject and a verb](../../../decisions/a-grant-is-a-subject-and-a-verb.md) | the grants the plugin's principal holds |
+| 3 | [A plugin's principal is marked, and its id is not read for the owner](../../../decisions/a-plugin-principal-is-marked-not-read-from-its-id.md) | Softov, 2026-10-10: "Mark the principal" |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -91,9 +93,9 @@ createHost -> listen -> a plugin calls its connection
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin opens an in-memory connection to its host](task-01-a-plugin-opens-a-connection.md) | todo | - |
-| [02 - The connection is plugin:<name>, with the grants its entry names](task-02-the-connection-is-the-plugins-principal.md) | todo | 01 |
-| [03 - Docs](task-03-docs.md) | todo | 02 |
+| [01 - A plugin opens an in-memory connection to its host](task-01-a-plugin-opens-a-connection.md) | done | - |
+| [02 - The connection is plugin:<name>, with the grants its entry names](task-02-the-connection-is-the-plugins-principal.md) | done | 01 |
+| [03 - Docs](task-03-docs.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -102,14 +104,15 @@ createHost -> listen -> a plugin calls its connection
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-plugin-opens-a-connection.md](task-01-a-plugin-opens-a-connection.md).
-- **Watch out for:** the plugin's end must introduce itself with `initialize` like any client; the host refuses anything before it.
+- **Done so far:** all three tasks, 2026-10-10. `PluginHost.connect()` answers the plugin's end of an in-memory pair, and `Host.accept` serves it as `plugin:<name>`. The grants arrive from the configuration entry through `PluginSpec.grants`, `asSpec`, the loader's `grantProblem` and `HostRecordingOptions.grants`. `Owner`, `Principal.plugin` and `ownerOfPrincipal` make a plugin's sessions and usage its own. `docs/PLUGINS.md` describes the connection and the entry's `grants`.
+- **Next action:** none; see [implemented.md](implemented.md).
+- **Open questions:** none. The one the plan left open - `user:plugin:<name>` or `plugin:<name>` - Softov answered on 2026-10-04, in the table above.
+- **Watch out for:** the plugin's end must introduce itself with `initialize` like any client, and the host refuses anything before it. `connect()` is not a registration, so it is never refused after `apply` returned. A plugin asking before the host exists is told rather than dropped.
 
 ## Final verification checklist
 
-- [ ] A fixture plugin creates a session and sends a turn through its connection, and a watching client sees the turn.
-- [ ] With a user directory, a plugin with no `grants` is refused `-32009`, and one with `session:write` is not.
-- [ ] Asking for a connection during `apply` refuses with a sentence.
-- [ ] A session a plugin creates is owned by `plugin:<name>`, and its usage is recorded under that owner.
-- [ ] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `plans/index.md` updated.
+- [x] A fixture plugin creates a session and sends a turn through its connection, and a watching client sees the turn.
+- [x] With a user directory, a plugin with no `grants` is refused `-32009`, and one with `session:write` is not.
+- [x] Asking for a connection during `apply` refuses with a sentence.
+- [x] A session a plugin creates is owned by `plugin:<name>`, and its usage is recorded under that owner.
+- [x] `pnpm test`, `pnpm typecheck`, `pnpm boundary` green; `docs/PLUGINS.md`, `plans/index.md` updated.

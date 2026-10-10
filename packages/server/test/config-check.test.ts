@@ -122,6 +122,15 @@ describe('a wrong value on a known key', () => {
     expect(refusal({ plugins: [{ name: 'x', enabled: 'no' }] })).toBe(`${config}: plugins.enabled must be true or false`);
   });
 
+  it('refuses grants that are not a list of text', () => {
+    // The shape is checked before the grammar is: a list holding a number is
+    // refused as a schema, while one holding a word that names nothing is read
+    // and dropped by the loader, which is the one that can say what is wrong
+    // with the word.
+    expect(refusal({ plugins: [{ name: 'x', grants: 'session:write' }] })).toBe(`${config}: plugins.grants must be a list of text`);
+    expect(refusal({ plugins: [{ name: 'x', grants: [7] }] })).toBe(`${config}: plugins.grants must be text`);
+  });
+
   it('refuses a value that was dropped before, rather than falling back to the default', () => {
     expect(refusal({ updateCheck: 'false' })).toBe(`${config}: updateCheck must be true or false`);
   });

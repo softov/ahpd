@@ -15,12 +15,16 @@ import type { Agent } from './types/agent.js';
 import type { SessionConfigAnswerer } from './types/completions.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from './types/events.js';
 import type { HostOptions, HostTool } from './types/host.js';
-import type { Contribution, PluginContext, PluginHost, PluginStarts, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
+import type { Contribution, PluginConnects, PluginContext, PluginHost, PluginStarts, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from './types/plugin.js';
 import type { SessionStore } from './types/sessions.js';
 import type { Usage } from './types/usage.js';
+import type { Grant, Principal } from './types/users.js';
 import type { Vault } from './types/vault.js';
 import { idOf, schemeOf } from './catalog.js';
 import { frozenCopy } from './frozen.js';
+import { holds } from './users.js';
+import { createPair } from './pair.js';
+import type { Pair } from './pair.js';
 import { readSecret } from './vault.js';
 import { checkAgent, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, miss } from './validate.js';
 
@@ -221,6 +225,9 @@ export interface FoldedOptions {
  *   them to collide on.
  * - A close function is kept, never composed: every registration runs, in load
  *   order, and there is nothing for two of them to collide on.
+ * - A plugin's own connections to the host are carried through whole, one entry
+ *   per plugin: the daemon binds the host onto each and closes them when it
+ *   stops, so the fold neither composes them nor reads them.
  */
 export function foldHostOptions(base: HostOptions, contributions: Contribution[]): FoldedOptions {
   const problems: string[] = [];
@@ -499,6 +506,19 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
   const pluginStarts = contributions.map((one) => one.starts);
   if (pluginStarts.length > 0) options.pluginStarts = pluginStarts;
 
+  /*
+   * Every plugin's own way into this host, one entry each.
+   *
+   * Unconditional and unnamed, exactly as `pluginStarts` is: connecting is not
+   * a claim on a name two plugins could disagree about, so there is nothing to
+   * arbitrate and no entry to drop. The objects are the ones `pluginHost` built
+   * and not copies, because the daemon sets `host` on them and each plugin's own
+   * `connect` reads the same one - and the same entries are what it closes when
+   * it stops.
+   */
+  const pluginConnects = contributions.map((one) => one.connects);
+  if (pluginConnects.length > 0) options.pluginConnects = pluginConnects;
+
   return { options, problems, routes };
 }
 
@@ -571,6 +591,15 @@ export interface HostRecordingOptions {
    * run waits rather than being told there are no sessions.
    */
   sessions?: () => SessionStore | undefined | Promise<SessionStore | undefined>;
+  /**
+   * What this plugin's own connection may do, from its configuration entry.
+   *
+   * Already checked by whoever read the entry, which is the loader: what it
+   * drops is reported in its `problems` naming the key it was written under,
+   * so nothing here has a second place to say the same thing. Absent, the
+   * connection holds nothing and every gated command it sends is refused.
+   */
+  grants?: readonly Grant[];
 }
 
 /**
@@ -600,6 +629,38 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
   const events: Record<string, EventListener[]> = {};
   const triggers: PluginTriggers = { by, types: {} };
   const starts: PluginStarts = { by };
+  /*
+   * The connections this plugin has open, in the order it opened them.
+   *
+   * Held here rather than on the picked-up `PluginConnects`, which is what the
+   * daemon binds and closes: this is the plain list of what is open, and the
+   * close is a closure over it rather than a field any reader could rewrite.
+   */
+  const opened: Pair[] = [];
+  const connects: PluginConnects = {
+    by,
+    close: () => { for (const pair of opened.splice(0)) pair.close(); },
+  };
+  /*
+   * Who this plugin is when it connects, which is what every command on that
+   * connection is gated against.
+   *
+   * `plugin:<name>` and not a person: a plugin is nobody's account, so it has
+   * no roles, no memberships and no primary, and the work it starts is charged
+   * to no team. What it may do is the `grants` its configuration entry names,
+   * matched the way a role's are - so a wildcard means what it means everywhere
+   * else and a grant naming nothing else's scheme reaches nothing else.
+   *
+   * Frozen where it is built, as every principal this host serves is: it
+   * reaches the gate, a policy and a scheme's own methods, and one of them
+   * rewriting `can` would decide what the next question is answered with.
+   */
+  const principal: Principal = Object.freeze({
+    id: `plugin:${by}`,
+    plugin: by,
+    roles: Object.freeze([]),
+    can: (grant: Grant) => holds(new Set(options.grants ?? []), grant),
+  });
   const contribution: Contribution = {
     by,
     ...(options.spec === undefined ? {} : { spec: options.spec }),
@@ -613,6 +674,7 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
     closers: [],
     triggers,
     starts,
+    connects,
   };
   const providers = new Set<string>();
   const tools = new Set<string>();
@@ -726,6 +788,33 @@ export function pluginHost(by: string, context: PluginContext, options: HostReco
         throw new Error(miss(by, 'startSession', 'the session', 'asked for once a host is built over this plugin'));
       }
       return start(asked);
+    },
+    /*
+     * The plugin's own connection, over a pair with this host on the other end.
+     *
+     * `connect` is not a registration, so it is not refused after `apply`
+     * returned: a plugin connects from a route or a timer, which is long after
+     * the fold took its copies. What it does need is a host, and the daemon sets
+     * that once `createHost` has answered - so a plugin asking while `apply`
+     * runs, or one asking a host that was never bound to it, is told rather
+     * than handed a connection to nothing.
+     *
+     * The connection is served as this plugin's own principal rather than as
+     * nobody, and never as root: a plugin is a client of this host with what its
+     * entry grants it, which is the whole of what it may do here.
+     */
+    connect() {
+      const host = connects.host;
+      if (host === undefined) {
+        throw new Error(miss(by, 'connect', 'a connection', 'asked for once a host is built over this plugin; connect from `listening` or later'));
+      }
+      const pair = createPair(() => {
+        const at = opened.indexOf(pair);
+        if (at !== -1) opened.splice(at, 1);
+      });
+      opened.push(pair);
+      pair.served(host.accept(pair.host, principal));
+      return pair.plugin;
     },
     registerAgent(agent) {
       open();

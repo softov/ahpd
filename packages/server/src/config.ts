@@ -520,10 +520,23 @@ export const asSpec = (value: unknown): PluginSpec | undefined => {
     return undefined;
   }
   if (held.enabled !== undefined && typeof held.enabled !== 'boolean') return undefined;
+  /*
+   * The grants, kept only when every one of them is a string.
+   *
+   * A list holding anything else is a half-read answer about what a plugin may
+   * do, which is worse than none: the loader would drop the one bad entry and
+   * grant the rest, and an operator who wrote a number would be told about the
+   * number and not about the list they meant to write. So the whole list goes
+   * and the entry is refused, the way a wrong `enabled` is.
+   */
+  if (held.grants !== undefined && !(Array.isArray(held.grants) && held.grants.every((one) => typeof one === 'string'))) {
+    return undefined;
+  }
 
   const spec: PluginSpec = { name: held.name };
   if (held.options !== undefined) spec.options = held.options as Record<string, unknown>;
   if (held.enabled !== undefined) spec.enabled = held.enabled;
+  if (held.grants !== undefined) spec.grants = held.grants as string[];
   return spec;
 };
 

@@ -581,6 +581,10 @@ const pluginEntry: JsonSchema = {
     name: { type: 'string' },
     options: { type: 'object' },
     enabled: { type: 'boolean' },
+    // What the plugin may do on this host when it acts as a client of its own:
+    // `<subject>:<operation>`, checked by the loader, which drops what is not
+    // one and says so. Empty or absent, it may do nothing.
+    grants: { type: 'array', items: { type: 'string' } },
   },
   required: ['name'],
 };

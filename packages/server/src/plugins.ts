@@ -27,8 +27,8 @@ import { createRequire } from 'node:module';
 import { basename, dirname, extname, isAbsolute, join, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
-import { foldHostOptions, frozenCopy, isRecord, pluginHost, readSecret, reason, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
-import type { Agent, Contribution, HostOptions, Loaded, Plugin, PluginContext, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
+import { foldHostOptions, frozenCopy, grantProblem, isRecord, pluginHost, readSecret, reason, runtime, sdkVersion, secretRef } from '@ahpd/sdk';
+import type { Agent, Contribution, Grant, HostOptions, Loaded, Plugin, PluginContext, PluginSpec, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
 import { satisfies } from './compat.js';
 
 /** One spec, turned into a URL to import. */
@@ -720,6 +720,28 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
       if (!Object.hasOwn(known, key)) problems.push(`plugin ${name}: ${label}.${key} is not an option ${name} knows; passed through`);
     }
   }
+  /*
+   * What this plugin's own connection may do, as its entry wrote it.
+   *
+   * One grant of the wrong shape is dropped rather than the plugin refused: it
+   * is one line of a list, and the rest of the list is what the person meant -
+   * the same reading a role written through the people provider gets. The line
+   * naming it is this loader's rather than the plugin's, because the entry it
+   * was read from is the loader's: a plugin never sees what it was configured
+   * with. Decision `a-grant-names-an-operation-and-read-and-write-are-its-groups`.
+   *
+   * `asSpec` has already refused an entry whose `grants` is not a list of
+   * strings, so the guard below is for the spec this loader was handed rather
+   * than for the file: a string read as a list would report one line per
+   * character.
+   */
+  const listed = typeof spec === 'object' && spec !== null ? spec.grants : undefined;
+  const grants: Grant[] = [];
+  for (const one of Array.isArray(listed) ? listed : []) {
+    const why = grantProblem(one);
+    if (why === undefined) grants.push(one as Grant);
+    else problems.push(`plugin ${name}: plugins.${name}.grants: ${why}`);
+  }
   const plugin: Plugin = {
     name,
     apply,
@@ -767,6 +789,7 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions): Prom
     ...(options.usage === undefined ? {} : { usage: options.usage }),
     ...(options.vault === undefined ? {} : { vault: options.vault }),
     problem: (line) => { told.push(line); },
+    ...(grants.length === 0 ? {} : { grants }),
     ...(options.sessions === undefined ? {} : { sessions: options.sessions }),
     // As configuration wrote it, which is what a host inside a machine loads.
     spec: said,
