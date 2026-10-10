@@ -432,10 +432,7 @@ const NOT_REPLAYED = [
   '272-toolcallready-typed-edit-previews',
   '273-chat-isarchivedchanged-unarchives-chat',
   '274-chat-canvaseschanged-sets-canvases',
-  '274-session-mcpserverbackgroundrequested-clears-blocking',
   '275-chat-canvaseschanged-clears-canvases',
-  '275-session-mcpserverbackgroundrequested-noop-when-not-starting',
-  '276-session-mcpserverbackgroundrequested-noop-when-not-blocking',
   '277-chat-backgroundworkset-adds',
   '277-session-chatsreordered-authoritative-order-to-start',
   '278-chat-backgroundworkset-replaces',
@@ -471,10 +468,6 @@ const NOT_REPLAYED = [
  * then be in neither this list nor a comparison.
  */
 const HOST_REFUSED = [
-  // `session/mcpServerBackgroundRequested is not served yet`
-  '274-session-mcpserverbackgroundrequested-clears-blocking',
-  '275-session-mcpserverbackgroundrequested-noop-when-not-starting',
-  '276-session-mcpserverbackgroundrequested-noop-when-not-blocking',
   // `session/activeClientRemoved is not served yet`
   '221-session-activeclientremoved-removes-client',
   '222-session-activeclientremoved-no-op-unknown-client',
@@ -685,14 +678,17 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
   }
 
   it('names every case it cannot replay, and no other', () => {
-    expect(NOT_REPLAYED).toHaveLength(208);
-    expect(new Set(NOT_REPLAYED).size).toBe(208);
-    expect(HOST_REFUSED).toHaveLength(62);
+    expect(NOT_REPLAYED).toHaveLength(205);
+    expect(new Set(NOT_REPLAYED).size).toBe(205);
+    expect(HOST_REFUSED).toHaveLength(59);
     // The rest of the refused cases are the ones a client may not send, and
     // each of those is checked against the protocol's own answer per case.
     expect(NOT_REPLAYED.length - HOST_REFUSED.length).toBe(146);
     expect(Object.keys(HOST_OWNS)).toHaveLength(11);
-    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 29).toBe(hostCases.length);
+    // And 32 that ran and agreed, which need no entry in either list: they are
+    // the coverage this suite is for, and a case joining or leaving them is
+    // what moves this number.
+    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 32).toBe(hostCases.length);
   });
 });
 

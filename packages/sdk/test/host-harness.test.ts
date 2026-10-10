@@ -705,6 +705,67 @@ describe('turning a customization on and off', () => {
     await settle(8);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
   });
+
+  it('says nothing to a request to background a startup, since nothing here waits on one', async () => {
+    const said: string[] = [];
+    sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
+    sdk.mcp = [{ name: 'desk', status: 'connected' }];
+    const { client, peer: p, uri } = await running({ onEvent: (message) => said.push(message) });
+    await settle(8);
+
+    const before = actions(p, uri).length;
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+
+    /*
+     * The Claude CLI's startup is not blocking unless a server says
+     * `alwaysLoad`, and this backend never reports one, so there is no seam on
+     * this session and the action changes nothing. A refusal would be worse
+     * than nothing: it would tell a client its request was wrong when the
+     * truth is that nothing was waiting on the server to begin with.
+     */
+    expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
+    expect(actions(p, uri).length).toBe(before);
+  });
+
+  it('hands a background request to a backend that has the call, once, with the id', async () => {
+    const asked: string[] = [];
+    const backend = claude({ paths: ['/home/softov'] });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...backend,
+        create: (start: Parameters<typeof backend.create>[0]) => ({
+          ...backend.create(start),
+          backgroundMcpServerStartup: async (id: string): Promise<boolean> => {
+            asked.push(id);
+            return true;
+          },
+        }),
+      }],
+    });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/live' } });
+    await settle(8);
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+
+    // The backend is the only thing that knows whether that server was
+    // blocking, so the host asks it and says nothing of its own. Once: the
+    // host is not the thing that decides, and asking twice would run whatever
+    // the backend does twice.
+    expect(asked).toEqual(['mcp:desk']);
+  });
 });
 
 describe('a skill is not a prompt', () => {

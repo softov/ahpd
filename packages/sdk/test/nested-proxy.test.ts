@@ -249,6 +249,7 @@ interface Told {
   confirmed: { id: string; approved: boolean; option?: string }[];
   answered: { id: string; accepted: boolean; answers: Bag }[];
   signedIn: { resource: string; token: string }[];
+  backgrounded: string[];
   order: string[];
 }
 
@@ -260,7 +261,7 @@ const scriptedAgent = (
   onBegin: (session: Start, turnId: string, text: string) => void,
   extra: { models?: { id: string; name: string }[]; awaiting?: string[] } = {},
 ): { agent: Agent; told: Told } => {
-  const told: Told = { confirmed: [], answered: [], signedIn: [], order: [] };
+  const told: Told = { confirmed: [], answered: [], signedIn: [], backgrounded: [], order: [] };
   const agent = {
     provider: PROVIDER,
     displayName: 'Cofold',
@@ -292,6 +293,14 @@ const scriptedAgent = (
       cancel: () => {}, queue: () => {}, unqueue: () => {}, setDraft: () => {}, reorder: () => {},
       setCustomizationEnabled: async () => false, startMcpServer: async () => false,
       stopMcpServer: async () => false, settings: () => ({}),
+      // A backend that can background a startup answers by emitting, so this
+      // one does what a real one does: the action, then the state.
+      backgroundMcpServerStartup: async (serverId: string) => {
+        told.backgrounded.push(serverId);
+        session.emit('session', { type: 'session/mcpServerBackgroundRequested', id: serverId });
+        session.emit('session', { type: 'session/mcpServerStateChanged', id: serverId, state: { kind: 'starting', blocking: false } });
+        return true;
+      },
       ...(extra.awaiting === undefined ? {} : {
         awaiting: () => extra.awaiting,
         authenticated: async (resource: string, token: string) => { told.signedIn.push({ resource, token }); return true; },
@@ -437,6 +446,38 @@ it('a sign-in the inner session asks for is awaited outside and reaches the inne
   expect(session.awaiting?.()).toEqual([resource]);
   expect(await session.authenticated?.(resource, 'token-1')).toBe(true);
   expect(told.signedIn).toEqual([{ resource, token: 'token-1' }]);
+  session.close();
+});
+
+it('a background request is handed to the host inside, and its answer comes back out', async () => {
+  const { agent, told } = scriptedAgent((session, turnId) => {
+    session.emit('chat', { type: 'chat/turnComplete', turnId });
+  });
+  const inner = innerHost(agent);
+  const { seen, emit } = recorder();
+  const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
+  session.begin('t1', 'hi');
+  await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
+
+  /*
+   * Whether that server was blocking is the inner session's own state, and
+   * the proxy holds no copy of it: the action goes inside as the same action,
+   * with the same id, and the answer is whatever the inner host puts out.
+   */
+  expect(await session.backgroundMcpServerStartup?.('mcp:desk')).toBe(true);
+  await until(() => told.backgrounded.length > 0);
+  const handed = inner.messages.find((message) => message.method === 'dispatchAction'
+    && message.params?.action?.type === 'session/mcpServerBackgroundRequested');
+  expect(handed?.params?.action).toEqual({ type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' });
+  expect(told.backgrounded).toEqual(['mcp:desk']);
+
+  // And the state the inner backend said comes back out on the outer session,
+  // which is how the client outside learns the server stopped blocking.
+  await until(() => seen.some(({ action }) => action.type === 'session/mcpServerStateChanged'));
+  expect(seen.find(({ action }) => action.type === 'session/mcpServerStateChanged')).toEqual({
+    channel: 'session',
+    action: { type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'starting', blocking: false } },
+  });
   session.close();
 });
 

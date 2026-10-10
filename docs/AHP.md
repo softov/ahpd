@@ -195,7 +195,7 @@ Three keys VS Code declared before 1.140 are not declared here, because 1.140 dr
 The artifact tools carry the long wording and no other, and every session runs under the deferred title strategy, with no key to change either.
 A client older than 1.140 that still pushes one of the three has that key refused by name, and the rest of its push applied.
 
-### `session/*` — 28 of 28
+### `session/*` — 29 of 29
 
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
@@ -221,6 +221,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/mcpServerStateChanged` | host | ✅ | The protocol's words, not the SDK's: `ready`, `stopped`, `error`, `authRequired`, `starting`. Each kind carries different required fields, and only the last two carry any. |
 | `session/mcpServerStartRequested` | both | ✅ | Also how a server nobody has signed into is signed into, because lifting the disabled flag alone brings it straight back needing one. |
 | `session/mcpServerStopRequested` | both | ✅ | Straight through to the CLI's own toggle. |
+| `session/mcpServerBackgroundRequested` | client | ✅ | A server that is starting and blocking is one a turn waits on, and this asks for the wait to end without stopping the server: a backend that takes the request emits it and then the `session/mcpServerStateChanged` carrying `blocking: false`. It is a no-op on every backend that ships here, and the Claude backend is why - nothing in it holds a message back on a starting server, so it has no seam for this and never reports `blocking` either, and a request against it is answered with nothing rather than a refusal. A nested host hands it inside, because whether that server was blocking is the inner session's own state. |
 | `session/isReadChanged` | client | ✅ | This host's own bit, kept per session and never seen by a backend. |
 | `session/isArchivedChanged` | client | ✅ | The same, and the reason a row with no agent running still has a status to report. |
 | `session/activityChanged` | host | ✅ | What the session is doing in one line, taken from whichever chat is driving it. Absent means idle, which is a field left off rather than an empty string. |

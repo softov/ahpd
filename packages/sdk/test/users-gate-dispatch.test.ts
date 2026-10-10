@@ -113,6 +113,29 @@ it('classifies a dispatch by its action, with the channel beside it', async () =
   expect(GATE.dispatchNeeds(ROOT, 'other', { type: 'root/configChanged', config: { defaultShell: '/bin/sh', somethingNew: 1 } })).toBe('config:change');
 });
 
+it('asks a role for the session write before it lets one background an MCP startup', async () => {
+  const made = host({ users: directory({ r: ['session:read'], w: ['session:read', 'session:write'] }) });
+
+  /*
+   * `session:configure`, which the write group covers and the read one does
+   * not. Refused at the gate, before the session is looked for - so the
+   * refusal is the grant's and not "no such session", which is what a reader
+   * would otherwise be told and could do nothing about.
+   */
+  const reader = await withRole(made, 'r');
+  await reader.send('ahp-session:/x', { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' });
+  expect(reader.refused()).toEqual(['ahp-session:/x: r may not session:configure here']);
+
+  // The same action from a role that may configure the session is taken and
+  // refused to nobody, even though this backend has no such seam: a backend
+  // with nothing to do about it is not a client that asked for the wrong
+  // thing.
+  const writer = await withRole(made, 'w');
+  expect(await call(writer.client, 'createSession', { channel: 'ahp-session:/x', provider: 'base' })).toHaveProperty('result');
+  await writer.send('ahp-session:/x', { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' });
+  expect(writer.refused()).toEqual([]);
+});
+
 it('dispatches freely with no user directory', async () => {
   const seen = watching();
   const client = host({ terminals: shellTerminals() }).accept(seen);

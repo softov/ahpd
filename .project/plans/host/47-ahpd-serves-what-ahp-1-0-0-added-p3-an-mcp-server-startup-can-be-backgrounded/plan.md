@@ -1,7 +1,7 @@
 ---
 title: A blocking MCP server startup can be sent to the background
 domain: host
-status: planned
+status: built
 priority: low
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -66,7 +66,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A request to background an MCP startup reaches the backend that can do it](task-01-a-background-request-reaches-the-backend.md) | todo | - |
+| [01 - A request to background an MCP startup reaches the backend that can do it](task-01-a-background-request-reaches-the-backend.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,13 +74,17 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-background-request-reaches-the-backend.md](task-01-a-background-request-reaches-the-backend.md).
+- **Done so far:** task 01 implemented 2026-10-09, awaiting review. The action is served, the nested forward is in, the Claude backend still reports no `blocking`, the `docs/AHP.md` row is written, and the gates pass. The protocol's own three cases for the action left `HOST_REFUSED` and now replay with no difference.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** the host must not dispatch the action itself; on a backend that cannot background, an echo would tell every other client the server stopped blocking when it did not.
+- **Watch out for:** the host must not dispatch the action itself; on a backend that cannot background, an echo would tell every other client the server stopped blocking when it did not. Nothing in `chatactions.ts` emits for this case, and the action only comes back from a backend that took the request.
 
 ## Final verification checklist
 
-- [ ] The action is no longer refused, and reaches a backend that implements the method.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm test` pass.
-- [ ] `plans/index.md` updated.
+- [x] The action is no longer refused, and reaches a backend that implements the method.
+- [x] `pnpm exec tsc --noEmit`, `pnpm test` pass.
+- [x] `plans/index.md` updated.
+
+Not done by hand: nothing. The one claim no test can make is the wait a real blocking server would have ended. No backend in this repository raises such a wait, so there is nothing to watch by hand either.
+
+One edit outside the plan is `packages/sdk/test/fixtures/wire.jsonl`, which the suite rewrites with this box's endpoints on every run. It is not part of this task's change.

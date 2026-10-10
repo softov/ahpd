@@ -107,6 +107,23 @@ describe('where a customization came from', () => {
   });
 });
 
+/*
+ * A server the CLI is still connecting to.
+ *
+ * The Claude backend never reports `blocking`, which is the protocol's
+ * optional field for a startup a client would have to wait on: nothing here
+ * holds a message back on one, so a client is told the server is starting and
+ * nothing else. `blocking: false` would be a claim about a wait that does not
+ * exist, and a `session/mcpServerBackgroundRequested` would then have
+ * something to clear that was never raised.
+ */
+it('reports a server the CLI is still connecting to as starting, with no blocking flag', () => {
+  const out = customizationsOf({}, [{ name: 'desk', status: 'pending' }]);
+  const server = out.find((one) => one.type === 'mcpServer');
+  expect(server?.state).toEqual({ kind: 'starting' });
+  expect(server?.state).not.toHaveProperty('blocking');
+});
+
 describe('where an agent lives', () => {
   it('gives an agent the CLI ships, and which has no file of its own, an internal uri', () => {
     const { restore } = withHome([]);

@@ -389,6 +389,18 @@ it('sends the background actions to a 0.9.0 connection', () => {
   expect(isActionKnownToVersion({ type: 'chat/backgroundWorkRemoved', id: work.id } as unknown as StateAction, '0.9.0')).toBe(true);
 });
 
+it('sends a background request to a 0.9.0 connection', () => {
+  /*
+   * `session/mcpServerBackgroundRequested` came in with the same version, so a
+   * client that knows only that one is told the startup it asked to background
+   * went through, rather than being left with a session it believes is still
+   * blocking on the server.
+   */
+  expect(isActionKnownToVersion({
+    type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk',
+  } as unknown as StateAction, '0.9.0')).toBe(true);
+});
+
 it('reduces a terminal, from the bytes a shell wrote', async () => {
   const host = createHost({ path: '/tmp', agents: [claude({ paths: ['/tmp'] })], terminals: shellTerminals() });
   const p = peer();

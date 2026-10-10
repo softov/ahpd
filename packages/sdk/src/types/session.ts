@@ -561,6 +561,23 @@ export interface Session {
   stopMcpServer(id: string): Promise<boolean>;
 
   /**
+   * Stop holding a turn back on an MCP server that is still starting.
+   *
+   * The protocol's `session/mcpServerBackgroundRequested`, and the name is VS
+   * Code's own for the same seam. The server keeps starting; what changes is
+   * that the next message does not wait for it.
+   *
+   * The backend says how it went by emitting, not by answering: the action and
+   * the `session/mcpServerStateChanged` that follows it when it took the
+   * request, and a state restoring `blocking: true` when it could not.
+   *
+   * Optional, and absent is not a refusal. No backend here holds a message back
+   * on a starting server, so the host calls this where it exists and says
+   * nothing where it does not.
+   */
+  backgroundMcpServerStartup?(id: string): Promise<boolean>;
+
+  /**
    * A token for one of this session's MCP servers, as the client signed in.
    *
    * Answers whether the server it names is one of this session's. The token

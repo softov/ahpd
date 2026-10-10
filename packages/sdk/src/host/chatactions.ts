@@ -1126,6 +1126,22 @@ export function chatAction(
         if (!took) no(`${String(action.id ?? '')} would not stop`);
       });
       break;
+    /*
+     * A startup a client asked to stop waiting on.
+     *
+     * Handed to the backend, which is the only thing that knows whether this
+     * server was blocking and how to stop holding a turn on it. The backend
+     * answers by emitting - the action and the state that follows - so there
+     * is nothing to report here on either answer.
+     *
+     * No refusal, and no `no(...)`: a backend without the call, and a server
+     * that was not blocking, both leave the state alone. The protocol's own
+     * reducer is a no-op for them, and a refusal would tell the client its
+     * request was wrong when there was simply nothing to do.
+     */
+    case 'session/mcpServerBackgroundRequested':
+      void session.backgroundMcpServerStartup?.(String(action.id ?? ''));
+      break;
     case 'chat/draftChanged':
       // A `Message`, not a string: `ChatState.draft` is the message
       // somebody is part-way through writing, model and all. Absent
