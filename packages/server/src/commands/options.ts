@@ -298,6 +298,48 @@ const setAt = (options: Record<string, unknown> | undefined, path: readonly stri
 };
 
 /**
+ * The plugin one `--plugin-option` names, of the names a run loads, and the key
+ * path after it.
+ *
+ * The name is the longest of `names` the text ahead of the `=` starts with and
+ * has a dot after it, so a scoped package name and a path whose extension holds
+ * a dot are both found by asking the list rather than by counting dots, and of
+ * two names that both fit, such as `a` and `a.b` for `a.b.c`, the longer one is
+ * the plugin and the rest is the key path - which is exactly how a start reads
+ * the same flag.
+ */
+const pluginOptionIn = (head: string, names: readonly string[]): { plugin: string; path: string[] } | undefined => {
+  let found: string | undefined;
+  for (const name of names) {
+    if (name === '' || !head.startsWith(`${name}.`)) continue;
+    if (found === undefined || name.length > found.length) found = name;
+  }
+  if (found === undefined) return undefined;
+  return { plugin: found, path: head.slice(found.length + 1).split('.') };
+};
+
+/**
+ * One `--plugin-option` value, split the way a start splits it: the plugin it
+ * names, the key path under that plugin's options, and the value.
+ *
+ * Split at the first `=`, so a value may hold one. The value is JSON when it
+ * parses. Nothing when the text names none of `names`, and when it holds no
+ * `=` or an empty key: a start refuses each of those, so a line one wrote holds
+ * none of them. `plugin config` reads a recorded line with this, so what it
+ * says about a flag is what a start would do with it.
+ */
+export const splitPluginOption = (
+  typed: string,
+  names: readonly string[],
+): { plugin: string; path: string[]; value: unknown } | undefined => {
+  const equals = typed.indexOf('=');
+  const head = equals === -1 ? '' : typed.slice(0, equals);
+  const named = pluginOptionIn(head, names);
+  if (named === undefined || named.path.some((key) => key === '')) return undefined;
+  return { ...named, value: typedValue(typed.slice(equals + 1)) };
+};
+
+/**
  * `mcpServers` as this run offers them, and what is wrong with the rest.
  *
  * The entries are not described by the schema on the key, because the JSON
@@ -811,35 +853,19 @@ const noCwd = input['noCwd'] === true;
   }
 
   /*
-   * `--plugin-option`, over the options of the plugin it names.
-   *
-   * Split at the first `=`, so a value may hold one, and what is left of it is
-   * `<plugin>.<key path>`, the path set as deep into the entry's options as it
-   * goes. The value is JSON when it parses. The plugin must be one this run
+   * `--plugin-option`, over the options of the plugin it names: each one is
+   * split by `pluginOptionIn` into the plugin and the key path, which is set as
+   * deep into that entry's options as it goes. The plugin must be one this run
    * loads, enabled, because an option for a plugin that is not loaded is a
    * setting nobody would see take effect.
    */
   // An entry switched off is one this run does not load.
   const loadedName = (spec: PluginSpec): string | undefined =>
     typeof spec === 'string' ? spec : spec.enabled === false ? undefined : spec.name;
+  const loadedNames = plugins.map(loadedName).filter((name): name is string => name !== undefined);
   for (const typedOption of (input['pluginOptions'] as string[] | undefined) ?? []) {
     const equals = typedOption.indexOf('=');
     const head = equals === -1 ? '' : typedOption.slice(0, equals);
-    /*
-     * The plugin is the longest name this run loads that the text ahead of the
-     * `=` starts with, so a scoped package name and a path whose extension
-     * holds a dot are both found by asking the list rather than by counting
-     * dots, and everything after that name is the key path.
-     */
-    let at = -1;
-    let named = '';
-    plugins.forEach((spec, index) => {
-      const name = loadedName(spec);
-      if (name !== undefined && name !== '' && head.startsWith(`${name}.`) && name.length > named.length) {
-        at = index;
-        named = name;
-      }
-    });
     /*
      * What the flag was written as, up to its `=`. Every refusal about this
      * one quotes the path and never the value: what is being set is an option
@@ -847,16 +873,18 @@ const noCwd = input['noCwd'] === true;
      * and a refusal is printed on a terminal and written to a log.
      */
     const spelled = pathOf(typedOption);
-    if (at === -1) {
+    const named = pluginOptionIn(head, loadedNames);
+    if (named === undefined) {
       // Nothing this run loads is named here, so the first dot says which name was meant.
       const dot = head.indexOf('.');
       if (equals === -1 || dot <= 0) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${spelled === '' ? 'an empty path' : spelled}.`);
       stop(`--plugin-option names ${head.slice(0, dot)}, which is not a plugin this run loads.`);
     }
-    const spec = plugins[at] as PluginSpec;
-    const path = head.slice(named.length + 1).split('.');
+    const { plugin, path } = named;
     if (path.some((key) => key === '')) stop(`--plugin-option takes <plugin>.<key>=<value>, not ${spelled}.`);
     const value = typedValue(typedOption.slice(equals + 1));
+    const at = plugins.findIndex((spec) => loadedName(spec) === plugin);
+    const spec = plugins[at] as PluginSpec;
     plugins[at] = typeof spec === 'string'
       ? { name: spec, options: setAt(undefined, path, value, spelled) }
       : { ...spec, options: setAt(spec.options, path, value, spelled) };

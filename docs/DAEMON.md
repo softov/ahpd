@@ -465,6 +465,8 @@ A plugin that cannot be imported is written anyway, and its options are checked 
 A plugin switched off with `enabled: false` is never imported, here or over the API: a value set for it is written unchecked and checked when it is enabled and loads, and one read over the API answers `<set>` for each of its values.
 An `unset` of an option the entry does not set leaves the file as it is and says so.
 Nothing a running daemon loaded changes until it is restarted, and each of these says so when a daemon is running.
+When the running daemon's recorded line sets that same option with `--plugin-option`, the line names the flag too: a restart starts that line again, so the flag wins over the file.
+The flag is named up to its `=`, as a refusal about one is, and never the value it holds.
 
 `--plugin-option` sets one option for one run, over the file's:
 

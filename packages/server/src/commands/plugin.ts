@@ -19,11 +19,44 @@ import type { Moved } from '../install.js';
 import { describePlugin, optionsSchemaOf, pluginLine } from '../plugins.js';
 import { version } from '../version.js';
 import { keyed, maskOption, schemasFor, withoutSpecSecrets, withoutUserinfoIn } from './config.js';
-import { optionsFrom, pluginWriteFields, flagFields, serverFields, servedPluginWriteFields, stop, typedValue } from './options.js';
+import { optionsFrom, pluginWriteFields, flagFields, serverFields, servedPluginWriteFields, splitPluginOption, stop, typedValue } from './options.js';
 import type { ServedFacts } from './served.js';
 
 /** What a change to the plugins says, since only a restart loads it. */
 const RESTART = 'Restart the daemon to load the change: ahpd restart';
+
+/**
+ * What a set says when the running daemon's recorded line already sets that
+ * option: a restart starts that line again, so the flag wins over the file.
+ *
+ * The flag is named up to its `=`, as every refusal about one is: an option is
+ * a credential more often than not, and this line is printed on a terminal and
+ * carried by a served answer, so what the flag holds is not said.
+ */
+const overridden = (plugin: string, key: string): string =>
+  `--plugin-option ${plugin}.${key}, recorded for this daemon, overrides it on ahpd restart.`;
+
+/**
+ * Whether a recorded line sets one key of one plugin with `--plugin-option`.
+ *
+ * The line is a list of words, so the flag is read as one: `--plugin-option X`
+ * and `--plugin-option=X` are both what a start forwards, whichever the person
+ * typed. Only a flag that sets the key itself and nothing deeper counts, since
+ * one that sets a path under the key leaves the rest of what the file set in
+ * place.
+ */
+const recordedOverride = (argv: readonly string[], plugin: string, key: string): boolean => {
+  for (let index = 0; index < argv.length; index += 1) {
+    const word = argv[index] as string;
+    const typed = word === '--plugin-option' ? argv[index + 1]
+      : word.startsWith('--plugin-option=') ? word.slice('--plugin-option='.length)
+      : undefined;
+    if (typed === undefined) continue;
+    const split = splitPluginOption(typed, [plugin]);
+    if (split !== undefined && split.path.length === 1 && split.path[0] === key) return true;
+  }
+  return false;
+};
 
 export const declarePlugin = (registry: Registry<object>, served?: ServedFacts): Command[] => {
   const list = registry.action({
@@ -283,13 +316,23 @@ export const declarePlugin = (registry: Registry<object>, served?: ServedFacts):
       setPluginOption(file, name, option, value);
       say(`Set ${name} ${option}.`);
     }
-    const restart = restarting();
+    /*
+     * The record of the daemon that is up, read once: what says a restart is
+     * needed, and the line a restart would start again. A daemon that recorded
+     * no line, such as one an older ahpd started or one run in the foreground,
+     * has no flag to override anything with.
+     */
+    const record = running();
+    const restart = served !== undefined || record !== undefined;
+    const override = record?.argv !== undefined && recordedOverride(record.argv, name, option);
+    if (override) say(overridden(name, option));
     if (restart) say(RESTART);
     return output({
       name,
       key: option,
       ...(doing === 'unset' ? {} : { value: shown(option, typedValue(typed as string)) }),
       ...(restart ? { restart: true } : {}),
+      ...(override ? { overriddenBy: `--plugin-option ${name}.${option}`, words: overridden(name, option) } : {}),
     }, '');
   });
   const config = registry.action({

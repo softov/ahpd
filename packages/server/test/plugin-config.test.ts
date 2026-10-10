@@ -187,6 +187,129 @@ describe('the restart line', () => {
   });
 });
 
+describe('a recorded --plugin-option that overrides a set', () => {
+  /** The record of a daemon this process stands in for, started with that line. */
+  const recordedWith = (argv: string[]): void => {
+    writeFileSync(join(home, 'ahpd', 'daemon.json'), JSON.stringify({
+      pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '', argv,
+    }));
+  };
+  const RESTART = 'Restart the daemon to load the change: ahpd restart\n';
+  /** What the line says about one key: the flag, never the value it holds. */
+  const overrides = (key: string): string =>
+    `--plugin-option ${SECRET}.${key}, recorded for this daemon, overrides it on ahpd restart.`;
+
+  it('names the flag a set will not take effect past, and writes the file', async () => {
+    recordedWith(['--path', '/tmp/x', '--plugin-option', `${SECRET}.region=eu`, '--plugin-option', `${SECRET}.retries=3`]);
+    put({ plugins: [SECRET] });
+    const set = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(set.said).toBe(`Set ${SECRET} region.\n${overrides('region')}\n${RESTART}`);
+    expect(set.output?.data).toEqual({
+      name: SECRET,
+      key: 'region',
+      value: 'turn',
+      restart: true,
+      overriddenBy: `--plugin-option ${SECRET}.region`,
+      words: overrides('region'),
+    });
+    // The file holds the new value; the recorded flag is what a restart starts
+    // from, so the line says the file's value never takes effect.
+    expect(read().plugins).toEqual([{ name: SECRET, options: { region: 'turn' } }]);
+  });
+
+  it('reads both spellings the line may use', async () => {
+    recordedWith([`--plugin-option=${SECRET}.region=eu`]);
+    put({ plugins: [SECRET] });
+    const set = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(set.said).toContain(`${overrides('region')}\n`);
+  });
+
+  it('says it after an unset too, which the flag puts back at the next restart', async () => {
+    recordedWith(['--plugin-option', `${SECRET}.region=eu`]);
+    put({ plugins: [{ name: SECRET, options: { region: 'eu' } }] });
+    const off = await run('plugin.config.unset', { name: SECRET, key: 'region' });
+    expect(off.said).toBe(`Unset ${SECRET} region.\n${overrides('region')}\n${RESTART}`);
+    expect(off.output?.data).toEqual({
+      name: SECRET, key: 'region', restart: true,
+      overriddenBy: `--plugin-option ${SECRET}.region`, words: overrides('region'),
+    });
+    expect(read().plugins).toEqual([{ name: SECRET }]);
+  });
+
+  it('names the flag when the line gives one key twice, as a start reads it', async () => {
+    recordedWith(['--plugin-option', `${SECRET}.region=eu`, '--plugin-option', `${SECRET}.region=us`]);
+    put({ plugins: [SECRET] });
+    const set = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(set.said).toContain(`${overrides('region')}\n`);
+  });
+
+  it('says nothing more for another key, another plugin, a record without a line, or none', async () => {
+    const OVERRIDES = 'overrides it on ahpd restart';
+    put({ plugins: [{ name: SECRET, options: { region: 'eu' } }] });
+
+    // Another key of the same plugin.
+    recordedWith(['--plugin-option', `${SECRET}.apiKey=k-1`]);
+    const otherKey = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(otherKey.said).not.toContain(OVERRIDES);
+    expect(otherKey.output?.data).toEqual({ name: SECRET, key: 'region', value: 'turn', restart: true });
+
+    // A flag deeper than the key sets a path under it and not the key itself.
+    recordedWith(['--plugin-option', `${SECRET}.region.eu=1`]);
+    expect((await run('plugin.config.unset', { name: SECRET, key: 'region' })).said).not.toContain(OVERRIDES);
+
+    // A flag for a plugin beside this one is that plugin's business.
+    recordedWith(['--plugin-option', 'other.region=eu']);
+    const beside = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(beside.said).not.toContain(OVERRIDES);
+    expect(beside.said).toContain(RESTART);
+
+    // A record an older daemon wrote, which holds no line of its own.
+    writeFileSync(join(home, 'ahpd', 'daemon.json'), JSON.stringify({
+      pid: process.pid, url: 'ws://127.0.0.1:9187', connectUrl: 'ws://127.0.0.1:9187/', paths: [], startedAt: '',
+    }));
+    const older = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(older.said).not.toContain(OVERRIDES);
+    expect(older.said).toContain(RESTART);
+
+    // And no record at all, where not even a restart is said.
+    rmSync(join(home, 'ahpd', 'daemon.json'));
+    const none = await run('plugin.config.set', { name: SECRET, key: 'region', value: 'turn' });
+    expect(none.said).toBe(`Set ${SECRET} region.\n`);
+  });
+
+  it('carries the same line and the flag in a served answer', async () => {
+    recordedWith(['--plugin-option', `${SECRET}.region=eu`]);
+    put({ plugins: [SECRET] });
+    const facts: ServedFacts = {
+      options: {} as Options,
+      configFile: config,
+      running: () => ({ pid: process.pid, url: `ws://${AUTHORITY}`, host: '127.0.0.1', port: 9350, paths: [], startedAt: '' }),
+      turning: () => [],
+      restart: () => {},
+    };
+    const handler = apiHandler({
+      registry: servedRegistry(facts),
+      token: 'root-secret',
+      program: { name: 'ahpd', version: '0.0.0' },
+      origins: () => apiOrigins('127.0.0.1', undefined, 9350),
+    });
+    const answered = await handler(new Request(`http://${AUTHORITY}/api/plugin/config/set`, {
+      method: 'POST',
+      headers: { host: AUTHORITY, 'content-type': 'application/json', authorization: 'Bearer root-secret' },
+      body: JSON.stringify({ name: SECRET, key: 'region', value: 'turn' }),
+    }));
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toEqual({
+      name: SECRET,
+      key: 'region',
+      value: 'turn',
+      restart: true,
+      overriddenBy: `--plugin-option ${SECRET}.region`,
+      words: overrides('region'),
+    });
+  });
+});
+
 describe('plugin enable and disable at the terminal', () => {
   it('turns a string entry off and on', async () => {
     put({ plugins: [SECRET] });

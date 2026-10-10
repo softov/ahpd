@@ -74,6 +74,7 @@ The files read are the `refs` above.
 | A restart keeps every one-run flag in the recorded argv, `--plugin-option` and `--path` among them, and `plugin config` warns when one overrides the key it set | Softov, 2026-10-04, asked "A restart starts the recorded argv again, so a one-run flag such as `--plugin-option` or `--path` outlives the run it was typed for. Keep every one-run flag, or drop them and start from the file?": keep every one-run flag | 01, 04 |
 | A plugin or preset that fails to load at a restart is skipped and the successor runs with the rest; `start` and `restart` print what was skipped and exit 0 | Softov, 2026-10-03, "Only its item"; [host/41 task 03](../../host/41-a-failure-belongs-to-the-item-that-failed/task-03-start-and-restart-say-what-was-skipped.md) | host/41 03 |
 | A session whose agent did not load after a restart is listed under it, not openable, its record never rewritten | Softov, 2026-10-03; [host/41 task 02](../../host/41-a-failure-belongs-to-the-item-that-failed/task-02-a-session-waits-for-its-own-agent.md) | host/41 02 |
+| The override line names the flag up to its `=` and never its value, at the terminal and in the served answer | Softov, 2026-10-09, asked whether the line shows the flag's value, since the served answer carries it and a value can be a secret: "Name the flag only" | 04 |
 
 ## Proposed architecture
 
@@ -88,7 +89,7 @@ The files read are the `refs` above.
 | [01 - The record keeps the argv](task-01-the-record-keeps-the-argv.md) | done | - |
 | [02 - `ahpd restart`](task-02-ahpd-restart.md) | done | 01 |
 | [03 - The restart line and docs](task-03-the-restart-line-and-docs.md) | done | 02 |
-| [04 - `plugin config` says a recorded flag overrides it](task-04-plugin-config-says-a-recorded-flag-overrides-it.md) | todo | 01 |
+| [04 - `plugin config` says a recorded flag overrides it](task-04-plugin-config-says-a-recorded-flag-overrides-it.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -103,9 +104,9 @@ The files read are the `refs` above.
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03 implemented, awaiting review.
+- **Done so far:** tasks 01 to 04 done. `plugin config` names the recorded `--plugin-option` that overrides a key it set, at the terminal and in the served answer, and `docs/DAEMON.md` says the line.
 - **Reviews applied:** the first review of 2026-09-30, the terminal signalling only and waiting while the old daemon stops; the second, with the receipt line, refusals tagged by signal, the claimed record, the grace close and the quiesce; the third, with `stop` forgetting only its daemon's record, `Host.close` awaited and refusing new work, the line and token read before going down, the record's lock, the announcement by pid, Bun and Deno closes, and the terminal's words. The fourth, with the lock made whole by a hard link and reaped by compare, every failure after the way down began exiting 1, `Host.close` steps each logged and the stores closed after the wait, the turns read again after the line, `typedValue` refusing only what loses its value, and the log read from its offset. The fifth, with the lock dropped at Softov's answer, the listen tests waiting on the request rather than the clock, the receipt's words, `typedValue` alike at every depth, and a close waiting for automation runs already starting. The merge-readiness review, with a file that holds no record cleared, the child stopped when its record cannot be written, and the temp sweep keeping another user's pid.
-- **Next action:** [task-04-plugin-config-says-a-recorded-flag-overrides-it.md](task-04-plugin-config-says-a-recorded-flag-overrides-it.md); review, the checklist's checks by hand, then `implemented.md` and `status: built`.
+- **Next action:** the checks by hand in [daemon-13-restart-checks.md](../../../review/daemon-13-restart-checks.md), then `implemented.md` and `status: built`.
 - **Watch out for:** `start` leaves out the program globals (`--remote`, `--token`); the recorded argv must be the child's, not the parent's.
 - **Watch out for:** a signal names no sender, so two terminals sending the same kind of signal read the same answer; they asked for the same thing, so either answer is true for both.
 
