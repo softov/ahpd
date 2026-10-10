@@ -1,6 +1,6 @@
 ---
 title: The docs and the domain reference list the route kind
-status: implemented
+status: done
 depends: [task-02-the-listener-serves-routes.md]
 layer: "docs"
 refs:

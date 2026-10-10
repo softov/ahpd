@@ -35,4 +35,3 @@ A plugin registers one route with `registerRoute(handler)`, and the daemon serve
 
 - `@ahpd/tunnel-devtunnel` announcing its URL, so a route is reachable through that tunnel.
 - A route acting on the host through its plugin's own connection, which plan 20 brings.
-- The tasks stay `implemented` until Softov reviews them.

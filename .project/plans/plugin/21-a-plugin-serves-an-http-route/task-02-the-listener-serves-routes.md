@@ -1,6 +1,6 @@
 ---
 title: The listener serves a plugin's route under /plugins/<name>/
-status: implemented
+status: done
 depends: [task-01-register-route-is-a-kind.md]
 layer: "sdk listen, server"
 refs:

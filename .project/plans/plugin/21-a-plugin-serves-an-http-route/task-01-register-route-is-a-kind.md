@@ -1,6 +1,6 @@
 ---
 title: registerRoute is a registration kind
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

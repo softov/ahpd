@@ -88,9 +88,9 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - registerRoute is a registration kind](task-01-register-route-is-a-kind.md) | implemented | - |
-| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | implemented | 01, and the open question in Resume state |
-| [03 - Docs](task-03-docs.md) | implemented | 02 |
+| [01 - registerRoute is a registration kind](task-01-register-route-is-a-kind.md) | done | - |
+| [02 - The listener serves a plugin's route under /plugins/<name>/](task-02-the-listener-serves-routes.md) | done | 01, and the open question in Resume state |
+| [03 - Docs](task-03-docs.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -100,7 +100,7 @@ listener: plainRequests(daemonRequest) -> tools servers -> [new] /plugins/<encod
 ## Resume state
 
 - **Done so far:** built 2026-10-04 in `22e5c2e`; see [implemented.md](implemented.md).
-- **Next action:** Softov's review, which moves the tasks from `implemented` to `done`.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none; Softov's answers of 2026-10-04 are in the table above.
 - **Watch out for:** a route is reachable through devtunnel only once that plugin announces its URL.
 
