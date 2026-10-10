@@ -50,13 +50,13 @@ Not a host feature: policy minimum versions, the `autoTier` setting and identity
 
 `@microsoft/agent-host-protocol@1.0.0` ships every item below; each line says where it is planned.
 
-- [ ] `moveChat` with `MoveChatParams`, `session/chatsReordered`, `chat/movableChanged` (protocol `2265e2e`, upstream `14b9d22f9a9`). Planned in `host/47` p1; VS Code itself answers `MethodNotFound`.
-- [ ] `ChatState.backgroundWork`, `chat/backgroundWorkSet|Removed` (protocol #482, upstream `c4db793967f`). Planned in `host/47` p2.
-- [ ] `chat/isArchivedChanged`, `SessionChatSummary.archived` (protocol `458cc41`, upstream `0af7cd09bb5`). Planned in `host/44` p3.
-- [ ] `session/mcpServerBackgroundRequested` (protocol `edef8d8`). Planned in `host/47` p3, with `McpServerStartingState.blocking`.
-- [ ] `ConfigPropertySchema.minItems/maxItems`; `FileEditSide`/`FileEditCollection` (types only). `minItems`/`maxItems` planned in `host/43` p3 and `host/45`; the file edit types in `host/47` p4.
-- [ ] `AutomationCapabilities.customizations`, `AutomationSessionTemplate.customizations` (protocol `9f94039`). Planned in `host/47` p5.
-- [ ] `ChangesetStatus.recomputing` and `McpServerStartingState.blocking` (1.0.0). `recomputing` planned in `host/47` p6, `blocking` in `host/47` p3.
+- [x] `moveChat` with `MoveChatParams`, `session/chatsReordered`, `chat/movableChanged` (protocol `2265e2e`, upstream `14b9d22f9a9`). Planned in `host/47` p1; VS Code itself answers `MethodNotFound`.
+- [x] `ChatState.backgroundWork`, `chat/backgroundWorkSet|Removed` (protocol #482, upstream `c4db793967f`). Planned in `host/47` p2.
+- [x] `chat/isArchivedChanged`, `SessionChatSummary.archived` (protocol `458cc41`, upstream `0af7cd09bb5`). Planned in `host/44` p3.
+- [x] `session/mcpServerBackgroundRequested` (protocol `edef8d8`). Planned in `host/47` p3, with `McpServerStartingState.blocking`.
+- [x] `ConfigPropertySchema.minItems/maxItems`; `FileEditSide`/`FileEditCollection` (types only). `minItems`/`maxItems` planned in `host/43` p3 and `host/45`; the file edit types in `host/47` p4.
+- [x] `AutomationCapabilities.customizations`, `AutomationSessionTemplate.customizations` (protocol `9f94039`). Planned in `host/47` p5.
+- [x] `ChangesetStatus.recomputing` and `McpServerStartingState.blocking` (1.0.0). `recomputing` planned in `host/47` p6, `blocking` in `host/47` p3.
 - [ ] `chat/canvasesChanged`, `canvas/stateChanged` and the experimental `ahp-canvas:` channel, registered as `0.10.0`: if taken, sent only where `isActionKnownToVersion` says the connection's version knows them, which a 1.0.0 connection does and a 0.9.0 one does not. Left out for now: Softov, 2026-10-03, "Leave out for now".
 
 `@microsoft/agent-host-protocol@1.0.0`, published 2026-10-03, carries every item in this list and the per-chat changesets above. `host/44` moves ahpd to it and takes `AutomationDefinition.disableConditions` with `AutomationEntry.runCount`, `SessionSummary.chats` and `defaultChat`, and `chat/isReadChanged`, and `host/43` p3 keeps `minItems`/`maxItems` on the root config schema; `host/47` plans the rest, canvas excepted. `SessionChatSummary.archived` shipped as the `status` bitset, `IsRead` and `IsArchived` beside the activity bits, and `chat/isArchivedChanged` sets that bit, so `host/44` p3 takes it too.

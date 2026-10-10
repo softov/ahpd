@@ -1,7 +1,7 @@
 ---
 title: ahpd serves what AHP 1.0.0 added
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-03
 revalidated: 2026-10-04
@@ -56,7 +56,7 @@ The files read and the patterns to reuse are the `refs` above, each with its not
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - A chat is reordered in its session, or moved to another session of the same agent and machine](../47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) | planned | host/50 |
+| [p1 - A chat is reordered in its session, or moved to another session of the same agent and machine](../47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) | built | host/50 |
 | [p2 - A chat lists the shells and subagents running in its background](../47-ahpd-serves-what-ahp-1-0-0-added-p2-a-chat-lists-its-background-work/plan.md) | built | - |
 | [p3 - A blocking MCP server startup can be sent to the background](../47-ahpd-serves-what-ahp-1-0-0-added-p3-an-mcp-server-startup-can-be-backgrounded/plan.md) | built | - |
 | [p4 - A file edit is the protocol's type, and a Claude write confirmation previews its edit](../47-ahpd-serves-what-ahp-1-0-0-added-p4-a-file-edit-is-the-protocols-type/plan.md) | built | - |
@@ -72,14 +72,12 @@ Every child requires host/44 p1, which is built (`1eb8c8f`); p1 also requires ho
 
 ## Resume state
 
-- **Done so far:** p2, p3, p4, p5 and p6 built.
-- **Next action:** [p1](../47-ahpd-serves-what-ahp-1-0-0-added-p1-moving-a-chat/plan.md) in build.
-- **Open questions:** none; the three asked were answered by Softov on 2026-10-03.
-- **Watch out for:** `node_modules` on `main` may still hold 0.9.0 after `1eb8c8f`; run `pnpm install` before any child, or the new types do not exist.
+- **Done so far:** p1 to p6 built 2026-10-09.
+- **Next action:** none; see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] p1 to p6 built.
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
-- [ ] UPSTREAM.md Pass 5's boxes ticked by the commits that land them.
-- [ ] `plans/index.md` updated.
+- [x] p1 to p6 built.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test` pass.
+- [x] UPSTREAM.md Pass 5's boxes ticked by the commits that land them.
+- [x] `plans/index.md` updated.
