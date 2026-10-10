@@ -15,7 +15,7 @@
  * each keeps its own leaves and asks for these parts rather than the provider.
  */
 
-import { RpcError } from './rpc.js';
+import { INVALID_PARAMS, RpcError } from './rpc.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription, Write } from './types/resources.js';
 
 /**
@@ -85,7 +85,7 @@ export interface At {
  */
 export const splitResource = (uri: string, scheme: string): At => {
   const match = /^([a-zA-Z][\w+.-]*):\/\/(.*)$/.exec(uri);
-  if (match === null || match[1] !== scheme) throw new RpcError(-32602, `${uri} is not a ${scheme}: URI`);
+  if (match === null || match[1] !== scheme) throw new RpcError(INVALID_PARAMS, `${uri} is not a ${scheme}: URI`);
   const rest = match[2] ?? '';
   const mark = rest.indexOf('?');
   const path = mark === -1 ? rest : rest.slice(0, mark);
@@ -124,10 +124,10 @@ export const jsonBody = (content: Write, what: string): Record<string, unknown> 
     parsed = JSON.parse(text === '' ? '{}' : text);
   }
   catch {
-    throw new RpcError(-32602, `A ${what} is made from a JSON object; that body is not one`);
+    throw new RpcError(INVALID_PARAMS, `A ${what} is made from a JSON object; that body is not one`);
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new RpcError(-32602, `A ${what} is made from a JSON object, and that body is not one`);
+    throw new RpcError(INVALID_PARAMS, `A ${what} is made from a JSON object, and that body is not one`);
   }
   return parsed as Record<string, unknown>;
 };
@@ -217,8 +217,8 @@ export const recordsProvider = (scheme: string, records: Records): RecordsProvid
      */
     write: async (uri, content) => {
       const at = splitResource(uri, scheme);
-      if (at.id === '') throw new RpcError(-32602, `${uri} is not a name for a new ${scheme}; write to ${scheme}://<id>`);
-      if (at.leaf !== '') throw new RpcError(-32602, `${uri} is not something to write; a ${scheme} is written whole, at ${scheme}://<id>`);
+      if (at.id === '') throw new RpcError(INVALID_PARAMS, `${uri} is not a name for a new ${scheme}; write to ${scheme}://<id>`);
+      if (at.leaf !== '') throw new RpcError(INVALID_PARAMS, `${uri} is not something to write; a ${scheme} is written whole, at ${scheme}://<id>`);
       const was = await records.find(at.id);
       // `createOnly` is the protocol's own word for refusing one that is there.
       if (content.createOnly === true && was !== undefined) {
@@ -236,7 +236,7 @@ export const recordsProvider = (scheme: string, records: Records): RecordsProvid
      */
     remove: async (uri) => {
       const at = splitResource(uri, scheme);
-      if (at.id === '') throw new RpcError(-32602, `${uri} is the ${scheme} directory; remove ${scheme}://<id>`);
+      if (at.id === '') throw new RpcError(INVALID_PARAMS, `${uri} is the ${scheme} directory; remove ${scheme}://<id>`);
       if (at.leaf !== '') throw absentResource(scheme, uri);
       if (!await records.drop(at.id)) throw absentResource(scheme, uri);
     },

@@ -1,4 +1,4 @@
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerId } from '../computers.js';
 import { deleteNested } from '../nested.js';
 import { localPath, uriOf } from '../fileuri.js';
@@ -867,7 +867,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     if (!port || config.isolation !== 'worktree' || where === undefined) return where;
     const repository = await port.repository(where);
     if (repository === undefined) {
-      throw new RpcError(-32602, `${where} is not a git repository, so it has no worktrees`);
+      throw new RpcError(INVALID_PARAMS, `${where} is not a git repository, so it has no worktrees`);
     }
     const said = (key: string): string => (typeof config[key] === 'string' ? config[key] : '');
     /*
@@ -1226,7 +1226,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an
       // internal error it cannot.
-      throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+      throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
     }
     /*
      * The branch it started on, when that is already known.

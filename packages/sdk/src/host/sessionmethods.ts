@@ -1,4 +1,4 @@
-import { INTERNAL_ERROR, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { computerId } from '../computers.js';
 import { tail, older } from '../paging.js';
@@ -390,7 +390,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * makes and this is the same one.
        */
       if (!sessionChannel(sessionOfChat(channel) ?? channel))
-        throw new RpcError(-32602, `${channel} is not a session or a chat`);
+        throw new RpcError(INVALID_PARAMS, `${channel} is not a session or a chat`);
       const live = byChat.get(channel);
       // Asked before the transcript, so a page asked for out of a session
       // waiting for its agent names that agent rather than saying the
@@ -418,7 +418,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // Guessing at a cursor this host did not issue would answer a
         // question about old turns with new ones, and the client would
         // page for ever without noticing.
-        throw new RpcError(-32602, `Unrecognised cursor ${String(asked)}`);
+        throw new RpcError(INVALID_PARAMS, `Unrecognised cursor ${String(asked)}`);
       }
       dispatch(channel, {
         type: 'chat/turnsLoaded',
@@ -698,7 +698,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // cursor is: a cursor whose row has been disposed would otherwise
       // resume from the top, and the client would page for ever.
       if (cursor !== undefined && after === 0)
-        throw new RpcError(-32602, `Unrecognised cursor ${cursor}`);
+        throw new RpcError(INVALID_PARAMS, `Unrecognised cursor ${cursor}`);
       const limit = typeof params.limit === 'number' && Number.isFinite(params.limit)
         ? Math.max(1, Math.min(Math.floor(params.limit), PAGE_CAP))
         : PAGE_MOST;
@@ -869,7 +869,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (!held)
         throw new RpcError(-32001, `No agent for session ${uri}`);
       if (idOf(chatUri) === '' || chatUri.indexOf(':') <= 0)
-        throw new RpcError(-32602, `${chatUri} is not a chat URI`);
+        throw new RpcError(INVALID_PARAMS, `${chatUri} is not a chat URI`);
       if (byChat.has(chatUri))
         throw new RpcError(-32003, `${chatUri} already exists`);
       claimable(chatUri, 'chat');
@@ -894,29 +894,29 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         // something this host has never heard of, and saying "no such
         // turn" about it would send somebody looking at the turn.
         if (kind !== 'fork' && kind !== 'sideChat')
-          throw new RpcError(-32602, `${kind} is not a chat source this host knows`);
+          throw new RpcError(INVALID_PARAMS, `${kind} is not a chat source this host knows`);
         const from = byChat.get(chatOf(String(source.chat ?? '')));
         if (!from || from.uri !== uri)
-          throw new RpcError(-32602, `${String(source.chat ?? '')} is not a chat in ${uri}`);
+          throw new RpcError(INVALID_PARAMS, `${String(source.chat ?? '')} is not a chat in ${uri}`);
         const turnId = String(source.turnId ?? '');
         const all = from.chat.allTurns();
         const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
         if (at < 0)
-          throw new RpcError(-32602, `${turnId} is not a turn in ${String(source.chat ?? '')}`);
+          throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn in ${String(source.chat ?? '')}`);
         if (kind === 'fork') {
           if (held.agent.chats?.fork !== true)
-            throw new RpcError(-32602, `${held.agent.provider} cannot fork a chat from a turn`);
+            throw new RpcError(INVALID_PARAMS, `${held.agent.provider} cannot fork a chat from a turn`);
           // The backend's own name for where that turn ended, which is
           // the only one it can be asked to continue from.
           const point = from.chat.forkPoint?.(turnId);
           const started = from.chat.agentId();
           if (point === undefined || started === undefined)
-            throw new RpcError(-32602, `${turnId} is not a turn this host can fork from`);
+            throw new RpcError(INVALID_PARAMS, `${turnId} is not a turn this host can fork from`);
           made = { resume: started, forkAt: point, seed: all.slice(0, at + 1) as Bag[] };
         }
         else {
           if (held.agent.chats?.sideChat !== true)
-            throw new RpcError(-32602, `${held.agent.provider} cannot start a side chat from a turn`);
+            throw new RpcError(INVALID_PARAMS, `${held.agent.provider} cannot start a side chat from a turn`);
           const message = (all[at] as Bag | undefined)?.message;
           const said = typeof message === 'object' && message !== null
             ? (message as { text?: unknown }).text
@@ -952,7 +952,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const own = [held.workingDirectory, ...(held.additional ?? [])].filter((one) => one !== undefined);
       const stray = asked.find((one) => !own.includes(one));
       if (stray !== undefined)
-        throw new RpcError(-32602, `${stray} is not a working directory of ${uri}`);
+        throw new RpcError(INVALID_PARAMS, `${stray} is not a working directory of ${uri}`);
       const peers = asked.length > 0
         ? asked.filter((one) => one !== held.workingDirectory)
         : held.additional;
@@ -1019,13 +1019,13 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * moved from a state nobody was shown.
        */
       if (!movable(chatUri))
-        throw new RpcError(-32602, `${chatUri} cannot be moved`);
+        throw new RpcError(INVALID_PARAMS, `${chatUri} cannot be moved`);
       const destination = (typeof params.destination === 'object' && params.destination !== null
         ? params.destination
         : {}) as Record<string, unknown>;
       const kind = String(destination.kind ?? '');
       if (kind !== 'session' && kind !== 'newSession') {
-        throw new RpcError(-32602, kind === ''
+        throw new RpcError(INVALID_PARAMS, kind === ''
           ? 'a move needs a destination'
           : `a ${kind} destination is not one this host serves yet`);
       }
@@ -1036,7 +1036,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const anchor = destination.after === undefined ? undefined : chatOf(String(destination.after));
       if (anchor !== undefined && anchor === chatUri)
-        throw new RpcError(-32602, `${chatUri} cannot be placed after itself`);
+        throw new RpcError(INVALID_PARAMS, `${chatUri} cannot be placed after itself`);
       // A session made for the chat, which has no chats to be placed among yet.
       if (kind === 'newSession') return await movedTo(chatUri, found, held, undefined, anchor);
       /*
@@ -1047,7 +1047,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       const to = heldAs(String(destination.session ?? ''));
       if (to === found.uri) {
         if (anchor !== undefined && !held.chats.has(anchor))
-          throw new RpcError(-32602, `${anchor} is not a chat in ${found.uri}`);
+          throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${found.uri}`);
         /*
          * The new order, which is the old one with this chat taken out and put
          * back where it was asked for. First when no anchor was named, which is
@@ -1084,17 +1084,17 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const dest = sessions.get(to);
       if (dest === undefined)
-        throw new RpcError(-32602, `${to === '' ? 'nowhere' : to} is not a session this host is running`);
+        throw new RpcError(INVALID_PARAMS, `${to === '' ? 'nowhere' : to} is not a session this host is running`);
       if (held.agent.provider !== dest.agent.provider)
-        throw new RpcError(-32602, `a move between providers is not supported yet: ${chatUri} runs on`
+        throw new RpcError(INVALID_PARAMS, `a move between providers is not supported yet: ${chatUri} runs on`
           + ` ${held.agent.provider} and ${to} on ${dest.agent.provider}`);
       const mine = computerId(held.config.computer);
       const theirs = computerId(dest.config.computer);
       if (mine !== theirs)
-        throw new RpcError(-32602, `a move between computers is not supported yet: ${chatUri} runs on`
+        throw new RpcError(INVALID_PARAMS, `a move between computers is not supported yet: ${chatUri} runs on`
           + ` ${mine ?? 'this host'} and ${to} on ${theirs ?? 'this host'}`);
       if (anchor !== undefined && !dest.chats.has(anchor))
-        throw new RpcError(-32602, `${anchor} is not a chat in ${to}`);
+        throw new RpcError(INVALID_PARAMS, `${anchor} is not a chat in ${to}`);
       return await movedTo(chatUri, found, held, to, anchor);
     },
     disposeChat: async (params) => {
@@ -1107,7 +1107,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (held && held.chats.size === 1) {
         // The last one is the session. Removing it would leave a session
         // with nothing to talk to, which `disposeSession` says properly.
-        throw new RpcError(-32602, `${chatUri} is the only chat in ${found.uri}; dispose the session instead`);
+        throw new RpcError(INVALID_PARAMS, `${chatUri} is the only chat in ${found.uri}; dispose the session instead`);
       }
       found.chat.close();
       byChat.delete(chatUri);

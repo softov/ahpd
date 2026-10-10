@@ -18,7 +18,7 @@
  */
 
 import { line, lines, recordsProvider, type Records, type RecordsProvider } from './records.js';
-import { RpcError } from './rpc.js';
+import { INVALID_PARAMS, RpcError } from './rpc.js';
 import { grantProblem } from './users.js';
 import type { Grant, Named, Users } from './types/users.js';
 
@@ -45,7 +45,7 @@ export type PeopleProvider = RecordsProvider;
  * directory, not a second set of rules.
  */
 const said = (error: unknown): never => {
-  throw new RpcError(-32602, error instanceof Error ? error.message : String(error));
+  throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error));
 };
 
 /** One field of text, or nothing when the body said nothing usable. */
@@ -59,7 +59,7 @@ const listOf = (held: Record<string, unknown>, key: string, scheme: string): str
   const value = held[key];
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.some((one) => typeof one !== 'string')) {
-    throw new RpcError(-32602, `A ${scheme} is written with ${key} as a list of strings`);
+    throw new RpcError(INVALID_PARAMS, `A ${scheme} is written with ${key} as a list of strings`);
   }
   return (value as string[]).map((one) => one.trim()).filter((one) => one !== '');
 };
@@ -207,7 +207,7 @@ const roles = (directory: Users): Records => ({
      * which is the reading the directory already refuses to give at
      * `user add`.
      */
-    if (grants === undefined) throw new RpcError(-32602, 'A role is written from {"grants": ["session:read"]}; that body names none');
+    if (grants === undefined) throw new RpcError(INVALID_PARAMS, 'A role is written from {"grants": ["session:read"]}; that body names none');
     /*
      * Checked here rather than left to the directory, so the refusal names the
      * subject's operations whether the directory behind this port is the file
@@ -216,7 +216,7 @@ const roles = (directory: Users): Records => ({
      */
     for (const one of grants) {
       const why = grantProblem(one);
-      if (why !== undefined) throw new RpcError(-32602, why);
+      if (why !== undefined) throw new RpcError(INVALID_PARAMS, why);
     }
     await directory.addRole(id, grants as Grant[]).catch(said);
   },

@@ -1,6 +1,6 @@
 import { ROOT } from './channels.js';
 import { localPath } from '../fileuri.js';
-import { INTERNAL_ERROR, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { CLOSING, need } from './common.js';
 import { named } from './channels.js';
 import type { Bag } from '../types/common.js';
@@ -278,7 +278,7 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       const claim = params.claim === undefined
         ? { kind: 'client' as const, clientId: connection.clientId }
         : claimOf(params.claim);
-      if (!claim) throw new RpcError(-32602, 'That is not a terminal claim');
+      if (!claim) throw new RpcError(INVALID_PARAMS, 'That is not a terminal claim');
       if (ctx.closed) throw new RpcError(INTERNAL_ERROR, CLOSING);
       const terminal = shells.create({
         uri,

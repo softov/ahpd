@@ -1,4 +1,4 @@
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { idOf } from '../catalog.js';
 
 export const ROOT = 'ahp-root://';
@@ -78,7 +78,7 @@ export const URI_KEYS = new Set([
  */
 export const named = (uri: string, what: string): string => {
   const colon = uri.indexOf(':');
-  if (colon <= 0 || idOf(uri) === '') throw new RpcError(-32602, `${uri} is not a ${what} URI`);
+  if (colon <= 0 || idOf(uri) === '') throw new RpcError(INVALID_PARAMS, `${uri} is not a ${what} URI`);
   return uri;
 };
 

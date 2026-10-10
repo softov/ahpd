@@ -24,6 +24,7 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
+import { INVALID_PARAMS } from '../rpc.js';
 import { toMcpContent } from './mcpcontent.js';
 import type { BoundTool } from '../types/agent.js';
 import type { ClientCallAnswer } from './clientcalls.js';
@@ -194,7 +195,7 @@ const answered = async (serving: Serving, said: Message, info: { name: string; v
   if (said.method === 'tools/list') return result(said.id, { tools: serving.tools.map(listed) });
   if (said.method !== 'tools/call') return failure(said.id, -32601, `This server answers initialize, tools/list and tools/call, not ${String(said.method)}`);
   const found = serving.tools.find((one) => one.definition.name === String(params.name));
-  if (found === undefined) return failure(said.id, -32602, `No tool named ${String(params.name)}`);
+  if (found === undefined) return failure(said.id, INVALID_PARAMS, `No tool named ${String(params.name)}`);
   const input = (params.arguments ?? {}) as Record<string, unknown>;
   /*
    * A tool that throws is a failed call and not a failed request: the model is
@@ -207,7 +208,7 @@ const answered = async (serving: Serving, said: Message, info: { name: string; v
     const run = found.run;
     if (run === undefined) {
       if (serving.runClient === undefined) {
-        return failure(said.id, -32602, `${String(params.name)} is a client's tool, which this server cannot run`);
+        return failure(said.id, INVALID_PARAMS, `${String(params.name)} is a client's tool, which this server cannot run`);
       }
       const answer = await serving.runClient(found, input, params._meta as Record<string, unknown> | undefined);
       const content = toMcpContent(answer, String(said.id ?? ''));

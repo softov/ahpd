@@ -7,12 +7,17 @@
  *
  * A message with no `id` is a notification and receives no reply, whatever the
  * handler returns.
+ *
+ * The readers a handler takes a request's params through live here too, beside
+ * the code they refuse with: a param of the wrong shape is `INVALID_PARAMS`
+ * whichever method it arrived at, and the sentence is the same one.
  */
 
 import type { Handler, Peer, Request, Wire } from './types/rpc.js';
 export const PARSE_ERROR = -32700;
 export const INVALID_REQUEST = -32600;
 export const METHOD_NOT_FOUND = -32601;
+export const INVALID_PARAMS = -32602;
 export const INTERNAL_ERROR = -32603;
 
 /**
@@ -36,6 +41,44 @@ export class RpcError extends Error {
     this.data = data;
   }
 }
+
+/*
+ * The readers a request's params go through, one per kind of field.
+ *
+ * A handler reads a client's value through one of these rather than testing
+ * the shape itself. A wrong value is then refused in one sentence whichever
+ * method it arrived at: `<key> must be <what>`. `what` is the caller's,
+ * because only the method knows whether its string is a URI, a name or a path.
+ * Every refusal here carries `INVALID_PARAMS`.
+ *
+ * A key that was left out and a key sent as the wrong thing are two answers.
+ * `optionalStringParam` returns `undefined` for the first and refuses the
+ * second, because a request that names no key sends no key at all.
+ */
+
+/** The string a request must carry under `key`, or a refusal naming the key. */
+export const stringParam = (params: Record<string, unknown>, key: string, what = 'a string'): string => {
+  const value = params[key];
+  if (typeof value !== 'string') throw new RpcError(INVALID_PARAMS, `${key} must be ${what}`);
+  return value;
+};
+
+/** The string a request may carry under `key`, or nothing where it carried none. */
+export const optionalStringParam = (
+  params: Record<string, unknown>, key: string, what = 'a string',
+): string | undefined => {
+  const value = params[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') throw new RpcError(INVALID_PARAMS, `${key} must be ${what}`);
+  return value;
+};
+
+/** The number a request must carry under `key`, or a refusal naming the key. */
+export const numberParam = (params: Record<string, unknown>, key: string, what = 'a number'): number => {
+  const value = params[key];
+  if (typeof value !== 'number') throw new RpcError(INVALID_PARAMS, `${key} must be ${what}`);
+  return value;
+};
 
 /**
  * Whether an error is an `RpcError`: named `RpcError`, with a numeric `code`.

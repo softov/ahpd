@@ -1,4 +1,4 @@
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { computerSource } from '../computers.js';
 import { isRootChannel, schemeOf } from './channels.js';
 import { NEEDS, UNGATED, channelRead, refusalReason } from './gate.js';
@@ -50,7 +50,7 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
     for (const name of names) {
       const said = params[name];
       if (said !== undefined && typeof said !== 'string')
-        throw new RpcError(-32602, `${name} must be a string`);
+        throw new RpcError(INVALID_PARAMS, `${name} must be a string`);
     }
   };
 

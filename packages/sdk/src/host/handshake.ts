@@ -1,5 +1,5 @@
 import { negotiateProtocolVersion, SUPPORTED_PROTOCOL_VERSIONS } from '@microsoft/agent-host-protocol';
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../fileuri.js';
 import { BANG } from './common.js';
 import type { ConnectionContext, HostContext } from './context.js';
@@ -141,7 +141,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         // An entry that is not a `MAJOR.MINOR.PATCH` string is malformed
         // rather than merely incompatible, and the package throws on one.
         // An uncaught throw is not a JSON-RPC error a client can read.
-        throw new RpcError(-32602, problem instanceof Error ? problem.message : String(problem));
+        throw new RpcError(INVALID_PARAMS, problem instanceof Error ? problem.message : String(problem));
       }
       if (!agreed) {
         // `supportedVersions`, which is the name the protocol gives this
@@ -471,7 +471,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         .flatMap((held) => [...held.chats.values()])
         .filter((chat) => chat.awaiting?.().includes(resource) === true);
       if (waiting.length === 0 && !advertised().has(resource)) {
-        throw new RpcError(-32602, `${resource || 'That'} is not a resource this host advertises`);
+        throw new RpcError(INVALID_PARAMS, `${resource || 'That'} is not a resource this host advertises`);
       }
       /*
        * An empty token takes the credential back.
@@ -507,7 +507,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        */
       const expiresIn = params.expiresIn;
       if (expiresIn !== undefined && !(typeof expiresIn === 'number' && Number.isInteger(expiresIn) && expiresIn > 0)) {
-        throw new RpcError(-32602, 'expiresIn must be a positive integer of seconds');
+        throw new RpcError(INVALID_PARAMS, 'expiresIn must be a positive integer of seconds');
       }
       /*
        * The deployment's own key needs no credential.

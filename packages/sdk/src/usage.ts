@@ -11,7 +11,7 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { refusalReason } from './host.js';
 import { absentResource, asFile, EPOCH, splitResource, type At as Split } from './records.js';
-import { RpcError } from './rpc.js';
+import { INVALID_PARAMS, RpcError } from './rpc.js';
 import { mayRead, membership } from './scopes.js';
 import type { Entry, Metadata, Read, ResourceProvider, SchemeDescription } from './types/resources.js';
 import type { Named, Principal } from './types/users.js';
@@ -509,7 +509,7 @@ const split = (uri: string): At | undefined => {
 
 const at = (uri: string): At => {
   const held = split(uri);
-  if (held === undefined) throw new RpcError(-32602, `${uri} is not a usage: URI`);
+  if (held === undefined) throw new RpcError(INVALID_PARAMS, `${uri} is not a usage: URI`);
   return held;
 };
 
@@ -668,7 +668,7 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
       const value = asked.get(which);
       if (value === null) return fallback;
       if (!DAY.test(value) || Number.isNaN(Date.parse(value))) {
-        throw new RpcError(-32602, `${which} must be a date, as 2026-10-01, or an ISO 8601 instant: ${value}`);
+        throw new RpcError(INVALID_PARAMS, `${which} must be a date, as 2026-10-01, or an ISO 8601 instant: ${value}`);
       }
       return value;
     };
@@ -681,7 +681,7 @@ export function usageProvider(options: UsageProviderOptions): UsageProvider {
     const keys: UsageKey[] = [];
     for (const one of written) {
       const key = KEYS.find((known) => known === one);
-      if (key === undefined) throw new RpcError(-32602, `by takes ${KEYS.join(', ')}, not ${one}`);
+      if (key === undefined) throw new RpcError(INVALID_PARAMS, `by takes ${KEYS.join(', ')}, not ${one}`);
       if (!keys.includes(key)) keys.push(key);
     }
     return keys;

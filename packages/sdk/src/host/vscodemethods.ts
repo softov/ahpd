@@ -1,6 +1,6 @@
 import { lookup } from 'node:dns/promises';
 import { stat } from 'node:fs/promises';
-import { INTERNAL_ERROR, METHOD_NOT_FOUND, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, numberParam, optionalStringParam, stringParam } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { hostLogPath } from '../debuglogs.js';
 import { localPath, uriOf } from '../fileuri.js';
@@ -84,34 +84,45 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     const agent = held?.agent ?? owners.get(uri);
     const dir = dirOf(uri);
     const chosen = chat === undefined ? undefined : byChat.get(chatOf(chat));
-    if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(-32602, 'chat must belong to the requested Agent Session');
+    if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
     if (agent?.stateFile === undefined || dir === undefined) return undefined;
     const live = chosen?.chat ?? (held ? leadOf(held) : undefined);
     return agent.stateFile(live?.agentId() ?? idOf(uri), dir);
   };
 
   /**
-   * The three strings a connect carries from the client, checked once.
+   * The `connectionId` a container request names, checked once.
    *
    * A `connectionId` is a name a client chose, so it is bounded: non-empty,
-   * no NUL, and short enough to be an identifier rather than a payload.
+   * no NUL, and short enough to be an identifier rather than a payload. A
+   * `connect` and a `disconnect` refuse it in one sentence, which is why the
+   * check is one function rather than two.
+   */
+  const connectionIdOf = (params: Record<string, unknown>): string => {
+    const id = typeof params.connectionId === 'string' ? params.connectionId : '';
+    if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
+      throw new RpcError(INVALID_PARAMS, 'connectionId must be a non-empty identifier');
+    }
+    return id;
+  };
+
+  /**
+   * The other two strings a `connect` carries, checked with the id.
+   *
    * Whether the folder exists and has a container definition is the
    * launcher's to answer, because that is a question about a filesystem.
    * The owner is not among them: the client does not name one, and the
    * call below fills it from the connection the ask arrived on.
    */
   const containerAsk = (params: Record<string, unknown>): ContainerConnect => {
-    const id = typeof params.connectionId === 'string' ? params.connectionId : '';
-    if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
-      throw new RpcError(-32602, 'connectionId must be a non-empty identifier');
-    }
+    const id = connectionIdOf(params);
     const folder = typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '';
     if (folder.trim() === '' || folder.includes('\0')) {
-      throw new RpcError(-32602, 'workspaceFolder must be a path on this host');
+      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be a path on this host');
     }
     const name = typeof params.name === 'string' ? params.name : '';
     if (name.trim() === '' || name.includes('\0')) {
-      throw new RpcError(-32602, 'name must be non-empty');
+      throw new RpcError(INVALID_PARAMS, 'name must be non-empty');
     }
     return { connectionId: id, workspaceFolder: folder, name };
   };
@@ -122,13 +133,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    * The reference sends `{ connectionId }` and `{ connectionId, data }`,
    * so a folder is not asked for again: the connection was made with one.
    */
-  const namedContainer = (params: Record<string, unknown>): string => {
-    const id = typeof params.connectionId === 'string' ? params.connectionId : '';
-    if (id.trim() === '' || id.length > 256 || id.includes('\0')) {
-      throw new RpcError(-32602, 'connectionId must be a non-empty identifier');
-    }
-    return id;
-  };
+  const namedContainer = (params: Record<string, unknown>): string => connectionIdOf(params);
 
   return {
     /**
@@ -141,14 +146,14 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      * reference host's words.
      */
     'vscode/createAgentHostDetachedWorktree': async (params) => {
-      if (typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
-      if (typeof params.prompt !== 'string') throw new RpcError(-32602, 'prompt must be a string');
-      const uri = sessionFor(params.session);
+      const session = stringParam(params, 'session', 'a URI string');
+      stringParam(params, 'prompt');
+      const uri = sessionFor(session);
       const tree = worktrees.get(uri);
       if (tree === undefined) {
-        throw new RpcError(-32602, sessions.has(uri)
-          ? `Session is not configured for worktree isolation: ${params.session}`
-          : `Session not found: ${params.session}`);
+        throw new RpcError(INVALID_PARAMS, sessions.has(uri)
+          ? `Session is not configured for worktree isolation: ${session}`
+          : `Session not found: ${session}`);
       }
       const handle = crypto.randomUUID();
       const now = Date.now();
@@ -169,7 +174,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/claimAgentHostDetachedWorktree': async (params) => {
       const handle = String(params.handle ?? '');
       const held = detached.get(handle);
-      if (held === undefined) throw new RpcError(-32602, `Unknown detached worktree handle: ${handle}`);
+      if (held === undefined) throw new RpcError(INVALID_PARAMS, `Unknown detached worktree handle: ${handle}`);
       held.claimed = true;
       held.lastSeenAt = Date.now();
       return {};
@@ -264,7 +269,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     'vscode/removeSessionArtifact': async (params) => {
       const session = String(params.session ?? '');
       const artifactId = String(params.artifactId ?? '').trim();
-      if (session === '' || artifactId === '') throw new RpcError(-32602, 'session and artifactId must be non-empty strings');
+      if (session === '' || artifactId === '') throw new RpcError(INVALID_PARAMS, 'session and artifactId must be non-empty strings');
       const uri = sessions.has(session) ? session : sessionFor(session);
       const held = kept.artifacts(idOf(uri)) ?? [];
       const left = held.filter((one) => one.id !== artifactId);
@@ -281,9 +286,9 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      * answer too.
      */
     'vscode/getAgentHostSessionStateFile': async (params) => {
-      if (typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
-      if (params.chat !== undefined && typeof params.chat !== 'string') throw new RpcError(-32602, 'chat must be a URI string');
-      const found = stateFileOf(params.session, params.chat);
+      const session = stringParam(params, 'session', 'a URI string');
+      const chat = optionalStringParam(params, 'chat', 'a URI string');
+      const found = stateFileOf(session, chat);
       return found === undefined ? {} : { resource: uriOf(found) };
     },
     /**
@@ -297,20 +302,20 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
      */
     'vscode/collectAgentHostDebugLogs': async (params) => {
       const kind = params.kind;
-      if (kind !== 'archive' && kind !== 'directory') throw new RpcError(-32602, 'kind must be archive or directory');
-      if (params.session !== undefined && typeof params.session !== 'string') throw new RpcError(-32602, 'session must be a URI string');
-      if (params.chat !== undefined && typeof params.chat !== 'string') throw new RpcError(-32602, 'chat must be a URI string');
-      if (params.chat !== undefined && params.session === undefined) throw new RpcError(-32602, 'chat must belong to the requested Agent Session');
+      if (kind !== 'archive' && kind !== 'directory') throw new RpcError(INVALID_PARAMS, 'kind must be archive or directory');
+      const session = optionalStringParam(params, 'session', 'a URI string');
+      const chat = optionalStringParam(params, 'chat', 'a URI string');
+      if (chat !== undefined && session === undefined) throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
       const files: LogFile[] = (options.diagnostics?.logs?.() ?? []).map((file) => ({ path: hostLogPath(file), from: file }));
-      const record = params.session === undefined ? undefined : stateFileOf(params.session, params.chat);
+      const record = session === undefined ? undefined : stateFileOf(session, chat);
       if (record !== undefined) files.push({ path: 'events.jsonl', from: record, provider: true });
       return await logs.collect(files, kind);
     },
     'vscode/readAgentHostDebugLogsChunk': async (params) => {
-      if (typeof params.resource !== 'string') throw new RpcError(-32602, 'resource must be a URI string');
-      if (typeof params.position !== 'number') throw new RpcError(-32602, 'position must be a number');
-      try { return await logs.read(params.resource, params.position); }
-      catch (error) { throw new RpcError(-32602, error instanceof Error ? error.message : String(error)); }
+      const resource = stringParam(params, 'resource', 'a URI string');
+      const position = numberParam(params, 'position');
+      try { return await logs.read(resource, position); }
+      catch (error) { throw new RpcError(INVALID_PARAMS, error instanceof Error ? error.message : String(error)); }
     },
     /**
      * The four the window asks of its own host about itself.
@@ -347,24 +352,24 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     },
     getManagedSettingsDiagnostics: async () => [],
     diagnosticsFetch: async (params) => {
-      if (typeof params.url !== 'string') throw new RpcError(-32602, 'url must be a string');
+      const url = stringParam(params, 'url');
       let target: URL;
-      try { target = new URL(params.url); }
-      catch { throw new RpcError(-32602, `${params.url} is not a URL`); }
+      try { target = new URL(url); }
+      catch { throw new RpcError(INVALID_PARAMS, `${url} is not a URL`); }
       const [dnsIpv4, dnsIpv6] = await Promise.all([resolved(target.hostname, 4), resolved(target.hostname, 6)]);
       const began = Date.now();
       try {
         const answer = await fetch(target, { signal: AbortSignal.timeout(PROBE_TIMEOUT) });
         const body = await answer.text();
         return {
-          url: params.url, dnsIpv4, dnsIpv6,
+          url, dnsIpv4, dnsIpv6,
           statusCode: answer.status, statusMessage: answer.statusText,
           body: body.length > MAX_BODY ? body.slice(0, MAX_BODY) : body,
           durationMs: Date.now() - began,
         };
       }
       catch (error) {
-        return { url: params.url, dnsIpv4, dnsIpv6, error: reason(error), durationMs: Date.now() - began };
+        return { url, dnsIpv4, dnsIpv6, error: reason(error), durationMs: Date.now() - began };
       }
     },
     /*
@@ -384,7 +389,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       const launcher = need(options.containers, 'vscode/devContainers/connect');
       const one = containerAsk(params);
       if (conn.containers.has(one.connectionId)) {
-        throw new RpcError(-32602, `Dev Container connectionId ${one.connectionId} is already in use`);
+        throw new RpcError(INVALID_PARAMS, `Dev Container connectionId ${one.connectionId} is already in use`);
       }
       // Held before the first await, so a second connect under the same
       // name cannot slip in while this one is building an image.
@@ -487,10 +492,10 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       if (!conn.containers.has(id)) {
         throw new RpcError(-32008, `${id} is not a dev container this client opened`);
       }
-      if (typeof params.data !== 'string') throw new RpcError(-32602, 'data must be a string');
+      const data = stringParam(params, 'data');
       // The frame is written and not read: the nested host is the one that
       // answers it, and what it answers with comes back as `relayMessage`.
-      await launcher.send(id, params.data);
+      await launcher.send(id, data);
     },
   };
 }

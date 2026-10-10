@@ -3,7 +3,7 @@ import { cp, lstat, open, mkdir as makeDir, readdir, readFile, realpath, rename,
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { uriOf } from './fileuri.js';
-import { RpcError } from './rpc.js';
+import { INVALID_PARAMS, RpcError } from './rpc.js';
 import type { Entry, Metadata, Read, ResourceChange, ResourceStore, WatchOptions, Watcher, Write } from './types/resources.js';
 
 /**
@@ -35,7 +35,7 @@ export const pathOf = (uri: string): string => {
   if (!uri.startsWith('file:')) return uri;
   if (!uri.startsWith('file:/')) throw new RpcError(REFUSED, `${uri} is not an absolute path`);
   try { return fileURLToPath(uri); }
-  catch { throw new RpcError(-32602, `${uri} is not a local file URI`); }
+  catch { throw new RpcError(INVALID_PARAMS, `${uri} is not a local file URI`); }
 };
 
 /**

@@ -11,7 +11,7 @@
  * scheme and `decide` name a row they were handed.
  */
 
-import { RpcError } from './rpc.js';
+import { INVALID_PARAMS, RpcError } from './rpc.js';
 import { readJson, writeJsonAtomic } from './jsonfile.js';
 import type {
   Measure, Period, Policies, Policy, PolicyKind, PolicyLimit, PolicyMatch, PolicyValueType,
@@ -63,7 +63,7 @@ const said = (value: unknown): string =>
 
 /** One field a body got wrong. Every refusal here names it. */
 const wrong = (field: string, what: string): RpcError =>
-  new RpcError(-32602, `A policy's ${field} ${what}`);
+  new RpcError(INVALID_PARAMS, `A policy's ${field} ${what}`);
 
 /**
  * One end of a window, as the instant a check compares against.
@@ -135,7 +135,7 @@ const limitOf = (body: unknown, kind: PolicyKind, index: number): PolicyLimit =>
  */
 export function checkPolicy(body: unknown): Policy {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    throw new RpcError(-32602, `A policy is made from a JSON object, and that body has ${said(body)}`);
+    throw new RpcError(INVALID_PARAMS, `A policy is made from a JSON object, and that body has ${said(body)}`);
   }
   const held = body as Record<string, unknown>;
 

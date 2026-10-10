@@ -1,6 +1,6 @@
 import { computerSource } from '../computers.js';
 import { Status, idOf } from '../catalog.js';
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { EVENT_TRIGGERS, pluginTriggerTypes } from '../automations.js';
 import { presetById } from '../triggerpresets.js';
 import { localPath } from '../fileuri.js';
@@ -1247,7 +1247,7 @@ export function createAutomationMethods(ctx: HostContext): AutomationMethods {
     fetchAutomationRuns: async (params) => {
       const cursor = typeof params.cursor === 'string' ? params.cursor : undefined;
       const known = need(options.automations, 'fetchAutomationRuns').runs(String(params.automation ?? ''), cursor);
-      if (!known) throw new RpcError(-32602, `Unrecognised cursor ${String(cursor)}`);
+      if (!known) throw new RpcError(INVALID_PARAMS, `Unrecognised cursor ${String(cursor)}`);
       return {};
     },
   };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createPeer, receive, RpcClosed, RpcError, RpcTimeout } from '../src/rpc.js';
+import { createPeer, receive, RpcClosed, RpcError, RpcTimeout, INVALID_PARAMS, numberParam, optionalStringParam, stringParam } from '../src/rpc.js';
 import type { Wire } from '../src/types/rpc.js';
 
 /*
@@ -235,5 +235,64 @@ describe('the result a handler returned', () => {
 
   it('goes on the wire as `{}` where the handler returned nothing', async () => {
     expect(await answered(undefined)).toEqual({ jsonrpc: '2.0', id: 1, result: {} });
+  });
+});
+
+describe('the readers a request\'s params go through', () => {
+  /*
+   * One reader per kind of field, and one sentence per refusal: `<key> must be
+   * <what>`. A client reads that sentence to fix its call, so what is checked
+   * here is the value each reader answers and the code and words it refuses
+   * with - `INVALID_PARAMS`, which is the protocol's `-32602`.
+   */
+
+  /** The refusal a reader threw, for a value that deserved one. */
+  const refused = (run: () => unknown): unknown => {
+    try { run(); return undefined; }
+    catch (error) { return error; }
+  };
+
+  it('names the protocol\'s own number for a bad param', () => {
+    expect(INVALID_PARAMS).toBe(-32602);
+  });
+
+  it('answers the string a param carried', () => {
+    expect(stringParam({ session: 'ahp-session:/one' }, 'session')).toBe('ahp-session:/one');
+    expect(stringParam({ session: '' }, 'session')).toBe('');
+  });
+
+  it('refuses a string param sent anything else, naming the key', () => {
+    expect(refused(() => stringParam({ session: 7 }, 'session')))
+      .toMatchObject({ code: -32602, message: 'session must be a string' });
+    expect(refused(() => stringParam({}, 'session')))
+      .toMatchObject({ code: -32602, message: 'session must be a string' });
+  });
+
+  it('says what the key had to be where the caller says so', () => {
+    expect(refused(() => stringParam({ session: 7 }, 'session', 'a URI string')))
+      .toMatchObject({ code: -32602, message: 'session must be a URI string' });
+  });
+
+  it('answers nothing for a string param that was left out', () => {
+    expect(optionalStringParam({}, 'chat')).toBeUndefined();
+    expect(optionalStringParam({ chat: 'ahp-chat://one/two' }, 'chat')).toBe('ahp-chat://one/two');
+  });
+
+  it('still refuses an optional string param sent something else', () => {
+    expect(refused(() => optionalStringParam({ chat: 7 }, 'chat', 'a URI string')))
+      .toMatchObject({ code: -32602, message: 'chat must be a URI string' });
+  });
+
+  it('answers the number a param carried', () => {
+    expect(numberParam({ position: 0 }, 'position')).toBe(0);
+  });
+
+  it('refuses a number param sent anything else', () => {
+    expect(refused(() => numberParam({ position: '0' }, 'position')))
+      .toMatchObject({ code: -32602, message: 'position must be a number' });
+    expect(refused(() => numberParam({}, 'position')))
+      .toMatchObject({ code: -32602, message: 'position must be a number' });
+    expect(refused(() => numberParam({ at: 'x' }, 'at', 'a whole number')))
+      .toMatchObject({ code: -32602, message: 'at must be a whole number' });
   });
 });

@@ -1,6 +1,6 @@
 ---
 title: Request params are read one way, and -32602 has a name
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -36,3 +36,16 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk`.
 
 ## Resume
+
+- **Implemented** 2026-10-10 on `build/agents/5a3a4ac2`, reviewed and done 2026-10-10.
+- `packages/sdk/src/rpc.ts` names `INVALID_PARAMS`, the protocol's `-32602`, beside the four codes already there.
+- The same file holds the three request-param readers: `stringParam`, `optionalStringParam` and `numberParam`, each `(params, key, what)`.
+- Each reader refuses with `INVALID_PARAMS` and the sentence its caller passes as `what`, so every refusal says what it said before.
+- No raw `-32602` is left in `packages/sdk/src`: 78 sites over 19 files now name `INVALID_PARAMS` (the task file's 65 was counted on 2026-10-05).
+- `packages/sdk/src/host/vscodemethods.ts` has one `connectionIdOf(params)` where two `connectionId` checks stood.
+- Its `String(params.x ?? '')` reads stay as they are, because they accept any value rather than refusing one.
+- Its `typeof params.x !== 'string'` refusals read through the helpers, and `data must be a string` is one of them.
+- The sentences are unchanged: `session must be a URI string`, `chat must be a URI string`, `prompt must be a string`, `url must be a string`, `resource must be a URI string`, `position must be a number`, and the two `connectionId` refusals.
+- `packages/sdk/test/rpc.test.ts` has 8 new cases over the three readers: the value each answers, and the code and sentence each refuses with.
+- Agent packages keep their raw `-32602`; they can take the name once they import anything else from `rpc.ts`.
+- Gates: `pnpm install`, `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and the full suite pass, 4816 tests over 269 files.

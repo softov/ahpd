@@ -1,4 +1,4 @@
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { Claiming } from './state.js';
 import type { Clients, Connection } from '../types/host.js';
 import { ROOT } from './channels.js';
@@ -132,7 +132,7 @@ export function createRelay(ctx: HostContext): Relay {
      */
     const to = params.destination === undefined ? undefined : ownerOf(String(params.destination));
     if (params.destination !== undefined && to?.clientId !== owner.clientId) {
-      throw new RpcError(-32602, `${uri} and ${String(params.destination)} are not the same client's`);
+      throw new RpcError(INVALID_PARAMS, `${uri} and ${String(params.destination)} are not the same client's`);
     }
     /*
      * The owner's refusal is the owner's, and it is written down here.

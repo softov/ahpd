@@ -20,7 +20,7 @@
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { AnnotationsState, ChatAction, SessionInputRequestKind, ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { WireTurn } from './types/wire.js';
-import { RpcError, METHOD_NOT_FOUND } from './rpc.js';
+import { INVALID_PARAMS, RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { computerId, computersFor } from './computers.js';
 import { nestedAgent } from './nested.js';
 import { createCallLinks } from './calllinks.js';
@@ -1324,7 +1324,7 @@ export function createHost(options: HostOptions): Host {
           if (fixed !== undefined && typeof named === 'string' && named !== '' && named !== fixed
             && !(fixed === AUTOMATIONS && isAutomations(named))
             && !(fixed === ROOT && isRootChannel(named))) {
-            throw new RpcError(-32602, `${request.method} is answered on ${fixed}, not on ${named}`);
+            throw new RpcError(INVALID_PARAMS, `${request.method} is answered on ${fixed}, not on ${named}`);
           }
           if (REVERSE.has(request.method)) {
             const away = await elsewhere(request.method, request.params ?? {});

@@ -12,6 +12,7 @@ import type { PullRequests } from './types/github.js';
 import { commitPrompt, cutDiff, pullRequestPrompt, splitWords } from './changewords.js';
 import { gitArgv } from './repo/hardened.js';
 import { uriOf } from './fileuri.js';
+import { INVALID_PARAMS } from './rpc.js';
 
 /**
  * How many lines a file has, for one git will not count.
@@ -1032,7 +1033,7 @@ export function gitChanges(): ChangesetSource {
       if (before === undefined && /would be overwritten by checkout/.test(out.err)) {
         throw new OperationError(
           `Your local changes would be overwritten by checkout. Commit or stash the current changes before checking out \`${treeish}\`.`,
-          -32602,
+          INVALID_PARAMS,
           { reason: 'dirtyWorkingTree' },
         );
       }

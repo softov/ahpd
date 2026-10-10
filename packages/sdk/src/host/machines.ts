@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { idOf } from '../catalog.js';
 import { computerId, computerSource, machineRefusal, openComputer } from '../computers.js';
-import { RpcError } from '../rpc.js';
+import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import type { Scope } from '../scopes.js';
 import type { BroughtBack } from '../types/computers.js';
 import type { Principal } from '../types/users.js';
@@ -472,7 +472,7 @@ export function createMachines(ctx: HostContext): Machines {
     const known = sessionMachines.get(uri);
     if (known !== undefined) {
       if (known.source !== said) {
-        throw new RpcError(-32602, `This session is already running in ${known.machine}, made from ${known.source}, and cannot switch to ${said} before its first turn; dispose it and create one that asks for ${said}`);
+        throw new RpcError(INVALID_PARAMS, `This session is already running in ${known.machine}, made from ${known.source}, and cannot switch to ${said} before its first turn; dispose it and create one that asks for ${said}`);
       }
       config.computer = known.machine;
       return;

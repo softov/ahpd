@@ -1,4 +1,4 @@
-import { INTERNAL_ERROR, RpcError } from '../rpc.js';
+import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { notServed } from '../resources.js';
 import { Status } from '../catalog.js';
 import { need } from './common.js';
@@ -232,7 +232,7 @@ const CONFLICT = -32011;
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(source);
-      if (held !== storeFor(destination)) throw new RpcError(-32602, `${source} and ${destination} are served by different providers`);
+      if (held !== storeFor(destination)) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
       await need(need(held, 'resourceMove').move, 'resourceMove')(
         source, destination, params.failIfExists === true,
       );
@@ -245,7 +245,7 @@ const CONFLICT = -32011;
       const source = String(params.source ?? '');
       const destination = String(params.destination ?? '');
       const held = storeFor(destination);
-      if (storeFor(source) !== held) throw new RpcError(-32602, `${source} and ${destination} are served by different providers`);
+      if (storeFor(source) !== held) throw new RpcError(INVALID_PARAMS, `${source} and ${destination} are served by different providers`);
       await need(need(held, 'resourceCopy').copy, 'resourceCopy')(
         source, destination, params.failIfExists === true,
       );
@@ -295,7 +295,7 @@ const CONFLICT = -32011;
       const offered = (source.operations?.(at.dir, at.owner, at.scope, context) ?? [])
         .find((one) => one.id === operationId);
       if (!offered)
-        throw new RpcError(-32602, `No operation called ${operationId} on ${channel}`);
+        throw new RpcError(INVALID_PARAMS, `No operation called ${operationId} on ${channel}`);
 
       const raw = params.target as Record<string, unknown> | undefined;
       const target = raw !== undefined && typeof raw === 'object'
@@ -312,7 +312,7 @@ const CONFLICT = -32011;
       // a changeset-scoped invocation.
       const kind = target?.kind ?? 'changeset';
       if (!offered.scopes.includes(kind))
-        throw new RpcError(-32602, `${operationId} cannot be invoked on a ${kind}`);
+        throw new RpcError(INVALID_PARAMS, `${operationId} cannot be invoked on a ${kind}`);
 
       // Refused rather than queued. The agent is writing to this tree, and
       // an operation that rewrote a file underneath it would be racing the
