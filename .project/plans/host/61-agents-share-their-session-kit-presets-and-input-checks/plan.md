@@ -1,7 +1,7 @@
 ---
 title: The agents share their status, activity, title and preset reading, and the host checks tool inputs and request params one way
 domain: host
-status: planned
+status: active
 priority: medium
 created: 2026-10-05
 revalidated: 2026-10-05
@@ -107,7 +107,7 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 | [02 - Every backend titles a session from the first line, up to 80](task-02-every-backend-titles-a-session-from-the-first-line.md) | todo | - |
 | [03 - A preset's secrets and environment references are read by the sdk](task-03-a-presets-secrets-and-environment-references-are-read-by-the-sdk.md) | todo | - |
 | [04 - One loop registers a plugin's presets](task-04-one-loop-registers-a-plugins-presets.md) | todo | 03 |
-| [05 - The host's tools read their input one way](task-05-the-hosts-tools-read-their-input-one-way.md) | todo | - |
+| [05 - The host's tools read their input one way](task-05-the-hosts-tools-read-their-input-one-way.md) | done | - |
 | [06 - Request params are read one way, and -32602 has a name](task-06-request-params-are-read-one-way.md) | todo | - |
 
 ## Risks and tradeoffs
@@ -121,8 +121,8 @@ No decision file: every row below is either Softov's answer or a choice anyone w
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-sessions-status-and-activity-come-from-the-sdk.md](task-01-a-sessions-status-and-activity-come-from-the-sdk.md), after host 59 is built; 05 and 06 touch only the sdk and can start before it.
+- **Done so far:** task 05, reviewed 2026-10-09; the four readers are in `packages/sdk/src/toolinput.ts`.
+- **Next action:** [task-01-a-sessions-status-and-activity-come-from-the-sdk.md](task-01-a-sessions-status-and-activity-come-from-the-sdk.md), after host 59 is built; 06 touches only the sdk and can start before it.
 - **Open questions:** none.
 - **Watch out for:** `activityOf` must emit nothing when the activity did not change, as all four `doing` do; claude's `status` reads truthiness (`ctx.active ?`) and the other three `!== undefined`, so `statusOf` takes booleans and each caller says what counts; pi's `UNTITLED` is the fallback for a blank message, and acp and cofold have their own.
 

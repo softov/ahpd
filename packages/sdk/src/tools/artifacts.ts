@@ -1,3 +1,4 @@
+import { required } from '../toolinput.js';
 import type { HostTool } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 
@@ -39,19 +40,13 @@ export interface Artifact {
   isGitHub?: boolean;
 }
 
-const requireString = (value: unknown, field: string, tool: string): string => {
-  if (typeof value !== 'string' || value.trim().length === 0)
-    throw new Error(`Invalid ${tool} input: ${field} must be a non-empty string.`);
-  return value.trim();
-};
-
 /**
  * A link opens outside, in whatever the desktop hands the scheme to, so only
  * the web is allowed: a `file:` link on an agent-labelled pill would launch a
  * local target.
  */
 const requireWebLink = (value: unknown, field: string, tool: string): string => {
-  const link = requireString(value, field, tool);
+  const link = required(value, field, tool).trim();
   let scheme: string;
   try { scheme = new URL(link).protocol; }
   catch { throw new Error(`Invalid ${tool} input: ${field} must be an absolute http(s) URL.`); }
@@ -65,7 +60,7 @@ const requireWebLink = (value: unknown, field: string, tool: string): string => 
  * pretending to be one, which parses and then draws nothing.
  */
 const requireUri = (value: unknown, field: string, tool: string): string => {
-  const uri = requireString(value, field, tool);
+  const uri = required(value, field, tool).trim();
   const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(uri)?.[1];
   if (scheme === undefined || scheme.length === 1)
     throw new Error(`Invalid ${tool} input: ${field} must be an absolute URI including its scheme, such as 'file:///path/to/file' \u2014 not a plain file system path.`);
@@ -93,10 +88,10 @@ export const parseArtifact = (raw: unknown, tool: string, prefix?: string): Omit
   if (typeof args.isArtifact !== 'boolean')
     throw new Error(`Invalid ${tool} input: ${field('isArtifact')} must be a boolean \u2014 true for an artifact, false for a reference.`);
   const kind = type as ArtifactType;
-  const out: Omit<Artifact, 'id'> = { type: kind, label: requireString(args.label, field('label'), tool), isArtifact: args.isArtifact };
+  const out: Omit<Artifact, 'id'> = { type: kind, label: required(args.label, field('label'), tool).trim(), isArtifact: args.isArtifact };
   if (LINKED.has(kind)) out.link = requireWebLink(args.link, field('link'), tool);
   if (ADDRESSED.has(kind)) out.uri = requireUri(args.uri, field('uri'), tool);
-  if (kind === 'commit') out.commitHash = requireString(args.commitHash, field('commitHash'), tool);
+  if (kind === 'commit') out.commitHash = required(args.commitHash, field('commitHash'), tool).trim();
   if (out.link !== undefined && GITHUB.has(kind)) out.isGitHub = isGitHubLink(out.link);
   return out;
 };

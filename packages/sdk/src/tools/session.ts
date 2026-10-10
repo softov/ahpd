@@ -1,6 +1,7 @@
 import { posix } from 'node:path';
 import { Status, idOf } from '../catalog.js';
 import { localPath, uriOf } from '../fileuri.js';
+import { flag, optional, required, when } from '../toolinput.js';
 import type { HostTool, ToolCall } from '../types/host.js';
 import type { Summary } from '../types/catalog.js';
 import type { Bag } from '../types/common.js';
@@ -46,28 +47,6 @@ export const sessionMeant = (asked: string, rows: Summary[]): { session: Summary
   }
   const row = rows.find((one) => one.resource === asked);
   return row === undefined ? undefined : { session: row };
-};
-
-const required = (value: unknown, field: string, tool: string): string => {
-  if (typeof value !== 'string' || value.trim() === '')
-    throw new Error(`Invalid ${tool} input: ${field} must be a non-empty string.`);
-  return value;
-};
-const optional = (value: unknown, field: string, tool: string): string | undefined => {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'string') throw new Error(`Invalid ${tool} input: ${field} must be a string.`);
-  return value;
-};
-const flag = (value: unknown, field: string, tool: string): boolean | undefined => {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== 'boolean') throw new Error(`Invalid ${tool} input: ${field} must be a boolean.`);
-  return value;
-};
-const when = (value: unknown, field: string, tool: string): number | undefined => {
-  if (value === undefined || value === null) return undefined;
-  const at = typeof value === 'string' ? Date.parse(value) : Number.NaN;
-  if (Number.isNaN(at)) throw new Error(`Invalid ${tool} input: ${field} must be an ISO-8601 timestamp.`);
-  return at;
 };
 
 /** A title fit to keep: non-blank, two hundred characters at most, one space between words. */

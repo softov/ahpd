@@ -1,6 +1,6 @@
 ---
 title: The host's tools read their input one way
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -32,3 +32,11 @@ refs:
 - `pnpm exec tsc --noEmit`, `pnpm test packages/sdk`.
 
 ## Resume
+
+- **Implemented** 2026-10-09 on `build/agents/379ac04c`.
+- `packages/sdk/src/toolinput.ts` holds the four readers, `required`, `optional`, `flag` and `when`, each `(value, field, tool)`. It is not exported from `@ahpd/sdk`.
+- `packages/sdk/src/tools/session.ts:4` imports them instead of defining them. Its 27 uses and every sentence are unchanged.
+- `packages/sdk/src/tools/artifacts.ts` lost `requireString`; its four calls are now `required(...).trim()`, so each answers what it answered.
+- `packages/sdk/test/toolinput.test.ts` is 8 cases over the four readers: the value each accepts and the sentence each refuses with. `sessiontools.test.ts` and `artifacttools.test.ts` are unchanged and green.
+- The remove tool's inline check on `id` stayed. It does not trim, so `required` would refuse a whitespace-only id that today reaches the store, and this task changes no answer.
+- Gates: `node tools/schema.mjs`, `pnpm build`, `pnpm typecheck`, `pnpm boundary` and the full suite pass, 4768 tests over 268 files.
