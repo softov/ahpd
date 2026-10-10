@@ -4,62 +4,47 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-10-09. [plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
+Current progress and pending items only, as of 2026-10-10.
+[plans/index.md](../plans/index.md) is the backlog and each plan's Resume state is its detail; what merged is in `git log`.
 
-## How builds run now
+## Main
 
-Builds run as daemon sessions on the `claude-deepseek-build` preset through ahpc, at most 2-3 at a time, so Softov can watch them.
-Each session has `isolation=worktree`, and its worktree is under `/github/ahpd.worktrees/build-agents-<id>`.
-The builder sets tasks `implemented`, never `done`.
-The review reads the diff against the plan, probes the security and data-loss paths, and reruns the four gates (`pnpm exec tsc --noEmit`, `pnpm boundary`, `pnpm test`, `pnpm build`).
-On Softov's approval: commit in the worktree, rebase on main, rerun the gates, fast-forward main, remove the worktree and the branch, and keep the session.
-Never push; Softov pushes.
+- `main` is at `d1d950b`, pushed, and CI is green (run 38066810517, 3m29s).
+- The version is still 0.10.0, with 114 commits since the `v0.10.0` tag. The bump and the tag are Softov's.
+- CI runs `test:unit` in the `check` job and `test:processes` in the `processes` job. If `processes` nears its 300 s limit, the next file to move out is `computer-git-fetch`.
 
-## In flight
+## Build worktrees
 
-- **Waiting on Softov:** see [../review/](../review/).
-- **cofold released:** agents 0.2.1 and tools 0.3.0 (`release-2026-10-09`). ahpd is still on 0.1; moving it broke 25 agent-cofold tests, so [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) takes the whole range and certifies every change. plugin/22 task 04 is dropped into plugin/40 task 07.
-- **cofold tools/04** (planned in cofold): `files: { requireRead: false }` turns off the read-first rule. Its release and version are Softov's; plugin/40 task 09 takes it after.
-- **claude/19:** merged in `fbb24bf`. Its `answer` in `agent-cofold/src/pauses.ts` returns a boolean; plugin/40 task 02 keeps that.
-- **Parked:** `/github/ahpd.worktrees/build-agents-cofold-uptake` holds the first try at the range move. plugin/40 starts from main and copies what it needs; removing the worktree is Softov's call.
-- **VS Code 1.141 hosts:** ahpc ahp/08 (`356852c`) and ahpapp host/06 (`2b63956`) offer `0.10.0` after `1.0.0`. Merged and pushed, not yet tried against a live 1.141 host.
-- **Clients ready for host/43 p4:** ahpapp host/05 (`a66f582`) reads both names and sends `ahpd.commit`; ahpc ahp/07 (`a13ec65`) reads `ahpd.model` too. Both are merged and pushed.
+| Worktree | Branch head | State |
+|---|---|---|
+| `build-agents-f8d0dae8` | `cfb1224` | [plugin/18](../plans/plugin/18-the-acp-bridge-resumes-forks-and-asks/plan.md) tasks 01-04 implemented, not reviewed. Three forks wait for Softov: cancel and decline are the same to a backend, an unknown form field is asked as text, `resumable()` reads only `loadSession`. |
+| `build-agents-428b7b46` | `653adc5` | Uncommitted edits to the [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) plan files (33 files). plugin/40 is built on main. Check whether the edits are wanted, then remove the worktree. |
+| `build-agents-cofold-uptake` | `c50d5bc` | Parked. Removing it is Softov's call. |
 
-## Next, buildable now
+## Plans to close
 
-Ten, in waves of at most three; every requirement is built.
+- Many task files carry `status: implemented` under plans that the index lists as built. Each one needs a review and `done`, or the plan stays open.
+- `active` without `implemented.md`: [daemon/13](../plans/daemon/13-ahpd-restart/plan.md), [host/56](../plans/host/56-the-catalogue-answers-at-once-and-a-summary-is-sent-when-it-changes/plan.md), [container/02](../plans/container/02-vscode-offers-our-dev-container/plan.md), [container/05 p9](../plans/container/05-an-agent-in-a-machine-p9-an-ssh-machine-runs-a-nested-host/plan.md).
 
-| Wave | Plan | Note |
-| --- | --- | --- |
-| 1 | [plugin/40](../plans/plugin/40-ahpd-runs-on-the-current-cofold/plan.md) tasks 01-08 | 01 and 02 land together |
-| 1 | [claude/19](../plans/claude/19-a-question-shows-its-headers-and-its-answer-at-once/plan.md) | review and merge only |
-| 1 | [host/59](../plans/host/59-one-record-store-provider-and-shared-value-helpers/plan.md) | unblocks host/61 |
-| 2 | cofold tools/04 | tested against plugin/40 01-08 with a packed tarball; no version, no tag |
-| 2 | [host/60](../plans/host/60-one-json-file-reader-and-writer-and-a-session-is-one-row/plan.md) | the session store; before host/50 |
-| 2 | [host/49](../plans/host/49-a-session-loads-a-clients-plugins/plan.md) | unblocks host/47 p5 |
-| 3 | [host/50](../plans/host/50-a-peer-chat-is-its-own-conversation/plan.md) | after host/60; unblocks host/47 p1 |
-| 3 | [host/44 p2](../plans/host/44-ahpd-speaks-ahp-1-0-0-p2-an-automation-disables-itself/plan.md) | |
-| 3 | [host/45](../plans/host/45-root-config-declares-every-value-it-holds/plan.md) | |
-| 4 | [host/44 p3](../plans/host/44-ahpd-speaks-ahp-1-0-0-p3-a-sessions-row-lists-its-chats/plan.md) | after host/50, which records a session's chats |
+## Reviews
 
-After those: plugin/40 task 09 (after Softov releases tools/04), [plugin/36](../plans/plugin/36-a-cofold-turn-reads-its-attachments/plan.md) (after plugin/40), host/61 (after host/59 and plugin/40, both touch `runs.ts`), host/47 p1-p6, host/43 p4 task 05, daemon/13 task 04.
+- [2026-09-19-upstream-pass-4.md](../review/2026-09-19-upstream-pass-4.md)
+- [daemon-13-restart-checks.md](../review/daemon-13-restart-checks.md)
+- [host-56-measure.md](../review/host-56-measure.md)
 
-Doc drift found by documentation/03 and left for a decision: AHP.md marks `automationRun/cancelRequested` supported where `packages/sdk/src/host/actions.ts` refuses it; AHP.md and a comment in `packages/sdk/src/host/terminals.ts` claim a served-directory check `createTerminal` does not make; `TitleStrategy`'s `utility` is never selected.
+## By Softov's hand
 
-## Waiting on Softov
+- daemon/13 restart checks, host/56 task 05, container/02 tasks 01-03 (Windows VS Code run), container/05 p9 task 06 on dev86.
 
-- One file per item in [../review/](../review/), with his steps and a Reply section; a file is deleted once its item is finished.
-- Flaky tests: `computer-devcontainer.test.ts` under full load, `ENOTEMPTY` in afterEach cleanup, and once a `computer-needs.test.ts` vault restart case. A problem file or a fix plan was offered, with no answer yet.
+## Next builds
 
-## Carried from 2026-10-03, not rechecked since
+- [host/79](../plans/host/79-a-quiet-session-sleeps-and-wakes/plan.md): planned, builds once Softov says so.
+- container/05 p9 tasks 02, 03 and 05; task 07 waits on 06.
+- plugin/19 after plugin/18; container/05 p8, p10, p11, p12; host/33 task files; documentation/02 waits on ahpc cli/02.
+- To offer: a VS Code parity host plan (`runCancellation`, `runHistoryLimit`, `customizations`, `_meta.hostBuild`, `vscode.agentHost.resources`, `agentCustomizationSettings`, `remoteSessions`, `completionTriggerCharacters`).
 
-- Checks nobody has made: VS Code's `computer` picker chip; ahpapp against the published packages; 0.6 session state read by 0.8; an MCP tool call on each agent; host/24, 25, 27, claude/05, 06, 07, pi/12 in a client; daemon/11 in ahpapp.
-- After the release: the `docs/` prose pass; README and manifest mismatches in computer, tunnel-devtunnel, agent-acp, agent-pi and agent-cofold.
+## Open with Softov
 
-## Environment notes written nowhere else
-
-- CI runs `pnpm test` before `pnpm build`, so the suite must pass with no `packages/*/dist`.
-- `pnpm test` generates `tools/ahp.strict.schema.json` first; running vitest alone in a fresh checkout fails the acp ports tests for want of it.
-- The gates as one line, run in a worktree: `pnpm install && node tools/schema.mjs && pnpm build && pnpm typecheck && pnpm boundary && npx vitest run --maxWorkers=2 --testTimeout=10000`. The suite takes about ten minutes; two at once roughly double it.
-- Every suite run rewrites `packages/sdk/test/fixtures/wire.jsonl` with this box's endpoints; `git checkout --` it before committing.
-- A build session is started with `node /github/ahpc/dist/src/main.js --host ws://127.0.0.1:37537 session new --agent claude-deepseek-build --cwd /github/ahpd --set permissionMode=dontAsk --set effortLevel=high --set isolation=worktree --set branch=main --set worktreeBranchPrefix=build/`, then `prompt <uri> "<text>"`; `session list` and `session history <uri>` watch it. A builder sometimes ends its turn waiting on a watcher that never wakes it, so read its worktree, not only its report.
+- About 21 idle claude processes (about 4.5 GB) wait for an ahpd restart, until host/79 lands.
+- The dev container stop problem, VS Code "No models available", the stale `wire.jsonl` fixture, the unset `ANTHROPIC_API_KEY`, the papo flaky-test offer, the ahpc cancel bug.
+- Open problems are in [problems/](../problems/).
