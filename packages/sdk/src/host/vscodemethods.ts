@@ -1,5 +1,7 @@
 import { lookup } from 'node:dns/promises';
+import { realpathSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
+import { isAbsolute, resolve } from 'node:path';
 import { INTERNAL_ERROR, INVALID_PARAMS, METHOD_NOT_FOUND, RpcError, numberParam, optionalStringParam, stringParam } from '../rpc.js';
 import { idOf } from '../catalog.js';
 import { hostLogPath } from '../debuglogs.js';
@@ -36,12 +38,15 @@ const DETACHED_GRACE = 24 * 60 * 60 * 1000;
 /** How much of the launcher's output is kept to explain an ending. */
 const CONTAINER_TAIL = 24;
 
+/** The source a session names to be placed in a folder's own dev container. */
+const DEV_CONTAINER_SOURCE = 'devcontainer://';
+
 /**
  * The methods the reference window asks of its own host, and the diagnostics
  * it asks the process about.
  *
  * The worktree handles it holds, the session state file and the logs it
- * collects, its own shutdown, and the four devContainer requests the relay is
+ * collects, its own shutdown, and the devContainer requests the relay is
  * decided on - decision `the-relay-surface-is-the-reference-one`.
  */
 export interface VscodeMethods {
@@ -58,6 +63,8 @@ export interface VscodeMethods {
   'vscode/devContainers/connect': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/devContainers/disconnect': (params: Record<string, unknown>) => Promise<unknown>;
   'vscode/devContainers/relaySend': (params: Record<string, unknown>) => Promise<unknown>;
+  'vscode/devContainers/stop': (params: Record<string, unknown>) => Promise<unknown>;
+  'vscode/devContainers/remove': (params: Record<string, unknown>) => Promise<unknown>;
   shutdown: (params: Record<string, unknown>) => Promise<unknown>;
   getNetworkDiagnosticsInfo: (params: Record<string, unknown>) => Promise<unknown>;
   getManagedSettingsDiagnostics: (params: Record<string, unknown>) => Promise<unknown>;
@@ -134,6 +141,97 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
    * so a folder is not asked for again: the connection was made with one.
    */
   const namedContainer = (params: Record<string, unknown>): string => connectionIdOf(params);
+
+  /**
+   * The folder a `stop` or a `remove` names.
+   *
+   * One string, and it is a path on this host: the reference sends
+   * `{ workspaceFolder }` for both, and the folder is the whole of what a dev
+   * container is - its `devcontainer.json` is the definition and the machine is
+   * that folder's. A relative path is refused rather than resolved against this
+   * process's own working directory, which is not a folder a client chose.
+   */
+  const devFolder = (params: Record<string, unknown>): string => {
+    const folder = typeof params.workspaceFolder === 'string' ? params.workspaceFolder : '';
+    if (folder.trim() === '' || folder.includes('\0')) {
+      throw new RpcError(INVALID_PARAMS, 'workspaceFolder must be a path on this host');
+    }
+    if (!isAbsolute(folder)) {
+      throw new RpcError(INVALID_PARAMS, `workspaceFolder must be an absolute path, and ${folder} is not one`);
+    }
+    return folder;
+  };
+
+  /** A folder as one path, so two spellings of one folder are one folder. */
+  const atPath = (folder: string): string => {
+    try { return realpathSync(folder); }
+    catch { return resolve(folder); }
+  };
+
+  /**
+   * Whether a connection other than this one still holds a relay on a folder.
+   *
+   * The reference host's own question, and the reason it answers `false` rather
+   * than stopping a container another window has open. Every live connection's
+   * map is held on the host for exactly this, since a name a client chose
+   * reaches no other client and the folders are what can be compared.
+   */
+  const relayedByAnother = (folder: string): boolean => {
+    const here = atPath(folder);
+    for (const [who, held] of ctx.relays) {
+      if (who === connection) continue;
+      for (const one of held.values()) if (atPath(one.folder) === here) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Whether a session of this host is running in the folder's computer.
+   *
+   * The user the reference host has none of. A dev container is a `computer://`
+   * machine here, and the sessions placed on one are this host's own - decision
+   * `a-dev-container-is-a-computer-made-from-its-devcontainer-json`. A session
+   * that asked for the container by folder is what `sessionMachines` holds,
+   * under the source it named; the folder is compared as a path, because the
+   * source is a spelling a client chose and the folder a client names here is
+   * another.
+   */
+  const placedOn = (folder: string): boolean => {
+    const here = atPath(folder);
+    for (const one of ctx.sessionMachines.values()) {
+      if (!one.source.startsWith(DEV_CONTAINER_SOURCE)) continue;
+      if (atPath(one.source.slice(DEV_CONTAINER_SOURCE.length).trim()) === here) return true;
+    }
+    return false;
+  };
+
+  /**
+   * Stop or remove the computer a folder is, unless somebody else is using it.
+   *
+   * The reference host's own order: the folder's relays are ended, then the
+   * container is stopped or removed, and the answer is whether anything was
+   * done. This connection's own relays go first, so the host inside a container
+   * is not left running in one that is about to stop; a relay another
+   * connection holds, or a session placed on the computer, is what makes the
+   * answer `false` instead.
+   */
+  const devContainerStopped = async (verb: 'stop' | 'remove', params: Record<string, unknown>): Promise<boolean> => {
+    const method = `vscode/devContainers/${verb}`;
+    const port = need(options.containers, method);
+    const folder = devFolder(params);
+    const act = verb === 'stop' ? port.stop : port.remove;
+    // A launcher that cannot reach the runtime's own stop answers nothing, and
+    // is refused the way an absent launcher is rather than serving a false.
+    if (act === undefined) throw new RpcError(METHOD_NOT_FOUND, `This host does not serve ${method} yet`);
+    if (relayedByAnother(folder) || placedOn(folder)) return false;
+    const here = atPath(folder);
+    for (const [id, held] of [...conn.containers]) {
+      if (atPath(held.folder) !== here) continue;
+      conn.containers.delete(id);
+      await port.disconnect(id);
+    }
+    return await act.call(port, folder);
+  };
 
   return {
     /**
@@ -497,5 +595,18 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
       // answers it, and what it answers with comes back as `relayMessage`.
       await launcher.send(id, data);
     },
+    /*
+     * The two the reference host sends when a dev container is idle or gone.
+     *
+     * Both take `{ workspaceFolder }` and answer a boolean, because a dev
+     * container is a folder's here and not a connection's: the reference ends
+     * the folder's relays, stops or removes the container, and answers `false`
+     * while another client still uses it. This host answers the same, with one
+     * more user than the reference has - a session placed on the folder's
+     * computer, which after `container/03` is a machine ahpd sessions run in -
+     * decision `stopping-a-dev-container-needs-the-computers-grant`.
+     */
+    'vscode/devContainers/stop': async (params) => await devContainerStopped('stop', params),
+    'vscode/devContainers/remove': async (params) => await devContainerStopped('remove', params),
   };
 }

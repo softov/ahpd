@@ -865,6 +865,8 @@ refused `-32601`.
 | `vscode/devContainers/isDockerAvailable` | The window drives a dev container from its own client and not from here, so the whole surface is the relay it holds. [CONTAINERS.md](CONTAINERS.md) |
 | `vscode/devContainers/connect` | The same surface: it opens the relay into the container. [CONTAINERS.md](CONTAINERS.md) |
 | `vscode/devContainers/disconnect` | The same surface: it ends the relay. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/stop` | The same surface: it stops the container a folder is. [CONTAINERS.md](CONTAINERS.md) |
+| `vscode/devContainers/remove` | The same surface: it removes the container a folder is. [CONTAINERS.md](CONTAINERS.md) |
 | `vscode/devContainers/relaySend` | The same surface: one frame written to the host inside. [CONTAINERS.md](CONTAINERS.md) |
 | `vscode/devContainers/relayMessage` | A notification of that surface: one frame back from the host inside. [CONTAINERS.md](CONTAINERS.md) |
 | `vscode/devContainers/output` | A notification of that surface: the CLI's and the container's own output, which a person watches while an image builds. [CONTAINERS.md](CONTAINERS.md) |

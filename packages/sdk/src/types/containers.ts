@@ -120,6 +120,32 @@ export interface ContainerPort {
    */
   disconnect(connectionId: string): void | Promise<void>;
   /**
+   * Stop the container a folder's dev container is, and answer whether it acted.
+   *
+   * `vscode/devContainers/stop` in the reference client's own name for it: the
+   * folder is the whole of what it names, because a dev container is a folder's
+   * `devcontainer.json` made into a machine. The container stops and the folder
+   * and its `devcontainer.json` stay, as they do for a `computer://` stop.
+   *
+   * `true` is "nothing of this folder's is running now" and is what a folder
+   * with no container of its own answers: a client asking for one that is
+   * already gone has nothing left to want. `false` is "it is still in use",
+   * which the reference host answers and its caller reports unchanged.
+   *
+   * Optional, because a launcher that cannot reach the runtime's own `stop`
+   * serves no such method, and a client that asks is refused the way it is for
+   * an absent launcher.
+   */
+  stop?(folder: string): Promise<boolean>;
+  /**
+   * Remove the container a folder's dev container is, and answer whether it acted.
+   *
+   * `vscode/devContainers/remove`: the container goes and the folder and its
+   * `devcontainer.json` never do, because the definition is the folder's and the
+   * container is this host's. `true` and `false` are `stop`'s.
+   */
+  remove?(folder: string): Promise<boolean>;
+  /**
    * Stop every relay this launcher started, and answer once they have ended.
    *
    * The daemon's own stop. A nested host left running is a process nobody is

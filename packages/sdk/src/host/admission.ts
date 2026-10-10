@@ -132,6 +132,16 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
       if (to !== '' && ctx.sessionFor(to) !== ctx.sessionFor(String(params.channel ?? '')))
         return ['chat:move', 'session:write'];
     }
+    /*
+     * Stopping or removing a folder's dev container destroys the machine the
+     * folder is, which is `computer:write` as it is for a `computer://` delete
+     * and for a session that names a source - decision
+     * `stopping-a-dev-container-needs-the-computers-grant`. The container's own
+     * operation rides with it, so a role that may reach the relay surface and
+     * not destroy a machine names the two apart.
+     */
+    if (method === 'vscode/devContainers/stop') return ['container:stop', 'computer:write'];
+    if (method === 'vscode/devContainers/remove') return ['container:remove', 'computer:write'];
     const plain = NEEDS[method];
     if (plain === undefined) {
       /*

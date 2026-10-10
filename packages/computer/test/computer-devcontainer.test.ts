@@ -209,6 +209,7 @@ async function room(hostOptions: HostOptions) {
   return {
     client,
     peer: p,
+    host,
     open: async (uri: string, config: Record<string, unknown>, folder?: string): Promise<unknown> => {
       await client.handle({
         method: 'createSession',
@@ -1803,4 +1804,150 @@ it('mounts a worktree folder\'s git directory through the override, and runs eac
   expect(commands.filter((one) => !one.command.includes('chown')).every((one) => one.user === me)).toBe(true);
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await answered(dockerState, 2);
+});
+
+/*
+ * container/02 task 04: VS Code's stop and remove, on the computer a folder is.
+ *
+ * The folder is the whole of what either names, and both act on the machine
+ * that folder already is: the same `machineFor` the picker and the relay's
+ * connect read, so no second container is made beside the first.
+ */
+
+/**
+ * One window's client, on a host that is already there.
+ *
+ * A window is one connection of a host's, never a host of its own: what a
+ * window asks about - whether a folder's container is in use - is a fact about
+ * the host and not about one connection.
+ */
+const viewerOf = async (host: ReturnType<typeof createHost>) => {
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'window', protocolVersions: ['0.9.0'] },
+  });
+  return { client, peer: p };
+};
+
+/** One window's client, on a host of its own. */
+async function viewer(hostOptions: HostOptions) {
+  const host = createHost(hostOptions);
+  keeping(hostOptions, host);
+  return viewerOf(host);
+}
+
+/** The plugin options that put the fake nested host behind a relay. */
+const relayed = (devState: string, dockerState: string): Record<string, unknown> => optionsOf(devState, dockerState, {
+  devcontainer: {
+    command: process.execPath,
+    args: [DEV],
+    env: { DEVCONTAINER_FAKE_STATE: devState, DOCKER_FAKE_STATE: dockerState },
+    host: [process.execPath, HOST],
+    install: false,
+    plugins: ['@ahpd/agent-cofold'],
+  },
+});
+
+it('stops the container a folder is, ending the window\'s relay first', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  writeFileSync(devState, JSON.stringify({ calls: [] }));
+  writeFileSync(dockerState, JSON.stringify({ machines: [], calls: [], passthrough: [process.execPath] }));
+  const { options: loaded } = await load(relayed(devState, dockerState), [agentWith()], join(dir, 'config'));
+  const { client } = await viewer(loaded);
+
+  await client.handle({
+    method: 'vscode/devContainers/connect',
+    params: { connectionId: 'one', workspaceFolder: folder, name: 'Box' },
+  });
+  expect(dockerHeld(dockerState).machines[0]?.state).toBe('running');
+
+  // The stop names the folder and nothing else, and this window's own relay
+  // ends before the machine does, so nothing is left talking to a container
+  // that is going down.
+  expect(await client.handle({ method: 'vscode/devContainers/stop', params: { workspaceFolder: folder } })).toBe(true);
+  const ended = await client.handle({
+    method: 'vscode/devContainers/relaySend',
+    params: { connectionId: 'one', data: '{}' },
+  }).then(() => undefined, (error: unknown) => error as Error);
+  expect(ended?.message).toContain('one is not a dev container this client opened');
+
+  // The machine is stopped and the folder and its definition stay: a dev
+  // container is that folder made into a machine, and stopping the machine is
+  // not taking the definition away.
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  expect(dockerHeld(dockerState).machines[0]?.state).toBe('exited');
+  expect(existsSync(join(folder, '.devcontainer', 'devcontainer.json'))).toBe(true);
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+it('removes the container a folder is, and the record beside the configuration with it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const configDir = join(dir, 'config');
+  const folder = workspace(dir);
+  mkdirSync(configDir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [agentWith()], configDir);
+  await providerOf(loaded).write('computer://box', {
+    data: JSON.stringify({ devcontainer: { folder } }),
+    encoding: 'utf-8',
+  });
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  expect(Object.keys(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8')) as Record<string, unknown>)).toEqual(['box']);
+
+  const { client } = await viewer(loaded);
+  expect(await client.handle({ method: 'vscode/devContainers/remove', params: { workspaceFolder: folder } })).toBe(true);
+
+  // The machine, its record beside the configuration, and the machine's own
+  // stretch all go: a removal this way is the `computer://` delete's own
+  // `remove`, not a second road through the runtime.
+  expect(dockerHeld(dockerState).machines).toEqual([]);
+  expect(JSON.parse(readFileSync(join(configDir, 'computers.json'), 'utf8')) as Record<string, unknown>).toEqual({});
+  expect(existsSync(join(folder, '.devcontainer', 'devcontainer.json'))).toBe(true);
+
+  // A folder no computer is left for is `true`, as it is when none was ever
+  // made: there is nothing of this folder's to stop or take away.
+  expect(await client.handle({ method: 'vscode/devContainers/stop', params: { workspaceFolder: folder } })).toBe(true);
+  expect(await client.handle({ method: 'vscode/devContainers/remove', params: { workspaceFolder: join(dir, 'elsewhere') } })).toBe(true);
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
+});
+
+it('leaves the folder\'s container alone while a session of this host is running in it', async () => {
+  const dir = temp();
+  const devState = join(dir, 'dev.json');
+  const dockerState = join(dir, 'docker.json');
+  const folder = workspace(dir);
+  const configDir = join(dir, 'config');
+  mkdirSync(configDir);
+  const { options: loaded } = await load(optionsOf(devState, dockerState), [agentWith()], configDir);
+  const session = await room(loaded);
+  const opened = await session.open('ahp-session:/one', { computer: `devcontainer://${folder}` }, folder) as {
+    snapshot: { state: { config?: { values?: Record<string, unknown> } } };
+  };
+  expect(String(opened.snapshot.state.config?.values?.computer)).toMatch(/^computer:\/\/ahpd-computer-\w{8}$/);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+
+  // The window is a second connection on the same host, because what is in
+  // use is a fact about the host and not about one connection: the session's
+  // machine belongs to no client, and no VS Code window made it. Both answers
+  // are `false` and the launcher is never reached - a container taken out from
+  // under a running session is a turn that fails somewhere else entirely.
+  const view = await viewerOf(session.host);
+  expect(await view.client.handle({ method: 'vscode/devContainers/stop', params: { workspaceFolder: folder } })).toBe(false);
+  expect(await view.client.handle({ method: 'vscode/devContainers/remove', params: { workspaceFolder: folder } })).toBe(false);
+  expect(dockerHeld(dockerState).machines).toHaveLength(1);
+  expect(dockerHeld(dockerState).machines[0]?.state).toBe('running');
+
+  // The session's own machine is untouched, and the folder is free again once
+  // the session has gone.
+  await session.client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
+  await until(() => !existsSync(`${dockerState}.lock`));
+  expect(await view.client.handle({ method: 'vscode/devContainers/stop', params: { workspaceFolder: folder } })).toBe(true);
+  expect(dockerHeld(dockerState).machines[0]?.state).toBe('exited');
+  await answered(dockerState, dockerHeld(dockerState).calls.length);
 });

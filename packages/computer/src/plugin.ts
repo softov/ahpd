@@ -1817,6 +1817,32 @@ export const apply: Plugin['apply'] = (host, options) => {
         open(machine.id);
         return result;
       },
+      /*
+       * VS Code's `stop` and `remove`, on the computer a folder is.
+       *
+       * The folder is resolved the way every other road resolves it, so the
+       * machine a folder already is is the one found rather than a second one
+       * made beside it. No container of that folder is `true`: there is nothing
+       * of this client's running and nothing to take away, which is what the
+       * reference host answers for a folder it holds no container for.
+       *
+       * Both go through `made`'s wrapped `stop` and `remove` rather than the
+       * Docker runtime's, so a machine that goes this way closes its stretch and
+       * its `computers.json` entry exactly as one destroyed by a `computer://`
+       * delete does.
+       */
+      stop: async (folder) => {
+        const found = await machineFor(resolved(folder));
+        if (found === undefined) return true;
+        await made.stop(found.id);
+        return true;
+      },
+      remove: async (folder) => {
+        const found = await machineFor(resolved(folder));
+        if (found === undefined) return true;
+        await made.remove(found.id);
+        return true;
+      },
     });
   }
 

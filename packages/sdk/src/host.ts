@@ -835,7 +835,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, replayable, leaves, seenBy, claims, agents, first, connections, holders, sessions, byChat, subagents, owners, names,
+    options, dir, known, replayable, leaves, seenBy, claims, agents, first, connections, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
     logs, detached, refuse,
@@ -1121,6 +1121,10 @@ export function createHost(options: HostOptions): Host {
       connections.add(connection);
 
       const conn = { connection, alive: true, containers: new Map() } as ConnectionContext;
+      // Held beside `connections`, and for the same span: `stop` and `remove`
+      // ask across every live connection's relays, and a map there is the one
+      // this connection's own methods write.
+      ctx.relays.set(connection, conn.containers);
       const { storeFor, methods } = createResourceMethods(ctx, conn);
       conn.storeFor = storeFor;
       const { admit } = createAdmission(ctx, conn);
@@ -1345,6 +1349,9 @@ export function createHost(options: HostOptions): Host {
             }
           }
           connections.delete(connection);
+          // The relays above were ended one by one; the view across
+          // connections drops this one with the connection itself.
+          ctx.relays.delete(connection);
           void fire({ type: 'client_disconnect', client: connection.clientId || 'anonymous' });
           /*
            * And the git watch of a directory this was the last watcher of. The

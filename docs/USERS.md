@@ -135,7 +135,7 @@ The subjects the host decides are these ten:
 | `file` | `get`, `list`, `resolve`, `watch` | `put`, `delete`, `mkdir`, `move`, `copy`, `request` | Files and other resources on this host. Every other scheme has the same operations under its own name |
 | `config` | `settings` | `change` | This host's settings |
 | `diagnostics` | `logs`, `network`, `fetch` | - | Logs and network details for troubleshooting |
-| `container` | - | `connect`, `disconnect`, `relay` | Connecting to dev containers |
+| `container` | - | `connect`, `disconnect`, `relay`, `stop`, `remove` | Connecting to dev containers, and stopping or removing one |
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
 | `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
 

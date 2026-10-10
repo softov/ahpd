@@ -672,6 +672,8 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
     'vscode/devContainers/isDockerAvailable': 'CONTAINERS.md',
     'vscode/devContainers/connect': 'CONTAINERS.md',
     'vscode/devContainers/disconnect': 'CONTAINERS.md',
+    'vscode/devContainers/stop': 'CONTAINERS.md',
+    'vscode/devContainers/remove': 'CONTAINERS.md',
     'vscode/devContainers/relaySend': 'CONTAINERS.md',
     'vscode/devContainers/relayMessage': 'CONTAINERS.md',
     'vscode/devContainers/output': 'CONTAINERS.md',

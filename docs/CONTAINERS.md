@@ -1,7 +1,7 @@
 # A session in a dev container
 
 A workspace with a `devcontainer.json` can run its session inside the container that file defines, with a whole agent host inside it and this host carrying the frames between the client and that host.
-The reference client's own dev container flow drives it, so VS Code needs no extension for it and neither does anything else that speaks the same four methods.
+The reference client's own dev container flow drives it, so VS Code needs no extension for it and neither does anything else that speaks the same six methods.
 
 ## One computer, two recipes
 
@@ -107,7 +107,7 @@ The paths are the container's view of the mount, and the Dev Container CLI mount
 
 ## The surface
 
-Four methods, all in the reference client's own names, and four notifications back.
+Six methods, all in the reference client's own names, and four notifications back.
 A client that does not know `_meta['vscode.devContainers']` ignores all of it, and nothing else on this host changes.
 
 | method | | needs |
@@ -116,6 +116,8 @@ A client that does not know `_meta['vscode.devContainers']` ignores all of it, a
 | `vscode/devContainers/connect` | `{ connectionId, workspaceFolder, name }`, answered with `{ connectionId, address, name, remoteWorkspaceFolder, hostWorkspaceFolder? }` | `container:write` |
 | `vscode/devContainers/relaySend` | `{ connectionId, data }`: one frame, written to the host inside | `container:write` |
 | `vscode/devContainers/disconnect` | `{ connectionId }`: end the relay | `container:write` |
+| `vscode/devContainers/stop` | `{ workspaceFolder }`: end this connection's relay, then stop the container the folder is | `container:stop`, `computer:write` |
+| `vscode/devContainers/remove` | `{ workspaceFolder }`: the same, and the container's record goes with it | `container:remove`, `computer:write` |
 
 | notification | |
 | --- | --- |
@@ -127,7 +129,13 @@ A client that does not know `_meta['vscode.devContainers']` ignores all of it, a
 `connectionId` is the client's own name for the connection and is namespaced per connection: nothing one client can spell reaches another's container, and a socket that drops stops the relays it opened.
 `address` is `devcontainer:<containerId>`, which is a name a client shows and stores rather than something it can dial.
 The names are the reference client's on purpose - decision [the dev container surface is the reference client's own](../.project/decisions/the-relay-surface-is-the-reference-one.md).
-The grant is `container:write` and not `computer:write`, because the parameters name a workspace folder rather than a `computer://` URI, and starting a container is this host's Docker access by proxy - decision [connecting to a dev container needs a grant of its own](../.project/decisions/connecting-to-a-dev-container-needs-a-grant.md).
+`stop` and `remove` answer `true`.
+They answer `false` while another connection still relays to that folder, or while a session of this host is placed on its computer.
+They reach a computer the folder already is, so each asks for the container operation and `computer:write` beside it.
+No owner check is made - decision [stopping a dev container needs the computer's grant](../.project/decisions/stopping-a-dev-container-needs-the-computers-grant.md).
+The four that hold a relay ask for `container:write` and not `computer:write`.
+Their parameters name a workspace folder rather than a `computer://` URI.
+Starting a container is this host's Docker access by proxy - decision [connecting to a dev container needs a grant of its own](../.project/decisions/connecting-to-a-dev-container-needs-a-grant.md).
 
 ## How the host inside runs
 
@@ -192,7 +200,7 @@ with a configuration naming the computer plugin and an open door:
 }
 ```
 
-Then, from a client that serves the four methods: `connect` with `{ "connectionId": "box", "workspaceFolder": "/tmp/devc-work", "name": "Box" }`, followed by `relaySend` carrying an `initialize` and a `ping`.
+Then, from a client that serves the six methods: `connect` with `{ "connectionId": "box", "workspaceFolder": "/tmp/devc-work", "name": "Box" }`, followed by `relaySend` carrying an `initialize` and a `ping`.
 The same folder may also be reached as a computer, by writing `{"source": "devcontainer", "devcontainer": "/tmp/devc-work", "image": "debian:bookworm-slim"}` to `computer://box` or by starting a session with `"computer": "devcontainer:///tmp/devc-work"`.
 What was seen with the relay on 2026-09-24 is in the plan's [implemented.md](../.project/plans/container/01-a-session-in-a-dev-container/implemented.md): the CLI made the container, the host was installed into it, and the frames came back.
 

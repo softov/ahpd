@@ -1,6 +1,6 @@
 ---
 title: The route to VS Code's dev container flow is documented
-status: todo
+status: blocked
 depends: [task-01-the-tunnel-route-tried-by-hand.md]
 layer: "docs"
 refs:
@@ -28,3 +28,7 @@ A person reading `docs/CONTAINERS.md` knows that VS Code offers a dev container 
 - No em dash, no hard wrap.
 
 ## Resume
+
+2026-10-10: blocked on task 01. Step 1 writes the section from task 01's result, and task 01 has no result yet.
+A section written from the research note alone would say what the checks are and not which of them pass.
+Unblocked the moment task 01 records its checks.

@@ -52,6 +52,19 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   first: Agent;
   /** Every connection the host is serving right now. */
   connections: Set<Connection>;
+  /**
+   * The dev container relays each live connection holds, by the connection.
+   *
+   * `ConnectionContext.containers` is one connection's own map, which is where
+   * the reference host keeps them too, so a name one client chose never reaches
+   * another. The two methods VS Code sends to stop or remove a folder's dev
+   * container have to answer whether *another* connection still holds a relay on
+   * that folder, which is a question across connections - so the same maps are
+   * held here, as each connection is admitted and dropped when it goes. What is
+   * read is the map itself and never a copy of it, so nothing has to be spilled
+   * back when a relay ends.
+   */
+  relays: Map<Connection, Map<string, { name: string; folder: string; tail: string[] }>>;
   /** The person who first signed in under each client id, by client id. */
   holders: Map<string, string>;
   /**

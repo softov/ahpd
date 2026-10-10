@@ -1,6 +1,6 @@
 ---
 title: What the tunnel try found missing is fixed in ahpd
-status: todo
+status: blocked
 depends: [task-01-the-tunnel-route-tried-by-hand.md]
 layer: "sdk | tunnel-devtunnel"
 refs:
@@ -27,3 +27,7 @@ Written from task 01's *Resume* before this task starts; a fork found there stop
 - Task 01's steps 4 and 5 repeated by hand, with the session running in the container.
 
 ## Resume
+
+2026-10-10: blocked on task 01. The *Files* section is written from task 01's *Resume*, which records no failed check yet.
+So there is nothing to fix and no file to name.
+Unblocked the moment task 01 records which of the six checks failed.

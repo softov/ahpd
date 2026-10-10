@@ -1,6 +1,6 @@
 ---
 title: The tunnel route tried by hand, with every check recorded
-status: todo
+status: blocked
 depends: []
 layer: "manual"
 refs:
@@ -38,3 +38,7 @@ Next: compare the tunnel's labels (`devtunnel show`) with what VS Code's `Tunnel
 
 2026-10-02: the labels were compared and already match: `vscode-server-launcher`, the protocol label and `_ahpd` ([`code://packages/tunnel-devtunnel/src/discovery.ts#L69`](../../../../packages/tunnel-devtunnel/src/discovery.ts#L69)).
 VS Code lists tunnels with its own GitHub or Microsoft token, so the likelier cause is a tunnel made under another provider or account; the next try starts with step 1's same provider and account.
+
+2026-10-10: blocked on Softov's Windows VS Code run. Steps 2 to 6 need a real VS Code 1.140 on Windows connected through the tunnel, and nobody else can drive that.
+Nothing in this task is buildable without it, so steps 1 and 2 were not attempted either.
+A daemon started and a tunnel confirmed on this side would still leave every check that matters untried.

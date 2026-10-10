@@ -159,7 +159,7 @@ against its contract before it is recorded.
 | `registerSessions(store)` | set | the session store: flags, config, artifacts, pull requests, chat titles, the chats a session has, and the sessions it holds |
 | `registerDiagnostics(diagnostics)` | set | all members optional, so `{}` is valid |
 | `registerComputers(computers)` | set | how a backend runs its process in a named machine |
-| `registerContainers(containers)` | set | whether a dev container can be made, made, written to, and stopped; present, the host serves `vscode/devContainers/*` and advertises the capability |
+| `registerContainers(containers)` | set | whether a dev container can be made, made, written to, stopped and removed; present, the host serves `vscode/devContainers/*` and advertises the capability |
 | `registerUsage(usage, when?)` | set | where records are kept and what a pool has been charged: `record`, `total`, `pools` and `records`, all four |
 | `registerPolicies(policies, when?)` | set | where policies are kept: `list`, `get`, `put` and `remove`, all four |
 | `registerVault(vault, when?)` | set | where this host's secrets are kept: `get`, `set`, `delete` and `list`, all four |

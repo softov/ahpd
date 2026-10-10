@@ -90,6 +90,14 @@ export const NEEDS: Record<string, Grant> = {
   'vscode/devContainers/connect': 'container:connect',
   'vscode/devContainers/disconnect': 'container:disconnect',
   'vscode/devContainers/relaySend': 'container:relay',
+  /*
+   * Stopping or removing a folder's dev container is the act, and the machine
+   * it acts on is the one the folder is: `computer:write` is asked beside the
+   * operation in `capabilityFor`, as it is for a session naming a source -
+   * decision `stopping-a-dev-container-needs-the-computers-grant`.
+   */
+  'vscode/devContainers/stop': 'container:stop',
+  'vscode/devContainers/remove': 'container:remove',
 
   // diagnostics
   'vscode/collectAgentHostDebugLogs': 'diagnostics:logs',

@@ -6,7 +6,7 @@ import { host, peer } from './users-gate-helpers.js';
 import type { Grant } from '../src/types/users.js';
 
 /** How many methods the host serves. A method added is a number raised here. */
-const SERVED = 48;
+const SERVED = 50;
 
 it('classifies every handler the host serves', () => {
   /*

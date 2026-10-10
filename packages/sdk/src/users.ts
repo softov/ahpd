@@ -168,8 +168,8 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   container: {
     title: 'Dev containers',
     description: 'Connecting to dev containers.',
-    operations: ['connect', 'disconnect', 'relay'],
-    groups: { read: [], write: ['connect', 'disconnect', 'relay'] },
+    operations: ['connect', 'disconnect', 'relay', 'stop', 'remove'],
+    groups: { read: [], write: ['connect', 'disconnect', 'relay', 'stop', 'remove'] },
   },
   // The two subjects the gate asks about through no method: a `workspaceTrust`
   // push on the root config, and a model call or a model list on the proxy's
