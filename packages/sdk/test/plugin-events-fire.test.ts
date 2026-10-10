@@ -8,7 +8,7 @@ import type { Agent } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
 import type { EventName, HostEvent } from '../src/types/events.js';
 import type { HostOptions, HostTool } from '../src/types/host.js';
-import type { ResourceStore } from '../src/types/resources.js';
+import type { ResourceProvider, ResourceStore } from '../src/types/resources.js';
 import type { Emit } from '../src/types/session.js';
 import type { TerminalStore } from '../src/types/terminals.js';
 import type { PluginContext } from '../src/types/plugin.js';
@@ -29,7 +29,7 @@ const ROOT = 'ahp-root://';
 const AUTOMATIONS = 'ahp-automations://';
 
 const EVENT_NAMES: readonly EventName[] = [
-  'session_start', 'session_end', 'turn_start', 'turn_end', 'message', 'tool_call',
+  'session_start', 'session_end', 'session_opened', 'turn_start', 'turn_end', 'message', 'tool_call',
   'input_needed_set', 'input_needed_removed',
   'client_connect', 'client_disconnect', 'authenticated', 'automation_fire',
   'resource_write', 'terminal_open', 'log',
@@ -191,13 +191,86 @@ it('fires session_start with its provider, and session_end when it is disposed',
 
   const started = of(seen, 'session_start');
   expect(started).toHaveLength(1);
-  expect(started[0]).toMatchObject({ session: 'echo:/one', provider: 'echo' });
+  expect(started[0]).toMatchObject({ session: 'echo:/one', provider: 'echo', client: 'probe' });
 
   await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/one' } });
   await settle();
   const ended = of(seen, 'session_end');
   expect(ended).toHaveLength(1);
   expect(ended[0]).toMatchObject({ session: 'echo:/one' });
+});
+
+it('names the creating client, and one client per subscription that opened a session', async () => {
+  const { seen, host, client } = watched();
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/opened', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/opened' } });
+  await settle();
+
+  // A person's second window is a second client, and it opens the session
+  // again under its own id. Subscribing twice is still one opening.
+  const second = host.accept(peer());
+  await second.handle({
+    method: 'initialize',
+    params: { clientId: 'second', protocolVersions: ['0.9.0'], initialSubscriptions: [] },
+  });
+  await second.handle({ method: 'subscribe', params: { channel: 'ahp-session:/opened' } });
+  await second.handle({ method: 'subscribe', params: { channel: 'ahp-session:/opened' } });
+  await settle();
+
+  const started = of(seen, 'session_start');
+  expect(started).toHaveLength(1);
+  expect(started[0]).toMatchObject({ session: 'echo:/opened', client: 'probe' });
+
+  const opened = of(seen, 'session_opened');
+  expect(opened.map((event) => (event as { client: string }).client)).toEqual(['probe', 'second']);
+  expect(opened[0]).toMatchObject({ session: 'echo:/opened' });
+});
+
+it('leaves the client off a session no client created', async () => {
+  const { seen, client } = watched({ automations: memoryAutomations() });
+  await hello(client);
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: AUTOMATIONS,
+      action: {
+        type: 'automation/createRequested',
+        resource: 'ahp-automation:/alone',
+        definition: {
+          title: 'Alone',
+          enabled: true,
+          message: { text: 'review' },
+          session: { provider: 'echo', workingDirectories: [`file://${DIR}`] },
+          triggers: [],
+        },
+      },
+    },
+  });
+  await client.handle({ method: 'runAutomation', params: { channel: AUTOMATIONS, automation: 'ahp-automation:/alone', requestId: 'r1' } });
+  await settle();
+
+  const started = of(seen, 'session_start');
+  expect(started).toHaveLength(1);
+  expect(started[0]).toMatchObject({ provider: 'echo' });
+  expect((started[0] as { client?: string }).client).toBeUndefined();
+});
+
+it('hands a provider the client that wrote to it', async () => {
+  const written: { uri: string; client: string | undefined }[] = [];
+  const scheme: ResourceProvider = {
+    read: async () => ({ data: '', encoding: 'utf-8' }),
+    write: async (uri, _content, _owner, client) => { written.push({ uri, client }); },
+  };
+  const { client } = watched({ resourceProviders: { probe: scheme } });
+  await hello(client);
+  await client.handle({
+    method: 'resourceWrite',
+    params: { channel: ROOT, uri: 'probe://devices/one', data: '{}', encoding: 'utf-8' },
+  });
+  await settle();
+
+  expect(written).toEqual([{ uri: 'probe://devices/one', client: 'probe' }]);
 });
 
 it('fires message, turn_start and turn_end once each, and nothing per delta', async () => {

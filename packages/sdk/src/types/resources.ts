@@ -162,13 +162,20 @@ export interface ResourceStore {
    * and a `computer:` machine writes its own up time against it - decision
    * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
    *
+   * `client` is the id of the connection that asked, as it gave it at
+   * `initialize`. It is what tells a provider which of a person's windows did
+   * this, where `owner` and `reader` name the person rather than the client: a
+   * `push:` record is registered by one device and is sent to that device
+   * alone. Absent on a connection that never introduced itself, which the
+   * gate has already refused a write on.
+   *
    * `reader` is whoever the connection is, the same one `read` is handed and
    * absent in the same two cases - a host with no user directory, and the root
    * connection. It is not here to excuse a write, which nothing opens: it is
    * what a scheme checks a write against, and a `bot:` made for a team needs it
    * to know whether the writer belongs to that team.
    */
-  write?(uri: string, content: Write, owner?: Owner, reader?: Principal): Promise<void>;
+  write?(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
   /**
    * Remove a file, or a directory when `recursive`.
    *

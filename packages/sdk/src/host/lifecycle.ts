@@ -1252,7 +1252,16 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     sessionAdded(uri);
     activeSessionsMoved();
     // Named and in the map, which is the moment a handler can act on it.
-    void fire({ type: 'session_start', session: uri, provider });
+    // The client that asked is named where one did: an automation carries a
+    // name rather than a connection, and a session found on disk was started
+    // by whoever ran the daemon rather than by anyone here.
+    const made = by?.sender?.clientId;
+    void fire({
+      type: 'session_start',
+      session: uri,
+      provider,
+      ...(made === undefined || made === '' ? {} : { client: made }),
+    });
   };
 
   return {

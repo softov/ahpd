@@ -1,0 +1,68 @@
+{
+  "name": "@ahpd/push",
+  "version": "0.10.0",
+  "type": "module",
+  "description": "Expo push notifications for the ahpd daemon: a push: resource provider a device registers with, and the sender that tells it when a session needs a person",
+  "keywords": [
+    "ahp",
+    "agent-host-protocol",
+    "agent-host",
+    "agent",
+    "ai",
+    "plugin",
+    "resource",
+    "push",
+    "notification",
+    "expo",
+    "apns",
+    "fcm"
+  ],
+  "author": "Luiz Fernando Softov <lfs@softov.dev>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "homepage": "https://github.com/softov/ahpd/tree/main/packages/push#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/softov/ahpd.git",
+    "directory": "packages/push"
+  },
+  "bugs": {
+    "url": "https://github.com/softov/ahpd/issues"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "typings": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepack": "tsc -p .",
+    "test": "cd ../.. && vitest run packages/push/test"
+  },
+  "peerDependencies": {
+    "@ahpd/sdk": ">=0.10"
+  },
+  "devDependencies": {
+    "@ahpd/sdk": "workspace:*"
+  },
+  "ahpd": {
+    "entry": "./dist/index.js",
+    "title": "Push",
+    "options": {}
+  }
+}

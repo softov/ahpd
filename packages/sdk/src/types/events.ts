@@ -29,6 +29,7 @@ import type { Owner } from './usage.js';
 export type EventName =
   | 'session_start'
   | 'session_end'
+  | 'session_opened'
   | 'turn_start'
   | 'turn_end'
   | 'message'
@@ -52,6 +53,16 @@ export interface SessionStartEvent {
   session: string;
   /** The agent `provider` it runs on. */
   provider: string;
+  /**
+   * The client that created it, when a client did.
+   *
+   * Absent for a session nobody asked for: an automation coming round at nine
+   * in the morning, a changeset making its own, a plugin starting one for
+   * somebody it names. A plugin that has to reach whoever is working in a
+   * session needs this and `session_opened` both, because a client that did
+   * not create one may still be in it.
+   */
+  client?: string;
 }
 
 /** A session this host stopped, and why. */
@@ -61,6 +72,23 @@ export interface SessionEndEvent {
   session: string;
   /** The word for what ended it, which only the host knows. */
   reason: string;
+}
+
+/**
+ * A client subscribed to a session, or to one of its chats.
+ *
+ * The moment a client is in a session, and the only one: `session_start`
+ * names whoever created it, and a session a person opens from a list was
+ * created by nobody here. Raised once per client and session, so a client
+ * that subscribes to a session and then to a chat of it has opened it once,
+ * and one that opens a second window is a second client under its own id.
+ */
+export interface SessionOpenedEvent {
+  type: 'session_opened';
+  /** The session channel URI. */
+  session: string;
+  /** The id the client gave at `initialize` or `reconnect`. */
+  client: string;
 }
 
 /** A turn that began. */
@@ -256,6 +284,7 @@ export interface LogEvent {
 export type HostEvent =
   | SessionStartEvent
   | SessionEndEvent
+  | SessionOpenedEvent
   | TurnStartEvent
   | TurnEndEvent
   | MessageEvent

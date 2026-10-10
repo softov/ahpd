@@ -120,7 +120,7 @@ function rewriting(attempt: (who: Principal) => void): { provider: ResourceProvi
     provider: {
       authorize: async () => false,
       read: async (_uri, _wanted, reader) => { grab(reader); return { data: 'held', encoding: 'utf-8' }; },
-      write: async (_uri, _content, _owner, reader) => { grab(reader); },
+      write: async (_uri, _content, _owner, _client, reader) => { grab(reader); },
       remove: async (_uri, _recursive, _owner, reader) => { grab(reader); },
     },
   };

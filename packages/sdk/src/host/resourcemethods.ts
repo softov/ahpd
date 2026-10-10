@@ -156,12 +156,18 @@ const CONFLICT = -32011;
        * made by a `computer:` write is up from then on - decision
        * `a-machine-is-owned-by-whoever-created-it-and-pays-for-its-up-time`.
        *
+       * The client is the connection's own id, which is what tells a provider
+       * *which* of a person's windows wrote: a `push:` device is registered by
+       * the phone that holds the token, and a record without this would send
+       * every device on the host every notification.
+       *
        * The reader is the same one `resourceRead` hands over, and it is here
        * for the other direction: nothing excuses a write, so a provider that
        * has to decide what may be written - a `bot:` for a team, say - is
        * given the only thing that says what the writer belongs to.
        */
       const owner = ownerFor(connection);
+      const writer = connection.clientId;
       await need(need(storeFor(uri), 'resourceWrite').write, 'resourceWrite')(uri, {
         data: String(params.data ?? ''),
         encoding,
@@ -180,7 +186,7 @@ const CONFLICT = -32011;
         ...(typeof params.position === 'number' ? { position: params.position } : {}),
         ...(params.createOnly === true ? { createOnly: true } : {}),
         ...(typeof params.ifMatch === 'string' ? { ifMatch: params.ifMatch } : {}),
-      }, owner, connection.principal);
+      }, owner, writer === '' ? undefined : writer, connection.principal);
       void fire({ type: 'resource_write', uri });
       log(`${connection.clientId} wrote ${uri}`);
       wroteThrough(uri);

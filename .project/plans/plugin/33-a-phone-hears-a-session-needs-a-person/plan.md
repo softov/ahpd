@@ -1,7 +1,7 @@
 ---
 title: A phone hears when a session needs a person
 domain: plugin
-status: planned
+status: built
 priority: high
 created: 2026-10-02
 revalidated: 2026-10-04
@@ -11,6 +11,7 @@ changes: []
 creates: []
 decisions:
   - decisions/a-device-registers-for-push-by-writing-a-resource.md
+  - decisions/a-push-token-is-write-only.md
 refs:
   - "[code://packages/sdk/src/types/events.ts#L105-L116](../../../../packages/sdk/src/types/events.ts#L105-L116) - `InputNeededSetEvent`: session, chat, id, kind"
   - "[code://packages/sdk/src/host/root.ts#L171-L185](../../../../packages/sdk/src/host/root.ts#L171-L185) - `advertisedSchemes`, which advertises `push` once it is registered"
@@ -54,6 +55,7 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 | # | Decision | Rationale / source |
 | --- | --- | --- |
 | 1 | [A device registers for push by writing a resource the push plugin serves](../../../decisions/a-device-registers-for-push-by-writing-a-resource.md) | Softov, 2026-10-04 |
+| 2 | [A push token is write-only](../../../decisions/a-push-token-is-write-only.md) | Softov, 2026-10-10 |
 
 | What | Source | Task |
 | --- | --- | --- |
@@ -81,10 +83,10 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A device registers under push:](task-01-a-device-registers-under-push.md) | todo | 04 |
-| [02 - A waiting session is sent to the devices whose client created or opened it](task-02-a-waiting-session-is-sent.md) | todo | 01 |
-| [03 - The plugin is documented](task-03-docs.md) | todo | 02 |
-| [04 - The host names the client that wrote, created or opened](task-04-the-host-names-the-client.md) | todo | - |
+| [01 - A device registers under push:](task-01-a-device-registers-under-push.md) | done | 04 |
+| [02 - A waiting session is sent to the devices whose client created or opened it](task-02-a-waiting-session-is-sent.md) | done | 01 |
+| [03 - The plugin is documented](task-03-docs.md) | done | 02 |
+| [04 - The host names the client that wrote, created or opened](task-04-the-host-names-the-client.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -94,12 +96,11 @@ backend session/inputNeededSet -> emit -> input_needed_set -> push plugin -> Exp
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-04-the-host-names-the-client.md](task-04-the-host-names-the-client.md), then [task-01-a-device-registers-under-push.md](task-01-a-device-registers-under-push.md).
-- **Watch out for:** the events repeat for the same id (the protocol's upsert); dedupe on `(session, id)`, never count.
+- **Done so far:** tasks 01 to 04 built 2026-10-10.
+- **Next action:** none; see [implemented.md](implemented.md).
 
 ## Final verification checklist
 
-- [ ] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` clean.
+- [x] `pnpm exec tsc --noEmit`, `pnpm boundary` and `pnpm test` clean.
 - [ ] A fixture backend's `inputNeededSet` sends exactly one request to a stubbed Expo endpoint per registered device whose client created or opened the session, and none to a device whose client did neither.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

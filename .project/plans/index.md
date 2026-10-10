@@ -253,7 +253,7 @@ Reference: [00-plugin.md](plugin/00-plugin.md)
 
 | [32 - A turn's usage is every model call it made, sent as it runs, with the harness's cost](plugin/32-a-turns-usage-is-every-call-it-made/plan.md) | high | built 2026-10-01; p1-p4 | - | the agent meter |
 
-| [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | planned 2026-10-02 | plugin 17 | - |
+| [33 - A phone hears when a session needs a person](plugin/33-a-phone-hears-a-session-needs-a-person/plan.md) | high | built 2026-10-10 ([implemented.md](plugin/33-a-phone-hears-a-session-needs-a-person/implemented.md)) | plugin 17 | - |
 | [34 - The cofold session is split into one file per area, and session.ts composes them](plugin/34-cofold-session-is-split-by-area/plan.md) | high | built 2026-10-04 ([implemented.md](plugin/34-cofold-session-is-split-by-area/implemented.md)); tasks implemented, awaiting review | - | - |
 | [35 - A cofold session uses what published cofold already ships - listed models with their price, compaction, and a question for the person](plugin/35-cofold-uses-what-cofold-ships/plan.md) | high | built 2026-10-06 ([implemented.md](plugin/35-cofold-uses-what-cofold-ships/implemented.md)); reviewed and merged 2026-10-06 | plugin 05, plugin 32 p3 | - |
 | [36 - A cofold turn reads its message's attachments, and sends an image only to a model that takes images](plugin/36-a-cofold-turn-reads-its-attachments/plan.md) | medium | built 2026-10-09 | host 68, plugin 40 | - |

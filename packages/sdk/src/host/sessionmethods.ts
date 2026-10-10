@@ -41,7 +41,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     chatSummary, chatsReordered, claimable, claims, dir, dispatch, drafts, dropChat, first, flushDeltas,
     forWhom, heldAs,
     isolating, isolated, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
-    movable, movableMoved, openSession, options, orderChats,
+    movable, movableMoved, openSession, openedBy, options, orderChats,
     ownerFor, past, placedIn, presence, replayable, removeSession, retool, scoping, seeded,
     seenBy, sessionAdded, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle,
     snapshotOf, spawn, subagentSummary, subagents, summaryMoved, unheld, waitingFor, watches, withSender,
@@ -340,6 +340,11 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const meant = answeredAs(connection, channel, snapshot);
       connection.watching.add(channel);
+      // A client is now in this session, which is the moment a plugin that
+      // reaches whoever is working in one hears about. Said after the
+      // snapshot, so a subscription that was refused for the session it named
+      // has opened nothing.
+      openedBy(meant, connection.clientId);
       // From here on, an unsubscribe means something: a watch nobody has
       // subscribed to yet is not one everybody has finished with.
       const held = watches.get(channel);

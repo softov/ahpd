@@ -23,7 +23,8 @@ export type { Loaded, Plugin, PluginContext, PluginHost, PluginSpec, PluginStart
 export type {
   AuthenticatedEvent, AutomationFireEvent, ClientConnectEvent, ClientDisconnectEvent, EventHandler, EventListener,
   EventName, HostEvent, HostEventOf, HostHandlers, InputNeededRemovedEvent, InputNeededSetEvent, ListeningEvent,
-  LogEvent, MessageEvent, ResourceWriteEvent, SessionEndEvent, SessionStartEvent, StoppingEvent, TerminalOpenEvent,
+  LogEvent, MessageEvent, ResourceWriteEvent, SessionEndEvent, SessionOpenedEvent, SessionStartEvent,
+  StoppingEvent, TerminalOpenEvent,
   ToolCallEvent, TurnEndEvent, TurnStartEvent,
 } from './events.js';
 export type { Page } from './paging.js';

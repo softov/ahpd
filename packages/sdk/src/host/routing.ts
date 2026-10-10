@@ -32,10 +32,11 @@ export interface Routing {
   answeredAs(connection: Connection, channel: string, snapshot: Record<string, unknown>): string;
   claimable(name: string, kind: NameKind): void;
   unheld(uri: string, asked?: string): void;
+  openedBy(channel: string, client: string): void;
 }
 
 export function createRouting(ctx: HostContext): Routing {
-  const { agents, claims, sessions, byChat, subagents, owners, names, homeId } = ctx;
+  const { agents, claims, sessions, byChat, subagents, owners, names, homeId, fire } = ctx;
 
   /**
    * `spaceOf`, and a scheme that names a provider here is a session's: a
@@ -394,6 +395,43 @@ export function createRouting(ctx: HostContext): Routing {
   };
   /** Whether `channelKind` reads a channel as a session's. */
   const sessionChannel = (channel: string): boolean => channelKind(channel) === 'session';
+
+  /**
+   * The client and session pairs a `session_opened` has already been raised
+   * for.
+   *
+   * Raised once per pair rather than once per subscribe, because one opening
+   * is one client with one session in front of them: a client subscribes to a
+   * session and then to a chat of it, reconnects, or a window subscribes
+   * twice, and a plugin told each time would reach the same device three
+   * times. Named after the host's own session, so two spellings of one channel
+   * are one pair.
+   */
+  const opened = new Set<string>();
+
+  /**
+   * Note that a client is in a session, and say so the first time.
+   *
+   * Called from every subscription - the command and the two handshakes that
+   * subscribe on their way in - because a client that arrives with its
+   * subscription in `initialize` has opened the session as surely as one that
+   * asks afterwards. A channel that is no session's, or one this host does not
+   * hold, is nothing to note: only a session a plugin could reach with a
+   * message is worth one.
+   */
+  const openedBy = (channel: string, client: string): void => {
+    if (client === '') return;
+    const held = heldAs(channel);
+    // A session's own channel, or the session a chat, an annotation or a
+    // changeset of it belongs to. `baseOf` is what keeps a session's marks
+    // from being raised as a session of their own.
+    const session = sessionOfChat(held) ?? baseOf(held);
+    if (sessionOfChat(session) !== undefined || !sessionChannel(session)) return;
+    const key = `${session}\u0000${client}`;
+    if (opened.has(key)) return;
+    opened.add(key);
+    void fire({ type: 'session_opened', session, client });
+  };
   /** The kind of channel a channel is, as `ACTION_HOMES` names it, or nothing an action belongs on. */
   const homeOf = (channel: string): Home | undefined => {
     if (isRootChannel(channel)) return 'root';
@@ -450,6 +488,6 @@ export function createRouting(ctx: HostContext): Routing {
   return {
     spaceHere, heldAs, nameOf, ownName, sessionOfChat, sessionFor, chatOf, meantBy,
     sessionHolding, channelKind, sessionChannel, homeOf, spelledFor, respell, respelledIn,
-    spellingOf, answeredAs, claimable, unheld,
+    spellingOf, answeredAs, claimable, unheld, openedBy,
   };
 }

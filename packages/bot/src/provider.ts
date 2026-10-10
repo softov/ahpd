@@ -86,7 +86,7 @@ export interface BotProvider extends ResourceProvider {
   list(uri: string, reader?: Principal): Promise<Entry[]>;
   resolve(uri: string, followSymlinks?: boolean): Promise<Metadata>;
   read(uri: string, wanted?: string, reader?: Principal): Promise<Read>;
-  write(uri: string, content: Write, owner?: Owner, reader?: Principal): Promise<void>;
+  write(uri: string, content: Write, owner?: Owner, client?: string, reader?: Principal): Promise<void>;
   remove(uri: string, recursive?: boolean, owner?: Owner, reader?: Principal): Promise<void>;
   describe(): SchemeDescription;
   authorize(uri: string, reader: Principal | undefined): Promise<boolean>;
@@ -362,7 +362,7 @@ export function botProvider(options: BotOptions): BotProvider {
      * else is said about the bot, so a write that may not touch one is told
      * that rather than what is in it.
      */
-    write: async (uri, content, owner, reader) => {
+    write: async (uri, content, owner, _client, reader) => {
       const held = at(uri);
       if (held.leaf !== '') {
         throw new RpcError(-32602, `${uri} is not a bot; write to bot://<slug>`);

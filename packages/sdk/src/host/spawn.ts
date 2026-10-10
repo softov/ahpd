@@ -103,7 +103,7 @@ function heldResources(store: ResourceStore): ResourceStore {
   const move = store.move;
   const copy = store.copy;
   const watch = store.watch;
-  if (write !== undefined) taken.write = (uri, content, owner, reader) => write(uri, content, owner, reader);
+  if (write !== undefined) taken.write = (uri, content, owner, client, reader) => write(uri, content, owner, client, reader);
   if (remove !== undefined) taken.remove = (uri, recursive, owner, reader) => remove(uri, recursive, owner, reader);
   if (mkdir !== undefined) taken.mkdir = (uri) => mkdir(uri);
   if (move !== undefined) taken.move = (source, destination, failIfExists) => move(source, destination, failIfExists);

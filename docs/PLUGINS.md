@@ -533,8 +533,9 @@ does not stop the next handler or the action it observed.
 
 | Event | What else the payload carries |
 | --- | --- |
-| `session_start` | `session`, `provider` |
+| `session_start` | `session`, `provider`, and `client` when a client of this host created it |
 | `session_end` | `session`, `reason` |
+| `session_opened` | `session`, `client` |
 | `turn_start` | `session`, `chat`, `turn`, and `sender` (`user:<id>` or `root:<host>`) when the host knows who sent it |
 | `turn_end` | `session`, `chat`, `turn`, `status` (`complete` or `cancelled`), and `sender` as on `turn_start` |
 | `message` | `session`, `chat`, `turn`, `text` |
@@ -559,6 +560,14 @@ There is no per-token event: a plugin that wants the live stream of a turn is a
 client. The `chat` on a turn event is the host's own chat URI, which is not
 always the alias a client addressed it by.
 
+`session_start` names the client that created the session where a client did,
+and `session_opened` names each one that subscribed to it, or to one of its
+chats, afterwards. Together they are who is in a session: a session a client
+found in a list was created by nobody here, and a session an automation opened
+has no client at all. `session_opened` is raised once per client and session,
+so a client that subscribes to a session and then to a chat of it, or opens a
+second window under another id, is heard from once per window.
+
 An event may repeat a state action a client also receives, and is added only
 for a moment a plugin acts on without watching the session - a turn's two ends,
 a session that began or stopped waiting on a person - decision
@@ -566,6 +575,9 @@ a session that began or stopped waiting on a person - decision
 `input_needed_set` is raised once per action, and the protocol's action is an
 upsert keyed by `id`, so a handler that tracks what a session is waiting on
 dedupes by `id` rather than counting.
+
+`@ahpd/push` is one such consumer: it reads `input_needed_set` to tell a phone
+that a session needs a person, and `input_needed_removed` to forget the wait.
 
 ## The manifest
 
@@ -1054,6 +1066,10 @@ A plugin can serve one URI scheme itself - `computer:`, or anything else that is
 not a file - without touching the filesystem store. The daemon routes every
 `resource*` command by the scheme in the URI, so `file:` keeps its store and the
 scheme goes to the plugin.
+
+`@ahpd/push` serves a second one: a device registers its Expo push token by
+writing `push://devices/<install id>`, which makes it the one scheme here that
+exists to be written to rather than read from.
 
 ```ts
 host.registerResourceProvider('computer', {

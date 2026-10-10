@@ -23,7 +23,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedGrants, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting, dir, fire, flushDeltas,
-    holders, known, leaves, loginId, log, LOGS, METRICS, metaMoved, metadataFor, meantBy,
+    holders, known, leaves, loginId, log, LOGS, METRICS, metaMoved, metadataFor, meantBy, openedBy,
     options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
     snapshotOf, spellingOf, TRACES,
   } = ctx;
@@ -194,9 +194,10 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
           const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
-          answeredAs(connection, channel, snapshot);
+          const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
           connection.watching.add(channel);
+          openedBy(meant, connection.clientId);
         }
         catch { /* not subscribed, and the client will be told if it asks */ }
       }
@@ -388,6 +389,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           await snapshotOf(meant, connection.config ?? {}, connection);
           if (meant !== channel) connection.aliases.set(meant, channel);
           connection.watching.add(channel);
+          openedBy(meant, connection.clientId);
           resumed.set(meant, channel);
         }
         catch {
