@@ -1,7 +1,7 @@
 ---
 title: A cofold write lands on the file its check allowed, and not on one that changed since it was read
 domain: plugin
-status: active
+status: built
 priority: medium
 created: 2026-09-27
 revalidated: 2026-10-03
@@ -82,7 +82,7 @@ model tool call -> ahpd permission check (insideDirectory, real paths now) -> co
 ## Resume state
 
 - **Done so far:** task 01, the approach chosen 2026-09-30. Tasks 02 and 03 merged in cofold 2026-10-09 as d39935f, unreleased.
-- **Next action:** none here; task 04 moved to [plugin 40 task 07](../40-ahpd-runs-on-the-current-cofold/task-07-a-test-reads-before-it-writes.md), and this plan closes when plugin 40 is built.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Known limits:** a parent folder swapped for a link before a new file is opened is still followed; after a restart, a file is read again before it is written; tested on Linux only.
 - **Watch out for:** Node's `fs` has `O_NOFOLLOW` but no `openat`, so "open by descriptor" can refuse a link only at the last name, not walk the path from the workspace one name at a time.
 
