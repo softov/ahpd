@@ -29,16 +29,19 @@
     "id": "claude",
     "name": "Claude",
     "kind": "npm",
-    "version": "0.85.1",
+    "version": "0.91.0",
     "requires": ["node"],
-    "packages": ["@agentclientprotocol/claude-agent-acp", "@anthropic-ai/claude-code@2.1.291"],
+    "packages": [
+      "@agentclientprotocol/claude-agent-acp",
+      "@anthropic-ai/claude-code@2.1.291"
+    ],
     "bin": ["claude-agent-acp", "claude"]
   },
   {
     "id": "codex",
     "name": "Codex",
     "kind": "npm",
-    "version": "2.1.1",
+    "version": "2.2.2",
     "requires": ["node"],
     "packages": ["@agentclientprotocol/codex-acp"],
     "bin": ["codex-acp"]
@@ -47,7 +50,7 @@
     "id": "gemini",
     "name": "Gemini",
     "kind": "npm",
-    "version": "0.62.0",
+    "version": "0.64.0",
     "requires": ["node"],
     "packages": ["@google/gemini-cli"],
     "bin": ["gemini"]
@@ -56,7 +59,7 @@
     "id": "copilot",
     "name": "Copilot",
     "kind": "npm",
-    "version": "1.0.91",
+    "version": "1.0.98",
     "requires": ["node"],
     "packages": ["@github/copilot"],
     "updates": { "COPILOT_AUTO_UPDATE": "false" },
@@ -66,15 +69,15 @@
     "id": "opencode",
     "name": "OpenCode",
     "kind": "archive",
-    "version": "1.18.34",
+    "version": "1.19.1",
     "archives": {
       "linux-x64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-x64.tar.gz",
-        "sha256": "0f22479647226d1d2dd99595d20082ee7bda3870b62dc6a90b41efc1a71d7e9a"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-linux-x64.tar.gz",
+        "sha256": "6f1904b860bdbd32e90e679c9e1b0e64e78269a353e1497d5ea792dfa449538c"
       },
       "linux-arm64": {
-        "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.34/opencode-linux-arm64.tar.gz",
-        "sha256": "bbdb3f00c2c51e42e315525233151309724226a8776da8e9145e3b0fa3d5310f"
+        "url": "https://github.com/anomalyco/opencode/releases/download/v1.19.1/opencode-linux-arm64.tar.gz",
+        "sha256": "3840e9afb2462a666d31816b20bc13b91af9845c329cff660a972aa9cfaee3a2"
       }
     },
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
@@ -84,7 +87,7 @@
     "id": "kilo",
     "name": "Kilo",
     "kind": "npm",
-    "version": "7.8.3",
+    "version": "7.8.12",
     "requires": ["node"],
     "packages": ["@kilocode/cli"],
     "updates": { "OPENCODE_DISABLE_AUTOUPDATE": "1" },
@@ -94,15 +97,15 @@
     "id": "goose",
     "name": "Goose",
     "kind": "archive",
-    "version": "1.53.0",
+    "version": "1.54.0",
     "archives": {
       "linux-x64": {
-        "url": "https://github.com/block/goose/releases/download/v1.53.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
-        "sha256": "2d010c66dfd4348bb437b3a94001882468a5db1aa556858920481522f57752d7"
+        "url": "https://github.com/block/goose/releases/download/v1.54.0/goose-x86_64-unknown-linux-gnu.tar.bz2",
+        "sha256": "bf01cb6359f7a2b1acb54ca4827e1d059b18aabb3d2b75202e21066cfd3a3396"
       },
       "linux-arm64": {
-        "url": "https://github.com/block/goose/releases/download/v1.53.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
-        "sha256": "e156799760a174bfbc5d14443aacef064ce7592f9099dc9ce04c3db74e72224b"
+        "url": "https://github.com/block/goose/releases/download/v1.54.0/goose-aarch64-unknown-linux-gnu.tar.bz2",
+        "sha256": "8c7ad233bdaf05f10a52ef36f3ce50f839cb1d2d1df5b31b172af7150c1c288e"
       }
     },
     "bin": ["goose"]
@@ -129,15 +132,15 @@
     "id": "devin",
     "name": "Devin",
     "kind": "archive",
-    "version": "3000.11.3",
+    "version": "3000.11.92",
     "archives": {
       "linux-x64": {
-        "url": "https://static.devin.ai/cli/3000.11.3/devin-3000.11.3-x86_64-unknown-linux.tar.gz",
-        "sha256": "83b3b113c01bf2a3e9e100db08d77e6b086806a7754f091e20831bdfe215157e"
+        "url": "https://static.devin.ai/cli/3000.11.92/devin-3000.11.92-x86_64-unknown-linux.tar.gz",
+        "sha256": "2d829139682e038cf122510f1170eee3d7060bcc7ebf92445cbc5d28c9fbcfa0"
       },
       "linux-arm64": {
-        "url": "https://static.devin.ai/cli/3000.11.3/devin-3000.11.3-aarch64-unknown-linux.tar.gz",
-        "sha256": "21a2d7a8dea67987067cde7eb3fe7193a48daa8f8c3d50d414c603c4a2b67f15"
+        "url": "https://static.devin.ai/cli/3000.11.92/devin-3000.11.92-aarch64-unknown-linux.tar.gz",
+        "sha256": "881e83b0df06dd57a307004e299407c2c3745f288546e0a339a67fbebe7cb6c0"
       }
     },
     "bin": ["devin"]
@@ -146,15 +149,15 @@
     "id": "cursor",
     "name": "Cursor",
     "kind": "archive",
-    "version": "2026.10.01",
+    "version": "2026.10.14",
     "archives": {
       "linux-x64": {
-        "url": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/x64/agent-cli-package.tar.gz",
-        "sha256": "ba9a855f8f813c91b9f2707127572d2dc9ae5a62818e1c36719625d0fb8bd452"
+        "url": "https://downloads.cursor.com/lab/2026.10.14-0f9edde/linux/x64/agent-cli-package.tar.gz",
+        "sha256": "74fac931fe3578980d070701872b7dab54eb87a9abf9b6e2e6be19beeb9167a7"
       },
       "linux-arm64": {
-        "url": "https://downloads.cursor.com/lab/2026.10.01-14929f9/linux/arm64/agent-cli-package.tar.gz",
-        "sha256": "c31ef0ba6b827fdf8053919de57abae4a7bd71afefdf2cab061e276faac42b3a"
+        "url": "https://downloads.cursor.com/lab/2026.10.14-0f9edde/linux/arm64/agent-cli-package.tar.gz",
+        "sha256": "28028e8adb8266c8b7c00d11950765fbf9a3b9cac77a98b7c92b172646b35f4b"
       }
     },
     "bin": ["cursor-agent"]
@@ -182,7 +185,7 @@
     "id": "qwen",
     "name": "Qwen Code",
     "kind": "npm",
-    "version": "0.24.7",
+    "version": "0.25.2",
     "requires": ["node"],
     "packages": ["@qwen-code/qwen-code"],
     "bin": ["qwen"]
