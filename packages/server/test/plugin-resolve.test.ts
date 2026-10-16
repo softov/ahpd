@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configDir } from '../src/config.js';
-import { denoMessage, entryOf, resolvePlugin } from '../src/plugins.js';
+import { denoMessage, entryOf, hasScheme, resolvePlugin } from '../src/plugins.js';
 
 /*
  * Turning a spec into something importable, without importing it.
@@ -109,7 +110,7 @@ describe('resolvePlugin', () => {
     putInRoot('package.json', '{}');
 
     expect(() => resolvePlugin('fixture-plugin', { configDir: configDir(), cwd: process.cwd() }))
-      .toThrow(new RegExp(`${configDir()} or ${rooted('node_modules')}`));
+      .toThrow(`${configDir()} or ${rooted('node_modules')}`);
   });
 
   it('looks in the configuration directory alone when the variable is not set', () => {
@@ -124,14 +125,16 @@ describe('resolvePlugin', () => {
       .toBe(at('node_modules/fixture-plugin/index.js'));
     // And one place is all the refusal names when there is one.
     expect(() => resolvePlugin('absent-plugin', { configDir: configDir(), cwd: process.cwd() }))
-      .toThrow(new RegExp(`is not installed in ${configDir()};`));
+      .toThrow(`is not installed in ${configDir()};`);
   });
 
+  // The refusals below are matched as text, not as a pattern built from a path:
+  // a Windows path's backslashes would read as escapes.
   it('refuses a relative path that is in neither the working directory nor the configuration directory', () => {
     const cwd = join(home, 'work');
     mkdirSync(cwd, { recursive: true });
     expect(() => resolvePlugin('./missing.js', { configDir: configDir(), cwd }))
-      .toThrow(new RegExp(`${resolve(cwd, './missing.js')}.*${resolve(configDir(), './missing.js')}`));
+      .toThrow(`${resolve(cwd, './missing.js')} and ${resolve(configDir(), './missing.js')}`);
   });
 
   it('passes a spec with a scheme of its own through untouched', () => {
@@ -139,6 +142,22 @@ describe('resolvePlugin', () => {
     expect(resolved.url).toBe('npm:fixture-plugin');
     expect(resolved.path).toBeUndefined();
     expect(resolved.packageDir).toBeUndefined();
+  });
+
+  it('reads a Windows drive as a path, not as a scheme', () => {
+    expect(hasScheme('C:\\plugins\\mine.js')).toBe(false);
+    expect(hasScheme('F:/plugins/mine.js')).toBe(false);
+    expect(hasScheme('file:///plugins/mine.js')).toBe(true);
+    expect(hasScheme('npm:mine')).toBe(true);
+  });
+
+  it('turns an absolute path into a file URL', () => {
+    // On Windows this path starts with a drive, which an import refuses as it
+    // is: it has to arrive as a file URL.
+    const dir = directory('absolute', { 'main.js': '' });
+    const resolved = resolvePlugin(join(dir, 'main.js'), { configDir: configDir(), cwd: process.cwd() });
+    expect(resolved.url).toBe(pathToFileURL(join(dir, 'main.js')).href);
+    expect(resolved.path).toBe(join(dir, 'main.js'));
   });
 
   it('refuses a scoped name that is not installed, in its own words', () => {
@@ -173,7 +192,7 @@ describe('resolvePlugin', () => {
 
   it('refuses a directory with none of the four entries, naming it', () => {
     const none = directory('none', { 'package.json': JSON.stringify({ name: 'none' }) });
-    expect(() => entryOf(none)).toThrow(new RegExp(`${none} has no plugin entry`));
+    expect(() => entryOf(none)).toThrow(`${none} has no plugin entry`);
   });
 
   it('refuses a manifest entry that points outside its own package', () => {

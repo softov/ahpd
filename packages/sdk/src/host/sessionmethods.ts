@@ -4,6 +4,7 @@ import { computerId } from '../computers.js';
 import { tail, older } from '../paging.js';
 import { namesOf } from '../scopes.js';
 import { localPath, uriOf } from '../fileuri.js';
+import { configOf } from '../remotesession.js';
 import { CLOSING } from './common.js';
 import { chatIdFor, named, ROOT } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
@@ -907,9 +908,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         for (const one of [uri, given]) if (claims.get(one) === pending) claims.delete(one);
       };
       try {
-        const config = (typeof params.config === 'object' && params.config !== null
-          ? params.config
-          : {}) as Record<string, string>;
+        const config = configOf(params) as Record<string, string>;
         /*
          * Where the client asked the agent to work.
          *

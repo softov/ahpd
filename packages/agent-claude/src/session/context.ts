@@ -131,6 +131,14 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   failed: string | undefined;
   /**
+   * Whether the last turn was stopped here and its result has not come yet.
+   *
+   * An interrupt ends with a result of its own - `error_during_execution`,
+   * `is_error: true` - after `cancel` has already ended the turn as cancelled.
+   * Read as a failure, it drew every stopped session as failed.
+   */
+  interrupted: boolean;
+  /**
    * The model the turn now running actually answered on, as its own frames
    * reported it.
    *

@@ -2,7 +2,9 @@
  * A session a window sent here.
  *
  * A window hands a session to another host by naming where it came from on the
- * create request, under its own keys in the config's `_meta` bag. What is
+ * create request, under its own keys in the request's `_meta` bag - VS Code
+ * 1.141 sends them there, beside an empty config. The host also takes them
+ * in the config's `_meta`, which is how its own roads hand them on. What is
  * checked here is that such a session is taken, that the origin survives the
  * trip to the session's summary and a restart, that a value the window could
  * not have written is no origin rather than half of one, and that the agent
@@ -132,6 +134,7 @@ const made = async (
   config?: Record<string, unknown>,
   over: Partial<HostOptions> = {},
   active?: { tools: { name: string }[] },
+  meta?: Record<string, unknown>,
 ) => {
   const host = createHost({
     path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...machine(), ...over,
@@ -146,6 +149,7 @@ const made = async (
       provider: 'claude',
       ...(config === undefined ? {} : { config }),
       ...(active === undefined ? {} : { activeClient: active }),
+      ...(meta === undefined ? {} : { _meta: meta }),
     },
   });
   await settle();
@@ -182,6 +186,15 @@ describe('a session a window sent here', () => {
     expect(row?._meta?.[ORIGIN]).toEqual({ session: FROM, chat: CHAT, depth: 2 });
     expect(row?._meta?.[DEPTH]).toBe(2);
     expect(row?._meta?.[CREATED_BY]).toEqual({ session: 'abc', chat: 'abc#one', turnId: 't1' });
+  });
+
+  it('takes the origin on the request\'s own _meta, where VS Code sends it', async () => {
+    // As the 1.141 window sent it: the keys beside an empty config, not in it.
+    const { meta, row } = await made({}, {}, undefined, sent._meta);
+    expect(meta?.[ORIGIN]).toEqual({ session: FROM, chat: CHAT, depth: 2 });
+    expect(meta?.[DEPTH]).toBe(2);
+    expect(meta?.[CREATED_BY]).toEqual({ session: 'abc', chat: 'abc#one', turnId: 't1' });
+    expect(row?._meta?.[ORIGIN]).toEqual({ session: FROM, chat: CHAT, depth: 2 });
   });
 
   it('has none of the three for a session this host began itself', async () => {
@@ -317,6 +330,15 @@ describe('telling each turn of a session another window sent here to report back
     // A message that waits its turn, and the turn that comes to it.
     await says(client, chat, 'second', 'waiting-1');
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 3 });
+    expect(await told()).toEqual([REPORT_BACK]);
+  });
+
+  it('tells the first turn to report back when the window sent the origin on the request', async () => {
+    // The 1.141 window's create request: origin on the request's `_meta`, and
+    // the creator announced in the same request with the tool it reports with.
+    const { client, chat } = await made({}, {}, { tools: [REPORTS_BACK] }, sent._meta);
+    await says(client, chat, 'list the files');
+    await settle();
     expect(await told()).toEqual([REPORT_BACK]);
   });
 

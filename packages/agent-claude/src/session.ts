@@ -58,6 +58,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     activity: activityOf(emit),
     startedAt: 0,
     failed: undefined as string | undefined,
+    interrupted: false,
     ran: undefined as string | undefined,
     streaming: undefined as string | undefined,
     wake: undefined as (() => void) | undefined,

@@ -124,6 +124,24 @@ export const asCreatedBy = (value: unknown): CreatedBy | undefined => {
 /** The creator a config or a state carries, or nothing where it carries none. */
 export const readCreatedBy = (source: unknown): CreatedBy | undefined => asCreatedBy(metaOf(source)?.[CREATED_BY_META]);
 
+/**
+ * The config a `createSession` request opens its session with, holding the
+ * window's keys where `openSession` reads them.
+ *
+ * VS Code sends the origin and the creator on the request's own `_meta`, the
+ * protocol's place for request metadata, and leaves `config` to the agent's
+ * settings. Every road into a session reads them off the config, so they are
+ * moved there, and a key on the request wins over one in the config.
+ */
+export const configOf = (params: Bag): Bag => {
+  const config = bag(params.config) ?? {};
+  const sent = metaOf(params);
+  const carried = Object.fromEntries([REMOTE_ORIGIN_META, CREATED_BY_META]
+    .filter((key) => sent?.[key] !== undefined)
+    .map((key) => [key, sent?.[key]]));
+  return Object.keys(carried).length === 0 ? config : { ...config, _meta: { ...metaOf(config), ...carried } };
+};
+
 /** A meta bag's own depth, or `0` where it holds none or holds something else. */
 export const readDepth = (meta: Bag | undefined): number => {
   const value = meta?.[SPAWN_DEPTH_META];

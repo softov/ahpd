@@ -788,9 +788,13 @@ export function createQuery(ctx: SessionContext): Query {
               ctx.emit('chat', { type: 'chat/turnComplete', turnId: turn.id, duration: turn.duration });
             }
           }
+          // The result an interrupt ends with, for a turn `cancel` already
+          // ended: it says the turn was stopped, which is not a failure.
+          const stopped = turn === undefined && ctx.interrupted;
+          ctx.interrupted = false;
           // About the session rather than the turn: it reads into
           // `Status.Error` and into the summary, and the next turn clears it.
-          if (message.is_error === true) ctx.failed = wrong ?? 'The turn failed';
+          if (message.is_error === true && !stopped) ctx.failed = wrong ?? 'The turn failed';
           ctx.doing(undefined);
           ctx.touch();
           ctx.startNext();

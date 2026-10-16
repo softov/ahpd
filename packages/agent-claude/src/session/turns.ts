@@ -669,6 +669,7 @@ export function createTurns(ctx: SessionContext): Turns {
         ctx.settleOpen(turn);
         ctx.turns.push(turn);
         ctx.active = undefined;
+        ctx.interrupted = true;
         ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turnId || turn.id, duration: turn.duration });
       }
       ctx.doing(undefined);

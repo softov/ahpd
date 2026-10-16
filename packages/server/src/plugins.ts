@@ -100,8 +100,13 @@ const unscoped = (id: string): string => {
 const provisionalOf = (spec: PluginSpec, found: Located): string =>
   unscoped(found.manifest?.name ?? (found.manifest === undefined && found.target !== undefined ? fileNameOf(found.target) : nameOf(spec)));
 
-/** Whether the spec carries a scheme of its own, which this daemon does not second-guess. */
-export const hasScheme = (spec: string): boolean => /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(spec);
+/**
+ * Whether the spec carries a scheme of its own, which this daemon does not second-guess.
+ *
+ * A scheme is two characters or more: one letter and a colon is a Windows drive,
+ * as in `C:\plugins\mine.js`, and no runtime imports a one-letter scheme.
+ */
+export const hasScheme = (spec: string): boolean => /^[a-zA-Z][a-zA-Z0-9+.-]+:/.test(spec);
 
 /** Why a bare name cannot be resolved on Deno, and what to write instead. */
 export const denoMessage = (name: string, configDir: string): string =>
