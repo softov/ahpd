@@ -3,8 +3,8 @@
  *
  * A model provider is a connector, so the host registers these beside the
  * adapters a plugin brings, with no plugin entry of its own. Each one is a
- * form, a `provider` that tells the proxy where and how to call it, a check
- * that proves its key, and an icon.
+ * form, a `provider` that tells the proxy where and how to call it, a `models`
+ * that reads the provider's own list, a check that proves its key, and an icon.
  *
  * The key is a secret: a schema marks it `writeOnly`, so the host keeps its
  * value in the vault and hands the adapter the value back when it opens the
@@ -16,7 +16,10 @@
  */
 
 import { fileURLToPath } from 'node:url';
-import { type Adapter, type Capability, type CheckResult, type Connector, MODEL_DIALECTS, type ModelDialect, type ModelProvider } from '@ahpd/sdk';
+import {
+  type Adapter, type Capability, type CheckResult, type Connector, MODEL_DIALECTS, type ModelDialect, type ModelProvider,
+  type ProviderModel,
+} from '@ahpd/sdk';
 import type { Icon } from '@ahpd/sdk';
 import { resolveIcons, type IconProblem } from '../icons.js';
 
@@ -144,6 +147,121 @@ const probe = async (url: string, headers: Record<string, string>, fetcher: type
   return { result: 'failed', message };
 };
 
+/** A JSON object, when a value is one. */
+const plain = (value: unknown): Record<string, unknown> | undefined =>
+  (typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined);
+
+/** The entries of a list answer, which every vendor keeps under `data`. */
+const listOf = (value: unknown): Record<string, unknown>[] => {
+  const data = plain(value)?.['data'];
+  return Array.isArray(data)
+    ? data.map(plain).filter((one): one is Record<string, unknown> => one !== undefined)
+    : [];
+};
+
+/** A count a list entry gives, when it gives one. */
+const count = (value: unknown): number | undefined =>
+  (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
+
+/**
+ * The models of a list answer, through one adapter's reading.
+ *
+ * An entry without an id names nothing a caller could ask for, so it is left
+ * out rather than listed with an empty name.
+ */
+const modelsOf = (
+  value: unknown,
+  read: (entry: Record<string, unknown>) => ProviderModel | undefined,
+): ProviderModel[] => listOf(value).map(read).filter((one): one is ProviderModel => one !== undefined);
+
+/**
+ * One `GET` of a provider's model list, read as JSON.
+ *
+ * The answer is refused with its status when it is not 2xx, so the host's log
+ * says what the provider said. The time limit is the check's, because both are
+ * one call of the same kind.
+ */
+const listed = async (url: string, headers: Record<string, string>, fetcher: typeof fetch): Promise<unknown> => {
+  const answer = await fetcher(url, { headers, redirect: 'error', signal: AbortSignal.timeout(CHECK_TIMEOUT_MS) });
+  if (!answer.ok) {
+    await answer.body?.cancel().catch(() => undefined);
+    throw new Error(`HTTP ${String(answer.status)}`);
+  }
+  return answer.json() as Promise<unknown>;
+};
+
+/** One OpenRouter entry, with the fields its list carries that a caller sees. */
+const openRouterModel = (entry: Record<string, unknown>): ProviderModel | undefined => {
+  const id = text(entry['id']);
+  if (id === undefined) return undefined;
+  const name = text(entry['name']);
+  const context = count(entry['context_length']);
+  const pricing = plain(entry['pricing']);
+  const prompt = text(pricing?.['prompt']);
+  const completion = text(pricing?.['completion']);
+  return {
+    id,
+    ...(name === undefined ? {} : { name }),
+    ...(context === undefined ? {} : { context_length: context }),
+    ...(prompt === undefined && completion === undefined ? {} : {
+      pricing: { ...(prompt === undefined ? {} : { prompt }), ...(completion === undefined ? {} : { completion }) },
+    }),
+  };
+};
+
+/** One OpenAI entry: the list is ids alone. */
+const openAiModel = (entry: Record<string, unknown>): ProviderModel | undefined => {
+  const id = text(entry['id']);
+  return id === undefined ? undefined : { id };
+};
+
+/** One Anthropic entry, which spells the name and the window its own way. */
+const anthropicModel = (entry: Record<string, unknown>): ProviderModel | undefined => {
+  const id = text(entry['id']);
+  if (id === undefined) return undefined;
+  const name = text(entry['display_name']);
+  const context = count(entry['max_input_tokens']);
+  return {
+    id,
+    ...(name === undefined ? {} : { name }),
+    ...(context === undefined ? {} : { context_length: context }),
+  };
+};
+
+/** One entry of an OpenAI-compatible server's list, which may carry a name and a window. */
+const compatibleModel = (entry: Record<string, unknown>): ProviderModel | undefined => {
+  const id = text(entry['id']);
+  if (id === undefined) return undefined;
+  const name = text(entry['name']);
+  const context = count(entry['context_length']);
+  return {
+    id,
+    ...(name === undefined ? {} : { name }),
+    ...(context === undefined ? {} : { context_length: context }),
+  };
+};
+
+/** How many models to ask Anthropic for in one page. */
+const ANTHROPIC_PAGE = 1_000;
+
+/** Anthropic's whole list, one page after another while it says there is more. */
+const anthropicModels = async (connector: Connector, fetcher: typeof fetch): Promise<ProviderModel[]> => {
+  const endpoint = endpointOf(connector, ANTHROPIC_ENDPOINT);
+  const headers = { 'x-api-key': required(connector, 'key'), 'anthropic-version': ANTHROPIC_VERSION };
+  const models: ProviderModel[] = [];
+  const pages = new Set<string>();
+  let after: string | undefined;
+  for (;;) {
+    const more = after === undefined ? '' : `&after_id=${encodeURIComponent(after)}`;
+    const page = plain(await listed(`${endpoint}/v1/models?limit=${String(ANTHROPIC_PAGE)}${more}`, headers, fetcher));
+    models.push(...modelsOf(page, anthropicModel));
+    const last = text(page?.['last_id']);
+    if (page?.['has_more'] !== true || last === undefined || pages.has(last)) return models;
+    pages.add(last);
+    after = last;
+  }
+};
+
 /** The icon of each host adapter, read once and kept: the files do not change while the daemon runs. */
 let iconsRead: Record<string, Icon[]> | undefined;
 
@@ -205,6 +323,11 @@ export function hostAdapters(options: HostAdapterOptions = {}): Record<string, A
       { authorization: `Bearer ${required(connector, 'key')}` },
       fetcher,
     ),
+    models: async (connector: Connector) => modelsOf(await listed(
+      `${endpointOf(connector, OPENROUTER_ENDPOINT)}/models`,
+      { authorization: `Bearer ${required(connector, 'key')}` },
+      fetcher,
+    ), openRouterModel),
     ...icon('openrouter'),
   };
 
@@ -232,6 +355,7 @@ export function hostAdapters(options: HostAdapterOptions = {}): Record<string, A
       { 'x-api-key': required(connector, 'key'), 'anthropic-version': ANTHROPIC_VERSION },
       fetcher,
     ),
+    models: async (connector: Connector) => anthropicModels(connector, fetcher),
     ...icon('anthropic'),
   };
 
@@ -259,6 +383,11 @@ export function hostAdapters(options: HostAdapterOptions = {}): Record<string, A
       { authorization: `Bearer ${required(connector, 'key')}` },
       fetcher,
     ),
+    models: async (connector: Connector) => modelsOf(await listed(
+      `${endpointOf(connector, OPENAI_ENDPOINT)}/models`,
+      { authorization: `Bearer ${required(connector, 'key')}` },
+      fetcher,
+    ), openAiModel),
     ...icon('openai'),
   };
 
@@ -282,6 +411,7 @@ export function hostAdapters(options: HostAdapterOptions = {}): Record<string, A
       return {
         endpoint: required(connector, 'endpoint').replace(/\/+$/u, ''),
         accepts: acceptsOf(connector),
+        prefix: connector.id,
         ...(key === undefined ? {} : { key }),
       };
     },
@@ -292,6 +422,14 @@ export function hostAdapters(options: HostAdapterOptions = {}): Record<string, A
         key === undefined ? {} : { authorization: `Bearer ${key}` },
         fetcher,
       );
+    },
+    models: async (connector: Connector) => {
+      const key = text(connector.config['key']);
+      return modelsOf(await listed(
+        `${required(connector, 'endpoint').replace(/\/+$/u, '')}/models`,
+        key === undefined ? {} : { authorization: `Bearer ${key}` },
+        fetcher,
+      ), compatibleModel);
     },
     ...icon('openai-compatible'),
   };

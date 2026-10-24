@@ -51,4 +51,7 @@ export type {
 } from './policies.js';
 export type { SecretRef, SecretWork, Vault } from './vault.js';
 export type { CollectionOptions, RecordChange, RecordCollection, RecordStore, StoredRecord } from './records.js';
-export type { Adapter, CallOutcome, Capability, CapabilityType, CheckResult, Connector, ConnectorHealth, ConnectorOwner, ModelDialect, ModelProvider, ProviderConnector, ServedAdapter } from './connectors.js';
+export type {
+  Adapter, CallOutcome, Capability, CapabilityType, CheckResult, Connector, ConnectorHealth, ConnectorOwner, ModelDialect,
+  ModelPricing, ModelProvider, ProviderConnector, ProviderModel, ServedAdapter,
+} from './connectors.js';

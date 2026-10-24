@@ -1,12 +1,12 @@
 ---
 title: The OpenAI paths answer at the root
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
-  - "[code://packages/server/src/proxy/dialects.ts#L16-L33](../../../../packages/server/src/proxy/dialects.ts#L16-L33) - `CALLER_PATHS` and `MODELS_PATH`"
-  - "[code://packages/server/src/proxy/listener.ts#L722-L734](../../../../packages/server/src/proxy/listener.ts#L722-L734) - the path dispatch"
-  - "[code://packages/server/src/http.ts#L127-L148](../../../../packages/server/src/http.ts#L127-L148) - `PROXY_PREFIX` and `withoutApi`"
+  - "[code://packages/server/src/proxy/dialects.ts#L16-L47](../../../../packages/server/src/proxy/dialects.ts#L16-L47) - `CALLER_PATHS`, `MODELS_PATH`, `ROOT_PATHS` and `dialectAt`"
+  - "[code://packages/server/src/proxy/listener.ts#L793-L806](../../../../packages/server/src/proxy/listener.ts#L793-L806) - the path dispatch"
+  - "[code://packages/server/src/http.ts#L128-L150](../../../../packages/server/src/http.ts#L128-L150) - `PROXY_PREFIX` and `withoutApi`"
   - "[code://packages/sdk/src/plugins/plugins.ts#L124](../../../../packages/sdk/src/plugins/plugins.ts#L124) - `ROUTE_ROOT`"
 ---
 
@@ -39,3 +39,8 @@ refs:
 - The gate passes: `pnpm -s typecheck && pnpm -s build && pnpm -s boundary && pnpm -s test`.
 
 ## Resume
+
+- **Done so far:** `ROOT_PATHS` holds `/chat/completions` and `/models`, and `dialectAt` reads the chat path as `openai-chat`. The dispatch answers both root paths, and `withoutApi` sends them to the API handler as it sends `/v1`. Root `/models` answers in the header dialect, and a 405 names the path that was called. `/messages` at the root stays below. `proxy-listener.test.ts` covers both paths on a socket and on a real daemon, beside a `/plugins` route.
+- **Next action:** none for this task.
+- **Open questions:** none.
+- **Watch out for:** `http.ts` now imports `ROOT_PATHS` from `proxy/dialects.ts`. Root paths are matched whole, so `/models/more` stays below.

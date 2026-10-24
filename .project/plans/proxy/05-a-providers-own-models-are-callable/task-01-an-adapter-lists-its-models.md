@@ -1,11 +1,11 @@
 ---
 title: An adapter lists its models
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
-  - "[code://packages/sdk/src/types/connectors.ts#L78](../../../../packages/sdk/src/types/connectors.ts#L78) - `ModelProvider`, which gets `prefix`"
-  - "[code://packages/sdk/src/types/connectors.ts#L177-L204](../../../../packages/sdk/src/types/connectors.ts#L177-L204) - `Adapter`, which gets `models`"
+  - "[code://packages/sdk/src/types/connectors.ts#L110-L125](../../../../packages/sdk/src/types/connectors.ts#L110-L125) - `ModelProvider`, which gets `prefix`"
+  - "[code://packages/sdk/src/types/connectors.ts#L226-L291](../../../../packages/sdk/src/types/connectors.ts#L226-L291) - `Adapter`, which gets `models`"
   - https://openrouter.ai/docs/api-reference/list-available-models - the field names `ProviderModel` copies
 ---
 
@@ -33,3 +33,8 @@ A provider can name the first segment of its fetched model names.
 - The gate passes: `pnpm -s typecheck && pnpm -s build && pnpm -s boundary && pnpm -s test`.
 
 ## Resume
+
+- **Done so far:** `ModelPricing` and `ProviderModel` are in `packages/sdk/src/types/connectors.ts`, with `ModelProvider.prefix` and `Adapter.models(connector)`. Both index files export the new types. The refs' line numbers are corrected to this tree after proxy 04.
+- **Next action:** none for this task.
+- **Open questions:** none.
+- **Watch out for:** `models` takes a `Connector`, so it reads the resolved config. `providers()` binds each row's `models()` to that open connector, so the catalog never holds one. Softov answered that on 2026-10-24, and task 03 builds it.

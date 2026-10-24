@@ -60,6 +60,7 @@ import { API_PREFIX, apiHandler, json, listenApi, plainRequests, pluginRoutes, w
 import { servedRegistry, type ServedFacts } from './served.js';
 import { updateMethod } from './update.js';
 import { proxyHandler } from '../proxy/listener.js';
+import { modelCatalog } from '../proxy/catalog.js';
 import { hostAdapters } from '../proxy/adapters.js';
 import { loadPlugins, pluginSet, type LoadOptions } from '../plugins.js';
 import { applyPlugins, type Applied } from '../applyplugins.js';
@@ -558,6 +559,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const served = api === undefined ? undefined : proxyHandler({
     proxy: () => options.modelProxy,
     providers: () => connectorLists.providers(),
+    // The provider lists are kept below, once the channel they read exists.
+    catalog: () => catalogue,
     note: (id, outcome) => { connectorLists.note(id, outcome); },
     ...(token === undefined ? {} : { token }),
     ...(users === undefined ? {} : { users }),
@@ -758,6 +761,13 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     },
     onProblem: listProblem,
   });
+  /*
+   * The models each open provider connector lists, read once now and again
+   * each hour. The first read is not awaited: a provider slow to answer must
+   * not hold the daemon's start, and a call works before the first read ends.
+   */
+  const catalogue = modelCatalog({ providers: () => connectorLists.providers(), onProblem: stamp });
+  void catalogue.refresh();
   /*
    * The four provider adapters the host ships, beside the plugins' adapters.
    * A model provider is a connector, so these are not a plugin: the host
@@ -1585,6 +1595,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     down: async () => {
       await raise(folded.events, { type: 'stopping' }, stamp);
       peopleLists?.close();
+      // The hourly fetch of the provider lists stops with the daemon that reads them.
+      catalogue.stop();
       /*
        * And every connection the plugins opened, after `stopping` and before
        * the listeners go.

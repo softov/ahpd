@@ -1,7 +1,7 @@
 ---
 title: A provider's own models are callable, and the proxy answers at the root
 domain: proxy
-status: planned
+status: active
 priority: high
 created: 2026-10-24
 revalidated: 2026-10-24
@@ -9,17 +9,17 @@ requires: [plans/proxy/04-providers-are-connectors/plan.md]
 changes: []
 creates: []
 refs:
-  - "[code://packages/sdk/src/types/connectors.ts#L78](../../../../packages/sdk/src/types/connectors.ts#L78) - `ModelProvider`, which gets `prefix`"
-  - "[code://packages/sdk/src/types/connectors.ts#L177-L204](../../../../packages/sdk/src/types/connectors.ts#L177-L204) - `Adapter`, which gets `models`"
-  - "[code://packages/sdk/src/connectors/channel.ts#L155](../../../../packages/sdk/src/connectors/channel.ts#L155) - `providers()`, the open provider connectors"
-  - "[code://packages/server/src/proxy/route.ts#L92-L96](../../../../packages/server/src/proxy/route.ts#L92-L96) - `namedBy`, which finds the connectors an entry names"
-  - "[code://packages/server/src/proxy/route.ts#L135](../../../../packages/server/src/proxy/route.ts#L135) - `route`, which refuses a name the table does not hold"
+  - "[code://packages/sdk/src/types/connectors.ts#L110-L125](../../../../packages/sdk/src/types/connectors.ts#L110-L125) - `ModelProvider`, which gets `prefix`"
+  - "[code://packages/sdk/src/types/connectors.ts#L226-L291](../../../../packages/sdk/src/types/connectors.ts#L226-L291) - `Adapter`, which gets `models`"
+  - "[code://packages/sdk/src/connectors/channel.ts#L157](../../../../packages/sdk/src/connectors/channel.ts#L157) - `providers()`, the open provider connectors"
+  - "[code://packages/server/src/proxy/route.ts#L105](../../../../packages/server/src/proxy/route.ts#L105) - `namedBy`, which finds the connectors an entry names"
+  - "[code://packages/server/src/proxy/route.ts#L234](../../../../packages/server/src/proxy/route.ts#L234) - `route`, which reads a name the table does not hold as `<prefix>/<id>`"
   - "[code://packages/server/src/proxy/providers.ts#L111](../../../../packages/server/src/proxy/providers.ts#L111) - `MODEL_NAME`, one slash in a table name"
-  - "[code://packages/server/src/proxy/dialects.ts#L16-L33](../../../../packages/server/src/proxy/dialects.ts#L16-L33) - `CALLER_PATHS` and `MODELS_PATH`, all under `/v1`"
-  - "[code://packages/server/src/proxy/dialects.ts#L309](../../../../packages/server/src/proxy/dialects.ts#L309) - `modelList`, which sends the names only"
-  - "[code://packages/server/src/proxy/listener.ts#L273](../../../../packages/server/src/proxy/listener.ts#L273) - `costOf`, which prices a call from the entry"
-  - "[code://packages/server/src/proxy/listener.ts#L698-L734](../../../../packages/server/src/proxy/listener.ts#L698-L734) - the models list and the path dispatch"
-  - "[code://packages/server/src/http.ts#L127-L148](../../../../packages/server/src/http.ts#L127-L148) - `PROXY_PREFIX` and `withoutApi`"
+  - "[code://packages/server/src/proxy/dialects.ts#L16-L47](../../../../packages/server/src/proxy/dialects.ts#L16-L47) - `CALLER_PATHS`, `MODELS_PATH` and `ROOT_PATHS`"
+  - "[code://packages/server/src/proxy/dialects.ts#L328](../../../../packages/server/src/proxy/dialects.ts#L328) - `modelList`, which sends the names and their fields"
+  - "[code://packages/server/src/proxy/listener.ts#L279](../../../../packages/server/src/proxy/listener.ts#L279) - `costOf`, which prices a call from the entry"
+  - "[code://packages/server/src/proxy/listener.ts#L727-L796](../../../../packages/server/src/proxy/listener.ts#L727-L796) - the models list and the path dispatch"
+  - "[code://packages/server/src/http.ts#L128-L150](../../../../packages/server/src/http.ts#L128-L150) - `PROXY_PREFIX` and `withoutApi`"
   - "[code://packages/sdk/src/plugins/plugins.ts#L124](../../../../packages/sdk/src/plugins/plugins.ts#L124) - `ROUTE_ROOT`, so a plugin route is always under `/plugins`"
   - "[code://packages/sdk/src/access/decide.ts#L68](../../../../packages/sdk/src/access/decide.ts#L68) - a policy value with `*`, so `openrouter/*` names every OpenRouter model"
   - "[code://docs/server/PROXY.md](../../../../docs/server/PROXY.md) - the proxy's guide"
@@ -72,6 +72,7 @@ GET /models | /v1/models -> table names + catalog names the caller may use, with
 | Anthropic paths stay under `/v1` only | Softov, 2026-10-23 | 05 |
 | A plugin route cannot take one of those root paths | Softov, 2026-10-23; [code://packages/sdk/src/plugins/plugins.ts#L124](../../../../packages/sdk/src/plugins/plugins.ts#L124) already keeps every route under `/plugins` | 05 |
 | An adapter lists its models through `Adapter.models(connector)`, and answers them in OpenRouter's field names | (defaulted: each vendor's list has its own shape, and the adapter knows it) | 01, 02 |
+| Each `providers()` row carries a `models()` bound to its open connector, so the connector and its key never leave the channel | Softov, 2026-10-24 | 03 |
 | `ModelProvider.prefix` is the first segment of a fetched name, and is the adapter name when absent | (defaulted: the `openai-compatible` adapter answers its connector id there) | 01, 02 |
 | The host fetches a connector's list when the connector first opens, and again each hour. A failed fetch keeps the last list and writes one line to the log | (defaulted: a list changes slowly, and a failure must not empty it) | 03 |
 | A name in the table wins over a fetched name with the same spelling | (defaulted: the table is what a person wrote) | 03 |
@@ -98,12 +99,12 @@ GET /models | /v1/models -> table names + catalog names the caller may use, with
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An adapter lists its models](task-01-an-adapter-lists-its-models.md) | todo | - |
-| [02 - The host adapters list their models](task-02-the-host-adapters-list-their-models.md) | todo | 01 |
-| [03 - A fetched model is callable](task-03-a-fetched-model-is-callable.md) | todo | 01, 02 |
-| [04 - The models list carries OpenRouter's fields](task-04-the-models-list-carries-openrouter-fields.md) | todo | 03 |
-| [05 - The OpenAI paths answer at the root](task-05-the-openai-paths-answer-at-the-root.md) | todo | - |
-| [06 - The docs name a model by its provider](task-06-the-docs-name-a-model-by-its-provider.md) | todo | 03, 04, 05 |
+| [01 - An adapter lists its models](task-01-an-adapter-lists-its-models.md) | implemented | - |
+| [02 - The host adapters list their models](task-02-the-host-adapters-list-their-models.md) | implemented | 01 |
+| [03 - A fetched model is callable](task-03-a-fetched-model-is-callable.md) | implemented | 01, 02 |
+| [04 - The models list carries OpenRouter's fields](task-04-the-models-list-carries-openrouter-fields.md) | implemented | 03 |
+| [05 - The OpenAI paths answer at the root](task-05-the-openai-paths-answer-at-the-root.md) | implemented | - |
+| [06 - The docs name a model by its provider](task-06-the-docs-name-a-model-by-its-provider.md) | implemented | 03, 04, 05 |
 
 ## Risks and tradeoffs
 
@@ -114,8 +115,8 @@ GET /models | /v1/models -> table names + catalog names the caller may use, with
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** check the refs against main after proxy 04 merges, then [task-01-an-adapter-lists-its-models.md](task-01-an-adapter-lists-its-models.md).
+- **Done so far:** all six tasks are implemented. `Adapter.models(connector)` exists, the four host adapters answer it, and `providers()` binds each row's `models()` to its open connector. `ModelProvider.prefix` exists, and `openai-compatible` answers its connector id there. `packages/server/src/proxy/catalog.ts` keeps each open connector's list. `route` reads a name the table does not hold as `<prefix>/<id>`, and the models list carries `name`, `context_length`, `pricing` and `total_count`. The OpenAI paths answer at the root beside `/v1`, and the docs name a model by its provider. The refs' line numbers are corrected to this tree.
+- **Next action:** Softov reads the final verification checklist below, then the plan is closed with `implemented.md`.
 - **Open questions:** none.
 - **Watch out for:** a table name keeps the one-slash rule of `MODEL_NAME`. Only a fetched name holds more.
 

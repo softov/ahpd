@@ -13,10 +13,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { memoryPolicies, type Grant, type Users } from '@ahpd/sdk';
+import { memoryPolicies, type Grant, type ProviderConnector, type ProviderModel, type Users } from '@ahpd/sdk';
+import { modelCatalog, type ModelCatalog } from '../src/proxy/catalog.js';
 import {
-  answerJson, fakeProvider, isAnthropicError, isOpenAiError, MARKER, memoryUsage, people, ROOT_TOKEN, send, serveProxy,
-  type People, type ProviderFixture, type Served, type ServeOptions,
+  answerJson, fakeProvider, isAnthropicError, isOpenAiError, MARKER, memoryUsage, people, providerConnector, ROOT_TOKEN, send,
+  serveProxy, type People, type ProviderFixture, type Served, type ServeOptions,
 } from './fixtures/proxy-harness.js';
 
 let folder: string;
@@ -320,12 +321,14 @@ describe('GET /v1/models lists the names a caller may use', () => {
       data: [
         { id: 'anthropic/claude-sonnet-5-5', object: 'model', created: 0, owned_by: 'anthropic' },
         { id: 'anthropic/claude-opus-5-5', object: 'model', created: 0, owned_by: 'anthropic' },
-        { id: 'openai/gpt-5.5', object: 'model', created: 0, owned_by: 'openai' },
+        // The file's price, written per token as OpenRouter writes one.
+        { id: 'openai/gpt-5.5', object: 'model', created: 0, owned_by: 'openai', pricing: { prompt: '0.000005', completion: '0.00003' } },
         { id: 'local/default', object: 'model', created: 0, owned_by: 'local' },
       ],
+      total_count: 4,
     });
-    // No provider id, endpoint, price or variable is in it.
-    for (const word of ['claude-sonnet-5.5', 'local-model', 'openrouter', '127.0.0.1', 'price', 'API_KEY', MARKER]) {
+    // No provider id, upstream model id, endpoint or key is in it.
+    for (const word of ['claude-sonnet-5.5', 'local-model', 'openrouter', '127.0.0.1', 'API_KEY', MARKER]) {
       expect(got.text).not.toContain(word);
     }
   });
@@ -334,12 +337,13 @@ describe('GET /v1/models lists the names a caller may use', () => {
     const served = await proxy({ ...SOFTOV });
     const got = await send(served.port, '/v1/models', { headers: { 'x-api-key': who.ana, 'anthropic-version': '2023-06-01' } });
     expect(got.status).toBe(200);
-    const body = got.json as { data: { type: string; id: string; display_name: string; created_at: string }[]; has_more: boolean; first_id: string; last_id: string };
+    const body = got.json as { data: { type: string; id: string; display_name: string; created_at: string }[]; has_more: boolean; first_id: string; last_id: string; total_count: number };
     expect(body.data.map((one) => one.id)).toEqual(['anthropic/claude-sonnet-5-5', 'anthropic/claude-opus-5-5', 'openai/gpt-5.5', 'local/default']);
     expect(body.data[0]).toEqual({ type: 'model', id: 'anthropic/claude-sonnet-5-5', display_name: 'anthropic/claude-sonnet-5-5', created_at: '1970-01-01T00:00:00Z' });
     expect(body.has_more).toBe(false);
     expect(body.first_id).toBe('anthropic/claude-sonnet-5-5');
     expect(body.last_id).toBe('local/default');
+    expect(body.total_count).toBe(4);
   });
 
   it('drops a name whose every entry names no open connector', async () => {
@@ -386,6 +390,146 @@ describe('GET /v1/models lists the names a caller may use', () => {
   });
 });
 
+describe('the list carries the fields a provider sent', () => {
+  /** One model as the local server lists it, priced free. */
+  const LISTED: ProviderModel = { id: 'local-model', name: 'Local Model', context_length: 8_192, pricing: { prompt: '0', completion: '0' } };
+
+  /** The local connector, whose adapter names itself so its models are `local/<id>`. */
+  const local = (models: ProviderModel[] = [LISTED]): ProviderConnector => ({
+    ...providerConnector({ id: 'local', adapter: 'openai-compatible', endpoint: 'http://127.0.0.1:1/v1', key: null }),
+    provider: { endpoint: 'http://127.0.0.1:1/v1', accepts: ['openai-chat'], prefix: 'local' },
+    models: async () => models,
+  });
+
+  /** A catalog over these open connectors, read once and stopped with the test. */
+  const catalogueOver = async (rows: ProviderConnector[]): Promise<ModelCatalog> => {
+    const catalogue = modelCatalog({ providers: () => rows });
+    fakes.push({ close: async () => { catalogue.stop(); } });
+    await catalogue.refresh();
+    return catalogue;
+  };
+
+  it('carries the provider\'s name, context and price for a name in the file', async () => {
+    const row = local();
+    const catalogue = await catalogueOver([row]);
+    const served = await proxy({
+      proxy: { models: { 'local/default': [{ provider: 'local', id: 'local-model' }] } },
+      providers: [row],
+      catalog: () => catalogue,
+    });
+    const got = await send(served.port, '/v1/models', { headers: asRoot });
+    expect(got.json).toEqual({
+      object: 'list',
+      data: [
+        {
+          id: 'local/default', object: 'model', created: 0, owned_by: 'local',
+          name: 'Local Model', context_length: 8_192, pricing: { prompt: '0', completion: '0' },
+        },
+        {
+          id: 'local/local-model', object: 'model', created: 0, owned_by: 'local',
+          name: 'Local Model', context_length: 8_192, pricing: { prompt: '0', completion: '0' },
+        },
+      ],
+      total_count: 2,
+    });
+  });
+
+  it('lets a price in the file win over the fetched one', async () => {
+    const row = local([{ id: 'local-model', pricing: { prompt: '0.000003', completion: '0.000015' } }]);
+    const catalogue = await catalogueOver([row]);
+    const served = await proxy({
+      proxy: { models: { 'local/default': [{ provider: 'local', id: 'local-model', price: { input: 2, output: 10 } }] } },
+      providers: [row],
+      catalog: () => catalogue,
+    });
+    const got = await send(served.port, '/v1/models', { headers: asRoot });
+    const [first, second] = (got.json as { data: { id: string; pricing?: unknown }[] }).data;
+    expect(first).toEqual({ id: 'local/default', object: 'model', created: 0, owned_by: 'local', pricing: { prompt: '0.000002', completion: '0.00001' } });
+    // The fetched name keeps the provider's own price.
+    expect(second?.pricing).toEqual({ prompt: '0.000003', completion: '0.000015' });
+  });
+
+  it('lists a fetched name once, and leaves out one the file already holds', async () => {
+    const row = local([LISTED, { id: 'other' }, { id: 'local-model' }]);
+    const catalogue = await catalogueOver([row]);
+    const served = await proxy({
+      proxy: { models: { 'local/local-model': [{ provider: 'local', id: 'local-model' }] } },
+      providers: [row],
+      catalog: () => catalogue,
+    });
+    const got = await send(served.port, '/v1/models', { headers: asRoot });
+    const ids = (got.json as { data: { id: string }[]; total_count: number }).data.map((one) => one.id);
+    expect(ids).toEqual(['local/local-model', 'local/other']);
+    expect((got.json as { total_count: number }).total_count).toBe(2);
+  });
+
+  it('leaves out each fetched name a policy denies, and lists it for root', async () => {
+    const row = local([{ id: 'keep' }, { id: 'drop' }]);
+    const catalogue = await catalogueOver([row]);
+    const policies = memoryPolicies();
+    await policies.put({ id: 'everyone', scope: 'all', kind: 'model', effect: 'allow', match: { model: ['*'] } });
+    await policies.put({ id: 'no-drop', scope: 'all', kind: 'model', effect: 'deny', match: { model: ['local/drop'] } });
+    const served = await proxy({ proxy: { models: {} }, providers: [row], catalog: () => catalogue, policies, policiesCheck: true });
+
+    const ana = await send(served.port, '/v1/models', { headers: { 'x-api-key': who.ana } });
+    expect((ana.json as { data: { id: string }[] }).data.map((one) => one.id)).toEqual(['local/keep']);
+    const root = await send(served.port, '/v1/models', { headers: asRoot });
+    expect((root.json as { data: { id: string }[] }).data.map((one) => one.id)).toEqual(['local/drop', 'local/keep']);
+  });
+
+  it('answers in Anthropic\'s shape with the same fields', async () => {
+    const row = local();
+    const catalogue = await catalogueOver([row]);
+    const served = await proxy({ proxy: { models: {} }, providers: [row], catalog: () => catalogue });
+    const got = await send(served.port, '/v1/models', { headers: { ...asRoot, 'anthropic-version': '2023-06-01' } });
+    expect(got.json).toMatchObject({
+      data: [{
+        type: 'model', id: 'local/local-model', display_name: 'Local Model',
+        name: 'Local Model', context_length: 8_192, pricing: { prompt: '0', completion: '0' },
+      }],
+      total_count: 1,
+    });
+  });
+});
+
+describe('the OpenAI paths answer at the root as they do under /v1', () => {
+  it('answers a chat call and a models list at the root', async () => {
+    const fake = await okProvider();
+    const served = await proxy({ ...table(fake.endpoint) });
+    const called = await send(served.port, '/chat/completions', { headers: asRoot, body: CALL });
+    expect(called.status).toBe(200);
+    expect(fake.received.map((one) => one.url)).toEqual(['/v1/chat/completions']);
+
+    const listed = await send(served.port, '/models', { headers: asRoot });
+    expect(listed.status).toBe(200);
+    expect((listed.json as { data: { id: string }[] }).data.map((one) => one.id)).toEqual(['fake/model']);
+  });
+
+  it('reads the root models list in the dialect its headers name', async () => {
+    const served = await proxy({ ...table('http://127.0.0.1:1/v1') });
+    const openai = await send(served.port, '/models', { headers: asRoot });
+    expect((openai.json as { object: string }).object).toBe('list');
+    const anthropic = await send(served.port, '/models', { headers: { ...asRoot, 'anthropic-version': '2023-06-01' } });
+    expect(anthropic.status).toBe(200);
+    expect(anthropic.json).toMatchObject({ has_more: false });
+  });
+
+  it('refuses a method other than GET on the root models list, naming that path', async () => {
+    const served = await proxy();
+    const got = await send(served.port, '/models', { headers: asRoot, body: {} });
+    expect(got.status).toBe(405);
+    expect(got.headers['allow']).toBe('GET');
+    expect(got.json).toMatchObject({ error: { type: 'invalid_request_error', message: '/models takes GET' } });
+  });
+
+  it('leaves /messages at the root, and anything beyond the root paths, to what is below it', async () => {
+    const served = await proxy();
+    expect((await send(served.port, '/messages', { headers: asRoot, body: CALL })).status).toBe(418);
+    expect((await send(served.port, '/chat/completions/more', { headers: asRoot, body: CALL })).status).toBe(418);
+    expect((await send(served.port, '/models/more', { headers: asRoot })).status).toBe(418);
+  });
+});
+
 /*
  * The daemon, as a process: the mount and the switch.
  */
@@ -393,6 +537,8 @@ describe('GET /v1/models lists the names a caller may use', () => {
 const REPO = join(import.meta.dirname, '../../..');
 const MAIN = 'packages/server/src/main.ts';
 const BACKEND = join(import.meta.dirname, 'fixtures', 'plugin-echo');
+/** A plugin that serves a route of its own under `/plugins`, which the root paths must not take. */
+const ROUTE = join(import.meta.dirname, 'fixtures', 'plugin-route');
 
 interface Daemon {
   child: ChildProcess;
@@ -474,14 +620,34 @@ describe('the daemon serves /v1 beside /api, and only while httpApi is on', () =
     expect(one.output()).toContain('proxy: root fake/model');
   }, 30000);
 
+  it('answers the root OpenAI paths on its own port, beside a plugin route', async () => {
+    const fake = await okProvider();
+    writeConnector(fake.endpoint);
+    const one = await daemon({
+      httpApi: true,
+      plugins: [BACKEND, ROUTE],
+      modelProxy: { models: { 'fake/model': [{ provider: 'fake', id: 'fake-model' }] } },
+    });
+    expect((await send(one.port, '/chat/completions', { headers: asRoot, body: CALL })).status).toBe(200);
+    const listed = await send(one.port, '/models', { headers: asRoot });
+    expect(listed.status).toBe(200);
+    expect((listed.json as { data: { id: string }[] }).data.map((one) => one.id)).toEqual(['fake/model']);
+    // A plugin's own route still answers, and the root paths took nothing from it.
+    const routed = await send(one.port, '/plugins/plugin-route/hook', { method: 'POST', body: 'a=1' });
+    expect(routed.status).toBe(200);
+    expect((routed.json as { path: string }).path).toBe('/plugins/plugin-route/hook');
+  }, 30000);
+
   it('moves /v1 with /api to the API\'s own port', async () => {
     const fake = await okProvider();
     writeConnector(fake.endpoint);
     const one = await daemon({ httpApi: { port: 0 }, plugins: [BACKEND], modelProxy: table(fake.endpoint).proxy });
     expect(one.apiPort).toBeGreaterThan(0);
     expect((await send(one.apiPort, CHAT, { headers: asRoot, body: CALL })).status).toBe(200);
+    expect((await send(one.apiPort, '/models', { headers: asRoot })).status).toBe(200);
     const moved = await send(one.port, CHAT, { headers: asRoot, body: CALL });
     expect(moved.status).toBe(404);
+    expect((await send(one.port, '/models', { headers: asRoot })).status).toBe(404);
   }, 30000);
 
   it('answers /v1 with the 404 /api gets while httpApi is off', async () => {

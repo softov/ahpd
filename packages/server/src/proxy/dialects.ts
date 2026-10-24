@@ -9,7 +9,7 @@
  * dialect, and the listener asks this file rather than knowing either API.
  */
 
-import { isRecord, type Cost } from '@ahpd/sdk';
+import { isRecord, type Cost, type ProviderModel } from '@ahpd/sdk';
 import type { Dialect } from './providers.js';
 
 /** The path a caller posts to, by the dialect it is read as. */
@@ -32,12 +32,26 @@ export const UPSTREAM_PATHS: Readonly<Record<Dialect, string>> = {
 /** The path the models list answers at, for both dialects. */
 export const MODELS_PATH = '/v1/models';
 
+/** The path an OpenAI chat call answers at the root. */
+export const ROOT_CALL_PATH = '/chat/completions';
+
+/** The path the models list answers at the root. */
+export const ROOT_MODELS_PATH = '/models';
+
+/**
+ * The OpenAI paths that answer at the root as well as under `/v1`.
+ *
+ * Both SDKs are given `http://host:port` as their base URL, so only Anthropic's
+ * path keeps its `/v1`: `/v1/messages` has no root twin.
+ */
+export const ROOT_PATHS: readonly string[] = [ROOT_CALL_PATH, ROOT_MODELS_PATH];
+
 /** The dialect a caller's path is read as, or nothing when it is not a call. */
 export const dialectAt = (path: string): Dialect | undefined => {
   for (const [dialect, at] of Object.entries(CALLER_PATHS) as [Dialect, string][]) {
     if (path === at) return dialect;
   }
-  return undefined;
+  return path === ROOT_CALL_PATH ? 'openai-chat' : undefined;
 };
 
 /**
@@ -304,19 +318,37 @@ const makerOf = (name: string): string => name.split('/')[0] ?? name;
  *
  * OpenAI: `{ object: 'list', data: [{ id, object: 'model', created: 0, owned_by }] }`.
  * Anthropic: `{ data: [{ type: 'model', id, display_name, created_at }], has_more, first_id, last_id }`.
- * Only the names are in it: never a provider, its own id, a price or a variable.
+ * Both carry `total_count`, and each entry carries the fields OpenRouter's list
+ * has when they are known: `name`, `context_length` and `pricing`. A field a
+ * provider did not send is left out rather than written empty.
+ *
+ * Only what a caller may call is in it: never a connector, its key, its own
+ * model id or a variable.
  */
-export const modelList = (dialect: Dialect, names: readonly string[]): unknown => {
+export const modelList = (dialect: Dialect, models: readonly ProviderModel[]): unknown => {
+  const fields = (model: ProviderModel): Record<string, unknown> => ({
+    ...(model.name === undefined ? {} : { name: model.name }),
+    ...(model.context_length === undefined ? {} : { context_length: model.context_length }),
+    ...(model.pricing === undefined ? {} : { pricing: model.pricing }),
+  });
   if (dialect === 'anthropic-messages') {
     return {
-      data: names.map((id) => ({ type: 'model', id, display_name: id, created_at: '1970-01-01T00:00:00Z' })),
+      data: models.map((model) => ({
+        type: 'model',
+        id: model.id,
+        display_name: model.name ?? model.id,
+        created_at: '1970-01-01T00:00:00Z',
+        ...fields(model),
+      })),
       has_more: false,
-      first_id: names[0] ?? null,
-      last_id: names[names.length - 1] ?? null,
+      first_id: models[0]?.id ?? null,
+      last_id: models[models.length - 1]?.id ?? null,
+      total_count: models.length,
     };
   }
   return {
     object: 'list',
-    data: names.map((id) => ({ id, object: 'model', created: 0, owned_by: makerOf(id) })),
+    data: models.map((model) => ({ id: model.id, object: 'model', created: 0, owned_by: makerOf(model.id), ...fields(model) })),
+    total_count: models.length,
   };
 };

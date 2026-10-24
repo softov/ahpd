@@ -150,6 +150,8 @@ export interface ConnectorsChannel {
    * adapter with a `provider`, with its id, adapter, owner and the
    * `ModelProvider` the adapter answers from the resolved config. A provider
    * that throws leaves its connector out, and the problem is said once.
+   * An adapter with a `models` adds a `models()` bound to that open connector,
+   * so its list is read from the resolved config and the key stays here.
    * Nothing sends this answer: it is for the host, and a key can be in it.
    */
   providers(): ProviderConnector[];
@@ -811,7 +813,18 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
         const adapter = adapters[entry.connector.adapter];
         if (adapter === undefined || typeof adapter.provider !== 'function') continue;
         try {
-          listed.push({ id, adapter: adapter.name, owner: entry.connector.owner, provider: adapter.provider(entry.connector) });
+          /*
+           * The list is read here, bound to this open connector, so the caller
+           * gets the models and never the resolved config or the key.
+           */
+          const read = adapter.models;
+          listed.push({
+            id,
+            adapter: adapter.name,
+            owner: entry.connector.owner,
+            provider: adapter.provider(entry.connector),
+            ...(typeof read === 'function' ? { models: () => read(entry.connector) } : {}),
+          });
         } catch (error) {
           const line = `${id} serves no model: ${reason(error)}`;
           if (providerProblems.has(line)) continue;

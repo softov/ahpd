@@ -10,7 +10,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Principal, ProviderConnector } from '@ahpd/sdk';
 import type { ProxyCaller } from '../src/proxy/caller.js';
-import { proxyConfiguration } from '../src/proxy/providers.js';
+import { modelCatalog } from '../src/proxy/catalog.js';
+import { proxyConfiguration, type ModelEntry } from '../src/proxy/providers.js';
 import { route, upstreamUrl, type RouteOptions, type Routed } from '../src/proxy/route.js';
 
 /** A key nobody has, so a refusal or a log that held it is found by looking for it. */
@@ -34,14 +35,25 @@ const CONNECTORS: ProviderConnector[] = [
   {
     id: 'openrouter-main', adapter: 'openrouter', owner: 'host',
     provider: { endpoint: 'https://openrouter.ai/api/v1', accepts: ['openai-chat'], key: MARKER },
+    models: async () => [
+      {
+        id: 'anthropic/claude-sonnet-5.5',
+        name: 'Anthropic: Claude Sonnet 5.5',
+        context_length: 200_000,
+        pricing: { prompt: '0.000003', completion: '0.000015' },
+      },
+    ],
   },
   {
     id: 'anthropic-main', adapter: 'anthropic', owner: 'host',
     provider: { endpoint: 'https://api.anthropic.com', accepts: ['anthropic-messages'], key: MARKER },
+    models: async () => [{ id: 'claude-sonnet-5-5', context_length: 200_000 }],
   },
   {
+    // An openai-compatible endpoint names itself, so its models are `local/<id>`.
     id: 'local', adapter: 'openai-compatible', owner: 'host',
-    provider: { endpoint: 'http://127.0.0.1:1234/v1', accepts: ['openai-chat'] },
+    provider: { endpoint: 'http://127.0.0.1:1234/v1', accepts: ['openai-chat'], prefix: 'local' },
+    models: async () => [{ id: 'llama-3' }],
   },
 ];
 
@@ -216,6 +228,97 @@ describe('route', () => {
       { id: 'messages', adapter: 'openrouter', owner: 'host', provider: { endpoint: 'https://messages.test', accepts: ['anthropic-messages'], key: MARKER } },
     ];
     expect(routed(await route(table, 'm/x', 'anthropic-messages', { providers })).map((one) => one.connector)).toEqual(['messages']);
+  });
+});
+
+describe('a name the file does not hold', () => {
+  it('routes it by its provider prefix, with the rest as the provider\'s own id', async () => {
+    const [one] = routed(await over('openrouter/anthropic/claude-sonnet-5.5', 'openai-chat'));
+    expect(one?.connector).toBe('openrouter-main');
+    expect(one?.provider).toBe('openrouter');
+    expect(one?.entry).toEqual({ provider: 'openrouter', id: 'anthropic/claude-sonnet-5.5' });
+    expect(one?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(one?.key).toBe(MARKER);
+  });
+
+  it('routes an openai-compatible connector\'s models by that connector\'s id', async () => {
+    const [one] = routed(await over('local/llama-3', 'openai-chat'));
+    expect(one?.connector).toBe('local');
+    expect(one?.entry.id).toBe('llama-3');
+    expect(one?.key).toBeUndefined();
+  });
+
+  it('sends a name the list does not hold yet, so the provider answers it', async () => {
+    const [one] = routed(await over('openrouter/brand-new', 'openai-chat'));
+    expect(one?.connector).toBe('openrouter-main');
+    expect(one?.entry).toEqual({ provider: 'openrouter', id: 'brand-new' });
+    expect(one?.model).toBeUndefined();
+  });
+
+  it('keeps a name in the file over a fetched name of the same spelling', async () => {
+    const table = proxyConfiguration({
+      models: { 'openrouter/anthropic/claude-sonnet-5.5': [{ provider: 'anthropic', id: 'mine' }] },
+    });
+    const [one] = routed(await route(table, 'openrouter/anthropic/claude-sonnet-5.5', 'anthropic-messages', { providers: CONNECTORS }));
+    expect(one?.connector).toBe('anthropic-main');
+    expect(one?.entry.id).toBe('mine');
+    // And the fetched route is not a fallback when the table names nothing that speaks.
+    const refusal = refused(await route(table, 'openrouter/anthropic/claude-sonnet-5.5', 'openai-chat', { providers: CONNECTORS }));
+    expect(refusal.status).toBe(404);
+  });
+
+  it('gives a fetched name the provider\'s price and its own row', async () => {
+    const catalogue = modelCatalog({ providers: () => CONNECTORS });
+    try {
+      await catalogue.refresh();
+      const [one] = routed(await over('openrouter/anthropic/claude-sonnet-5.5', 'openai-chat', { catalog: catalogue }));
+      expect(one?.entry.price).toEqual({ input: 3, output: 15 });
+      expect(one?.model).toMatchObject({ context_length: 200_000 });
+      // A model the list does not price is routed with no price at all.
+      const [free] = routed(await over('local/llama-3', 'openai-chat', { catalog: catalogue }));
+      expect(free?.entry.price).toBeUndefined();
+    }
+    finally { catalogue.stop(); }
+  });
+
+  it('asks the policy on the whole name, once, with the adapter as the entry\'s provider', async () => {
+    const asked: ModelEntry[] = [];
+    const [one] = routed(await over('openrouter/anthropic/claude-sonnet-5.5', 'openai-chat', {
+      allowed: (entry) => { asked.push(entry); return undefined; },
+    }));
+    expect(one?.connector).toBe('openrouter-main');
+    expect(asked).toEqual([{ provider: 'openrouter', id: 'anthropic/claude-sonnet-5.5' }]);
+  });
+
+  it('answers 403 with the policy\'s sentence when it refuses the name', async () => {
+    const refusal = refused(await over('openrouter/anthropic/claude-sonnet-5.5', 'openai-chat', {
+      allowed: () => 'deny-off refuses model openrouter/anthropic/claude-sonnet-5.5',
+    }));
+    expect(refusal).toEqual({ status: 403, message: 'deny-off refuses model openrouter/anthropic/claude-sonnet-5.5' });
+  });
+
+  it('refuses a name whose connector the caller may not use, naming no connector', async () => {
+    const providers: ProviderConnector[] = [
+      { id: 'mine', adapter: 'openrouter', owner: 'user:ana', provider: { endpoint: 'https://ana.test/v1', accepts: ['openai-chat'], key: MARKER } },
+    ];
+    const refusal = refused(await route(TABLE, 'openrouter/anything', 'openai-chat', { providers, caller: person('gus') }));
+    expect(refusal.status).toBe(503);
+    expect(refusal.message).toBe('model openrouter/anything has no connector this caller may use for openrouter');
+    expect(JSON.stringify(refusal)).not.toContain('mine');
+  });
+
+  it('refuses a fetched name whose connectors are not in this dialect', async () => {
+    const refusal = refused(await over('anthropic/claude-haiku-5-5', 'openai-chat'));
+    expect(refusal).toEqual({
+      status: 404,
+      message: 'model anthropic/claude-haiku-5-5 is served in anthropic-messages, not openai-chat: call POST /v1/messages',
+      code: 'model_not_found',
+    });
+  });
+
+  it('still refuses a name with no slash as nobody serves it', async () => {
+    const refusal = refused(await over('nothing', 'openai-chat'));
+    expect(refusal).toEqual({ status: 404, message: 'model nothing is not served here', code: 'model_not_found' });
   });
 });
 

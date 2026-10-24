@@ -22,6 +22,23 @@ const fake = (answer: Response | Error) => {
   return { fetch: fetcher, calls };
 };
 
+/** What one fake `fetch` was asked, answering the n-th call with the n-th answer. */
+const sequence = (answers: (Response | Error)[]) => {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  const fetcher = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(url), ...(init === undefined ? {} : { init }) });
+    const answer = answers[calls.length - 1];
+    if (answer === undefined) throw new Error(`one call too many: ${String(url)}`);
+    if (answer instanceof Error) throw answer;
+    return answer;
+  }) as typeof fetch;
+  return { fetch: fetcher, calls };
+};
+
+/** A JSON answer, as a provider sends one. */
+const json = (value: unknown, status = 200): Response =>
+  new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+
 /** The four adapters, with a check that would answer 500 if it were reached. */
 const four = (fetcher?: typeof fetch): Record<string, Adapter> =>
   hostAdapters({ ...(fetcher === undefined ? {} : { fetch: fetcher }) });
@@ -43,6 +60,7 @@ describe('the host provider adapters', () => {
       expect(adapter.capabilities).toContainEqual(expect.objectContaining({ type: 'models' }));
       expect(adapter.icons?.length).toBeGreaterThan(0);
       expect(adapter.provider).toBeTypeOf('function');
+      expect(adapter.models).toBeTypeOf('function');
       expect(adapter.check).toBeTypeOf('function');
     }
     // OpenRouter is the one with a variant for each theme.
@@ -97,12 +115,14 @@ describe('the host provider adapters', () => {
     expect(provider(connector('openai-compatible', { endpoint: 'http://127.0.0.1:1234/v1' }))).toEqual({
       endpoint: 'http://127.0.0.1:1234/v1',
       accepts: ['openai-chat'],
+      prefix: 'one',
     });
     expect(provider(connector('openai-compatible', {
       endpoint: 'http://127.0.0.1:1234/v1', key: 'local', accepts: ['anthropic-messages'],
     }))).toEqual({
       endpoint: 'http://127.0.0.1:1234/v1',
       accepts: ['anthropic-messages'],
+      prefix: 'one',
       key: 'local',
     });
   });
@@ -160,6 +180,83 @@ describe('the host provider adapters', () => {
   it('gives each check an abort signal of its own', async () => {
     const probe = fake(new Response(null, { status: 200 }));
     await four(probe.fetch)['openai']!.check!(connector('openai', { key: 'k' }));
+    expect(probe.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('lists OpenRouter\'s models with the name, the window and the price it gives', async () => {
+    const probe = fake(json({
+      data: [
+        {
+          id: 'anthropic/claude-sonnet-5.5', name: 'Anthropic: Claude Sonnet 5.5', context_length: 200000,
+          pricing: { prompt: '0.000003', completion: '0.000015' }, architecture: { modality: 'text' },
+        },
+        { name: 'no id at all' },
+      ],
+    }));
+    const models = await four(probe.fetch)['openrouter']!.models!(connector('openrouter', { key: 'sk-or' }));
+    expect(models).toEqual([{
+      id: 'anthropic/claude-sonnet-5.5', name: 'Anthropic: Claude Sonnet 5.5', context_length: 200000,
+      pricing: { prompt: '0.000003', completion: '0.000015' },
+    }]);
+    expect(probe.calls[0]!.url).toBe('https://openrouter.ai/api/v1/models');
+    expect(HEADERS(probe.calls[0]!.init).get('authorization')).toBe('Bearer sk-or');
+  });
+
+  it('lists Anthropic\'s models a page at a time, with display_name and max_input_tokens', async () => {
+    const probe = sequence([
+      json({ data: [{ id: 'claude-a', display_name: 'Claude A', max_input_tokens: 200000 }], has_more: true, last_id: 'claude-a' }),
+      json({ data: [{ id: 'claude-b', display_name: 'Claude B' }], has_more: false, first_id: 'claude-a', last_id: 'claude-b' }),
+    ]);
+    const models = await four(probe.fetch)['anthropic']!.models!(connector('anthropic', { key: 'sk-an' }));
+    expect(models).toEqual([
+      { id: 'claude-a', name: 'Claude A', context_length: 200000 },
+      { id: 'claude-b', name: 'Claude B' },
+    ]);
+    expect(probe.calls.map((one) => one.url)).toEqual([
+      'https://api.anthropic.com/v1/models?limit=1000',
+      'https://api.anthropic.com/v1/models?limit=1000&after_id=claude-a',
+    ]);
+    expect(HEADERS(probe.calls[1]!.init).get('x-api-key')).toBe('sk-an');
+    expect(HEADERS(probe.calls[1]!.init).get('anthropic-version')).toBe('2023-06-01');
+  });
+
+  it('stops paging Anthropic when it says there is more but names no last id', async () => {
+    const probe = fake(json({ data: [{ id: 'claude-a' }], has_more: true }));
+    expect(await four(probe.fetch)['anthropic']!.models!(connector('anthropic', { key: 'sk-an' })))
+      .toEqual([{ id: 'claude-a' }]);
+    expect(probe.calls).toHaveLength(1);
+  });
+
+  it('lists OpenAI\'s models as ids alone', async () => {
+    const probe = fake(json({ object: 'list', data: [{ id: 'gpt-5.5', object: 'model' }, { object: 'model' }] }));
+    expect(await four(probe.fetch)['openai']!.models!(connector('openai', { key: 'sk-oa' })))
+      .toEqual([{ id: 'gpt-5.5' }]);
+    expect(probe.calls[0]!.url).toBe('https://api.openai.com/v1/models');
+  });
+
+  it('lists an OpenAI-compatible endpoint\'s models, with a name and a window when it gives them', async () => {
+    const probe = fake(json({ data: [{ id: 'llama-3', name: 'Llama 3', context_length: 8192 }, { no: 'id' }] }));
+    const models = await four(probe.fetch)['openai-compatible']!.models!(connector('openai-compatible', {
+      endpoint: 'http://127.0.0.1:1234/v1', key: 'local',
+    }));
+    expect(models).toEqual([{ id: 'llama-3', name: 'Llama 3', context_length: 8192 }]);
+    expect(probe.calls[0]!.url).toBe('http://127.0.0.1:1234/v1/models');
+    expect(HEADERS(probe.calls[0]!.init).get('authorization')).toBe('Bearer local');
+  });
+
+  it('calls an OpenAI-compatible list with no auth when the connector has no key', async () => {
+    const probe = fake(json({ data: [] }));
+    await four(probe.fetch)['openai-compatible']!.models!(connector('openai-compatible', { endpoint: 'http://127.0.0.1:1234/v1' }));
+    expect(HEADERS(probe.calls[0]!.init).has('authorization')).toBe(false);
+  });
+
+  it('refuses a list with its HTTP status, and never follows a redirect', async () => {
+    const refused = fake(new Response('no', { status: 401 }));
+    await expect(four(refused.fetch)['openai']!.models!(connector('openai', { key: 'k' }))).rejects.toThrow('HTTP 401');
+
+    const probe = fake(json({ data: [] }));
+    await four(probe.fetch)['openai']!.models!(connector('openai', { key: 'k' }));
+    expect(probe.calls[0]!.init?.redirect).toBe('error');
     expect(probe.calls[0]!.init?.signal).toBeInstanceOf(AbortSignal);
   });
 

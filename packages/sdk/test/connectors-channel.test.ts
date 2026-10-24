@@ -1014,6 +1014,8 @@ async function providersServed() {
           key: String(connector.config['key']),
         };
       },
+      // The list is read from the resolved config, as a real adapter's is.
+      models: async (connector: Connector) => [{ id: 'openai/gpt-5', name: `read with ${String(connector.config['key'])}` }],
     },
     webhook: {
       name: 'webhook',
@@ -1052,7 +1054,34 @@ it('lists each open connector whose adapter serves models, with its resolved key
     adapter: 'openrouter',
     owner: 'host',
     provider: { endpoint: 'https://openrouter.ai/api/v1', accepts: ['openai-chat'], key: 'sk-hosts-own' },
+    models: expect.any(Function),
   }]);
+});
+
+it('binds a connector\'s models to the open connector, and keeps its config here', async () => {
+  const { collection, connectors, vault } = await providersServed();
+  await vault.set('host:connector/work/key', 'sk-hosts-own');
+  await collection.put({
+    id: 'work',
+    adapter: 'openrouter',
+    owner: 'host',
+    config: { endpoint: 'https://openrouter.ai/api/v1', key: { $secret: 'host:connector/work/key' } },
+  });
+  await connectors.openAll();
+
+  const [row] = connectors.providers();
+  // The adapter read the resolved key, not the reference the record keeps.
+  expect(await row?.models?.()).toEqual([{ id: 'openai/gpt-5', name: 'read with sk-hosts-own' }]);
+  expect(row).not.toHaveProperty('config');
+  expect(row?.provider.key).toBe('sk-hosts-own');
+});
+
+it('gives no models to a connector whose adapter lists none', async () => {
+  const { collection, connectors } = await providersServed();
+  await collection.put({ id: 'hooks', adapter: 'webhook', owner: 'host', config: { target: 'a' } });
+  await connectors.openAll();
+
+  expect(connectors.providers()).toEqual([]);
 });
 
 it('leaves out a provider connector that is not open', async () => {

@@ -1,10 +1,10 @@
 ---
 title: The host adapters list their models
-status: todo
+status: implemented
 depends: [task-01-an-adapter-lists-its-models.md]
 layer: "server"
 refs:
-  - "[code://packages/server/src/proxy/route.ts#L92-L96](../../../../packages/server/src/proxy/route.ts#L92-L96) - `namedBy`, the rule a `prefix` is matched beside"
+  - "[code://packages/server/src/proxy/route.ts#L105](../../../../packages/server/src/proxy/route.ts#L105) - `namedBy`, the rule a `prefix` is matched beside"
   - https://openrouter.ai/docs/api-reference/list-available-models - OpenRouter's `GET /models`
   - https://docs.anthropic.com/en/api/models-list - Anthropic's `GET /v1/models`, paged with `after_id`
   - https://platform.openai.com/docs/api-reference/models/list - OpenAI's `GET /models`, ids only
@@ -42,3 +42,8 @@ The `openai-compatible` adapter answers its connector id as `prefix`.
 - The gate passes: `pnpm -s typecheck && pnpm -s build && pnpm -s boundary && pnpm -s test`.
 
 ## Resume
+
+- **Done so far:** the four host adapters answer `models`. OpenRouter keeps `name`, `context_length`, `pricing.prompt` and `pricing.completion`. Anthropic pages on `after_id` and maps `display_name` and `max_input_tokens`. OpenAI keeps ids alone. `openai-compatible` keeps `name` and `context_length`, and answers `prefix: connector.id`. A refused list throws `HTTP <status>`. `proxy-adapters.test.ts` has 20 cases.
+- **Next action:** none for this task.
+- **Open questions:** none.
+- **Watch out for:** each `models` reads the key from `connector.config`, not from the `ModelProvider` the adapter answers. A catalog built from `ProviderConnector` rows cannot call it as it stands.

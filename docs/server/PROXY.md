@@ -2,7 +2,7 @@
 
 The proxy lets a person point their own tool, Claude Code or a script, at this host and call a model by its `<maker>/<name>` with their ahpd token. The host picks the provider, calls it with the provider's own key, and streams the answer back unchanged. Policies say who may call which model, and each call is recorded against the caller's pools.
 
-A provider is a connector, made from one of the four adapters the host ships, with its key in the vault or in a daemon variable. The model names are the `modelProxy` key of the configuration, and `ahpd proxy list` shows them. This page is about adding a provider and calling a model through one.
+A provider is a connector of one of the four adapters the host ships. Its key is in the vault or in a daemon variable. Every model a provider lists is callable as `<provider>/<id>`, with no line in the file. An OpenRouter connector serves `openrouter/anthropic/claude-sonnet-5.5`, and a local endpoint serves `local/llama-3`. The `modelProxy` key holds the aliases: a `<maker>/<name>` of your own over one or more providers, and `ahpd proxy list` shows them. This page is about adding a provider and calling a model through one.
 
 ## Turning it on
 
@@ -16,10 +16,12 @@ With `httpApi.port` it moves with `/api` to the API's own port. With `httpApi` o
 
 ## Pointing a tool at it
 
+`http://127.0.0.1:<port>` is the base URL for both an OpenAI SDK and an Anthropic SDK. The OpenAI paths answer at the root as well as under `/v1`, and `/v1/messages` is Anthropic's only path.
+
 | Tool | Base URL | Credential |
 | --- | --- | --- |
 | Claude Code, an Anthropic SDK | `http://127.0.0.1:<port>` | `ANTHROPIC_API_KEY=<ahpd token>`, sent as `x-api-key` |
-| An OpenAI SDK | `http://127.0.0.1:<port>/v1` | `OPENAI_API_KEY=<ahpd token>`, sent as `Authorization: Bearer` |
+| An OpenAI SDK | `http://127.0.0.1:<port>` | `OPENAI_API_KEY=<ahpd token>`, sent as `Authorization: Bearer` |
 
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:9187 ANTHROPIC_API_KEY=$AHPD_TOKEN claude
@@ -27,11 +29,11 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:9187 ANTHROPIC_API_KEY=$AHPD_TOKEN claude
 
 | Path | Read as |
 | --- | --- |
-| `POST /v1/chat/completions` | OpenAI's chat completions (`openai-chat`) |
+| `POST /v1/chat/completions`, `POST /chat/completions` | OpenAI's chat completions (`openai-chat`) |
 | `POST /v1/messages` | Anthropic's messages (`anthropic-messages`) |
-| `GET /v1/models` | The names you may call |
+| `GET /v1/models`, `GET /models` | The names you may call |
 
-Any other path under `/v1` is 404.
+Any other path under `/v1` is 404. `/messages` at the root is not the proxy, and neither is a path under `/models` or `/chat/completions`.
 
 The `Host` may be one of the API's own names, or `127.0.0.1`, `localhost` or `[::1]` at any port, so a tunnel or an SSH forward that lands on another loopback port still reaches it. A browser `Origin` that is not the daemon's own is refused, as it is on `/api`.
 
@@ -109,11 +111,17 @@ An entry that named a provider now names the connector's id, or the adapter's na
 
 ## How a name is routed
 
-The body's `model` is a `<maker>/<name>` from the `modelProxy.models` table. The call goes to the first entry of that name, in the file's order, whose provider:
+The body's `model` is a name from the `modelProxy.models` table, or a name a provider lists.
+
+A name in the table goes to the first entry of that name, in the file's order, whose provider:
 
 1. accepts the dialect the call came in,
 2. is allowed by policy, when `policies.check` is on, and
 3. has a connector this caller may use, as the order above says.
+
+The table is for an alias: one name over one or more providers. It wins over a fetched name of the same spelling, because the table is what a person wrote.
+
+A name the table does not hold is read as `<provider>/<id>`, split at the first slash. The prefix is the adapter's name, so `openrouter/anthropic/claude-sonnet-5.5` is OpenRouter's own model `anthropic/claude-sonnet-5.5`. An `openai-compatible` connector has no vendor name, so its prefix is its own id: `local/llama-3` is the connector `local`'s model `llama-3`. Every ready connector with that prefix serves the call, in the order above. A policy is asked on the whole name, so `openrouter/*` allows every OpenRouter model. A call is sent even when the connector's list does not hold the id yet, and the provider's own 404 names the model.
 
 The body is sent unchanged except for `model`, which becomes that provider's own id. The provider's key goes in its dialect's header: `Authorization: Bearer` for `openai-chat`, `x-api-key` for `anthropic-messages`. Your token, `X-AHP-Scope`, cookies, connection headers (with any header your `Connection` header names) and the account headers below are not sent. Nothing is added to the body: an OpenAI stream that does not ask for `stream_options.include_usage` is recorded without tokens.
 
@@ -158,13 +166,28 @@ Every refusal is the dialect's own error body, so the tool shows the message. On
 
 ## The models list
 
-`GET /v1/models` lists the names you could call now: a name with at least one open connector you may use and that a policy allows you. Only the names are listed, never a connector, its id, a price or a key. It answers in Anthropic's list shape when `anthropic-version` is sent, and OpenAI's otherwise.
+`GET /v1/models` and `GET /models` list the names you could call now. First each name in the table with at least one ready connector you may use and that a policy allows you. Then each model the ready connectors list, as `<provider>/<id>`. A fetched name is listed once, from the connector the call would go to, and a name the table holds is listed from the table. Never listed: a connector, its key, or a provider's own model id on its own.
+
+Each model carries OpenRouter's fields when the provider sent them: `name`, `context_length`, and `pricing`. `pricing` is OpenRouter's shape, dollars per token as strings, such as `{ "prompt": "0.000003", "completion": "0.000015" }`. A price in the file is written per million tokens there, and is divided for this list, and it wins over the fetched price. The list carries `total_count`.
+
+It answers in Anthropic's list shape when `anthropic-version` is sent, and OpenAI's otherwise. Both shapes carry the same fields, so a fetched model shows its name and its price in either.
+
+```json
+{
+  "object": "list",
+  "data": [
+    { "id": "openai/gpt-5.5", "object": "model", "created": 0, "owned_by": "openai", "pricing": { "prompt": "0.000005", "completion": "0.00003" } },
+    { "id": "openrouter/anthropic/claude-sonnet-5.5", "object": "model", "created": 0, "owned_by": "openrouter", "name": "Anthropic: Claude Sonnet 5.5", "context_length": 200000, "pricing": { "prompt": "0.000003", "completion": "0.000015" } }
+  ],
+  "total_count": 2
+}
+```
 
 ## What is recorded
 
 Each answered call writes one usage record with `source: "proxy"`: the model name, the adapter that answered, the connector whose key paid, the tokens the answer reported, the owner (`user:<id>`, or `root:<host>` for the deployment token), the team and project, and the pools those give. A record is written when the stream ends, is cut, or fails. `ahpd usage` shows them.
 
-A record carries two costs. `providerCost` is what the provider reported, when it reported one: OpenRouter sends `usage.cost` with `cost_details`, which give the amount and what was sent and what came back. `cost` is what the pools are charged. With a `price` on the entry it is worked out from the price (`from: "price"`), with cache tokens at the input price; without one it is the provider's own figure (`from: "harness"`), so a call nobody priced is charged what it cost. A price that names one side and not the other gives no cost at all when the unnamed side has tokens, because an absent price is not a price of zero; a side priced at 0 is free.
+A record carries two costs. `providerCost` is what the provider reported, when it reported one: OpenRouter sends `usage.cost` with `cost_details`, which give the amount and what was sent and what came back. `cost` is what the pools are charged. A `price` on the entry, or a fetched `pricing` for a model the table does not hold, is the price of the call (`from: "price"`). Cache tokens are charged at the input price. Without a price, the cost is the provider's own figure (`from: "harness"`), so a call nobody priced is charged what it cost. A price that names one side and not the other gives no cost at all when the unnamed side has tokens, because an absent price is not a price of zero; a side priced at 0 is free.
 
 ## Session calls
 

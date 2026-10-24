@@ -69,6 +69,38 @@ export const MODEL_DIALECTS = ['anthropic-messages', 'openai-chat'] as const;
 export type ModelDialect = (typeof MODEL_DIALECTS)[number];
 
 /**
+ * What one model costs, as OpenRouter writes it.
+ *
+ * Each side is dollars per token, as a string, so a figure small enough to be
+ * written in exponent form keeps every digit the provider gave. A side the
+ * provider does not price is absent rather than zero.
+ */
+export interface ModelPricing {
+  /** Dollars per token of the prompt, such as `"0.000003"`. */
+  prompt?: string;
+  /** Dollars per token of the answer. */
+  completion?: string;
+}
+
+/**
+ * One model a provider connector serves, in the field names OpenRouter's list
+ * uses.
+ *
+ * An adapter answers these from its vendor's own list, so a field the vendor
+ * does not send is absent: OpenAI's list is ids alone.
+ */
+export interface ProviderModel {
+  /** The model's id on that provider, which is that provider's own spelling. */
+  id: string;
+  /** What the provider calls it, when it sends a name. */
+  name?: string;
+  /** The prompt the model reads, in tokens, when the provider says. */
+  context_length?: number;
+  /** What a call costs there, when the provider prices it. */
+  pricing?: ModelPricing;
+}
+
+/**
  * How the proxy calls one provider connector.
  *
  * An adapter that serves models answers this from the connector's config, with
@@ -82,6 +114,14 @@ export interface ModelProvider {
   accepts: ModelDialect[];
   /** The key a call goes out with; absent when the provider takes none. */
   key?: string;
+  /**
+   * What comes before a fetched model's id, as the adapter's name unless it
+   * says otherwise.
+   *
+   * An adapter with no vendor name of its own answers its connector's id here,
+   * so a local server's models are `<connector id>/<id>`.
+   */
+  prefix?: string;
 }
 
 /** One open connector that serves models, as the proxy reads it. */
@@ -94,6 +134,15 @@ export interface ProviderConnector {
   owner: ConnectorOwner;
   /** Where, how and with what key the proxy calls it. */
   provider: ModelProvider;
+  /**
+   * The models this connector serves, read from the provider's own list.
+   *
+   * The channel binds it to the open connector, so the adapter reads the
+   * resolved config and the key never leaves the channel. It is absent when
+   * the adapter has no `models`, as `provider` is absent when it has no
+   * `provider`.
+   */
+  models?: () => Promise<ProviderModel[]>;
 }
 
 /**
@@ -202,6 +251,15 @@ export interface Adapter {
    * keeps. Absent, a connector of this adapter serves no model.
    */
   provider?(connector: Connector): ModelProvider;
+  /**
+   * The models one connector serves, as its provider lists them.
+   *
+   * It reads the connector's resolved config, as `provider` does, so it calls
+   * the provider with the key the vault holds. The host reads it when the proxy
+   * starts and again every hour, so a failed read keeps the list it had. Absent,
+   * a connector of this adapter adds no model name of its own.
+   */
+  models?(connector: Connector): Promise<ProviderModel[]>;
   /**
    * Start answering for one connector.
    *

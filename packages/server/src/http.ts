@@ -19,6 +19,7 @@ import { serve, toNodeListener, type RequestHandler } from '@cofold/remote';
 import type { Runner } from '@cofold/commands';
 import { plainAnswer, routeOf, ROUTE_ROOT, serveRequests, type Door, type NodeRequestListener, type Route, type Users } from '@ahpd/sdk';
 import { authorizeOverHttp } from './commands/authorize.js';
+import { ROOT_PATHS } from './proxy/dialects.js';
 
 /** The path the API is served under, on whichever listener carries it. */
 export const API_PREFIX = '/api';
@@ -134,14 +135,15 @@ export const isUnder = (path: string, prefix: string): boolean => path === prefi
  *
  * `/api` and `/v1` and everything under them is `api`'s when the API is on
  * this port, and 404 otherwise, because a path nobody serves is not a
- * WebSocket handshake. Anything else is answered by its token, as the
+ * WebSocket handshake. The proxy's root paths, which are OpenAI's, are `api`'s
+ * on the same terms. Anything else is answered by its token, as the
  * listener answers it: 401 when the handshake would refuse the token, and 426
  * when it would admit it, because this listener speaks the protocol and a
  * plain request is not one.
  */
 export function withoutApi(door: Door, api?: RequestHandler): RequestHandler {
   return guarded((request, path) => {
-    if (isUnder(path, API_PREFIX) || isUnder(path, PROXY_PREFIX)) {
+    if (isUnder(path, API_PREFIX) || isUnder(path, PROXY_PREFIX) || ROOT_PATHS.includes(path)) {
       return api === undefined ? Promise.resolve(json(404, { message: `No API at ${path}` })) : api(request);
     }
     return plainAnswer(door, request);

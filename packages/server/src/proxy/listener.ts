@@ -19,16 +19,17 @@
 
 import type { RequestHandler } from '@cofold/remote';
 import {
-  chargeFor, decide, type Cost, type ModelUse, type Owner, type PayOrder, type Policies, type ProviderConnector, type Scope,
-  type Usage, type Users,
+  chargeFor, decide, type Cost, type ModelPricing, type ModelUse, type Owner, type PayOrder, type Policies, type ProviderConnector,
+  type ProviderModel, type Scope, type Usage, type Users,
 } from '@ahpd/sdk';
 import { foreign, guarded, isUnder, json, originRefusal, PROXY_PREFIX, type ApiOrigins } from '../http.js';
 import { callerName, callerOf, type ProxyCaller, type SessionCaller } from './caller.js';
+import { prefixOf, type ModelCatalog } from './catalog.js';
 import {
-  dialectAt, dialectOfHeaders, keyHeader, MODELS_PATH, modelList, refusalBody, usageReader,
+  dialectAt, dialectOfHeaders, keyHeader, MODELS_PATH, modelList, refusalBody, ROOT_MODELS_PATH, ROOT_PATHS, usageReader,
   type Refusal, type Tokens,
 } from './dialects.js';
-import { DIALECTS, type Dialect, type ModelEntry, type ProxyConfiguration } from './providers.js';
+import { DIALECTS, type Dialect, type ModelEntry, type ModelPrice, type ProxyConfiguration } from './providers.js';
 import { route, type Candidate } from './route.js';
 
 /** How long a provider has to send its status and headers. A local model loading its weights is slow to start. */
@@ -79,6 +80,11 @@ export interface ProxyOptions {
    * while the daemon runs is used or left at once. The answer may hold a key.
    */
   providers(): readonly ProviderConnector[];
+  /**
+   * The lists the open connectors answered, read per call. Absent when the
+   * host keeps none, and then a name outside the table has no price.
+   */
+  catalog?(): ModelCatalog | undefined;
   /**
    * Record one call's outcome for one connector, as the connectors channel
    * does: `ok` for a 2xx, and a failure with the status or the error.
@@ -281,6 +287,26 @@ const costOf = (entry: ModelEntry, tokens: Tokens): Cost | undefined => {
   const input = (prompt * (price.input ?? 0)) / 1_000_000;
   const output = (answer * (price.output ?? 0)) / 1_000_000;
   return { amount: input + output, currency: 'usd', from: 'price', input, output };
+};
+
+/**
+ * A price written per million tokens as OpenRouter writes one: dollars per
+ * token, as a string, never in exponent form.
+ *
+ * Nine places reaches below a thousandth of a cent per million tokens, which
+ * is finer than any price the file can usefully hold.
+ */
+const perToken = (value: number): string => {
+  const token = value / 1_000_000;
+  return token === 0 ? '0' : token.toFixed(9).replace(/0+$/u, '');
+};
+
+/** A file price as the list writes it, or nothing when the entry prices neither side. */
+const priced = (price: ModelPrice): ModelPricing | undefined => {
+  const prompt = price.input === undefined ? undefined : perToken(price.input);
+  const completion = price.output === undefined ? undefined : perToken(price.output);
+  if (prompt === undefined && completion === undefined) return undefined;
+  return { ...(prompt === undefined ? {} : { prompt }), ...(completion === undefined ? {} : { completion }) };
 };
 
 /** How much of a provider's refusal is read for the log: enough for its sentence, not its whole body. */
@@ -547,9 +573,11 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     const proxy = options.proxy();
     const charged = chargedAs(caller, options, proxy);
     const check = policyFor(options, charged, name, zone);
+    const catalog = options.catalog?.();
     const routed = await route(proxy, name, dialect, {
       providers: options.providers(),
       caller,
+      ...(catalog === undefined ? {} : { catalog }),
       ...(check === undefined ? {} : { allowed: check.allowed }),
     });
     if ('refusal' in routed) return refuse(routed.refusal);
@@ -695,41 +723,84 @@ export function proxyHandler(options: ProxyOptions): RequestHandler {
     return new Response(body, { status: response.status, statusText: response.statusText, headers: returnedHeaders(response.headers) });
   };
 
-  /** `GET /v1/models`: the names this caller could call now. */
-  const models = async (request: Request): Promise<Response> => {
+  /** `GET /v1/models` and `GET /models`: the names this caller could call now. */
+  const models = async (request: Request, path: string): Promise<Response> => {
     const dialect = dialectOfHeaders(request.headers);
-    if (request.method !== 'GET') return refusalBody(dialect, { status: 405, message: `${MODELS_PATH} takes GET` }, { allow: 'GET' });
+    if (request.method !== 'GET') return refusalBody(dialect, { status: 405, message: `${path} takes GET` }, { allow: 'GET' });
     const called = await callerOf(request, options, 'proxy:models');
     if ('refusal' in called) return refusalBody(dialect, called.refusal);
     const proxy = options.proxy();
     const charged = chargedAs(called.caller, options, proxy);
     const open = options.providers();
-    const names: string[] = [];
-    for (const name of Object.keys(proxy.models)) {
+    const catalog = options.catalog?.();
+    // A connector that opened since the last read is read now, so the names
+    // listed are never an hour behind the connectors that serve them.
+    await catalog?.refresh();
+
+    /** The first candidate of a name, in either dialect, or nothing when it is refused or serves nobody. */
+    const first = async (name: string): Promise<Candidate | undefined> => {
       const check = policyFor(options, charged, name, undefined);
       for (const one of DIALECTS) {
         const routed = await route(proxy, name, one, {
           providers: open,
           caller: called.caller,
+          ...(catalog === undefined ? {} : { catalog }),
           ...(check === undefined ? {} : { allowed: check.allowed }),
         });
-        if ('candidates' in routed) { names.push(name); break; }
+        if ('candidates' in routed) return routed.candidates[0];
+      }
+      return undefined;
+    };
+    /**
+     * One entry of the list: the name a caller calls, and the fields the first
+     * connector it routes to knows. A price in the file is written here as
+     * OpenRouter writes one, per token.
+     */
+    const entryOf = (name: string, candidate: Candidate, filePrice?: ModelPrice): ProviderModel => {
+      const model = candidate.model;
+      const pricing = filePrice === undefined ? model?.pricing : priced(filePrice);
+      return {
+        id: name,
+        ...(model?.name === undefined ? {} : { name: model.name }),
+        ...(model?.context_length === undefined ? {} : { context_length: model.context_length }),
+        ...(pricing === undefined ? {} : { pricing }),
+      };
+    };
+
+    const listed: ProviderModel[] = [];
+    for (const name of Object.keys(proxy.models)) {
+      const candidate = await first(name);
+      if (candidate === undefined) continue;
+      listed.push(entryOf(name, candidate, candidate.entry.price));
+    }
+    const fetched = new Set<string>();
+    for (const row of catalog?.listed() ?? []) {
+      for (const model of row.models) {
+        const name = `${prefixOf(row.connector)}/${model.id}`;
+        // A name the file holds is listed from the file, however the provider spells it.
+        if (Object.hasOwn(proxy.models, name)) continue;
+        fetched.add(name);
       }
     }
-    return new Response(`${JSON.stringify(modelList(dialect, names))}\n`, { status: 200, headers: { 'content-type': 'application/json' } });
+    for (const name of [...fetched].sort((one, two) => one.localeCompare(two))) {
+      const candidate = await first(name);
+      if (candidate === undefined) continue;
+      listed.push(entryOf(name, candidate));
+    }
+    return new Response(`${JSON.stringify(modelList(dialect, listed))}\n`, { status: 200, headers: { 'content-type': 'application/json' } });
   };
 
   return guarded(async (request, path) => {
-    if (!isUnder(path, PROXY_PREFIX)) return options.otherwise(request);
+    if (!isUnder(path, PROXY_PREFIX) && !ROOT_PATHS.includes(path)) return options.otherwise(request);
     const dialect = dialectAt(path);
     const refused = refusedGuard(request);
     if (refused !== undefined) {
-      return dialect === undefined && path !== MODELS_PATH
+      return dialect === undefined && path !== MODELS_PATH && path !== ROOT_MODELS_PATH
         ? json(403, { message: refused })
         : refusalBody(dialect ?? dialectOfHeaders(request.headers), { status: 403, message: refused });
     }
     if (dialect !== undefined) return call(request, dialect);
-    if (path === MODELS_PATH) return models(request);
+    if (path === MODELS_PATH || path === ROOT_MODELS_PATH) return models(request, path);
     return refusalBody('openai-chat', { status: 404, message: `Nothing is served at ${path}`, code: 'not_found' });
   });
 }

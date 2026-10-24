@@ -586,11 +586,23 @@ host.registerAdapter({
 - `check(connector)` is optional, and says whether the connector works with a call that needs its key. `connector` is the row `open` got. It answers `{ result, message? }`: `ok` when the service accepted the key, `denied` when it refused the credentials, `unreachable` when the service did not answer, or `failed` for anything else. The host runs it after each open: a put waits for the answer, so a put says whether the key is right, and a start does not, so a slow service cannot hold it. A check that has not answered in 10 seconds counts as `unreachable`, and one that throws is `failed` with its message. An adapter with no `check` leaves its connectors with no check.
 
 - `provider(connector)` is optional, and is how the model proxy calls a
-  connector of the adapter. It answers `{ endpoint, accepts, key? }`: where the
-  provider answers, the dialects it is called in (`openai-chat` or
-  `anthropic-messages`), and the key a call goes out with, or nothing when it
-  takes none. `connector` is the row `open` got, so a `writeOnly` field is the
-  value the vault holds. An adapter with no `provider` serves no model.
+  connector of the adapter. It answers `{ endpoint, accepts, key?, prefix? }`:
+  where the provider answers, the dialects it is called in (`openai-chat` or
+  `anthropic-messages`), the key a call goes out with, or nothing when it takes
+  none, and the first segment of a fetched model's name. `connector` is the row
+  `open` got, so a `writeOnly` field is the value the vault holds. An adapter
+  with no `provider` serves no model.
+- `models(connector)` is optional, and answers what the connector serves: a
+  promise of `{ id, name?, context_length?, pricing? }` rows, in OpenRouter's
+  field names. `connector` is the row `open` got. The channel reads it on the
+  connector it opened and hands the proxy a `models()` bound to that connector,
+  so the config and the key never leave it. The host reads each list when the
+  connector opens and again each hour, and every model in it is callable as
+  `<prefix>/<id>`: `prefix` is the adapter's name, or what `provider` answers
+  there. An `openai-compatible` connector has no vendor name, so it answers the
+  connector's id and a local server's models are `local/llama-3`. A list that
+  cannot be read keeps the one it had, and one line is written to the log. An
+  adapter with no `models` serves only the names a person writes in the file.
 - An adapter whose connectors serve models declares a `models` capability. The
   capability tells a client that the proxy may call a connector of it; the
   `provider` member says where. The host lists the open connectors whose adapter
