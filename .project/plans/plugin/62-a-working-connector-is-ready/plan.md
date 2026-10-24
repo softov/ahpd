@@ -1,7 +1,7 @@
 ---
 title: A working connector is ready, not open
 domain: plugin
-status: planned
+status: active
 priority: medium
 created: 2026-10-24
 revalidated: 2026-10-24
@@ -62,7 +62,7 @@ x-ahpd/connectors row -> stateOf -> { state: 'ready' | 'invalid' | 'unavailable'
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The connector state is ready](task-01-the-connector-state-is-ready.md) | todo | - |
+| [01 - The connector state is ready](task-01-the-connector-state-is-ready.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -70,12 +70,12 @@ x-ahpd/connectors row -> stateOf -> { state: 'ready' | 'invalid' | 'unavailable'
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-connector-state-is-ready.md](task-01-the-connector-state-is-ready.md), after proxy 04 merges, because proxy 04 changes `channel.ts`.
+- **Done so far:** [task-01-the-connector-state-is-ready.md](task-01-the-connector-state-is-ready.md) is implemented. The wire, the host and the docs name the state `ready`.
+- **Next action:** none in this repository. The by-hand check waits for ahpw's plugins plan 07.
 - **Open questions:** none.
-- **Watch out for:** "open" as a verb stays, such as `Adapter.open` and "the host opens the connector".
+- **Watch out for:** "open" as the act stays, such as `Adapter.open`, `openAll` and "the host opens the connector". The task's file list names `users-host.test.ts`, but its `state: 'open'` is a GitHub pull request's, not a connector's.
 
 ## Final verification checklist
 
 - [ ] ahpw shows "Pronto" and "Ready" on a working connector.
-- [ ] `plans/index.md` updated.
+- [x] `plans/index.md` updated.

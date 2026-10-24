@@ -239,7 +239,7 @@ it('refuses a put naming an automation and a reply', async () => {
   expect(error?.message).toContain('oneOf');
 });
 
-it('reads a stored connector with automation: true as invalid, and a connector naming an id as open', async () => {
+it('reads a stored connector with automation: true as invalid, and a connector naming an id as ready', async () => {
   const { adapter } = await started();
   const name = 'host:connector/ok/secret';
   const { collection, connectors, held } = await served({ ...adapter, by: 'webhook' });
@@ -253,6 +253,6 @@ it('reads a stored connector with automation: true as invalid, and a connector n
     records: { id: string; record: Record<string, unknown> }[];
   };
   const rows = Object.fromEntries(snapshot.records.map((one) => [one.id, one.record]));
-  expect(rows['ok']?.['state']).toBe('open');
+  expect(rows['ok']?.['state']).toBe('ready');
   expect(rows['old']?.['state']).toBe('invalid');
 });

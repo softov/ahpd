@@ -1,6 +1,6 @@
 ---
 title: The connector state is ready
-status: todo
+status: implemented
 depends: []
 layer: "sdk"
 refs:
@@ -38,3 +38,10 @@ A connector row that the host started has `state: 'ready'`, and the docs name th
 - The gate passes: `pnpm -s typecheck && pnpm -s build && pnpm -s boundary && pnpm -s test`.
 
 ## Resume
+
+- **Done so far:** `ConnectorState` is `'ready' | 'invalid' | 'unavailable'`, and `stateOf` answers `ready` for a connector the host opened. The header comment of `channel.ts` names the state `ready`. The state table in `PLUGINS.md` has a `ready` row, and the sentences that name the state say "it is ready" and "not ready". `WEBHOOKS.md` says "not ready yet". Every test that expected a connector's `state: 'open'` expects `ready`: twelve in `connectors-channel.test.ts` and one in `webhook-kind.test.ts`, whose name also says `ready`.
+- **Next action:** none. The by-hand check in ahpw waits for its own plan, plugins 07.
+- **Files:** `packages/sdk/src/connectors/channel.ts`, `packages/sdk/test/connectors-channel.test.ts`, `packages/webhook/test/webhook-kind.test.ts`, `docs/plugins/PLUGINS.md`, `docs/plugins/WEBHOOKS.md`, this task file, `plan.md` and `plans/index.md`.
+- **Open questions:** none.
+- **Departures:** the task names `packages/sdk/test/users-host.test.ts`, but its only `state: 'open'` is a GitHub pull request's state in the `github.create` fake, not a connector's. It stays `open`, so the rename does not reach it. The state value in the `x-ahpd-connectors` row is the only one that changed.
+- **Watch out for:** "open" as the act stays, such as `Adapter.open` and `openAll`. The same goes for "the host opens the connector" and "no open connector answers for that id" in `WEBHOOKS.md:72`.

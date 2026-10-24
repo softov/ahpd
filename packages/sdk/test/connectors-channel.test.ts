@@ -234,7 +234,7 @@ it('holds no adapter row, and a connector row names its adapter', async () => {
 
   expect(await ha.call('x-ahpd/connectors/put', {
     id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a' },
-  })).toMatchObject({ result: { state: 'open' } });
+  })).toMatchObject({ result: { state: 'ready' } });
 
   const rows = await iv.rows();
   expect(Object.keys(rows)).toEqual(['shared']);
@@ -252,10 +252,10 @@ it('makes two connectors of one adapter, and opens each with its own config', as
 
   expect(await cy.call('x-ahpd/connectors/put', {
     id: 'ci', adapter: 'webhook', owner: 'user:cy', title: 'CI', config: { target: 'bot://motion' },
-  })).toMatchObject({ result: { id: 'ci', adapter: 'webhook', owner: 'user:cy', title: 'CI', state: 'open' } });
+  })).toMatchObject({ result: { id: 'ci', adapter: 'webhook', owner: 'user:cy', title: 'CI', state: 'ready' } });
   expect(await cy.call('x-ahpd/connectors/put', {
     id: 'deploys', adapter: 'webhook', owner: 'user:cy', config: { target: 'automation' },
-  })).toMatchObject({ result: { id: 'deploys', state: 'open' } });
+  })).toMatchObject({ result: { id: 'deploys', state: 'ready' } });
 
   expect(opened).toEqual([
     { id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://motion' } },
@@ -263,8 +263,8 @@ it('makes two connectors of one adapter, and opens each with its own config', as
   ]);
   const rows = await cy.rows();
   expect(Object.keys(rows)).toEqual(['ci', 'deploys']);
-  expect(rows['ci']).toMatchObject({ id: 'ci', adapter: 'webhook', owner: 'user:cy', state: 'open' });
-  expect(rows['deploys']).toMatchObject({ state: 'open' });
+  expect(rows['ci']).toMatchObject({ id: 'ci', adapter: 'webhook', owner: 'user:cy', state: 'ready' });
+  expect(rows['deploys']).toMatchObject({ state: 'ready' });
   await close();
 });
 
@@ -298,7 +298,7 @@ it('keeps the stored secret when a put sends the writeOnly field empty', async (
   // A client never sees the value, so it sends the field empty rather than leaving it out.
   expect(await cy.call('x-ahpd/connectors/put', {
     id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'bot://other', secret: '' },
-  })).toMatchObject({ result: { state: 'open' } });
+  })).toMatchObject({ result: { state: 'ready' } });
 
   expect(await vault.get('user:cy/connector/ci/secret')).toBe('sk-live-1');
   expect((await collection.get('ci'))?.['config']).toEqual({
@@ -323,7 +323,7 @@ it('opens a host connector with a variable from the daemon\'s environment, and k
     owner: 'host',
     config: { target: 'bot://motion', secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } },
   })).toMatchObject({
-    result: { id: 'shared', state: 'open', config: { secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } } },
+    result: { id: 'shared', state: 'ready', config: { secret: { fromEnv: 'AHPD_TEST_CONNECTOR_KEY' } } },
   });
 
   // The adapter is given the value, and the daemon keeps nothing in the vault.
@@ -442,7 +442,7 @@ it('opens a stored connector of a registered adapter when the daemon starts', as
   expect(opened).toEqual([
     { id: 'ci', adapter: 'webhook', owner: 'host', config: { target: 'bot://motion', secret: 'right-token' } },
   ]);
-  expect((await ana.rows())['ci']).toMatchObject({ state: 'open' });
+  expect((await ana.rows())['ci']).toMatchObject({ state: 'ready' });
   await close();
 });
 
@@ -594,7 +594,7 @@ it('makes a team connector with connector:put and a membership, without team:wri
 
   expect(await di.call('x-ahpd/connectors/put', {
     id: 'team', adapter: 'webhook', owner: 'team:backend', config: { target: 'a' },
-  })).toMatchObject({ result: { state: 'open' } });
+  })).toMatchObject({ result: { state: 'ready' } });
   expect(Object.keys(await di.rows())).toEqual(['team']);
   await close();
 });
@@ -625,7 +625,7 @@ it('makes a host connector with connector:put and connector:host, and refuses co
 
   expect(await ha.call('x-ahpd/connectors/put', {
     id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a' },
-  })).toMatchObject({ result: { id: 'shared', owner: 'host', state: 'open' } });
+  })).toMatchObject({ result: { id: 'shared', owner: 'host', state: 'ready' } });
   // Making one is not removing it, which takes its own grant.
   expect(await ha.call('x-ahpd/connectors/remove', { id: 'shared' })).toMatchObject({ code: -32009 });
   // Moving it to themselves takes it from the host, which is a remove too.
@@ -804,7 +804,7 @@ it('answers a put with the check its adapter ran', async () => {
   expect(await cy.call('x-ahpd/connectors/put', {
     id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
   })).toMatchObject({
-    result: { state: 'open', health: { check: { result: 'ok', at: expect.any(String) } } },
+    result: { state: 'ready', health: { check: { result: 'ok', at: expect.any(String) } } },
   });
   expect(probe.asked).toEqual(['ci']);
   await close();
@@ -917,7 +917,7 @@ it('checks each connector when the daemon starts, without waiting for it', async
   await new Promise((done) => { setTimeout(done, 0); });
 
   const iv = await as(host, users, 'iv');
-  expect((await iv.rows())['ci']).toMatchObject({ state: 'open', health: { check: { result: 'ok' } } });
+  expect((await iv.rows())['ci']).toMatchObject({ state: 'ready', health: { check: { result: 'ok' } } });
   expect(probe.asked).toEqual(['ci']);
   await close();
 });

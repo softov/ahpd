@@ -2,7 +2,7 @@
  * `x-ahpd-connectors`: the connectors made from the adapters a host serves.
  *
  * One row for each stored connector, keyed by the connector's id, holding the
- * record as it is kept and a `state`: `open`, `invalid` when its config no
+ * record as it is kept and a `state`: `ready`, `invalid` when its config no
  * longer fits the adapter's schema or its adapter refused to open it, or
  * `unavailable` when no plugin registers its adapter any more. The adapters
  * themselves are listed on `x-ahpd-adapters`.
@@ -76,7 +76,7 @@ const NOTE_REFRESH_MS = 1000;
 const DENIED = -32009;
 
 /** The three states a connector row can be in. */
-export type ConnectorState = 'open' | 'invalid' | 'unavailable';
+export type ConnectorState = 'ready' | 'invalid' | 'unavailable';
 
 /** How a connectors channel reads its store, and who it writes a secret for. */
 export interface ConnectorsChannelOptions {
@@ -266,7 +266,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const adapter = options.adapters()[String(record.adapter)];
     if (adapter === undefined) return 'unavailable';
     if (!fits(configOf(record), adapter.schema)) return 'invalid';
-    return open.has(record.id) ? 'open' : 'invalid';
+    return open.has(record.id) ? 'ready' : 'invalid';
   };
 
   /**

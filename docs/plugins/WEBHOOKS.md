@@ -46,7 +46,7 @@ That object is the params of `x-ahpd/connectors/put`. A config that fails the ad
 
 The host writes `secret` and `verifyToken` to the vault as `host:connector/<id>/<field>`, `team:<team>/connector/<id>/<field>` or `user:<id>/connector/<id>/<field>`, and the record holds `{ "$secret": "<name>" }` in its place. A client sending the config again sends an empty field to keep the stored value. `ahpd vault list` shows the names.
 
-A connector of an adapter no loaded plugin registers stays on disk and shows as `unavailable`, and one whose config no longer fits shows as `invalid`. A call to either answers 404, and so does one to a connector that is not open yet.
+A connector of an adapter no loaded plugin registers stays on disk and shows as `unavailable`, and one whose config no longer fits shows as `invalid`. A call to either answers 404, and so does one to a connector that is not ready yet.
 
 ## The call
 

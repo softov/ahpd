@@ -638,7 +638,7 @@ and the host fills it in; with two or more, `connector` is required, with an
 Every call checks four things again, because a remove or a revoke changes them
 while the session runs:
 
-- the connector the alias names is one this host has, and it is open;
+- the connector the alias names is one this host has, and it is ready;
 - it is a connector of the tool's adapter;
 - the adapter has the action, and a `run` to run it;
 - the session's owner may read the connector, by the rule the connectors
@@ -1182,7 +1182,7 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 
 | `state` | What it says |
 | --- | --- |
-| `open` | The adapter was called and is answering |
+| `ready` | The adapter was called and is answering |
 | `invalid` | Its config no longer fits its adapter's schema, or the adapter refused to open it |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
@@ -1196,7 +1196,7 @@ Two commands change a connector, and a third checks one:
 | --- | --- | --- |
 | `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `writeOnly` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/connectors/check` | `connector:put`, and the owner's | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not open, or one whose adapter has no `check` |
+| `x-ahpd/connectors/check` | `connector:put`, and the owner's | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
 
 The owner narrows the grant. A `host` connector needs `connector:put` to be made
 and `connector:remove` to be removed, and `connector:host` beside either. A
