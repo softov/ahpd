@@ -5,13 +5,17 @@ import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
-import type { OpenedTerminal } from '../src/types/terminals.js';
+import type { CommandTerminal, Ran, RunCommand } from '../src/types/session.js';
+import type { OpenedTerminal, SpawnPty } from '../src/types/terminals.js';
 import { uriOf } from '../src/resources/resources.js';
 import { localPath } from '../src/resources/fileuri.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine,
-  peer, sdk, settle,
+  peer, sdk, settle, shellTerminals,
 } from './support/host.js';
+import { fakePty } from './support/pty.js';
+import { callsIn, openedFrom, replayed } from './support/replay.js';
+import { undeclaredIn } from './support/wire.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -29,8 +33,14 @@ beforeEach(resetSdk);
  * transcript that lost the command would be a conversation with a gap in it.
  */
 describe('a command typed into the conversation', () => {
-  const shelled = async () => {
-    const host = createHost({ path: tmpdir(), agents: [claude({ paths: [tmpdir()] })], ...machine() });
+  /** A Claude session on a host with a shell: pipes, or the pseudoterminal `pty` binds. */
+  const shelled = async (pty?: SpawnPty) => {
+    const host = createHost({
+      path: tmpdir(),
+      agents: [claude({ paths: [tmpdir()] })],
+      ...machine(),
+      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
+    });
     const p = peer();
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
@@ -39,8 +49,8 @@ describe('a command typed into the conversation', () => {
     const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string } };
     }).snapshot.state.defaultChat;
-    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-    return { host, client, peer: p, uri, chatUri };
+    const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+    return { host, client, peer: p, uri, chatUri, opened };
   };
 
   /** Wait for a turn to end, however it ended: the named one, or any. */
@@ -100,6 +110,43 @@ describe('a command typed into the conversation', () => {
     expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
     expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
     expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
+  });
+
+  /*
+   * The terminal as soon as it opens, as the reference host names its own:
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+   */
+  it('names its terminal while it runs, and says a pseudoterminal runs it', async () => {
+    const pty = fakePty();
+    const { client, peer: p, chatUri, opened } = await shelled(pty.spawn);
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+    });
+    const changed = () => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+    for (const until = Date.now() + WAIT_MS; changed() === undefined && Date.now() < until;) {
+      await new Promise((r) => { setTimeout(r, 5); });
+    }
+    // Before the command has printed anything, and with no `_meta`, which the
+    // reducer would put in place of the call's own.
+    const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+    expect(changed()?.content).toEqual([named]);
+    expect(changed()).not.toHaveProperty('_meta');
+    // A client that subscribes while the command runs reads what a watching one holds.
+    const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+    expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+
+    pty.say('built\r\n');
+    pty.exit(0);
+    const said = await ended(p, chatUri, 't1');
+    const done = said.find((one) => one.type === 'chat/toolCallComplete');
+    expect((done?.result as { content: unknown[] }).content).toEqual([
+      { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
+      { type: 'text', text: 'built\r\n' },
+    ]);
+    const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+    expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   });
 
   it('leaves the chat and the session read', async () => {
@@ -301,6 +348,59 @@ describe('a command typed into the conversation', () => {
       .find((reason): reason is string => typeof reason === 'string');
     expect(rejection).toContain('cannot run a command in a turn');
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
+  });
+});
+
+/*
+ * What a backend hears about the terminal a `!` command runs in: the terminal
+ * as soon as it opens, and whether a pseudoterminal runs it.
+ */
+describe('the terminal a command runs in', () => {
+  /** The host's `run` for one `!` command, which the case calls by hand. */
+  const commanding = async (pty?: SpawnPty): Promise<RunCommand> => {
+    const runs: RunCommand[] = [];
+    const inner = claude({ paths: [tmpdir()] });
+    const agent: Agent = { ...inner, create: (start) => ({ ...inner.create(start), ran: (_turnId, _command, run) => { runs.push(run); } }) };
+    const host = createHost({
+      path: tmpdir(),
+      agents: [agent],
+      ...machine(),
+      ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
+    });
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0']));
+    const uri = 'ahp-session:/ran';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(tmpdir())] } });
+    const chatUri = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo said-on-pipes', origin: { kind: 'user' } } } },
+    });
+    const run = runs[0];
+    if (run === undefined) throw new Error('the host handed the backend no run');
+    return run;
+  };
+
+  it('tells the backend the terminal as it opens, and that a pseudoterminal runs it', async () => {
+    const pty = fakePty();
+    const run = await commanding(pty.spawn);
+    const seen: CommandTerminal[] = [];
+    const ran = run('call-1', (terminal) => { seen.push(terminal); });
+    // Open, while the command has printed nothing and has not ended.
+    expect(seen).toEqual([{ uri: expect.stringMatching(/^ahp-terminal:/), isPty: true }]);
+    pty.say('out\r\n');
+    pty.exit(0);
+    expect(await ran).toMatchObject({ success: true, terminal: seen[0]?.uri, isPty: true, code: 0 });
+  });
+
+  it('says a command on pipes runs in no pseudoterminal', async () => {
+    const run = await commanding();
+    const seen: CommandTerminal[] = [];
+    const done: Ran = await run('call-1', (terminal) => { seen.push(terminal); });
+    expect(seen).toEqual([{ uri: done.terminal, isPty: false }]);
+    expect(done).toMatchObject({ success: true, isPty: false, output: expect.stringContaining('said-on-pipes') });
   });
 });
 
@@ -620,6 +720,29 @@ describe('a terminal a backend opens', () => {
     // shell running would be one nothing lists and nothing can stop.
     expect(listed()).toEqual([]);
     await expect(opened.waitForExit()).resolves.toBeDefined();
+  });
+
+  it('says whether a pseudoterminal runs it', async () => {
+    const opens = async (held: OpenedTerminal[], pty?: SpawnPty): Promise<void> => {
+      const host = createHost({
+        path: tmpdir(),
+        agents: [opening(held)],
+        ...machine(),
+        ...(pty === undefined ? {} : { terminals: shellTerminals({ pty }) }),
+      });
+      const client = host.accept(peer());
+      await client.handle(hello(['0.9.0']));
+      await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/shells', provider: 'claude' } });
+    };
+    const piped: OpenedTerminal[] = [];
+    await opens(piped);
+    expect(piped[0]?.isPty).toBe(false);
+    piped[0]?.release();
+
+    const bound: OpenedTerminal[] = [];
+    await opens(bound, fakePty().spawn);
+    expect(bound[0]?.isPty).toBe(true);
+    bound[0]?.release();
   });
 });
 

@@ -14,6 +14,9 @@ import { cofoldAgent, cofoldTools, sessionIdOf } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { BoundTool } from '../../sdk/src/types/agent.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
+import { fakePty } from '../../sdk/test/support/pty.js';
+import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
+import { undeclaredIn } from '../../sdk/test/support/wire.js';
 
 /*
  * One cofold turn, as a client drives it.
@@ -466,6 +469,61 @@ it('runs a !command in a shell rather than asking a model', async () => {
   expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
+});
+
+/*
+ * The reference host's own `!` command: a `terminal` call whose content names
+ * the terminal as soon as it opens.
+ * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L65-L117
+ */
+it('names a !command\'s terminal while it runs, and holds the call a watching client holds', async () => {
+  const pty = fakePty();
+  const host = createHost({
+    path: mkdtempSync(join(tmpdir(), 'ahpd-cofold-bang-')),
+    agents: [cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'never asked' }], stream: true }), memory: true })],
+    terminals: shellTerminals({ pty: pty.spawn }),
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'ahp-session:/bang';
+  const chatUri = 'ahp-chat:/bang';
+  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
+  await client.handle({ method: 'subscribe', params: { channel: uri } });
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  void client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!make preview', origin: { kind: 'user' } } } },
+  });
+  const changed = (): Note['action'] | undefined => actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged')?.action;
+  await until(() => changed() !== undefined);
+
+  // The command as the call's intention and its line, as the reference starts its own.
+  expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart')?.action.intention).toBe('make preview');
+  expect(actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallReady')?.action)
+    .toMatchObject({ invocationMessage: 'make preview', toolInput: 'make preview', confirmed: 'not-needed' });
+  const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+  expect(changed()?.content).toEqual([named]);
+  expect(changed()).not.toHaveProperty('_meta');
+  // A client that subscribes while the command runs reads the running call a
+  // watching client holds, not one still being written.
+  const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+
+  pty.say('built\r\n');
+  pty.exit(0);
+  await until(() => ended(p, chatUri));
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete');
+  expect((done?.action.result as { content: unknown[] }).content).toEqual([
+    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
+    { type: 'text', text: 'built\r\n' },
+  ]);
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
 });
 
 it('fails the turn, and not the daemon, when there is no model to run on', async () => {

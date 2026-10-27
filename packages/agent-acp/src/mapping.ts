@@ -374,7 +374,9 @@ const fileEdit = (turn: AcpTurn, diff: Diff): Bag => {
  * A call's content, as the blocks a client shows beside it.
  *
  * A terminal id is already a host terminal URI, because the bridge opened the
- * shell through the host, so the block is the one `runCommand` builds.
+ * shell through the host, so the block is the one `runCommand` builds. It says
+ * `isPty` as the session's handle does, and nothing on a turn the transcript
+ * replays, which holds no handle.
  */
 const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[] => {
   const blocks: Bag[] = [];
@@ -382,7 +384,8 @@ const contentBlocks = (turn: AcpTurn, content: ToolCallUpdate['content']): Bag[]
     if (entry.type === 'content' && entry.content.type === 'text') {
       blocks.push({ type: 'text', text: entry.content.text });
     } else if (entry.type === 'terminal') {
-      blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', isPty: false });
+      const isPty = turn.reach?.isPty(entry.terminalId);
+      blocks.push({ type: 'terminal', resource: entry.terminalId, title: 'Terminal', ...(isPty === undefined ? {} : { isPty }) });
     } else if (entry.type === 'diff') {
       blocks.push(fileEdit(turn, entry));
     }

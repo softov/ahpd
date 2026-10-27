@@ -8,12 +8,20 @@ What changed in each release of the `@ahpd/*` packages. Every package carries th
 
 - A tool call part is its `kind` and its `toolCall`, as the protocol declares one, from every agent. A client that found a call's part by an `id` beside them finds it by `toolCall.toolCallId`. A system notification part carries no `id` either.
 - An ACP session's commands are the children of one read-only `commands` directory customization, as the protocol holds a prompt, and no longer customizations of their own.
+- A pi `!` command's call is named `terminal` and shown as `Terminal`, with the command as its intention, its line and its input, as every other backend's is. It was named `shell`, shown as the command, with the command as JSON for its input.
+
+### Sessions and VS Code parity
+
+- A `!` command's call names its terminal as soon as the terminal opens, with `chat/toolCallContentChanged`, so a client watches the output arrive, as VS Code's does. A backend hears the terminal from the second argument of `Session.ran`'s `run` (`RunCommand`, `CommandTerminal`), and `Ran` and the handle of a terminal a backend opens say `isPty`. See [docs/sdk/TERMINALS.md](docs/sdk/TERMINALS.md#who-opens-one).
 
 ### Agents
 
 - Claude, ACP, cofold, pi and the bot send only what the protocol declares: no `id` on a tool call part or a notice, live or read back from a transcript. Each is driven through a host in its suite, every frame it sends and the chat a late client reads checked with the protocol's own schema. The wire suite reads the chat again after its turn, where it read only the session.
 - ACP and pi: a client that subscribes after a call ran reads the call a client that watched built, with its line, its confirmation and its result's content, as the protocol's reducer builds it.
 - Every agent on the root channel has a `description`, which `AgentInfo` requires: the backend's own, or its display name.
+- Claude, ACP, cofold and pi: a terminal a call names says `isPty` as the terminal's state does, so a client parses the VT sequences a pseudoterminal writes; it said `isPty: false` whatever ran the command. An ACP server's own terminal says it too.
+- cofold: a `!` command's call is held as a client that watched it holds it, so a client that subscribes while the command runs reads the running call, and its ready says the command as its line.
+- pi: a `!` command's call names the terminal it ran in, which a client opens to watch it and read it after.
 
 ## 0.14.0 - 2026-10-26
 

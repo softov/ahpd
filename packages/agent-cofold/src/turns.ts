@@ -1,11 +1,11 @@
 import { run } from '@cofold/agents';
 import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
 import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
+import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
 import type { TurnMapping } from './mapping.js';
-import { ruleName, toolCallPart, toolReadyAction, toolStartAction } from './tools.js';
+import { ruleName, toolCallPart, toolStartAction } from './tools.js';
 import { AGENT_ID } from './turnagent.js';
 import type { SessionContext } from './context.js';
 
@@ -406,7 +406,7 @@ export const createTurns = (
     const held = bag(next.command);
     const typed = str(held.text);
     if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, str(next.id));
+      runCommand(crypto.randomUUID(), typed, held.run as RunCommand, str(next.id));
       return;
     }
     const message = bag(next.message);
@@ -436,7 +436,7 @@ export const createTurns = (
   const runCommand = (
     turnId: string,
     command: string,
-    run: (toolCallId: string) => Promise<Ran>,
+    run: RunCommand,
     queuedMessageId?: string,
   ): void => {
     if (ctx.closed || ctx.active !== undefined) return;
@@ -445,8 +445,10 @@ export const createTurns = (
     const began = Date.now();
     const toolCallId = `${turnId}:command`;
     // The call as a part, because a client that subscribes after the command
-    // ran reads the snapshot rather than the actions it missed.
-    const part = toolCallPart(toolCallId, 'terminal', 'Terminal');
+    // ran reads the snapshot rather than the actions it missed. The command is
+    // its intention, as the reference host starts its own.
+    const part = toolCallPart(toolCallId, 'terminal', 'Terminal', undefined, undefined, command);
+    const call = bag(part.toolCall);
     ctx.active = {
       id: turnId,
       startedAt: new Date(began).toISOString(),
@@ -458,28 +460,49 @@ export const createTurns = (
       ...(queuedMessageId !== undefined ? { queuedMessageId } : {}),
     });
     retitle(command);
-    start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal'));
-    start.emit('chat', toolReadyAction(turnId, toolCallId, 'terminal', command));
+    start.emit('chat', toolStartAction(turnId, toolCallId, 'terminal', 'Terminal', undefined, undefined, command));
+    /*
+     * The ready the reference host sends for its own: the command is the line
+     * and the input, and nobody is asked. Onto the held call and into the
+     * action from one object, so a client that subscribes while the command
+     * runs reads the running call a watching client holds.
+     * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L75-L82
+     */
+    const ready: Bag = { invocationMessage: command, toolInput: command, confirmed: 'not-needed' };
+    Object.assign(call, ready, { status: 'running' });
+    start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, ...ready });
     ctx.doing('Running');
     ctx.touch();
-    void run(toolCallId).then((done) => {
+    /*
+     * The block a client opens the command's terminal from. `isPty` is the
+     * terminal's own, which a client reads to decide whether the output holds
+     * VT sequences, and it is left out where the host says nothing.
+     */
+    const terminalOf = (terminal: CommandTerminal): Bag => ({
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    });
+    void run(toolCallId, (opened) => {
       if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
       /*
-       * The terminal first, so a client can watch the output arrive.
-       *
-       * `content` is replaced rather than appended to, so the terminal
-       * reference and the text it produced go out together at the end - and
-       * the reference alone goes out as soon as there is one, which is what a
-       * client needs to start streaming.
+       * The terminal as soon as it opens, so a client watches the output
+       * arrive, as the reference host names its own. Onto the call and into
+       * the action from one object, and with no `_meta`, which the reducer
+       * would put in place of the call's.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
        */
+      const content = [terminalOf(opened)];
+      call.content = content;
+      start.emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
+    }).then((done) => {
+      if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+      // The terminal again, with how the command ended, and then the text it
+      // printed: `content` is replaced, not appended to.
       const content: Bag[] = [
         ...(done.terminal === undefined ? [] : [{
-          type: 'terminal',
-          resource: done.terminal,
-          title: 'Terminal',
-          // Pipes, not a pseudoterminal: a client reads this to decide whether
-          // the preview needs VT parsing.
-          isPty: false,
+          ...terminalOf({ uri: done.terminal, ...(done.isPty === undefined ? {} : { isPty: done.isPty }) }),
           result: {
             ...(done.code !== undefined ? { exitCode: done.code } : {}),
             ...(done.output === '' ? {} : { preview: done.output }),
@@ -494,8 +517,8 @@ export const createTurns = (
         ...(done.success ? {} : { error: { message: done.said } }),
       };
       // Into the part as well, so the snapshot a late subscriber reads holds
-      // the finished call rather than the `streaming` one it was opened with.
-      Object.assign(bag(part.toolCall), result, { status: 'completed', confirmed: 'not-needed' });
+      // the finished call rather than the running one.
+      Object.assign(call, result, { status: 'completed' });
       start.emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, result });
       const duration = Date.now() - began;
       ctx.active.state = done.success ? 'complete' : 'error';

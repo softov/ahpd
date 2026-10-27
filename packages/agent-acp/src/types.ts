@@ -421,6 +421,12 @@ export interface AcpReach {
    * reach - a file the agent created has no before to hold.
    */
   changed(path: string, before?: string): void;
+  /**
+   * Whether a pseudoterminal runs a terminal this session opened for the
+   * server, as its handle says. Nothing for one it did not open, or whose
+   * handle says nothing.
+   */
+  isPty(uri: string): boolean | undefined;
 }
 
 /**

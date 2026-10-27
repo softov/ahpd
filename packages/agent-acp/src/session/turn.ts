@@ -346,6 +346,9 @@ export function createTurn(ctx: SessionContext): Turn {
             if (before !== undefined) start.onFileEdit?.(turnId, path, 'before', before);
             start.onFileEdit?.(turnId, path, 'after');
           },
+          // A server's terminal id is the host's name for it, which the
+          // session holds its handle under.
+          isPty: (uri) => ctx.terminals.get(uri)?.handle.isPty,
         },
         // The clients' tools, read off what the host last said this session may
         // offer: a call the agent reports for one is held for the client that

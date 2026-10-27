@@ -1,6 +1,6 @@
 import type { ActiveTurn, ToolCallCompletedState, ToolCallRunningState, ToolResultTerminalContent, ToolResultTextContent } from '@microsoft/agent-host-protocol';
 import { titleFrom } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageAttachment, MessageFrom, OnWire, Ran, TurnOptions, WireTurn } from '@ahpd/sdk';
+import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, OnWire, RunCommand, TurnOptions, WireTurn } from '@ahpd/sdk';
 import { blocksFor } from './attachments.js';
 import { bag, list, str } from './common.js';
 import { EFFORTS } from './config.js';
@@ -15,7 +15,7 @@ export interface Turns {
   methods: {
     begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
     setTitle: (title: string) => void;
-    ran: (turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>, queuedAs?: string) => void;
+    ran: (turnId: string, command: string, run: RunCommand, queuedAs?: string) => void;
     steer: (id: string, text: string, attachments?: MessageAttachment[]) => boolean;
     queue: (id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions) => void;
     setDraft: (draft: Bag | undefined) => void;
@@ -287,7 +287,7 @@ export function createTurns(ctx: SessionContext): Turns {
     const held = bag(next.command);
     const typed = str(held.text);
     if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, str(next.id));
+      runCommand(crypto.randomUUID(), typed, held.run as RunCommand, str(next.id));
       return;
     }
     const message = bag(next.message);
@@ -325,7 +325,7 @@ export function createTurns(ctx: SessionContext): Turns {
   const runCommand = (
     turnId: string,
     command: string,
-    run: (toolCallId: string) => Promise<Ran>,
+    run: RunCommand,
     queuedMessageId?: string,
   ): void => {
     const turn: Bag = {
@@ -376,23 +376,35 @@ export function createTurns(ctx: SessionContext): Turns {
       invocationMessage: command, toolInput: command, confirmed: 'not-needed',
       _meta: ctx.stampStart(call),
     });
-    void run(toolCallId).then((done) => {
+    /*
+     * The block a client opens the command's terminal from. `isPty` is the
+     * terminal's own, which a client reads to decide whether the output holds
+     * VT sequences, and it is left out where the host says nothing.
+     */
+    const terminalOf = (terminal: CommandTerminal): OnWire<ToolResultTerminalContent> => ({
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    });
+    void run(toolCallId, (opened) => {
       if (ctx.active !== turn) return;
       /*
-       * The terminal first, so a client can watch the output arrive.
-       *
-       * `content` is replaced rather than appended to, so the terminal
-       * reference and the text it produced go out together at the end -
-       * and the reference alone goes out as soon as there is one, which is
-       * what a client needs to start streaming.
+       * The terminal as soon as it opens, so a client watches the output
+       * arrive, as the reference host names its own. Onto the call and into
+       * the action from one object, and with no `_meta`, which the reducer
+       * would put in place of the call's.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
        */
+      const content = [terminalOf(opened)];
+      call.content = content;
+      ctx.emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
+    }).then((done) => {
+      if (ctx.active !== turn) return;
+      // The terminal again, with how the command ended, and then the text it
+      // printed: `content` is replaced, not appended to.
       const watched = done.terminal === undefined ? [] : [{
-        type: 'terminal',
-        resource: done.terminal,
-        title: 'Terminal',
-        // Pipes, not a pseudoterminal, which is what the field is for: a
-        // client reads it to decide whether the preview needs VT parsing.
-        isPty: false,
+        ...terminalOf({ uri: done.terminal, ...(done.isPty === undefined ? {} : { isPty: done.isPty }) }),
         result: {
           ...(done.code !== undefined ? { exitCode: done.code } : {}),
           ...(done.output === '' ? {} : { preview: done.output }),
