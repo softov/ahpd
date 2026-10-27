@@ -561,12 +561,23 @@ export function createStream(ctx: SessionContext): Stream {
        */
       if (id !== undefined && ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
       const workerContent = id === undefined ? undefined : ctx.workerBlock(id);
+      /*
+       * The terminal that shows a `Bash` output too large to send, after the
+       * notice that stands in for that output in the text, which is where the
+       * reference adds it.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeMapSessionEvents.ts#L383-L391
+       */
+      const saved = id === undefined ? undefined : ctx.savedTerminals.get(id);
+      if (id !== undefined) ctx.savedTerminals.delete(id);
+      const shown = [
+        ...(workerContent !== undefined ? [workerContent] : []),
+        ...(text !== undefined ? [{ type: 'text', text }] : []),
+        ...(saved !== undefined ? [saved] : []),
+      ] as OnWire<ToolResultContent>[];
       const result = {
         success: ok,
         pastTenseMessage: said,
-        ...(text !== undefined || workerContent !== undefined
-          ? { content: [...(workerContent !== undefined ? [workerContent] : []), ...(text !== undefined ? [{ type: 'text', text }] : [])] as OnWire<ToolResultContent>[] }
-          : {}),
+        ...(shown.length > 0 ? { content: shown } : {}),
         ...(ok ? {} : { error: { message: text ?? 'The tool failed' } }),
         ...(answered !== undefined ? { structuredContent: answered } : {}),
       } satisfies Partial<OnWire<ToolCallCompletedState>>;

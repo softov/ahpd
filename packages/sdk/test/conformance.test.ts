@@ -1,11 +1,14 @@
 import { WAIT_MS } from '../../../tools/wait.ts';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { beforeEach, expect, it, vi } from 'vitest';
 import {
   changesetReducer, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer, terminalReducer,
 } from '@microsoft/agent-host-protocol';
 import type { StateAction } from '@microsoft/agent-host-protocol';
 import type { ChangesetSource } from '../src/types/changes.js';
+import type { HostOptions } from '../src/types/host.js';
 import type { Peer } from '../src/types/rpc.js';
 
 /*
@@ -80,6 +83,8 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { fileSessions } = await import('../src/sessions/sessions.js');
+const { chatUriFor, retainedTerminalOf } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
 const { uriOf } = await import('../src/resources/fileuri.js');
@@ -106,8 +111,8 @@ beforeEach(() => {
   sdk.canUseTool = undefined;
 });
 
-async function running() {
-  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+async function running(over: Partial<HostOptions> = {}) {
+  const host = createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })], ...over });
   const p = peer();
   const client = host.accept(p);
   await client.handle({
@@ -388,6 +393,63 @@ it('reduces a chat\'s background work, and shows it to a client arriving after',
   // The shell exited: the level no longer names it, and it is gone.
   await said({ type: 'system', subtype: 'background_tasks_changed', tasks: [] });
   expect((held(p, opened)[chatUri] as { backgroundWork?: unknown[] }).backgroundWork).toEqual([]);
+});
+
+it('reduces a Bash result too large to send, and serves its terminal exited with the whole output', async () => {
+  // A store that keeps a folder for each session, which is where the host
+  // keeps the output.
+  const { client, peer: p, chatUri, opened } = await running({ sessions: fileSessions({ dir: mkdtempSync(join(tmpdir(), 'ahpd-kept-')) }) });
+  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  await settle();
+  /*
+   * The file Claude saved the output to, and the notice it gave the model in
+   * its place. The structured output beside the result is what names the
+   * file, so the notice's own words for it are never read.
+   */
+  const path = join(mkdtempSync(join(tmpdir(), 'ahpd-saved-')), 'b907a98.txt');
+  const output = `BEGIN\n${'x'.repeat(40_000)}\nEND\n`;
+  writeFileSync(path, output);
+  const notice = ['<persisted-output>', `Output too large (39.1KB). Full output saved to: ${path}`, '', 'Preview (first 2KB):', 'BEGIN', '...', '</persisted-output>'].join('\n');
+  await said({
+    type: 'assistant',
+    message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_big', name: 'Bash', input: { command: 'cat big.log' } }] },
+  });
+  await said({
+    type: 'user',
+    parent_tool_use_id: null,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_big', content: notice }] },
+    tool_use_result: { stdout: output.slice(0, 30_000), stderr: '', interrupted: false, persistedOutputPath: path, persistedOutputSize: output.length },
+  });
+  const completed = (): boolean => actions(p, chatUri).some((one) => one.type === 'chat/toolCallComplete');
+  for (const until = Date.now() + WAIT_MS; !completed() && Date.now() < until;) await new Promise((r) => { setTimeout(r, 20); });
+
+  const chat = held(p, opened)[chatUri] as unknown as Chat;
+  const call = chat.activeTurn?.responseParts.find((one) => one.kind === 'toolCall')?.toolCall as { content?: { resource?: string }[] } | undefined;
+  expect(call?.content).toEqual([
+    { type: 'text', text: notice },
+    {
+      type: 'terminal',
+      resource: expect.stringMatching(/^ahp-terminal:\/\/shell\//),
+      title: 'Bash',
+      isPty: false,
+      result: { exitCode: 0, preview: 'BEGIN', truncated: true },
+    },
+  ]);
+  // Named after the call's chat, as the host holds it, and the call.
+  const resource = String(call?.content?.[1]?.resource);
+  expect(retainedTerminalOf(resource)).toEqual({ chat: chatUriFor('claude:/live'), key: 'toolu_big' });
+
+  /*
+   * The channel the call names, subscribed after the command is over: exited,
+   * with what the command wrote, rebuilt from what the host kept, with no
+   * process or channel behind it to keep alive.
+   */
+  const terminal = await client.handle({ method: 'subscribe', params: { channel: resource } }) as {
+    snapshot: { state: { lifecycle: unknown; isPty: boolean; content: { type: string; value?: string }[] } };
+  };
+  expect(terminal.snapshot.state.lifecycle).toEqual({ status: 'exited', exitCode: 0 });
+  expect(terminal.snapshot.state.isPty).toBe(false);
+  expect(terminal.snapshot.state.content).toEqual([{ type: 'unclassified', value: output }]);
 });
 
 it('reduces a chat reordered inside its session', async () => {

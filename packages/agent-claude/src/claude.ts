@@ -1,6 +1,7 @@
 import { probe } from './probe.js';
 import { serversFor } from './mcp.js';
 import { createSession, EFFORT_LABELS, EFFORTS } from './session.js';
+import { restoreSavedOutputs } from './session/savedoutput.js';
 import { turnsOf, subagentsOf } from './transcript.js';
 import { catalogue, findSession, forgetSession, transcriptOf } from './catalog.js';
 import { offeredModels, ownModels, type ModelEntry, type ModelSource, type OfferedModel } from './models.js';
@@ -537,9 +538,19 @@ export function claude(options: ClaudeOptions): Agent {
     // transcript reader wants the one the session ran in, and asking the store
     // about this one id is what says so, rather than listing every directory
     // to find out.
-    transcript: async (id, at) => {
+    transcript: async (id, at, outputs) => {
       const found = await findSession(dirs, id, at?.workingDirectory);
-      return found === undefined ? undefined : await turnsOf(id, found.dir);
+      if (found === undefined) return undefined;
+      const turns = await turnsOf(id, found.dir);
+      /*
+       * The transcript holds what the model was sent, so a `Bash` call whose
+       * output was too large to send comes back with Claude's notice alone.
+       * The host still keeps the output, and the call names its terminal again,
+       * as the reference restores a call after building the turns.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2008-L2009
+       */
+      if (outputs !== undefined) restoreSavedOutputs(turns, outputs);
+      return turns;
     },
 
     /*
@@ -679,6 +690,9 @@ export function claude(options: ClaudeOptions): Agent {
       // And the host's output-terminal factory, which is where a background
       // shell's output goes: the host owns the channel, this backend the text.
       ...(start.outputTerminals ? { outputTerminals: start.outputTerminals } : {}),
+      // The outputs the host keeps for this chat, which is where a `Bash`
+      // result too large to send keeps the output Claude saved for it.
+      ...(start.terminalOutputs ? { terminalOutputs: start.terminalOutputs } : {}),
       /*
        * A pushed token, as the variable the CLI reads.
        *
