@@ -2,6 +2,12 @@
 
 What changed in each release of the `@ahpd/*` packages. Every package carries the same version. Releases before 0.11.0 are in the git history.
 
+## 0.14.1 - unreleased
+
+### Agents
+
+- Claude: a call that a stopped turn was in stays cancelled when the CLI answers it after the stop. A client that subscribes later reads what a client that watched built, no `chat/toolCallComplete` without a `turnId` is sent, and the stopped session does not say it is thinking again. An edit such a call made is recorded under its own turn. See [docs/sdk/CHATS.md](docs/sdk/CHATS.md#turns).
+
 ## 0.14.0 - 2026-10-26
 
 ### Upgrading
