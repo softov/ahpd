@@ -73,6 +73,9 @@ const frame = (kind: 'user' | 'assistant', uuid: string, message: unknown): Reco
   type: kind, uuid, timestamp: '2020-01-01T00:00:00.000Z', message,
 });
 
+/** The question a restored worker asked. */
+const picking = { question: 'Which step first?', header: 'Step', multiSelect: false, options: [{ label: 'One' }, { label: 'Two' }] };
+
 const CONFIG = mkdtempSync(join(tmpdir(), 'ahpd-restore-'));
 const before = process.env.CLAUDE_CONFIG_DIR;
 process.env.CLAUDE_CONFIG_DIR = CONFIG;
@@ -145,9 +148,19 @@ function laid(): { project: string; session: string } {
   ].map(line).join(''));
   // A meta file naming only the kind of worker: no task to be named by.
   writeFileSync(join(subagents, 'agent-e5.meta.json'), JSON.stringify({ agentType: 'Plan', toolUseId: 'toolu_third', spawnDepth: 1 }));
+  // A worker that asked a question and was answered, the answers on the
+  // result's entry as the CLI writes them.
   writeFileSync(join(subagents, 'agent-e5.jsonl'), [
     frame('user', 'su5', { role: 'user', content: 'plan it' }),
     frame('assistant', 'sa5', { id: 'sm5', model: 'claude-opus-5', content: [{ type: 'text', text: 'Three steps.' }] }),
+    frame('assistant', 'sa6', {
+      id: 'sm6', model: 'claude-opus-5',
+      content: [{ type: 'tool_use', id: 'toolu_pick', name: 'AskUserQuestion', input: { questions: [picking] } }],
+    }),
+    {
+      ...frame('user', 'su6', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_pick', content: 'Answered.' }] }),
+      toolUseResult: { questions: [picking], answers: { 'Which step first?': 'Two' } },
+    },
   ].map(line).join(''));
   // Neither a meta file nor a suffix, so nothing names the call that ran it.
   writeFileSync(join(subagents, 'agent-c3.jsonl'), [
@@ -192,6 +205,16 @@ it('reads a session\'s subagents back, their turns and the call that ran each', 
 
   // And the one with neither is left out, not linked to somebody else's call.
   expect(found?.some((one) => one.title === 'Orphan')).toBe(false);
+});
+
+it('keeps the answers of a question a restored worker asked', async () => {
+  laid();
+  const agent = claude({ paths: [DIR] });
+  const worker = (await agent.subagents?.(SESSION))?.find((one) => one.toolCallId === 'toolu_third');
+  const parts = (worker?.turns.flatMap((turn) => turn.responseParts as Bag[]) ?? []);
+  const call = parts.map((part) => part.toolCall as Bag | undefined).find((one) => one?.toolCallId === 'toolu_pick');
+  expect(call?.structuredContent).toEqual({ questions: [picking], answers: { 'Which step first?': 'Two' } });
+  expect(parts.some((part) => part.kind === 'inputRequest' && part.response === 'accept')).toBe(true);
 });
 
 it('lists a restored session\'s worker chats and serves each one read-only', async () => {
