@@ -29,6 +29,7 @@ import type { Spawn } from './spawn.js';
 import type { Lifecycle } from './lifecycle.js';
 import type { Tooling } from './tooling.js';
 import type { Terminals } from './terminals.js';
+import type { Outputs } from './outputs.js';
 import type { Background } from './background.js';
 import type { Automations } from './automations.js';
 import type { SessionEvents } from './sessionevents.js';
@@ -45,7 +46,7 @@ import type { Merged } from './merged.js';
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Automations, Sleep, Wakes, Merged {
+export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Facts, Telemetry, Auth, Owners, Machines, SessionConfig, Root, Catalogue, History, Snapshots, Spawn, Lifecycle, Tooling, Terminals, Outputs, Automations, Sleep, Wakes, Merged {
   /** The background tasks a backend reported, by chat. */
   background: Background;
   /** The options `createHost` was given. */

@@ -9,7 +9,7 @@ import type { Emit, PlanUpdate, Session, SubagentChat, SubagentRequest } from '.
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Account, Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
-import type { StartTerminals, OutputTerminals } from './terminals.js';
+import type { StartTerminals, OutputTerminals, TerminalOutputs } from './terminals.js';
 import type { BackgroundTasks } from './background.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
 import type { ComputerPort } from './computers.js';
@@ -352,6 +352,15 @@ export interface Start {
    * from the machine.
    */
   outputTerminals?: OutputTerminals;
+  /**
+   * The terminal outputs the host keeps for this chat, for a backend with an
+   * output no process of the host's wrote.
+   *
+   * Kept in the session's own folder, so an output outlives a sleep and a
+   * restart, and goes with its turn, its chat or its session. Left out when the
+   * session store keeps no folder for the session, and then nothing is kept.
+   */
+  terminalOutputs?: TerminalOutputs;
   /**
    * The host's tools, as an MCP server this session's backend may point its
    * own client at.
@@ -847,8 +856,13 @@ export interface Agent {
    * content blocks no `type`.
    *
    * `at` is the session's recorded folder, as `find` is handed it.
+   *
+   * `outputs` is what the host keeps for the chat this conversation is, where
+   * it keeps anything. A transcript holds what the model was sent and not what
+   * a client was shown, so a backend that kept an output while the call ran
+   * names it on the call read back, and the call shows its terminal again.
    */
-  transcript?(id: string, at?: SessionAt): Promise<WireTurn<Turn>[] | undefined>;
+  transcript?(id: string, at?: SessionAt, outputs?: TerminalOutputs): Promise<WireTurn<Turn>[] | undefined>;
 
   /**
    * The worker chats one past session holds, read without starting anything.

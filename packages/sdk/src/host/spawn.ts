@@ -1015,6 +1015,7 @@ export function createSpawn(ctx: HostContext): Spawn {
       planUpdates.add(settled);
       void settled.then(() => { planUpdates.delete(settled); }, () => { planUpdates.delete(settled); });
     };
+    const terminalOutputs = ctx.outputsFor(uri, chatUri);
     const wired: Start = {
       uri,
       chatUri,
@@ -1047,6 +1048,9 @@ export function createSpawn(ctx: HostContext): Spawn {
        * is no process here to spawn, only a channel to write text into.
        */
       outputTerminals: ctx.heldOutputs(uri),
+      // The outputs this chat keeps after their terminals are gone, where the
+      // store keeps the session a folder to hold them in.
+      ...(terminalOutputs === undefined ? {} : { terminalOutputs }),
       ...(options.computers !== undefined ? { computers: computersFor(options.computers, agent.provider, uri, kept.owner(idOf(uri))) } : {}),
       /*
        * The MCP servers, when there are any.

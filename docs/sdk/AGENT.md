@@ -83,7 +83,7 @@ const host = createHost({ path, agents: [shout()] });
 | `directories()` | The directories you will work in | optional |
 | `list()` | Sessions somebody can browse | optional |
 | `find(id, at?)` | One of those, on its own, for an id the host has not got | optional |
-| `transcript(id, at?)` | One of those, as turns - a read, with nothing started | optional |
+| `transcript(id, at?, outputs?)` | One of those, as turns - a read, with nothing started | optional |
 | `subagents(id, turns?, at?)` | The worker chats one of those holds - a read, with nothing started | optional |
 | `protectedResources` | RFC 9728 metadata for anything you can be given a token for | optional |
 | `stateFile(id, directory)` | Where your own record of a session is, for the window to open or pack into a bug report | optional |
@@ -127,6 +127,19 @@ when the host recorded the session's folder, and absent when it did not.
 Look for the session there first and in your own directories after, so a
 session that ran in a subfolder, a worktree or any folder you do not serve
 still opens after a restart.
+
+**`outputs` is what the host kept for that chat's terminals.** A tool call may
+name a terminal, and a client opens it for as long as the chat lasts, with no
+process behind it once it has exited. An output no terminal of the host's
+printed - a file your harness saved for a result too large to send - is kept
+with `start.terminalOutputs.keep(key, output, exitCode)`, and the call names
+`start.terminalOutputs.uri(key)`; a subscribe to that name is answered with an
+exited terminal holding the output ([TERMINALS.md](TERMINALS.md#a-terminal-a-tool-result-names)).
+A transcript holds what the model was sent and not what a client was shown, so
+a call read back names its terminal again where `outputs.has(key)` says the
+output is kept. Both are absent where the session store keeps no folder for the
+session, and a `!` command's terminal or one opened with `start.terminals`
+needs neither: the host keeps what those print itself.
 
 ## `Session`
 

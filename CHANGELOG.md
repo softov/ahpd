@@ -2,6 +2,12 @@
 
 What changed in each release of the `@ahpd/*` packages. Every package carries the same version. Releases before 0.11.0 are in the git history.
 
+## 0.14.1 - unreleased
+
+### Sessions and VS Code parity
+
+- A terminal a tool call names opens for as long as its chat lasts. A `!` command's terminal and a terminal a backend opens are named `ahp-terminal://shell/<chat>/<key>`, and what each printed is kept in the session's folder when it exits. A subscribe that no live terminal answers gets the exited terminal back: after a client disposed it, after the backend released it, and after the daemon started again. What is kept goes with its turn on a truncation, with its chat and with its session, and moves with its chat. A backend keeps an output of its own with `Start.terminalOutputs`, and a transcript read is handed the outputs of the chat it reads. See [docs/sdk/TERMINALS.md](docs/sdk/TERMINALS.md#a-terminal-a-tool-result-names).
+
 ## 0.14.0 - 2026-10-26
 
 ### Upgrading

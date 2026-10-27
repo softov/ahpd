@@ -245,6 +245,9 @@ export interface OpenedTerminal {
    * gone, because a shell the host no longer lists and a backend no longer
    * holds is a process nothing can reach and nothing can stop. `kill` is for
    * ending one that should stay listed.
+   *
+   * A tool call that names it still opens it: the host kept what it printed
+   * when it exited, and a client that subscribes is answered from that.
    */
   release(): void;
 }
@@ -302,4 +305,29 @@ export interface OutputTerminal {
 export interface OutputTerminals {
   /** Open one, on a channel of the host's own, held by the session's chat. */
   create(options: { title: string; chat: string }): OutputTerminal;
+}
+
+/**
+ * The terminal outputs the host keeps for one chat, after their terminal is gone.
+ *
+ * A tool result that names a terminal names it for as long as its chat lasts,
+ * and the protocol lets a host serve an exited one from what it kept rather
+ * than from a process. So a backend with an output that no process wrote, such
+ * as a file its harness saved, keeps the text here under a key of its own, and
+ * names `uri(key)` in the call's content: a client that subscribes is answered
+ * an exited terminal rebuilt from it, after a sleep and after a restart.
+ *
+ * The host keeps what its own terminals print the same way, so a backend that
+ * names a `!` command's terminal or one it opened needs nothing from this.
+ */
+export interface TerminalOutputs {
+  /** The name a call gives the output kept under a key. */
+  uri(key: string): string;
+  /** Whether an output is kept under a key. */
+  has(key: string): boolean;
+  /**
+   * Keep an output under a key: its text and the code it exited with, when
+   * there is one. Answers whether it was kept, which it is not over 10 MB.
+   */
+  keep(key: string, output: string, exitCode?: number): boolean;
 }

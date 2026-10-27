@@ -306,7 +306,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `terminal/claimed` | both | ✅ | Who the terminal belongs to - a client, or a session that opened it for a `!` command. |
 | `terminal/titleChanged` | both | ✅ | Set by a client, or defaulted to the shell's own name. |
 | `terminal/cwdChanged` | host | ✅ | Read out of the shell's own OSC 7, so it is a fact rather than a guess. Under a pseudoterminal only. |
-| `terminal/exited` | host | ✅ | Announced when the pipes drain rather than when the process goes: between the two there is output written and not yet read, which is exactly what a `!` command reads back. |
+| `terminal/exited` | host | ✅ | Announced when the pipes drain rather than when the process goes: between the two there is output written and not yet read, which is exactly what a `!` command reads back. A terminal a tool call names is still a channel once nothing live answers for it: a subscribe gets the exited state rebuilt from the output this host kept, and nothing after it - [TERMINALS.md](TERMINALS.md#a-terminal-a-tool-result-names). |
 | `terminal/cleared` | both | ✅ | Drops the scrollback and keeps the size, the title and the claim - a client clears a terminal to stop reading what is there, not to give it up. Nothing reaches the process, which has no notion of its own output being discarded. |
 | `terminal/commandDetectionAvailable` | host | ✅ | Said once at the start, under a pseudoterminal. A client MUST check this before relying on command boundaries. |
 | `terminal/commandExecuted` | host | ✅ | From the shell's OSC 133 `C` mark, with the command line read back off what was typed since the prompt. |

@@ -184,6 +184,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
      */
     const was = [...held.chats.keys()];
     kept.moveChat(idOf(found.uri), idOf(into), chatUri, turns);
+    // And the outputs its terminals kept, which are the chat's own.
+    ctx.moveChatOutputs(found.uri, into, chatUri);
     // Stopped rather than disposed: the chat is started again below, in the
     // session it moved to, and it resumes the conversation it had.
     found.chat.close('stopping');
@@ -214,6 +216,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        * for a move it refused.
        */
       kept.moveChat(idOf(into), idOf(found.uri), chatUri, turns);
+      ctx.moveChatOutputs(into, found.uri, chatUri);
       byChat.delete(chatUri);
       claims.set(chatUri, { kind: 'chat', of: found.uri });
       if (to === undefined) {
@@ -1407,6 +1410,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const own = found.chat.agentId() ?? ctx.recordedChat(idOf(found.uri), chatUri)?.backendId;
       dropChat(found.uri, chatUri);
+      // And the outputs its terminals kept: a chat that is gone names nothing.
+      ctx.forgetChatOutputs(found.uri, chatUri);
       /*
        * And what the backend holds of it, when a closed chat is deleted rather
        * than hidden. The chat
