@@ -21,6 +21,8 @@ import type { Start } from '../../sdk/src/types/agent.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
 import type { LoaderContext } from '../../sdk/src/types/plugin.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import { undeclaredIn } from '../../sdk/test/support/wire.js';
+import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 
 /*
  * A chat with a bot is a session with no harness.
@@ -751,6 +753,32 @@ it('shows the back session as a subagent call on each turn', async () => {
   expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
   // And the line a restart reads holds the same two parts.
   expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: turn['id'], state: 'complete', responseParts: parts });
+});
+
+it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: CHAT } }));
+  const chat = turns(HELD);
+  const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
+  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+
+  // A client's message as the protocol declares one, with its origin.
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello', origin: { kind: 'user' } } } },
+  });
+  chat.reply('done');
+
+  const late = await client.handle({ method: 'subscribe', params: { channel: CHAT } });
+  const calls = ((((late as Bag)['snapshot'] as Bag)['state'] as Bag)['turns'] as Bag[])
+    .flatMap((turn) => turn['responseParts'] as Bag[])
+    .filter((part) => part['kind'] === 'toolCall');
+  expect(calls).toHaveLength(1);
+  expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: CHAT }, result: late }])).toEqual([]);
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, CHAT)));
 });
 
 it('refuses a chat with a bot that is not there', async () => {

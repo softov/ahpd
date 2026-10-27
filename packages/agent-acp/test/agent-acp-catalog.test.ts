@@ -591,7 +591,11 @@ it('reports a command the server advertises as a customization', async () => {
   const { session, watch } = start(agent, 'commands');
   await runTurn(session, watch, 't1', 'hi');
 
-  const plan = session.customizations().find((one) => one.name === 'plan');
+  // A child of the one directory that holds the server's commands, which is
+  // where the protocol holds a prompt.
+  const commands = session.customizations().find((one) => one.id === 'directory:commands');
+  expect(commands).toMatchObject({ type: 'directory', contents: 'prompt', enabled: true, writable: false });
+  const plan = (commands?.children as Bag[] | undefined)?.find((one) => one.name === 'plan');
   expect(plan).toMatchObject({ type: 'prompt', id: 'command:plan', enabled: true, description: 'Draft a plan' });
   expect(watch.actions.some((one) => one.channel === 'session'
     && one.action.type === 'session/customizationsChanged')).toBe(true);
@@ -900,12 +904,14 @@ it('reads back no part for a message that was only whitespace, with the ids the 
   await runTurn(session, watch, 't1', 'blank it');
 
   const turns = await agent.transcript?.(String(session.agentId()));
-  const parts = turns?.[0]?.responseParts as { id: string; kind?: string; content?: string }[];
+  const parts = turns?.[0]?.responseParts as Bag[];
   expect(parts.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
   expect(parts.map((part) => part.content)).toEqual(['first thought', undefined, 'second thought', ' \nthe answer']);
-  const live = session.allTurns()[0]?.responseParts as { id: string }[];
-  expect(parts.map((part) => part.id)).toEqual(live.map((part) => part.id));
-  expect(parts.map((part) => part.id)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+  // A prose part's own id, and a call's on the call: a tool call part has none.
+  const idOf = (part: Bag): unknown => (part.kind === 'toolCall' ? (part.toolCall as Bag).toolCallId : part.id);
+  const live = session.allTurns()[0]?.responseParts as Bag[];
+  expect(parts.map(idOf)).toEqual(live.map(idOf));
+  expect(parts.map(idOf)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
 });
 
 it('reaches the server for permissionMode and model, and refuses another key naming it', async () => {
@@ -1440,8 +1446,8 @@ it('says when a call started and ended, and reads back with the same numbers', a
   // The same call, read back out of what this process kept.
   const turns = await agent.transcript?.(String(session.agentId()));
   const parts = turns?.[0]?.responseParts as Bag[];
-  const held = parts.find((one) => one.id === 'call-later')?.toolCall as Bag;
-  expect(held._meta).toEqual(times);
+  const held = parts.map((one) => one.toolCall as Bag | undefined).find((call) => call?.toolCallId === 'call-later');
+  expect(held?._meta).toEqual(times);
 });
 
 it('starts a call at the first update about it, and ends it at the one that finished it', () => {
@@ -1463,7 +1469,7 @@ it('stamps a call whose row a permission question opened at its first update', (
   // The row a `session/request_permission` opened, left the way the session
   // leaves it for the mapping to find: a call nobody has heard anything about.
   turn.calls.set('c1', { toolCallId: 'c1', toolName: 'rm', displayName: 'Remove', readied: true, asked: true });
-  turn.parts.push({ id: 'c1', kind: 'toolCall', toolCall: { toolCallId: 'c1', toolName: 'rm', displayName: 'Remove', status: 'streaming' } });
+  turn.parts.push({ kind: 'toolCall', toolCall: { toolCallId: 'c1', toolName: 'rm', displayName: 'Remove', status: 'streaming' } });
 
   const sent = mapUpdate(turn, {
     sessionUpdate: 'tool_call_update',

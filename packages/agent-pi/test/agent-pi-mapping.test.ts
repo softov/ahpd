@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Bag, Start } from '../../sdk/src/types/index.js';
 import { activityOf, mapEvent, resultText } from '../src/mapping.js';
-import { answer, driveCall, opened, settled, streamed, turn } from './fake-pi.js';
+import { answer, callIn, driveCall, opened, settled, streamed, turn } from './fake-pi.js';
 
 // Mapping -----------------------------------------------------------------
 
@@ -116,8 +116,9 @@ it('opens no part for a text block that is only whitespace, live and replayed', 
   const sent: Bag[] = [];
   for (const content of messages) for (const event of streamed(content)) sent.push(...mapEvent(live, event));
   const seen = live.parts.map((p) => [p.id, p.kind, p.kind === 'toolCall' ? (p.toolCall as Bag).toolCallId : p.content]);
+  // A tool call part has no id of its own: the id is its call's.
   expect(seen).toEqual([
-    ['u1:1:0', 'reasoning', 'THINK-1'], ['c1', 'toolCall', 'c1'], ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
+    ['u1:1:0', 'reasoning', 'THINK-1'], [undefined, 'toolCall', 'c1'], ['u1:2:0', 'reasoning', 'THINK-2'], ['u1:2:1', 'markdown', 'REPLY'],
   ]);
   expect(sent.filter((a) => a.type === 'chat/delta').map((a) => a.content)).toEqual(['REPLY']);
 
@@ -233,7 +234,7 @@ it('says when a live call started and ended, on its ready and its complete', asy
   expect(metaOf(ready)['ahpd.endedAt']).toBeUndefined();
   expect(timed(complete)).toBe(true);
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(timed(parts.find((one) => one.id === 'c1')?.toolCall as Bag)).toBe(true);
+  expect(timed(callIn(parts, 'c1'))).toBe(true);
 });
 
 it('says when a call started, on the start pi opened the row for', async () => {
@@ -279,7 +280,7 @@ it('starts an approved call when it was approved, and says none for a denied one
   expect(metaOf(denied)['ahpd.durationMs']).toBeUndefined();
   // And the snapshot the person would read says the same.
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect((parts.find((one) => one.id === 'c2')?.toolCall as Bag)._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
+  expect(callIn(parts, 'c2')?._meta ?? {}).not.toHaveProperty('ahpd.startedAt');
   clock.mockRestore();
 });
 
@@ -307,7 +308,7 @@ it('gives a replayed call the times of the entries that ran it', async () => {
     },
   ];
   const { turns } = replayEntries(entries as never);
-  const row = turns[0]!.parts.find((one) => one.id === 'c1')?.toolCall as Bag;
+  const row = callIn(turns[0]!.parts, 'c1') as Bag;
   // pi's own times, not the moment this process read the file.
   expect(row._meta).toMatchObject({
     'ahpd.startedAt': '2020-01-01T00:00:05.000Z',
@@ -330,6 +331,6 @@ it('never writes a bare timing key on a pi tool call', async () => {
     expect(keys, String(action.type)).not.toContain('endedAt');
     expect(keys, String(action.type)).not.toContain('durationMs');
   }
-  const keys = Object.keys((parts.find((one) => one.id === 'c1')?.toolCall as Bag)._meta as Bag);
+  const keys = Object.keys(callIn(parts, 'c1')?._meta as Bag);
   expect(keys).not.toContain('startedAt');
 });

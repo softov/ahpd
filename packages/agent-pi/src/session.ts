@@ -34,7 +34,7 @@ import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf as saidFor, addUsage, describe, mapEvent, readyRow, untime } from './mapping.js';
+import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -340,7 +340,7 @@ export function piSession(
   const releasePending = (why: string): void => {
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
-      const part = mapping?.parts.find((one) => one.id === id);
+      const part = mapping === undefined ? undefined : callPartOf(mapping, id);
       if (part !== undefined) {
         bag(part.toolCall).status = 'cancelled';
         // The question was cancelled, so the call never ran: the start
@@ -530,7 +530,7 @@ export function piSession(
     const input = bag(event.input);
     const displayName = event.toolName;
     const turnId = active === undefined ? '' : String(active.id);
-    const part = mapping?.parts.find((one) => one.id === id);
+    const part = mapping === undefined ? undefined : callPartOf(mapping, id);
     const row = part === undefined ? undefined : bag(part.toolCall);
     const owner = mapping?.ownerOf?.(event.toolName);
     const contributor = owner === undefined
@@ -1117,7 +1117,6 @@ export function piSession(
     const toolCallId = `${turnId}:shell`;
     const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
     const part: Bag = {
-      id: toolCallId,
       kind: 'toolCall',
       toolCall: { toolCallId, toolName: 'shell', displayName: command, status: 'running' },
     };
@@ -1129,36 +1128,27 @@ export function piSession(
     });
     const held = bag(part.toolCall);
     held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
-    emit('chat', {
-      type: 'chat/toolCallReady',
-      turnId,
-      toolCallId,
-      invocationMessage: command,
-      confirmed: 'not-needed',
-      toolInput: JSON.stringify({ command }),
-      _meta: held._meta,
-    });
+    /*
+     * Onto the held call and into the action, from one object: the snapshot a
+     * client reads later is the call a client watching was sent.
+     */
+    const ready: Bag = { invocationMessage: command, confirmed: 'not-needed', toolInput: JSON.stringify({ command }) };
+    Object.assign(held, ready);
+    emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, ...ready, _meta: held._meta });
     activity.say(`Running ${command}`);
 
     void run(toolCallId).then((ran) => {
-      held.status = 'completed';
-      held.success = ran.success;
-      held.pastTenseMessage = ran.said;
+      const result: Bag = {
+        success: ran.success,
+        pastTenseMessage: ran.said,
+        ...(ran.output === '' ? {} : { content: [{ type: 'text', text: ran.output }] }),
+        ...(ran.success
+          ? {}
+          : { error: { message: ran.code === undefined ? ran.said : `Exited ${ran.code}` } }),
+      };
+      Object.assign(held, result, { status: 'completed' });
       held._meta = withCallTimes(bag(held._meta), callTimes(startOf(held._meta) ?? Date.now(), Date.now()));
-      emit('chat', {
-        type: 'chat/toolCallComplete',
-        turnId,
-        toolCallId,
-        _meta: held._meta,
-        result: {
-          success: ran.success,
-          pastTenseMessage: ran.said,
-          ...(ran.output === '' ? {} : { content: [{ type: 'text', text: ran.output }] }),
-          ...(ran.success
-            ? {}
-            : { error: { message: ran.code === undefined ? ran.said : `Exited ${ran.code}` } }),
-        },
-      });
+      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, _meta: held._meta, result });
       finish('complete');
     }).catch((error: unknown) => {
       finish('error', reason(error));
@@ -1357,7 +1347,7 @@ export function piSession(
       pending.delete(toolCallId);
       emit('session', { type: 'session/inputNeededRemoved', id: held.id });
       const toolCall = bag(held.entry.toolCall);
-      const part = mapping?.parts.find((one) => one.id === toolCallId);
+      const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
       let times: Bag | undefined;
       if (part !== undefined) {
         const row = bag(part.toolCall);

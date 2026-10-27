@@ -28,9 +28,14 @@ const textOf = (content: ContentBlock): string | undefined =>
 const written = (value: unknown): string | undefined =>
   (value === undefined ? undefined : JSON.stringify(value));
 
-/** The part this turn already holds under an id. */
-const partOf = (turn: AcpTurn, id: string): Bag | undefined =>
-  turn.parts.find((held) => held.id === id);
+/**
+ * The tool call part this turn holds for a call, found by the call's own id.
+ *
+ * A tool call part is a kind and a call, as the protocol declares one, so the
+ * id it is found by is the one on the call.
+ */
+export const callPartOf = (turn: { parts: Bag[] }, callId: string): Bag | undefined =>
+  turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === callId);
 
 /**
  * The id of the turn's plan call.
@@ -117,7 +122,6 @@ const callOf = (turn: AcpTurn, update: ToolCall | ToolCallUpdate): AcpCall => {
   // A call ends the run of message chunks before it, held whitespace and all.
   delete turn.waiting;
   turn.parts.push({
-    id: update.toolCallId,
     kind: 'toolCall',
     toolCall: {
       toolCallId: update.toolCallId,
@@ -183,14 +187,21 @@ const mayReady = (call: AcpCall): boolean => started(call.status) && !call.asked
  */
 const ready = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag => {
   call.readied = true;
-  return {
-    type: 'chat/toolCallReady',
-    turnId: turn.turnId,
-    toolCallId: call.toolCallId,
+  const said: Bag = {
     invocationMessage: call.displayName,
     confirmed: 'not-needed',
     ...(input === undefined ? {} : { toolInput: input }),
     ...contributorOf(call),
+  };
+  // Onto the held call and into the action, from one object, so the snapshot
+  // a late client reads is the running call a client watching was sent.
+  const held = callPartOf(turn, call.toolCallId);
+  if (held !== undefined) Object.assign(bag(held.toolCall), said, { status: 'running' });
+  return {
+    type: 'chat/toolCallReady',
+    turnId: turn.turnId,
+    toolCallId: call.toolCallId,
+    ...said,
     ...metaOf(turn, call),
   };
 };
@@ -208,12 +219,6 @@ const running = (turn: AcpTurn, call: AcpCall, input: string | undefined): Bag[]
   if (call.owner !== undefined && !finished) turn.onRunning?.(call);
   return [ready(turn, call, input)];
 };
-
-/**
- * The tool-call part held in the snapshot, opened lazily for an update that arrived first.
- */
-const callPartOf = (turn: AcpTurn, callId: string): Bag | undefined =>
-  partOf(turn, callId);
 
 /**
  * A call's times, as the `_meta` an action about it carries.
@@ -284,24 +289,31 @@ const opened = (turn: AcpTurn, call: AcpCall): Bag[] => [{
 const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] => {
   stampEnd(turn, call, at);
   const success = call.status === 'completed';
-  const part = callPartOf(turn, call.toolCallId);
-  const held = part === undefined ? undefined : bag(part.toolCall);
-  if (held !== undefined) {
-    held.status = 'completed';
-    held.success = success;
-    held.pastTenseMessage = call.displayName;
-  }
   const text = contentText(content);
+  const result: Bag = {
+    success,
+    pastTenseMessage: call.displayName,
+    ...(content.length === 0 ? {} : { content }),
+    ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
+  };
+  /*
+   * Onto the held call and into the action, from one object, as the ready is.
+   *
+   * The protocol's reducer builds a completed call from the running one and
+   * the result, and what the call showed while it ran is not carried over:
+   * a client that watched holds the result's content and no other.
+   */
+  const part = callPartOf(turn, call.toolCallId);
+  if (part !== undefined) {
+    const held = bag(part.toolCall);
+    delete held.content;
+    Object.assign(held, result, { status: 'completed' });
+  }
   return [...actions, {
     type: 'chat/toolCallComplete',
     turnId: turn.turnId,
     toolCallId: call.toolCallId,
-    result: {
-      success,
-      pastTenseMessage: call.displayName,
-      ...(content.length === 0 ? {} : { content }),
-      ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
-    },
+    result,
     ...metaOf(turn, call),
   }];
 };
@@ -312,14 +324,19 @@ const closed = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at
  * An update carrying a status alone carries nothing to replace, and a client
  * given an empty content change would draw an empty call.
  */
-const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] =>
-  content.length === 0 ? actions : [...actions, {
+const shown = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[]): Bag[] => {
+  if (content.length === 0) return actions;
+  // The reducer takes a content change for a running call and no other.
+  const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
+  if (held.status === 'running') held.content = content;
+  return [...actions, {
     type: 'chat/toolCallContentChanged',
     turnId: turn.turnId,
     toolCallId: call.toolCallId,
     content,
     ...metaOf(turn, call),
   }];
+};
 
 /** A call's content, as the actions that carry it on whichever update brought it. */
 const drawn = (turn: AcpTurn, call: AcpCall, content: Bag[], actions: Bag[], at?: number): Bag[] =>

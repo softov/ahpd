@@ -165,7 +165,9 @@ export function createRoot(ctx: HostContext): Root {
   const descriptors = (): Bag[] => [...agents.values()].map((agent) => ({
     provider: agent.provider,
     displayName: agent.displayName,
-    ...(agent.description ? { description: agent.description } : {}),
+    // Required on `AgentInfo`, and a backend may say none: one that does not
+    // is described by its name.
+    description: agent.description || agent.displayName,
     /*
      * With the provider on each, which `SessionModelInfo` requires.
      *

@@ -270,10 +270,8 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
    * because its deltas are already on the wire.
    */
   let held: { kind: 'reasoning' | 'text'; text: string }[] = [];
-  /** How many compactions this turn has reported, which numbers the parts. */
+  /** How many compactions this turn has reported, after which a command's own output says nothing new. */
   let compactions = 0;
-  /** How many notices runtime commands added to this turn, which numbers the parts. */
-  let commands = 0;
   /** Whether a runtime command started this turn, which words its compaction as asked for. */
   let commanded = false;
 
@@ -437,7 +435,6 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
         case 'context.compacted': {
           compactions += 1;
           const part: Bag = {
-            id: `${turnId}:compact:${compactions}`,
             kind: 'systemNotification',
             content: compactionNotice(
               { before: event.estimatedTokens, after: event.afterTokens },
@@ -461,8 +458,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
           return only([]);
         case 'command.finished': {
           if (event.output === undefined || event.output === '' || compactions > 0) return only([]);
-          commands += 1;
-          const part: Bag = { id: `${turnId}:command:${commands}`, kind: 'systemNotification', content: event.output };
+          const part: Bag = { kind: 'systemNotification', content: event.output };
           parts.push(part);
           return only([{ type: 'chat/responsePart', turnId, part: { ...part } }]);
         }
@@ -566,7 +562,7 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
            * otherwise be an entry naming a row no client has.
            */
           if (held === undefined) {
-            parts.push({ id: event.callId, kind: 'toolCall', toolCall: call });
+            parts.push({ kind: 'toolCall', toolCall: call });
             actions.push(toolStartAction(turnId, event.callId, event.name, displayName, owner, meta, intention));
           } else {
             held.awaited = true;

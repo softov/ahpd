@@ -2,6 +2,19 @@
 
 What changed in each release of the `@ahpd/*` packages. Every package carries the same version. Releases before 0.11.0 are in the git history.
 
+## 0.14.1 - unreleased
+
+### Upgrading
+
+- A tool call part is its `kind` and its `toolCall`, as the protocol declares one, from every agent. A client that found a call's part by an `id` beside them finds it by `toolCall.toolCallId`. A system notification part carries no `id` either.
+- An ACP session's commands are the children of one read-only `commands` directory customization, as the protocol holds a prompt, and no longer customizations of their own.
+
+### Agents
+
+- Claude, ACP, cofold, pi and the bot send only what the protocol declares: no `id` on a tool call part or a notice, live or read back from a transcript. Each is driven through a host in its suite, every frame it sends and the chat a late client reads checked with the protocol's own schema. The wire suite reads the chat again after its turn, where it read only the session.
+- ACP and pi: a client that subscribes after a call ran reads the call a client that watched built, with its line, its confirmation and its result's content, as the protocol's reducer builds it.
+- Every agent on the root channel has a `description`, which `AgentInfo` requires: the backend's own, or its display name.
+
 ## 0.14.0 - 2026-10-26
 
 ### Upgrading

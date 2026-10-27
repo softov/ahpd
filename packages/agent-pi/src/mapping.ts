@@ -27,11 +27,21 @@ import type { Bag } from '@ahpd/sdk';
 import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
 import type { PiCall, PiTurn } from './types.js';
 
-/** The part this turn already holds under an id. */
-const partOf = (turn: PiTurn, id: string): Bag | undefined => turn.parts.find((held) => held.id === id);
+/** The prose part this turn already holds under its id. */
+const partOf = (turn: PiTurn, id: string): Bag | undefined =>
+  turn.parts.find((held) => held.kind !== 'toolCall' && held.id === id);
+
+/**
+ * The tool call part this turn holds for a call, found by the call's own id.
+ *
+ * A tool call part is a kind and a call, as the protocol declares one, so the
+ * id it is found by is the one on the call.
+ */
+export const callPartOf = (turn: { parts: Bag[] }, id: string): Bag | undefined =>
+  turn.parts.find((held) => held.kind === 'toolCall' && bag(held.toolCall).toolCallId === id);
 
 /** A tool call's row, which is where the times are kept between the events. */
-const rowOf = (turn: PiTurn, id: string): Bag | undefined => bag(partOf(turn, id)?.toolCall);
+const rowOf = (turn: PiTurn, id: string): Bag | undefined => bag(callPartOf(turn, id)?.toolCall);
 
 /**
  * A call's bag with its start stamped, which is when pi began running it.
@@ -94,7 +104,6 @@ function openCall(turn: PiTurn, toolCallId: string, toolName: string): PiCall {
   turn.calls.set(toolCallId, call);
   const owner = turn.ownerOf?.(toolName);
   turn.parts.push({
-    id: toolCallId,
     kind: 'toolCall',
     toolCall: {
       toolCallId,
@@ -416,7 +425,7 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
       const call = callOf(turn, event.toolCallId, event.toolName);
       const success = !event.isError;
       const text = resultText(event.result);
-      const held = bag(partOf(turn, call.toolCallId)?.toolCall);
+      const held = bag(callPartOf(turn, call.toolCallId)?.toolCall);
       const said = call.said ?? call.displayName;
       /*
        * A call still `streaming` was never readied: pi failed it before its
@@ -427,19 +436,31 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
        */
       const unreadied = held.status === 'streaming';
       const owner = turn.ownerOf?.(call.toolName);
+      const readied: Bag = {
+        invocationMessage: said,
+        confirmed: 'not-needed',
+        ...(owner !== undefined ? { contributor: { kind: 'client', clientId: owner } } : {}),
+      };
+      const result: Bag = {
+        success,
+        pastTenseMessage: said,
+        ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
+        ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
+      };
       /*
        * A call a person declined is already `cancelled`. pi reports the block
        * as a failed execution, and a result does not reopen a row somebody
        * answered no to.
+       *
+       * Otherwise onto the held call and into the actions, from one object
+       * each. The protocol's reducer builds a completed call from the running
+       * one and the result, and what the call showed while it ran is not
+       * carried over, so the held call keeps the result's content and no other.
        */
       if (held.status !== 'cancelled') {
-        held.status = 'completed';
-        held.success = success;
-        held.pastTenseMessage = said;
-        if (unreadied) {
-          held.invocationMessage = said;
-          held.confirmed = 'not-needed';
-        }
+        if (unreadied) Object.assign(held, readied);
+        delete held.content;
+        Object.assign(held, result, { status: 'completed' });
         stampEnd(held, when);
       }
       // The whole bag on both, because an action's `_meta` replaces the call's.
@@ -448,20 +469,13 @@ export function mapEvent(turn: PiTurn, event: AgentSessionEvent, at?: number): B
         type: 'chat/toolCallReady',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
-        invocationMessage: said,
-        confirmed: 'not-needed' as const,
-        ...(owner !== undefined ? { contributor: { kind: 'client' as const, clientId: owner } } : {}),
+        ...readied,
         ...meta,
       }] : []), {
         type: 'chat/toolCallComplete',
         turnId: turn.turnId,
         toolCallId: call.toolCallId,
-        result: {
-          success,
-          pastTenseMessage: said,
-          ...(text === '' ? {} : { content: [{ type: 'text', text }] }),
-          ...(success ? {} : { error: { message: text === '' ? 'The tool failed' : text } }),
-        },
+        result,
         ...meta,
       }];
     }

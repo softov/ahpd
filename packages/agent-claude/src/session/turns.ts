@@ -366,7 +366,7 @@ export function createTurns(ctx: SessionContext): Turns {
     // As a part, the way every other call is held: the bare call went
     // into the snapshot with no `kind`, so a client that subscribed after
     // the command ran had a row it could not draw.
-    ctx.holdPart(turn, { id: toolCallId, kind: 'toolCall', toolCall: call });
+    ctx.holdPart(turn, { kind: 'toolCall', toolCall: call });
     ctx.emit('chat', {
       type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal',
       displayName: 'Terminal', intention: command, _meta: { toolKind: 'terminal' },

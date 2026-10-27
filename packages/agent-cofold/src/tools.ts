@@ -283,7 +283,6 @@ export const toolCallPart = (
   meta?: Bag,
   intention?: string,
 ): Bag => ({
-  id: callId,
   kind: 'toolCall',
   toolCall: {
     toolCallId: callId,

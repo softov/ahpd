@@ -218,7 +218,7 @@ export function createStream(ctx: SessionContext): Stream {
           ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         };
-        const part: Bag = { id, kind: 'toolCall', toolCall: call };
+        const part: Bag = { kind: 'toolCall', toolCall: call };
         scope.parts.set(id, part);
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {
@@ -402,7 +402,7 @@ export function createStream(ctx: SessionContext): Stream {
           ...(input !== undefined ? { toolInput: input } : {}),
         } satisfies OnWire<ToolCallRunningState>;
         if (open === undefined) {
-          const part: Bag = { id, kind: 'toolCall', toolCall: call };
+          const part: Bag = { kind: 'toolCall', toolCall: call };
           scope.parts.set(id, part);
           ctx.holdPart(turn, part);
         }

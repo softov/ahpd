@@ -14,7 +14,7 @@ import type { AgentSessionEvent, SessionEntry } from '@earendil-works/pi-coding-
 import type { AssistantMessage } from '@earendil-works/pi-ai';
 import type { Bag, SessionAt } from '@ahpd/sdk';
 import { lookupDirectories } from './catalog.js';
-import { mapEvent, readyRow, usageOf } from './mapping.js';
+import { callPartOf, mapEvent, readyRow, usageOf } from './mapping.js';
 import { loadPi } from './pi.js';
 import type { PiOptions, PiTurn, WatchedTurn } from './types.js';
 
@@ -168,7 +168,7 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
           const input = (block.arguments ?? {}) as Bag;
           update({ type: 'toolcall_start' });
           raise(turn, { type: 'tool_execution_start', toolCallId: block.id, toolName: block.name, args: input }, at);
-          const row = turn.parts.find((one) => one.id === block.id)?.toolCall as Bag | undefined;
+          const row = callPartOf(turn, String(block.id))?.toolCall as Bag | undefined;
           if (row !== undefined) readyRow(row, block.name, input, { confirmed: 'not-needed' });
         }
       });

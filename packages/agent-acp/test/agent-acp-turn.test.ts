@@ -293,7 +293,8 @@ it('opens no part for a message that is only whitespace, and keeps the whitespac
   expect(kept.map((part) => part.kind)).toEqual(['reasoning', 'toolCall', 'reasoning', 'markdown']);
   expect(kept.map((part) => part.content ?? part.toolCall?.toolCallId))
     .toEqual(['first thought', 'call-2', 'second thought', ' \nthe answer']);
-  expect(kept.map((part) => part.id)).toEqual(['t1:0', 'call-2', 't1:2', 't1:3']);
+  // A prose part's own id; a tool call part has none, as the protocol declares it.
+  expect(kept.map((part) => part.id)).toEqual(['t1:0', undefined, 't1:2', 't1:3']);
 
   // The held whitespace goes out with the words it came before, in their part.
   const said = actions(p, chatUri).map((e) => e.action);

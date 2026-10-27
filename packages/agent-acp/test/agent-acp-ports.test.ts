@@ -13,6 +13,9 @@ import { anyone, signIn } from './people.js';
 import type { ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { checker } from '../../../tools/wire.mjs';
+import { undeclaredIn } from '../../sdk/test/support/wire.js';
+import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
+import type { Bag } from '@ahpd/sdk';
 
 /*
  * The ports an ACP server reaches for.
@@ -290,6 +293,41 @@ it('asks the person, and answers with the once option they chose', async () => {
   // `allow_once`, never `allow_always`: the server offered both, and approving
   // one call is not agreeing to every call.
   expect(prose(p, chatUri)).toContain('perm=yes-once');
+});
+
+it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  // A client's message as the protocol declares one, with its origin.
+  const begin = (turnId: string, text: string): void => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+    });
+  };
+  // A call the server reports, a call the server asks about first, and a
+  // person's own shell command, each of which holds a tool call part.
+  begin('t1', 'tool now');
+  await endedTurn(p, chatUri, 1);
+  begin('t2', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true } },
+  });
+  await endedTurn(p, chatUri, 2);
+  begin('t3', '!echo declared');
+  await endedTurn(p, chatUri, 3);
+
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const calls = ((((late as Bag).snapshot as Bag).state as Bag).turns as Bag[])
+    .flatMap((turn) => turn.responseParts as Bag[])
+    .filter((part) => part.kind === 'toolCall')
+    .map((part) => String((part.toolCall as Bag).toolCallId));
+  expect(calls).toEqual(expect.arrayContaining(['call-1', 'call-perm']));
+  expect(calls.length).toBe(3);
+  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 });
 
 /** The fixture's three options, as the protocol offers them: approve before deny, in the server's order. */

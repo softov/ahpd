@@ -26,7 +26,7 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { hostPathOf, str } from '@ahpd/sdk';
 import type { Bag, BackgroundTask, BoundTool, OpenTerminal, Session } from '@ahpd/sdk';
-import { confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
+import { callPartOf, confirmationOptions, contentOf, mapUpdate, questionsFor, typedOf } from '../mapping.js';
 import type { PermissionAnswer } from '../types.js';
 import { bag } from './common.js';
 import { HOST_TOOLS, machineIdOf } from './opening.js';
@@ -110,6 +110,23 @@ export function createHandlers(ctx: SessionContext): Handlers {
     ...(command.description === '' ? {} : { description: command.description }),
     ...(command.input === null || command.input === undefined ? {} : { argumentHint: command.input.hint }),
   });
+
+  /*
+   * The server's commands, as the protocol holds prompts: the children of a
+   * container, never customizations of their own. They are the server's and
+   * no folder a client could write into, so one read-only directory holds
+   * them, under the URI their own `acp-command:` URIs extend.
+   */
+  const commandsIn = (leaves: Bag[]): Bag[] => (leaves.length === 0 ? [] : [{
+    type: 'directory',
+    id: 'directory:commands',
+    uri: `acp-command:${provider}`,
+    name: 'commands',
+    contents: 'prompt',
+    enabled: true,
+    writable: false,
+    children: leaves,
+  }]);
 
   /*
    * A terminal the server opened, as background work once its call has ended.
@@ -239,7 +256,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
       return;
     }
     if (update.sessionUpdate === 'available_commands_update') {
-      ctx.commands = update.availableCommands.map(commandLeaf);
+      ctx.commands = commandsIn(update.availableCommands.map(commandLeaf));
       emit('session', { type: 'session/customizationsChanged', customizations: [...seeds, ...ctx.commands] });
       return;
     }
@@ -543,7 +560,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     // a reported call: the name it gave, and the title only when it named none.
     const owner = ctx.ownerOf(request.toolCall.name ?? undefined, request.toolCall.title ?? toolCallId);
     const contributor: Bag = owner === undefined ? {} : { contributor: { kind: 'client', clientId: owner } };
-    const existing = ctx.mapping?.parts.find((one) => one.id === toolCallId);
+    const existing = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     const call = existing === undefined ? {
       toolCallId,
       toolName: request.toolCall.name ?? request.toolCall.title ?? toolCallId,
@@ -563,7 +580,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     delete call.confirmed;
     if (existing === undefined && ctx.mapping !== undefined) {
       Object.assign(call, contributor);
-      ctx.mapping.parts.push({ id: toolCallId, kind: 'toolCall', toolCall: call });
+      ctx.mapping.parts.push({ kind: 'toolCall', toolCall: call });
       emit('chat', {
         type: 'chat/toolCallStart', turnId, toolCallId,
         toolName: call.toolName, displayName: call.displayName,
@@ -875,7 +892,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     permissions.delete(toolCallId);
     emit('session', { type: 'session/inputNeededRemoved', id: held.requestId });
     const picked = held.offered.find((one) => one.id === optionId && one.kind === (approved ? 'approve' : 'deny'));
-    const part = ctx.mapping?.parts.find((one) => one.id === toolCallId);
+    const part = ctx.mapping === undefined ? undefined : callPartOf(ctx.mapping, toolCallId);
     if (part !== undefined) {
       const call = bag(bag(part).toolCall);
       call.status = approved ? 'running' : 'cancelled';

@@ -500,7 +500,6 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       const toolCallId = `call-${crypto.randomUUID()}`;
       const meta: Bag = { toolKind: 'subagent', subagentChatUri: chat };
       const part: Bag = {
-        id: toolCallId,
         kind: 'toolCall',
         toolCall: { toolCallId, toolName: 'subagent', displayName: title, status: 'streaming', _meta: meta },
       };
@@ -601,7 +600,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         ...(original['riskAssessment'] === undefined ? {} : { riskAssessment: original['riskAssessment'] }),
         ...(original['editable'] === undefined ? {} : { editable: original['editable'] }),
       };
-      const part: Bag = { id: toolCallId, kind: 'toolCall', toolCall };
+      const part: Bag = { kind: 'toolCall', toolCall };
       if (known === undefined) {
         held.responseParts.push(part);
         held.asked.push({ id, part });

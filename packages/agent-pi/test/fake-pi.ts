@@ -34,6 +34,10 @@ export let root: string;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'ahpd-pi-')); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); forget(); });
 
+/** The call some parts hold for a tool call id, found on the call, where the protocol puts the id. */
+export const callIn = (parts: Bag[], id: string): Bag | undefined =>
+  parts.map((part) => part.toolCall as Bag | undefined).find((call) => call?.toolCallId === id);
+
 export const turn = (turnId = 't1'): PiTurn => ({
   turnId,
   messages: 0,

@@ -67,7 +67,7 @@ export function createQueue(ctx: SessionContext): Queue {
       status: 'running',
       _meta: callTimes(began),
     };
-    const part: Bag = { id: toolCallId, kind: 'toolCall', toolCall: call };
+    const part: Bag = { kind: 'toolCall', toolCall: call };
     ctx.active = {
       id: turnId,
       startedAt: new Date(began).toISOString(),

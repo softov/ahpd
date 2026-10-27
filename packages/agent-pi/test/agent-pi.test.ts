@@ -11,7 +11,7 @@ import { idOf, modelFor, offered, THINKING_KEY } from '../src/models.js';
 import { optionsOf } from '../src/plugin.js';
 import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
-import { driveCall, fakePi, opened, root, settled, streamed } from './fake-pi.js';
+import { callIn, driveCall, fakePi, opened, root, settled, streamed } from './fake-pi.js';
 
 /*
  * pi as a backend, without a model provider.
@@ -144,7 +144,7 @@ it('skips a call the model was still writing when the turn stopped, in the snaps
   session.cancel('t1');
   await settled();
   const turns = session.chatState().turns as Bag[];
-  const row = (turns[0]?.responseParts as Bag[]).find((one) => one.id === 'c1')?.toolCall as Bag;
+  const row = callIn(turns[0]?.responseParts as Bag[], 'c1');
   expect(row).toMatchObject({ status: 'cancelled', reason: 'skipped' });
 });
 
