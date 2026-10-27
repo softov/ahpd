@@ -1,7 +1,7 @@
 ---
 title: A stopped call stays stopped
 domain: claude
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -74,7 +74,7 @@ cancel -> the turn goes into the history, its parts stay open
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A late result changes nothing](task-01-a-late-result-changes-nothing.md) | todo | - |
+| [01 - A late result changes nothing](task-01-a-late-result-changes-nothing.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,13 +83,13 @@ cancel -> the turn goes into the history, its parts stay open
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-late-result-changes-nothing.md](task-01-a-late-result-changes-nothing.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a test must give the result after `cancel`, or the call is still in the active turn and the old code passes.
 
 ## Final verification checklist
 
-- [ ] The new cases fail on the session before this change.
-- [ ] `pnpm boundary`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass.
-- [ ] `plans/index.md` updated.
+- [x] The new cases fail on the session before this change.
+- [x] `pnpm boundary`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass.
+- [x] `plans/index.md` updated.
