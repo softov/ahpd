@@ -1,7 +1,7 @@
 ---
 title: A restored question keeps its answers
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -55,6 +55,7 @@ subagentsOf -> readJsonl (toolUseResult on the entry) -> buildTurns reads block.
 | `buildTurns` reads the answers from the `toolUseResult` of the entry that holds the result. | Claude Code's transcripts, where the field is on the entry | 01 |
 | `turnsOf` reads the file of the session for the entries whose `toolUseResult` has answers, and puts that field on the message with the same `uuid`. | The module reads the CLI's own files where the SDK's reader gives nothing, [code://packages/agent-claude/src/transcript.ts#L72-L94](../../../../packages/agent-claude/src/transcript.ts#L72-L94) | 01 |
 | The file is read one line at a time with `node:readline`, and only a line that names `answers` is parsed. | https://nodejs.org/api/readline.html#example-read-file-stream-line-by-line, and the length limit of one string under Node | 01 |
+| The file is read only when the messages hold the result of an `AskUserQuestion` call, and only as far as the last such entry. | (defaulted: a full read of a 128 MB file added about 0.8 s to its restore) | 01 |
 | The fixture writes `toolUseResult` on the entry, and the mocked `getSessionMessages` leaves it out, as the SDK does. | The SDK's `SessionMessage` in npm://@anthropic-ai/claude-agent-sdk@0.3.301 | 01 |
 
 ## Proposed architecture
@@ -69,22 +70,22 @@ subagentsOf -> readJsonl (toolUseResult on the entry) -> buildTurns reads block.
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The answers come from the entry](task-01-the-answers-come-from-the-entry.md) | todo | - |
+| [01 - The answers come from the entry](task-01-the-answers-come-from-the-entry.md) | done | - |
 
 ## Risks and tradeoffs
 
-- A restore reads the file of the session a second time, after the SDK.
-  Each line is scanned for `answers`, and only those lines are parsed.
+- A restore of a session with an answered question reads its file a second time, after the SDK.
+  The read stops at the last such entry, and it took about 6 ms for each megabyte it read here.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-answers-come-from-the-entry.md](task-01-the-answers-come-from-the-entry.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a fixture must put `toolUseResult` where the CLI writes it, or the old code passes.
 
 ## Final verification checklist
 
-- [ ] The restored cases fail on the module before this change.
-- [ ] `pnpm boundary`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass.
-- [ ] `plans/index.md` updated.
+- [x] The restored cases fail on the module before this change.
+- [x] `pnpm boundary`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass.
+- [x] `plans/index.md` updated.
