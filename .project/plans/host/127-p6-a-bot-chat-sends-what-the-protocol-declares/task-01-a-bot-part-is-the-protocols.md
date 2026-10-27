@@ -1,6 +1,6 @@
 ---
 title: A bot part is the protocol's
-status: todo
+status: done
 depends: []
 layer: "bot"
 refs:
@@ -29,4 +29,8 @@ Every tool call part of a bot chat holds `kind` and `toolCall`.
 - The bot suite passes.
 
 ## Resume
+
+Done 2026-10-27.
+The two tool call parts have no `id`.
+The case fails before this change, and passes after it.
 

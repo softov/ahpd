@@ -1,6 +1,6 @@
 ---
 title: A Claude part is the protocol's
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -43,4 +43,8 @@ The wire suite reads the chat after its turn, so the strict schema reads the par
 - Run the cases and the wire suite on the session before this change, and see them fail.
 
 ## Resume
+
+Done 2026-10-27.
+The five tool call parts and the compaction notice have no `id`, and the wire suite reads the chat after its turn.
+The tool input case, the host case, the compaction case and the wire case fail before this change, and pass after it.
 

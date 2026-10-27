@@ -1,7 +1,7 @@
 ---
 title: A Claude session sends what the protocol declares
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -71,7 +71,7 @@ a compaction -> chat/responsePart with an id -> every client
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A Claude part is the protocol's](task-01-a-claude-part-is-the-protocols.md) | todo | - |
+| [01 - A Claude part is the protocol's](task-01-a-claude-part-is-the-protocols.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -79,12 +79,12 @@ a compaction -> chat/responsePart with an id -> every client
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-claude-part-is-the-protocols.md](task-01-a-claude-part-is-the-protocols.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** each of the five places makes its own part, so a case must reach all five.
 
 ## Final verification checklist
 
-- [ ] The new cases fail on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new cases fail on the session before this change.
+- [x] `plans/index.md` updated.

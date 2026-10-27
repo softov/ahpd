@@ -1,6 +1,6 @@
 ---
 title: An ACP part is the protocol's
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -43,4 +43,10 @@ The snapshot holds the calls a client that watched the actions built.
 - The agent-acp suite passes.
 
 ## Resume
+
+Done 2026-10-27.
+The tool call parts have no `id`, and a lookup reads the call's `toolCallId`.
+`ready`, `shown` and `closed` put what they send onto the held call.
+The commands are the children of one read-only directory.
+The case fails before this change with nine findings, and passes after it.
 

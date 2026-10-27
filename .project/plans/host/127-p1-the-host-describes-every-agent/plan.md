@@ -1,7 +1,7 @@
 ---
 title: The host describes every agent
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -56,7 +56,7 @@ Agent.description -> descriptors -> root/agentsChanged and the root snapshot -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Every agent entry has a description](task-01-every-agent-entry-has-a-description.md) | todo | - |
+| [01 - Every agent entry has a description](task-01-every-agent-entry-has-a-description.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -64,12 +64,12 @@ Agent.description -> descriptors -> root/agentsChanged and the root snapshot -> 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-every-agent-entry-has-a-description.md](task-01-every-agent-entry-has-a-description.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the ACP and cofold cases of p3 and p4 read the root channel too.
 
 ## Final verification checklist
 
-- [ ] The ACP and cofold cases report no missing description.
-- [ ] `plans/index.md` updated.
+- [x] The ACP and cofold cases report no missing description.
+- [x] `plans/index.md` updated.

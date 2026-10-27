@@ -1,7 +1,7 @@
 ---
 title: Every agent sends what the protocol declares, and a late client reads what a watching one built
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -74,12 +74,12 @@ a backend's actions -> the reducer of a watching client
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The host describes every agent](../127-p1-the-host-describes-every-agent/plan.md) | planned | - |
-| [p2 - A Claude session sends what the protocol declares](../127-p2-a-claude-session-sends-what-the-protocol-declares/plan.md) | planned | - |
-| [p3 - An ACP session sends what the protocol declares](../127-p3-an-acp-session-sends-what-the-protocol-declares/plan.md) | planned | p1 |
-| [p4 - A cofold session sends what the protocol declares](../127-p4-a-cofold-session-sends-what-the-protocol-declares/plan.md) | planned | p1 |
-| [p5 - A pi session sends what the protocol declares](../127-p5-a-pi-session-sends-what-the-protocol-declares/plan.md) | planned | - |
-| [p6 - A bot chat sends what the protocol declares](../127-p6-a-bot-chat-sends-what-the-protocol-declares/plan.md) | planned | - |
+| [p1 - The host describes every agent](../127-p1-the-host-describes-every-agent/plan.md) | built 2026-10-27 | - |
+| [p2 - A Claude session sends what the protocol declares](../127-p2-a-claude-session-sends-what-the-protocol-declares/plan.md) | built 2026-10-27 | - |
+| [p3 - An ACP session sends what the protocol declares](../127-p3-an-acp-session-sends-what-the-protocol-declares/plan.md) | built 2026-10-27 | p1 |
+| [p4 - A cofold session sends what the protocol declares](../127-p4-a-cofold-session-sends-what-the-protocol-declares/plan.md) | built 2026-10-27 | p1 |
+| [p5 - A pi session sends what the protocol declares](../127-p5-a-pi-session-sends-what-the-protocol-declares/plan.md) | built 2026-10-27 | - |
+| [p6 - A bot chat sends what the protocol declares](../127-p6-a-bot-chat-sends-what-the-protocol-declares/plan.md) | built 2026-10-27 | - |
 
 ## Risks and tradeoffs
 
@@ -88,13 +88,13 @@ a backend's actions -> the reducer of a watching client
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [p1](../127-p1-the-host-describes-every-agent/plan.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a client message in a case must carry its `origin`, or the case reports the client and not the host.
 
 ## Final verification checklist
 
-- [ ] Each case fails on the code before this plan.
-- [ ] `pnpm boundary`, `pnpm typecheck`, `pnpm test` and `pnpm build` pass.
-- [ ] `plans/index.md` updated.
+- [x] Each case fails on the code before this plan.
+- [x] `pnpm boundary`, `pnpm typecheck` and `pnpm build` pass, and so do the suites of the packages this plan changes.
+- [x] `plans/index.md` updated.

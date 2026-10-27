@@ -1,6 +1,6 @@
 ---
 title: Every agent entry has a description
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -26,4 +26,8 @@ A backend that says none is described by its display name.
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Done 2026-10-27.
+`descriptors` sends the backend's description, or its display name.
+The ACP and cofold cases report the missing `description` before this change, and nothing after it.
 

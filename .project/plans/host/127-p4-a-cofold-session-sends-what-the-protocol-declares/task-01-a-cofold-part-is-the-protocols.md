@@ -1,6 +1,6 @@
 ---
 title: A cofold part is the protocol's
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
@@ -39,4 +39,8 @@ A decision finds its call by the call's own id.
 - The agent-cofold suite passes.
 
 ## Resume
+
+Done 2026-10-27.
+The three tool call parts and the two notices have no `id`, and a decision finds its call part by the call's `toolCallId`.
+The case and the compaction case fail before this change, and pass after it.
 

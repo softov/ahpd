@@ -66,7 +66,7 @@ a pi event -> mapEvent -> a part, and actions -> the snapshot, and the reducer o
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A pi part is the protocol's](task-01-a-pi-part-is-the-protocols.md) | todo | - |
+| [01 - A pi part is the protocol's](task-01-a-pi-part-is-the-protocols.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,12 +74,12 @@ a pi event -> mapEvent -> a part, and actions -> the snapshot, and the reducer o
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-pi-part-is-the-protocols.md](task-01-a-pi-part-is-the-protocols.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the suites that read a call by its part `id` read it by the call's id.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the session before this change.
+- [x] `plans/index.md` updated.

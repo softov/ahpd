@@ -54,7 +54,7 @@ a turn -> a call on the back session -> the snapshot of a late client
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A bot part is the protocol's](task-01-a-bot-part-is-the-protocols.md) | todo | - |
+| [01 - A bot part is the protocol's](task-01-a-bot-part-is-the-protocols.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -62,12 +62,12 @@ a turn -> a call on the back session -> the snapshot of a late client
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-bot-part-is-the-protocols.md](task-01-a-bot-part-is-the-protocols.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** nothing more.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the chat before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the chat before this change.
+- [x] `plans/index.md` updated.

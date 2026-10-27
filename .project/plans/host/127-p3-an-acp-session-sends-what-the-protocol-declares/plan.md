@@ -75,7 +75,7 @@ available_commands_update -> commandLeaf -> session/customizationsChanged
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An ACP part is the protocol's](task-01-an-acp-part-is-the-protocols.md) | todo | - |
+| [01 - An ACP part is the protocol's](task-01-an-acp-part-is-the-protocols.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,12 +83,12 @@ available_commands_update -> commandLeaf -> session/customizationsChanged
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-acp-part-is-the-protocols.md](task-01-an-acp-part-is-the-protocols.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the case needs a client message with its `origin`, or it reports the client's message.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the session before this change.
+- [x] `plans/index.md` updated.

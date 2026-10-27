@@ -61,7 +61,7 @@ a run event -> mapping -> a part, and actions -> the snapshot, and the reducer o
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A cofold part is the protocol's](task-01-a-cofold-part-is-the-protocols.md) | todo | - |
+| [01 - A cofold part is the protocol's](task-01-a-cofold-part-is-the-protocols.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -69,12 +69,12 @@ a run event -> mapping -> a part, and actions -> the snapshot, and the reducer o
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-cofold-part-is-the-protocols.md](task-01-a-cofold-part-is-the-protocols.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a notice's count was only its id, and goes with it.
 
 ## Final verification checklist
 
-- [ ] The new cases fail on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new cases fail on the session before this change.
+- [x] `plans/index.md` updated.

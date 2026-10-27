@@ -1,6 +1,6 @@
 ---
 title: A pi part is the protocol's
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:
@@ -41,4 +41,9 @@ The snapshot holds the calls a client that watched the actions built.
 - The agent-pi suite passes.
 
 ## Resume
+
+Done 2026-10-27.
+The tool call parts have no `id`, and the four lookups read the call's `toolCallId`.
+A call's end and a shell command put their ready and their result onto the held call.
+The case fails before this change, and passes after it.
 
