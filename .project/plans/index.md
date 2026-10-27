@@ -253,8 +253,15 @@ Reference: [00-host.md](host/00-host.md)
 | [121 - Every schema a client draws names every value](host/121-every-schema-names-every-value/plan.md) | high | active 2026-10-27; tasks 01 to 05 implemented | - | scena draws `additionalProperties` |
 | [122 - Agents are records on their own channel](host/122-agents-are-records-on-their-own-channel/plan.md) | high | active 2026-10-24; merged in #89, waits on the check by hand | - | - |
 | [123 - Agent kinds on their own channel](host/123-agent-kinds-on-their-own-channel/plan.md) | high | active 2026-10-25; tasks 02 and 03 implemented, wait on Softov | host 122 | ahpw plugins 08 |
+| [127 - Every agent sends what the protocol declares, and a late client reads what a watching one built](host/127-every-agent-sends-what-the-protocol-declares/plan.md) | high | planned | host 43 | - |
+| [127 p1 - The host describes every agent](host/127-p1-the-host-describes-every-agent/plan.md) | high | planned | host 127 | 127 p3, 127 p4 |
+| [127 p2 - A Claude session sends what the protocol declares](host/127-p2-a-claude-session-sends-what-the-protocol-declares/plan.md) | high | planned | host 127, claude 07 | - |
+| [127 p3 - An ACP session sends what the protocol declares](host/127-p3-an-acp-session-sends-what-the-protocol-declares/plan.md) | high | planned | 127 p1 | - |
+| [127 p4 - A cofold session sends what the protocol declares](host/127-p4-a-cofold-session-sends-what-the-protocol-declares/plan.md) | high | planned | 127 p1 | - |
+| [127 p5 - A pi session sends what the protocol declares](host/127-p5-a-pi-session-sends-what-the-protocol-declares/plan.md) | high | planned | host 127 | - |
+| [127 p6 - A bot chat sends what the protocol declares](host/127-p6-a-bot-chat-sends-what-the-protocol-declares/plan.md) | high | planned | host 127 | - |
 
-Next free number in `host`: `124`.
+Next free number in `host`: `128`.
 
 ## claude
 
