@@ -260,8 +260,14 @@ Reference: [00-host.md](host/00-host.md)
 | [127 p4 - A cofold session sends what the protocol declares](host/127-p4-a-cofold-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p4-a-cofold-session-sends-what-the-protocol-declares/implemented.md)) | 127 p1 | - |
 | [127 p5 - A pi session sends what the protocol declares](host/127-p5-a-pi-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p5-a-pi-session-sends-what-the-protocol-declares/implemented.md)) | host 127 | - |
 | [127 p6 - A bot chat sends what the protocol declares](host/127-p6-a-bot-chat-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p6-a-bot-chat-sends-what-the-protocol-declares/implemented.md)) | host 127 | - |
+| [128 - A shell command's call shows its terminal as it is, while it runs](host/128-a-shell-commands-call-shows-its-terminal/plan.md) | high | planned | host 127 | - |
+| [128 p1 - The host says a command's terminal as it opens](host/128-p1-the-host-says-a-commands-terminal-as-it-opens/plan.md) | high | planned | host 128 | 128 p2 to p5 |
+| [128 p2 - A Claude command shows its terminal](host/128-p2-a-claude-command-shows-its-terminal/plan.md) | high | planned | 128 p1 | - |
+| [128 p3 - An ACP command and terminal say what they are](host/128-p3-an-acp-command-and-terminal-say-what-they-are/plan.md) | high | planned | 128 p1 | - |
+| [128 p4 - A cofold command shows its terminal](host/128-p4-a-cofold-command-shows-its-terminal/plan.md) | high | planned | 128 p1 | - |
+| [128 p5 - A pi command is a terminal call](host/128-p5-a-pi-command-is-a-terminal-call/plan.md) | high | planned | 128 p1 | - |
 
-Next free number in `host`: `128`.
+Next free number in `host`: `129`.
 
 ## claude
 
