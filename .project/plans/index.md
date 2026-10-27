@@ -253,8 +253,9 @@ Reference: [00-host.md](host/00-host.md)
 | [121 - Every schema a client draws names every value](host/121-every-schema-names-every-value/plan.md) | high | active 2026-10-27; tasks 01 to 05 implemented | - | scena draws `additionalProperties` |
 | [122 - Agents are records on their own channel](host/122-agents-are-records-on-their-own-channel/plan.md) | high | active 2026-10-24; merged in #89, waits on the check by hand | - | - |
 | [123 - Agent kinds on their own channel](host/123-agent-kinds-on-their-own-channel/plan.md) | high | active 2026-10-25; tasks 02 and 03 implemented, wait on Softov | host 122 | ahpw plugins 08 |
+| [126 - A terminal a tool result names lasts as long as its chat](host/126-a-tool-results-terminal-lasts-as-long-as-its-chat/plan.md) | medium | planned 2026-10-27 | - | claude 24 |
 
-Next free number in `host`: `124`.
+Next free number in `host`: `127`.
 
 ## claude
 
