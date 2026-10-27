@@ -1,6 +1,6 @@
 ---
 title: An ACP command and terminal say what they are
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -39,3 +39,7 @@ A terminal block for a terminal the server opened says `isPty` as its handle doe
 - Run the case on the session before this change, and see it fail.
 
 ## Resume
+
+Done 2026-10-27.
+The `!` call names its terminal when it opens, and a server's terminal block asks the turn's reach for `isPty`.
+The case fails before this change, and passes after it.

@@ -1,6 +1,6 @@
 ---
 title: A cofold command shows its terminal
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
@@ -36,3 +36,8 @@ It names its terminal as soon as it opens, and its terminal block says `isPty` a
 - Run the case on the session before this change, and see it fail.
 
 ## Resume
+
+Done 2026-10-27.
+The call starts with the command as its intention, and its ready goes onto the held call, which runs.
+The terminal goes onto the call and into `chat/toolCallContentChanged` when it opens.
+The case is in the turn suite, beside the other `!` command case, and fails before this change.

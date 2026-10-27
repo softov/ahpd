@@ -1,7 +1,7 @@
 ---
 title: A Claude command shows its terminal
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -58,7 +58,7 @@ runCommand -> run(toolCallId, opened) -> opened: the content onto the call, and 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A Claude command shows its terminal](task-01-a-claude-command-shows-its-terminal.md) | todo | - |
+| [01 - A Claude command shows its terminal](task-01-a-claude-command-shows-its-terminal.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -66,12 +66,12 @@ runCommand -> run(toolCallId, opened) -> opened: the content onto the call, and 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-claude-command-shows-its-terminal.md](task-01-a-claude-command-shows-its-terminal.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a turn that ended before the terminal opened sends no content.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the session before this change.
+- [x] `plans/index.md` updated.

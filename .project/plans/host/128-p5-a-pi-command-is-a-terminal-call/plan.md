@@ -1,7 +1,7 @@
 ---
 title: A pi command is a terminal call
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -59,7 +59,7 @@ runCommand -> start (terminal, Terminal, intention) -> ready onto the call -> ru
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A pi command is a terminal call](task-01-a-pi-command-is-a-terminal-call.md) | todo | - |
+| [01 - A pi command is a terminal call](task-01-a-pi-command-is-a-terminal-call.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -67,12 +67,12 @@ runCommand -> start (terminal, Terminal, intention) -> ready onto the call -> ru
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-pi-command-is-a-terminal-call.md](task-01-a-pi-command-is-a-terminal-call.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the call's id stays `<turn>:shell`, because an id is the session's to choose.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the session before this change.
+- [x] `plans/index.md` updated.

@@ -1,6 +1,6 @@
 ---
 title: The host says a command's terminal as it opens
-status: todo
+status: done
 depends: []
 layer: "sdk"
 refs:
@@ -50,3 +50,8 @@ refs:
 - Run the cases on the host before this change, and see them fail.
 
 ## Resume
+
+Done 2026-10-27.
+`commanded` calls `opened` once the terminal is a channel, and `Ran` and the handle say `isPty`.
+`RunCommand` names the type of `run`, and the fake pseudoterminal is in `test/support/pty.ts`.
+The three cases fail before this change, and pass after it.

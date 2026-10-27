@@ -1,6 +1,6 @@
 ---
 title: A pi command is a terminal call
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:
@@ -35,3 +35,8 @@ It completes with the terminal and the output, and its terminal block says `isPt
 - Run the case on the session before this change, and see it fail.
 
 ## Resume
+
+Done 2026-10-27.
+The call is a `terminal` call with the command as its intention, its line and its input.
+It names its terminal when the terminal opens, and completes with the terminal and the output.
+The case fails before this change, and passes after it.

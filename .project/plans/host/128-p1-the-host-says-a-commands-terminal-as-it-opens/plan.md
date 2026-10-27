@@ -1,7 +1,7 @@
 ---
 title: The host says a command's terminal as it opens
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -69,7 +69,7 @@ start.terminals.open -> OpenedTerminal { uri, isPty }
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host says a command's terminal as it opens](task-01-the-host-says-a-commands-terminal.md) | todo | - |
+| [01 - The host says a command's terminal as it opens](task-01-the-host-says-a-commands-terminal.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -77,12 +77,12 @@ start.terminals.open -> OpenedTerminal { uri, isPty }
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-host-says-a-commands-terminal.md](task-01-the-host-says-a-commands-terminal.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a fake pseudoterminal must exit, or `commanded` never answers.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the host before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the host before this change.
+- [x] `plans/index.md` updated.

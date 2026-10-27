@@ -1,7 +1,7 @@
 ---
 title: A shell command's call shows its terminal as it is, while it runs
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -71,11 +71,11 @@ the command exits -> Ran -> the call completes with the terminal and the output
 
 | Plan | Status | Depends on |
 | --- | --- | --- |
-| [p1 - The host says a command's terminal as it opens](../128-p1-the-host-says-a-commands-terminal-as-it-opens/plan.md) | planned | - |
-| [p2 - A Claude command shows its terminal](../128-p2-a-claude-command-shows-its-terminal/plan.md) | planned | p1 |
-| [p3 - An ACP command and terminal say what they are](../128-p3-an-acp-command-and-terminal-say-what-they-are/plan.md) | planned | p1 |
-| [p4 - A cofold command shows its terminal](../128-p4-a-cofold-command-shows-its-terminal/plan.md) | planned | p1 |
-| [p5 - A pi command is a terminal call](../128-p5-a-pi-command-is-a-terminal-call/plan.md) | planned | p1 |
+| [p1 - The host says a command's terminal as it opens](../128-p1-the-host-says-a-commands-terminal-as-it-opens/plan.md) | built 2026-10-27 | - |
+| [p2 - A Claude command shows its terminal](../128-p2-a-claude-command-shows-its-terminal/plan.md) | built 2026-10-27 | p1 |
+| [p3 - An ACP command and terminal say what they are](../128-p3-an-acp-command-and-terminal-say-what-they-are/plan.md) | built 2026-10-27 | p1 |
+| [p4 - A cofold command shows its terminal](../128-p4-a-cofold-command-shows-its-terminal/plan.md) | built 2026-10-27 | p1 |
+| [p5 - A pi command is a terminal call](../128-p5-a-pi-command-is-a-terminal-call/plan.md) | built 2026-10-27 | p1 |
 
 ## Risks and tradeoffs
 
@@ -83,13 +83,13 @@ the command exits -> Ran -> the call completes with the terminal and the output
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [p1](../128-p1-the-host-says-a-commands-terminal-as-it-opens/plan.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `chat/toolCallContentChanged` replaces the call's `_meta` when it carries one, so the early content carries none.
 
 ## Final verification checklist
 
-- [ ] Each case fails on the code before this plan.
-- [ ] `pnpm boundary`, `pnpm typecheck` and `pnpm build` pass, and so do the suites of the packages this plan changes.
-- [ ] `plans/index.md` updated.
+- [x] Each case fails on the code before this plan.
+- [x] `pnpm boundary`, `pnpm typecheck` and `pnpm build` pass, and so do the suites of the packages this plan changes.
+- [x] `plans/index.md` updated.

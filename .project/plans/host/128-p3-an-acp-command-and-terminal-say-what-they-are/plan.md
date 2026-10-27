@@ -1,7 +1,7 @@
 ---
 title: An ACP command and terminal say what they are
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-10-27
 revalidated: 2026-10-27
@@ -65,7 +65,7 @@ tool_call_update terminal -> contentBlocks -> turn.reach.isPty(uri) -> the block
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An ACP command and terminal say what they are](task-01-an-acp-command-and-terminal-say-what-they-are.md) | todo | - |
+| [01 - An ACP command and terminal say what they are](task-01-an-acp-command-and-terminal-say-what-they-are.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -73,12 +73,12 @@ tool_call_update terminal -> contentBlocks -> turn.reach.isPty(uri) -> the block
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-acp-command-and-terminal-say-what-they-are.md](task-01-an-acp-command-and-terminal-say-what-they-are.md).
+- **Done so far:** planned and built 2026-10-27; see [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the server's fixture waits for its terminal to exit.
 
 ## Final verification checklist
 
-- [ ] The new case fails on the session before this change.
-- [ ] `plans/index.md` updated.
+- [x] The new case fails on the session before this change.
+- [x] `plans/index.md` updated.

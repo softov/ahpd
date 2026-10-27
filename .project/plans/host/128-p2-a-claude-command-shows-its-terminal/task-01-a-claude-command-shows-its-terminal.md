@@ -1,6 +1,6 @@
 ---
 title: A Claude command shows its terminal
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -35,3 +35,7 @@ A client that subscribes while the command runs, or after it, reads the call a w
 - Run the case on the session before this change, and see it fail.
 
 ## Resume
+
+Done 2026-10-27.
+The terminal goes onto the call and into `chat/toolCallContentChanged` when it opens, and the completion names it again.
+The case fails before this change, and passes after it.
