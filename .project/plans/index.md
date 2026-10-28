@@ -292,8 +292,9 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [21 - A client's tools reach the agent whole and on time](claude/21-client-tools-reach-agent-whole-and-on-time/plan.md) | high | built 2026-10-11 ([implemented.md](claude/21-client-tools-reach-agent-whole-and-on-time/implemented.md)); the VS Code check by hand remains | - | - |
 | [22 - A Claude session fails cleanly](claude/22-a-claude-session-fails-cleanly/plan.md) | medium | built 2026-10-11 ([implemented.md](claude/22-a-claude-session-fails-cleanly/implemented.md)) | - | - |
 | [23 - agent-claude is on the Claude Agent SDK 0.3.301](claude/23-agent-claude-is-on-agent-sdk-0-3-301/plan.md) | medium | built 2026-10-16 ([implemented.md](claude/23-agent-claude-is-on-agent-sdk-0-3-301/implemented.md)) | - | - |
+| [26 - A restored question keeps its answers](claude/26-a-restored-question-keeps-its-answers/plan.md) | medium | built 2026-10-27 ([implemented.md](claude/26-a-restored-question-keeps-its-answers/implemented.md)) | claude 11 | - |
 
-Next free number in `claude`: `24`.
+Next free number in `claude`: `27`.
 
 ## documentation
 

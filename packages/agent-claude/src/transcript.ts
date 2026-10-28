@@ -2,9 +2,10 @@ import { getSessionMessages } from '@anthropic-ai/claude-agent-sdk';
 import type { ResponsePart, ToolCallCompletedState, ToolResultContent, Turn } from '@microsoft/agent-host-protocol';
 import type { Bag, OnWire, RestoredSubagent, WireTurn } from '@ahpd/sdk';
 import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { lineOf, pastLineOf, questionAnswers, questionRequest, titleOf, toolInputOf } from './input.js';
 import { toolMetaOf } from './kinds.js';
 import { ranOn } from './models.js';
@@ -56,7 +57,70 @@ export async function turnsOf(sessionId: string, dir: string): Promise<WireTurn<
     }
   }
 
-  return buildTurns(messages);
+  const asked = askedIn(messages);
+  const answered = asked.size === 0 ? new Map<string, unknown>() : await answeredIn(sessionId, dir, asked);
+  return buildTurns(answered.size === 0 ? messages : messages.map((message) => {
+    const result = answered.get(str(bag(message).uuid) ?? '');
+    return result === undefined ? message : { ...bag(message), toolUseResult: result };
+  }));
+}
+
+/** The uuids of the entries that hold the result of an `AskUserQuestion` call. */
+function askedIn(messages: unknown[]): Set<string> {
+  const questions = new Set<string>();
+  const holding = new Set<string>();
+  for (const message of messages) {
+    const frame = bag(message);
+    for (const block of list(bag(frame.message).content).map(bag)) {
+      const type = str(block.type);
+      if (type === 'tool_use' && str(block.name) === 'AskUserQuestion') questions.add(str(block.id) ?? '');
+      const uuid = str(frame.uuid);
+      if (type === 'tool_result' && uuid !== undefined && questions.has(str(block.tool_use_id) ?? '')) holding.add(uuid);
+    }
+  }
+  return holding;
+}
+
+/**
+ * What each answered question ran with, by the uuid of the entry that holds
+ * its result.
+ *
+ * The CLI writes a tool's result object on that entry as `toolUseResult`, and
+ * the SDK's `getSessionMessages` leaves the field out, so the session's own
+ * file is read for it, as far as the last of the entries asked for. Line by
+ * line, because the file of a long session can be longer than one string can
+ * be; and a line is parsed only when it names `answers`, because most lines
+ * are tool output.
+ *
+ * https://nodejs.org/api/readline.html#example-read-file-stream-line-by-line
+ */
+async function answeredIn(sessionId: string, dir: string, wanted: Set<string>): Promise<Map<string, unknown>> {
+  const answered = new Map<string, unknown>();
+  const files = sessionFiles(sessionId, dir);
+  if (files === undefined) return answered;
+  const input = createReadStream(join(files.project, `${files.session}.jsonl`));
+  const lines = createInterface({ input, crlfDelay: Infinity });
+  const seen = new Set<string>();
+  try {
+    for await (const line of lines) {
+      if (!line.includes('"answers"')) continue;
+      let entry: Bag;
+      try { entry = bag(JSON.parse(line)); }
+      catch { continue; }
+      const uuid = str(entry.uuid);
+      if (uuid === undefined || !wanted.has(uuid)) continue;
+      seen.add(uuid);
+      if (Object.keys(bag(bag(entry.toolUseResult).answers)).length > 0) answered.set(uuid, entry.toolUseResult);
+      if (seen.size === wanted.size) break;
+    }
+  }
+  catch {
+    // A file that cannot be read restores the turns the SDK read, without answers.
+  }
+  finally {
+    input.destroy();
+  }
+  return answered;
 }
 
 /**
@@ -277,14 +341,15 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         /*
          * What an answered question ran with, for a result that says so.
          *
-         * The SDK records the `updatedInput` it was handed as the result's
-         * `toolUseResult`, so a question anybody answered carries its input and
-         * the answers keyed by each question's own text. The live call of the
-         * same question carries them the same way, and a result with no
-         * `toolUseResult` was never answered, so it keeps its input as sent.
+         * The CLI records the `updatedInput` it was handed as the
+         * `toolUseResult` of the entry that holds the result, so a question
+         * anybody answered carries its input and the answers keyed by each
+         * question's own text. The live call of the same question carries them
+         * the same way, and a result whose entry has no `toolUseResult` was
+         * never answered, so it keeps its input as sent.
          */
         const ran = inputs.get(callId);
-        const answers = bag(bag(block.toolUseResult).answers);
+        const answers = bag(bag(frame.toolUseResult).answers);
         if (ran !== undefined && Object.keys(answers).length > 0) {
           // The same object the live call carries: what the SDK was handed back.
           call.structuredContent = { questions: Array.isArray(ran.questions) ? ran.questions : [], answers };
