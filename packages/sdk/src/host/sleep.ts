@@ -313,7 +313,9 @@ export function createSleep(ctx: HostContext): Sleep {
     // The chat it starts again as: the store's default where that is not the
     // session's own chat, which is a first chat closed under `hidden`.
     const other = lead === undefined || lead.one.uri === chatUriFor(named) ? undefined : lead;
-    const back = other === undefined ? undefined : await other.agent.transcript?.(other.one.backendId, at);
+    const back = other === undefined
+      ? undefined
+      : await other.agent.transcript?.(other.one.backendId, at, ctx.outputsFor(named, other.one.uri));
     // A host that closed while this resume read its record starts no agent.
     if (ctx.closed) throw new Error(CLOSING);
     /*
@@ -353,7 +355,7 @@ export function createSleep(ctx: HostContext): Sleep {
     // its own, resumed the way a chat restarted on its own is.
     for (const { one, agent } of served) {
       if (one.default === true) continue;
-      const own = await agent.transcript?.(one.backendId, at);
+      const own = await agent.transcript?.(one.backendId, at, ctx.outputsFor(named, one.uri));
       if (ctx.closed) throw new Error(CLOSING);
       spawn(
         agent,

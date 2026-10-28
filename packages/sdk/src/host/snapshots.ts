@@ -94,6 +94,17 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     if (terminal)
       return value({ resource: channel, state: terminal.state(), fromSeq: ctx.serverSeq });
     /*
+     * A terminal a tool result names, after the live one is gone: rebuilt from
+     * what the host kept, as the reference host answers a subscribe that no
+     * live terminal does. A name it cannot rebuild goes on to be refused
+     * below, as any terminal this host has not got is.
+     * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/agentService.ts#L10785-L10803
+     */
+    const rebuilding = ctx.retainedState(channel);
+    const retained = rebuilding === undefined ? undefined : await rebuilding;
+    if (retained !== undefined)
+      return value({ resource: channel, state: retained, fromSeq: ctx.serverSeq });
+    /*
      * A changeset, which lives under the session it belongs to.
      *
      * `<sessionUri>/changeset/<scope>`. Nested on purpose: disposing a session
@@ -422,7 +433,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         ? undefined
         : recordedChat(id, channel);
       if (opened !== undefined && opened.uri !== chatUriFor(nameOf(id))) {
-        const own = await owner.transcript?.(opened.backendId, ctx.sessionAt(id));
+        const own = await owner.transcript?.(opened.backendId, ctx.sessionAt(id), ctx.outputsFor(nameOf(id), opened.uri));
         return value({
           resource: channel,
           state: {

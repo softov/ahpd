@@ -785,6 +785,14 @@ export function createQuery(ctx: SessionContext): Query {
              */
             if (parent === '') ctx.options.onTurnRecorded?.(String(ctx.active.id), said);
           }
+          /*
+           * The output Claude saved for a `Bash` result too large to send, read
+           * before the result is mapped so its completion names the terminal,
+           * as the reference waits for it. Only such a message waits here.
+           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/claude/claudeSdkMessageRouter.ts#L77-L87
+           */
+          const reading = ctx.readSavedOutput(raw as SDKUserMessage);
+          if (reading !== undefined) await reading;
           ctx.results(bag(message.message), parent, message.tool_use_result);
           continue;
         }

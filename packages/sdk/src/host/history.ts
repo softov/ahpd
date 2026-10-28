@@ -1,5 +1,5 @@
 import { idFor } from '../sessions/catalog.js';
-import { subagentChatUri } from './channels.js';
+import { chatUriFor, subagentChatUri } from './channels.js';
 import type { Agent, Listed, SessionAt } from '../types/agent.js';
 import type { Bag } from '../types/common.js';
 import type { Summary } from '../types/catalog.js';
@@ -374,7 +374,9 @@ export function createHistory(ctx: HostContext): History {
       if (!row || !owner?.transcript)
         return undefined;
       titles.set(id, row.title);
-      const built = await owner.transcript(id, sessionAt(id));
+      // The session's own transcript is its first chat's, and the outputs
+      // handed with it are that chat's.
+      const built = await owner.transcript(id, sessionAt(id), ctx.outputsFor(nameOf(id), chatUriFor(nameOf(id))));
       if (!built)
         return undefined;
       /*

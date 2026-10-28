@@ -1,8 +1,8 @@
-import { ROOT } from './channels.js';
+import { ROOT, named, retainedTerminalOf, retainedTerminalUri } from './channels.js';
 import { localPath } from '../resources/fileuri.js';
 import { INTERNAL_ERROR, INVALID_PARAMS, RpcError } from '../rpc.js';
 import { CLOSING, need } from './common.js';
-import { named } from './channels.js';
+import { textOf } from './outputs.js';
 import type { Bag } from '../types/common.js';
 import type { Claim, OutputTerminal, OutputTerminals, StartTerminals, Terminal, TerminalStore } from '../types/terminals.js';
 import type { CommandTerminal, Ran } from '../types/session.js';
@@ -96,10 +96,12 @@ export function createTerminals(ctx: HostContext): Terminals {
    * through, and the terminal has to be a real channel so the client can
    * watch the output arrive instead of waiting for the whole of it.
    *
-   * The terminal is kept after the command exits. It is what the finished
-   * tool call points at, and disposing it would leave a transcript naming a
-   * channel that answers nothing - so it stays, exited, until the session
-   * that ran it goes.
+   * The terminal stays, exited, until the session that ran it goes, as the
+   * reference host keeps its own alive for the call that names it. It is
+   * named after that call's chat and id, and what it printed is kept when it
+   * exits: a call whose terminal a client disposed, or one read back after a
+   * restart, names a terminal the host rebuilds from it.
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L29-L39
    *
    * `opened` hears the terminal once it is a channel a client can subscribe
    * to, which is when the call names it.
@@ -113,7 +115,11 @@ export function createTerminals(ctx: HostContext): Terminals {
     const shells = options.terminals;
     if (!shells) return { success: false, said: 'There is no shell here to run it in', output: '' };
     if (ctx.closed) return { success: false, said: CLOSING, output: '' };
-    const uri = `ahp-terminal:/${crypto.randomUUID()}`;
+    // The call this command answers, which every `!` command's claim names.
+    const call = claim.kind === 'session' && claim.toolCallId !== undefined
+      ? { session: claim.session, chat: claim.chat, key: claim.toolCallId }
+      : undefined;
+    const uri = call === undefined ? `ahp-terminal:/${crypto.randomUUID()}` : retainedTerminalUri(call.chat, call.key);
     return await new Promise<Ran>((resolve) => {
       const terminal = shells.create({
         uri,
@@ -142,9 +148,11 @@ export function createTerminals(ctx: HostContext): Terminals {
            * late, capped, and a second copy in this closure would be the same
            * bytes held twice and the cap applied to only one of them.
            */
-          const printed = terminal.state().content
-            .map((part) => ('value' in part && typeof part.value === 'string' ? part.value : ''))
-            .join('');
+          const state = terminal.state();
+          const printed = textOf(state.content);
+          // Kept before the call completes, so the terminal it names answers
+          // from the moment a client can read the name.
+          if (call !== undefined) ctx.keepExited(call.chat, call.key, call.session, state, terminal.exitCode());
           resolve({
             success: code === 0,
             said: code === 0 ? 'Ran the command' : `The command exited with code ${String(code)}`,
@@ -199,11 +207,16 @@ export function createTerminals(ctx: HostContext): Terminals {
    * without ending the process would leave a shell running that the root list
    * no longer names and no client can reach, which is a leak wearing the
    * clothes of tidiness.
+   *
+   * A tool call may name the terminal, as an ACP agent's does, so it is named
+   * under its chat and a key of its own, and what it printed is kept when it
+   * exits: a call that names a released terminal names one the host rebuilds.
    */
   const heldTerminals = (shells: TerminalStore, sessionUri: string, chatUri: string): StartTerminals => ({
     open: (asked) => {
       if (ctx.closed) throw new Error(CLOSING);
-      const uri = `ahp-terminal:/${crypto.randomUUID()}`;
+      const key = crypto.randomUUID();
+      const uri = retainedTerminalUri(chatUri, key);
       const terminal = shells.create({
         uri,
         cwd: asked.cwd,
@@ -228,6 +241,7 @@ export function createTerminals(ctx: HostContext): Terminals {
           // The root list says whether a terminal is still running, so it is
           // stale the moment one exits and reaches nobody unless it moves.
           if ((action as Bag).type === 'terminal/exited') {
+            ctx.keepExited(chatUri, key, sessionUri, terminal.state(), terminal.exitCode());
             dispatch(ROOT, { type: 'root/terminalsChanged', terminals: ctx.terminalInfo() });
             // A command that ran in this session's directory may have moved it.
             const ranIn = dirOfFile(asked.cwd);
@@ -245,14 +259,7 @@ export function createTerminals(ctx: HostContext): Terminals {
         uri,
         ...ptyOf(terminal),
         output: () => {
-          /*
-           * The protocol's own recipe for turning typed parts back into the
-           * stream they came from: a command's output, or an unclassified
-           * part's value.
-           */
-          const output = terminal.state().content
-            .map((part) => (part.type === 'command' ? part.output : part.value))
-            .join('');
+          const output = textOf(terminal.state().content);
           const code = terminal.exitCode();
           return {
             output,
@@ -423,6 +430,10 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
       const uri = named(String(params.channel ?? ''), 'terminal');
       if (terminals.has(uri))
         throw new RpcError(-32003, `${uri} already exists`);
+      // The host names these, and a client's shell under one would answer for
+      // the terminal a tool call names.
+      if (retainedTerminalOf(uri) !== undefined)
+        throw new RpcError(-32003, `${uri} is a name this host keeps for the terminals a tool result names`);
       claimable(uri, 'terminal');
       const asked = typeof params.cwd === 'string' ? localPath(params.cwd) : dir;
       /*

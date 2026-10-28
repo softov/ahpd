@@ -1,11 +1,12 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
-import type { Activity, BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest } from '@ahpd/sdk';
+import type { Activity, BackgroundTasks, Bag, BoundTool, OutputTerminals, Session, SessionOptions, ShellEnv, Start, SubagentChat, SubagentRequest, TerminalOutputs } from '@ahpd/sdk';
 import type { Asked, Spawned } from '../spawn.js';
 import type { Asking } from './asking.js';
 import type { ClientTools } from './clienttools.js';
 import type { Config } from './config.js';
 import type { Parts } from './parts.js';
 import type { Query } from './query.js';
+import type { SavedOutputs } from './savedoutput.js';
 import type { Servers } from './servers.js';
 import type { Stream } from './stream.js';
 import type { Turns } from './turns.js';
@@ -135,6 +136,15 @@ export interface ClaudeSessionOptions extends SessionOptions {
    * session is built by hand, and then a shell is listed without its output.
    */
   outputTerminals?: OutputTerminals;
+  /**
+   * The outputs the host keeps for this chat, carried from `Start`.
+   *
+   * Where the whole output of a `Bash` result too large to send is kept, so
+   * the call names a terminal the host answers for as long as the chat lasts.
+   * Absent where the host's session store keeps no folder, and then the call
+   * keeps Claude's notice alone.
+   */
+  terminalOutputs?: TerminalOutputs;
 }
 
 /**
@@ -146,7 +156,7 @@ export interface ClaudeSessionOptions extends SessionOptions {
  * used rather than copied onto the factory's own scope at construction - so
  * the order the areas are built in never matters and nothing is frozen.
  */
-export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, Asking, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
+export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTools, 'methods'>, Parts, Omit<Workers, 'methods'>, Stream, SavedOutputs, Asking, Omit<Query, 'methods'>, Omit<Servers, 'methods'>, Omit<Turns, 'methods'> {
   /** The options `createSession` was given. */
   options: ClaudeSessionOptions;
   /** Say one thing on one channel, to every client watching it. */

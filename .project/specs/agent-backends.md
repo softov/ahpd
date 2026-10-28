@@ -129,8 +129,19 @@ THEN `Start.resources` is the store that the resource commands use, when the hos
 AND `Start.terminals.open` opens a host terminal that a client can watch
 AND an ACP agent's terminal in a session placed in a machine runs in that machine, through `computers.how`
 AND that terminal is still the host's to list and watch
-AND `Start.toolsServer` opens an MCP endpoint for the host tools, when the host has a listener.
+AND `Start.toolsServer` opens an MCP endpoint for the host tools, when the host has a listener
+AND `Start.terminalOutputs` keeps an output under a key of the backend, when the session store keeps a folder for the session.
 The reason: a session that asked for a machine must not run the agent's commands on the host. A machine path is not a folder the host has - decision [an-acp-agents-terminal-in-a-machine-runs-in-the-machine](../decisions/an-acp-agents-terminal-in-a-machine-runs-in-the-machine.md).
+
+### A terminal that a tool result names stays
+
+WHEN a tool result names a terminal that the host opened, or an output that a backend kept with `Start.terminalOutputs`
+AND no live terminal has that name
+THEN a subscribe gets an exited terminal that the host makes from the output that it kept
+AND the output goes with its turn, its chat and its session.
+WHEN the host reads a transcript
+THEN it gives the backend the outputs of the chat that it reads.
+The reason: the protocol says that such a terminal stays subscribable while its chat lasts.
 
 ### An ACP read loads the session once
 

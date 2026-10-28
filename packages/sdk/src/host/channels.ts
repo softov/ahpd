@@ -169,6 +169,36 @@ export const toolCallOfSubagentChat = (uri: string): string | undefined => {
   catch { return undefined; }
 };
 
+/** The authority a terminal this host keeps after its process is gone is named under. */
+const RETAINED = 'ahp-terminal://shell/';
+
+/**
+ * How this host names a terminal a tool result may name.
+ *
+ * The reference's shape, a `shell` authority with the chat and a key the
+ * terminal is kept under, so the name says where its output is once nothing is
+ * running: the chat finds the session that holds it now, and the key the file.
+ * The chat is base64url and the key escaped, as `subagentChatUri` writes a
+ * session and a call. A `!` command's key is its tool call; a backend's
+ * terminal has a key of its own.
+ * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/common/nonPtyShellTerminalUri.ts#L17-L29
+ */
+export const retainedTerminalUri = (chat: string, key: string): string =>
+  `${RETAINED}${Buffer.from(chat, 'utf8').toString('base64url')}/${encodeURIComponent(key)}`;
+
+/** The chat and the key a retained terminal's name carries, or nothing when it is not one. */
+export const retainedTerminalOf = (uri: string): { chat: string; key: string } | undefined => {
+  if (!uri.startsWith(RETAINED)) return undefined;
+  const [encoded = '', ...rest] = uri.slice(RETAINED.length).split('/');
+  if (encoded === '' || rest.length === 0) return undefined;
+  try {
+    const chat = Buffer.from(encoded, 'base64url').toString('utf8');
+    const key = decodeURIComponent(rest.join('/'));
+    return chat.startsWith('ahp-chat:') && key !== '' ? { chat, key } : undefined;
+  }
+  catch { return undefined; }
+};
+
 /**
  * Whether a URI names the automations catalogue, under any spelling.
  *

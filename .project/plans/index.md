@@ -258,6 +258,7 @@ Reference: [00-host.md](host/00-host.md)
 | [124 - A shell's marks stay out of its output](host/124-a-shells-marks-stay-out-of-its-output/plan.md) | high | built 2026-10-27 ([implemented.md](host/124-a-shells-marks-stay-out-of-its-output/implemented.md)) | - | - |
 | [125 - A split character arrives whole](host/125-a-split-character-arrives-whole/plan.md) | medium | built 2026-10-27 ([implemented.md](host/125-a-split-character-arrives-whole/implemented.md)) | - | - |
 | [126 - A new session is an `ahp-session:` URI](host/126-a-new-session-is-an-ahp-session-uri/plan.md) | medium | planned 2026-10-27; five tasks, todo | - | ahpc and ahpw create `ahp-session:` sessions |
+| [126 - A terminal a tool result names lasts as long as its chat](host/126-a-tool-results-terminal-lasts-as-long-as-its-chat/plan.md) | medium | built 2026-10-27; [implemented.md](host/126-a-tool-results-terminal-lasts-as-long-as-its-chat/implemented.md) | - | claude 24 |
 | [127 - Every agent sends what the protocol declares, and a late client reads what a watching one built](host/127-every-agent-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27; parent of p1 to p6; [implemented.md](host/127-every-agent-sends-what-the-protocol-declares/implemented.md) | host 43 | - |
 | [127 p1 - The host describes every agent](host/127-p1-the-host-describes-every-agent/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p1-the-host-describes-every-agent/implemented.md)) | host 127 | 127 p3, 127 p4 |
 | [127 p2 - A Claude session sends what the protocol declares](host/127-p2-a-claude-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p2-a-claude-session-sends-what-the-protocol-declares/implemented.md)) | host 127, claude 07 | - |
@@ -305,6 +306,7 @@ Reference: [00-claude.md](claude/00-claude.md)
 | [21 - A client's tools reach the agent whole and on time](claude/21-client-tools-reach-agent-whole-and-on-time/plan.md) | high | built 2026-10-11 ([implemented.md](claude/21-client-tools-reach-agent-whole-and-on-time/implemented.md)); the VS Code check by hand remains | - | - |
 | [22 - A Claude session fails cleanly](claude/22-a-claude-session-fails-cleanly/plan.md) | medium | built 2026-10-11 ([implemented.md](claude/22-a-claude-session-fails-cleanly/implemented.md)) | - | - |
 | [23 - agent-claude is on the Claude Agent SDK 0.3.301](claude/23-agent-claude-is-on-agent-sdk-0-3-301/plan.md) | medium | built 2026-10-16 ([implemented.md](claude/23-agent-claude-is-on-agent-sdk-0-3-301/implemented.md)) | - | - |
+| [24 - A Bash result too large to send is a terminal](claude/24-a-bash-result-too-large-to-send-is-a-terminal/plan.md) | medium | built 2026-10-27; [implemented.md](claude/24-a-bash-result-too-large-to-send-is-a-terminal/implemented.md) | host 126 | - |
 | [26 - A restored question keeps its answers](claude/26-a-restored-question-keeps-its-answers/plan.md) | medium | built 2026-10-27 ([implemented.md](claude/26-a-restored-question-keeps-its-answers/implemented.md)) | claude 11 | - |
 
 Next free number in `claude`: `27`.

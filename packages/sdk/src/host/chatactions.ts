@@ -1523,6 +1523,10 @@ export function chatAction(
        * showing somebody the turns they asked to be rid of.
        */
       dispatch(session.chatUri, action);
+      // The outputs the dropped turns' terminals kept go with those turns, as
+      // the reference's go with the rows of the turns they belong to.
+      // https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/sessionDatabase.ts#L236-L243
+      ctx.forgetTurnOutputs(session.uri, session.chatUri, all.slice(at + 1) as Bag[]);
       // A stop, not a removal: a session starts again right below on this
       // same id, and the backend it resumes is the one just stopped.
       session.close('stopping');
