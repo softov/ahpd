@@ -260,6 +260,8 @@ it('says a compaction as one notice rather than as the model\'s answer', async (
   const parts = drawn(view);
   const notices = parts.filter((part) => part.kind === 'systemNotification');
   expect(notices).toHaveLength(1);
+  // As the protocol declares a notice: its kind and what it says, and no id.
+  expect(Object.keys(notices[0] ?? {}).sort()).toEqual(['content', 'kind']);
   expect(notices[0]?.content).toBe(
     compactionNotice({ before: Number(compacted?.estimatedTokens), after: Number(compacted?.afterTokens) }),
   );

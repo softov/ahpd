@@ -12,7 +12,12 @@ import { acpAgent } from '../src/index.js';
 import { anyone, signIn } from './people.js';
 import type { ChangesetSource } from '../../sdk/src/types/changes.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
+import type { SpawnPty } from '../../sdk/src/types/terminals.js';
+import { fakePty } from '../../sdk/test/support/pty.js';
 import { checker } from '../../../tools/wire.mjs';
+import { undeclaredIn } from '../../sdk/test/support/wire.js';
+import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
+import type { Bag } from '@ahpd/sdk';
 
 /*
  * The ports an ACP server reaches for.
@@ -133,6 +138,8 @@ function recorder(): { source: ChangesetSource; seen: { turnId: string; path: st
 async function talking(options: {
   files?: boolean;
   shells?: boolean;
+  /** The pseudoterminal the host's shells run under, or pipes. */
+  pty?: SpawnPty;
   changes?: ChangesetSource;
   rules?: Record<string, boolean>;
 } = {}) {
@@ -147,7 +154,7 @@ async function talking(options: {
     // so no folder it can be told is trusted.
     users: anyone(),
     ...(options.files === false ? {} : { resources: fileResources() }),
-    ...(options.shells === false ? {} : { terminals: shellTerminals() }),
+    ...(options.shells === false ? {} : { terminals: shellTerminals(options.pty === undefined ? {} : { pty: options.pty }) }),
     ...(options.changes === undefined ? {} : { changes: options.changes }),
   });
   const p = peer();
@@ -290,6 +297,87 @@ it('asks the person, and answers with the once option they chose', async () => {
   // `allow_once`, never `allow_always`: the server offered both, and approving
   // one call is not agreeing to every call.
   expect(prose(p, chatUri)).toContain('perm=yes-once');
+});
+
+it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  // A client's message as the protocol declares one, with its origin.
+  const begin = (turnId: string, text: string): void => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+    });
+  };
+  // A call the server reports, a call the server asks about first, and a
+  // person's own shell command, each of which holds a tool call part.
+  begin('t1', 'tool now');
+  await endedTurn(p, chatUri, 1);
+  begin('t2', 'ask me first');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', turnId: 't2', toolCallId: 'call-perm', approved: true } },
+  });
+  await endedTurn(p, chatUri, 2);
+  begin('t3', '!echo declared');
+  await endedTurn(p, chatUri, 3);
+
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  const calls = ((((late as Bag).snapshot as Bag).state as Bag).turns as Bag[])
+    .flatMap((turn) => turn.responseParts as Bag[])
+    .filter((part) => part.kind === 'toolCall')
+    .map((part) => String((part.toolCall as Bag).toolCallId));
+  expect(calls).toEqual(expect.arrayContaining(['call-1', 'call-perm']));
+  expect(calls.length).toBe(3);
+  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+});
+
+/*
+ * A terminal shown as what it is: a server's, and a person's command's while
+ * it runs, as the reference host names its own.
+ * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+ */
+it('says a pseudoterminal runs a terminal, and names a command\'s while it runs', async () => {
+  const pty = fakePty();
+  const { client, peer: p, chatUri } = await talking({ pty: pty.spawn });
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  const begin = (turnId: string, text: string): void => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+    });
+  };
+  const named = { type: 'terminal', resource: expect.stringMatching(/^ahp-terminal:/), title: 'Terminal', isPty: true };
+
+  // A call whose content names a terminal the server opened through the host.
+  begin('t1', 'paint it');
+  await endedTurn(p, chatUri, 1);
+  const painted = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.toolCallId === 'call-paint');
+  expect(((painted?.action.result as Bag).content as Bag[])[0]).toEqual(named);
+
+  // A person's command names its terminal as soon as it opens.
+  begin('t2', '!make preview');
+  const changed = (): Bag | undefined => actions(p, chatUri)
+    .find((e) => e.action.type === 'chat/toolCallContentChanged' && e.action.turnId === 't2')?.action;
+  await until(() => changed() !== undefined);
+  expect(changed()?.content).toEqual([named]);
+  expect(changed()).not.toHaveProperty('_meta');
+  const during = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  expect(callsIn(during.state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+
+  pty.say('built\r\n');
+  pty.exit(0);
+  await endedTurn(p, chatUri, 2);
+  const done = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallComplete' && e.action.turnId === 't2');
+  expect((done?.action.result as Bag).content).toEqual([
+    { ...named, result: { exitCode: 0, preview: 'built\r\n' } },
+    { type: 'text', text: 'built\r\n' },
+  ]);
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
 });
 
 /** The fixture's three options, as the protocol offers them: approve before deny, in the server's order. */

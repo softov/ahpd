@@ -11,6 +11,8 @@ import { cofoldAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import type { HostTool } from '../../sdk/src/types/host.js';
 import { checker } from '../../../tools/wire.mjs';
+import { undeclaredIn } from '../../sdk/test/support/wire.js';
+import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js';
 
 /*
  * A cofold run that stops for a person, as a client drives it.
@@ -267,6 +269,28 @@ const twoWrites = [
   { toolCalls: [{ name: 'write', input: { text: 'two' }, callId: 'call-b' }] },
   { text: 'done again' },
 ];
+
+it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: twoWrites, stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor([]));
+  const { chatUri } = await open(client, 'declared');
+  const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+  // A client's message as the protocol declares one, with its origin.
+  for (const [turnId, text] of [['t1', 'write one'], ['t2', 'write two']]) {
+    void client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId, message: { text, origin: { kind: 'user' } } } },
+    });
+    await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length >= (turnId === 't1' ? 1 : 2));
+  }
+  expect(ran).toEqual(['one', 'two']);
+
+  const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  expect(callsIn(openedFrom(late).state).map((call) => call.toolCallId)).toEqual(['call-a', 'call-b']);
+  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+});
 
 /** The approvals asked in a session so far. */
 const asked = (p: ReturnType<typeof peer>, uri: string): number => actions(p, uri)

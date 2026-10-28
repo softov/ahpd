@@ -21,7 +21,6 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
     { id: `${disk.first}:1:0`, kind: 'reasoning', content: 'I should read it.' },
     { id: `${disk.first}:1:1`, kind: 'markdown', content: 'Reading it.' },
     {
-      id: 'call-1',
       kind: 'toolCall',
       toolCall: {
         toolCallId: 'call-1',
@@ -33,6 +32,8 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
         confirmed: 'not-needed',
         success: true,
         pastTenseMessage: 'a.ts',
+        // What the tool returned, as its completion carried it.
+        content: [{ type: 'text', text: 'export {};' }],
         // The times pi's own entries carry for it, off the file.
         _meta: {
           'ahpd.startedAt': expect.any(String),

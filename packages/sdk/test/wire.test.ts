@@ -244,8 +244,10 @@ const PREFIXED = ['ahpd.', 'vscode.', 'anthropic/', 'agentHost/'];
  */
 const REFERENCE: { key: string; at: string; from: string }[] = [
   // What the reference client picks a row's renderer by. A call it has no kind
-  // for carries no `_meta` at all rather than a guess.
+  // for carries no `_meta` at all rather than a guess. On the action, and on
+  // the call a snapshot holds, where the reducer puts the action's `_meta`.
   { key: 'toolKind', at: 'action/_meta', from: 'docs/sdk/AHP.md' },
+  { key: 'toolKind', at: 'toolCall/_meta', from: 'docs/sdk/AHP.md' },
   // A completion item has to say it is a command, or the reference client
   // drops it without a word, and `description` is the menu's second column.
   { key: 'command', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
@@ -447,9 +449,10 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await settle();
 
   // Asked for again, so the answer is the state a client connecting late
-  // reads: the turn that just ended, and the model the session is on - which
-  // is under `_meta`, and only on the state, never on an action.
+  // reads: the model the session is on - which is under `_meta`, and only on
+  // the state, never on an action - and, on the chat, the turn that just ended.
   await ask('subscribe', { channel: uri });
+  await ask('subscribe', { channel: chatUri });
 
   await ask('subscribe', { channel: `${uri}/annotations` });
   dispatch(`${uri}/annotations`, {

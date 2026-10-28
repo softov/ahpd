@@ -333,6 +333,20 @@ export interface SessionOptions {
   onHandshake?(): void;
 }
 
+/**
+ * The terminal a host-run command runs in, as soon as it is open.
+ *
+ * `isPty` is the terminal's own, as its state says it: a client reads it to
+ * decide whether the output holds VT sequences. Absent where the state says
+ * nothing.
+ */
+export interface CommandTerminal {
+  /** The channel a client subscribes to. */
+  uri: string;
+  /** Whether a pseudoterminal runs the command. */
+  isPty?: boolean;
+}
+
 /** What a host-run command did, once it has finished doing it. */
 export interface Ran {
   /** Whether it exited cleanly. */
@@ -343,9 +357,18 @@ export interface Ran {
   output: string;
   /** The terminal it ran in, so a client can watch it while it runs. */
   terminal?: string;
+  /** Whether a pseudoterminal ran it, as `CommandTerminal.isPty` says. */
+  isPty?: boolean;
   /** What it exited with, where the runtime reported one. */
   code?: number;
 }
+
+/**
+ * The host's half of a `!` command, as `Session.ran` is handed it: run the
+ * command for the tool call `toolCallId`, tell `opened` the terminal as soon as
+ * it opens, and answer with what the command did.
+ */
+export type RunCommand = (toolCallId: string, opened?: (terminal: CommandTerminal) => void) => Promise<Ran>;
 
 /** Who a message came from, when not the person at the keyboard. */
 export interface MessageFrom {
@@ -504,9 +527,11 @@ export interface Session {
    *
    * `run` is the host's half: it is handed the id of the tool call this turn
    * is about and answers with what happened. The terminal is the host's
-   * because the shell is - a session has no port to spawn one through - and
-   * naming it back is what lets a client watch the output arrive rather than
-   * only read it afterwards.
+   * because the shell is - a session has no port to spawn one through. `run`
+   * calls `opened` with the terminal as soon as it is open, which is when the
+   * call names it, so a client watches the output arrive rather than only
+   * reading it afterwards, as the reference host's `!` command does:
+   * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
    *
    * Optional. `terminalCommandPrefix` is advertised per host rather than per
    * backend, because the protocol's capability is the host's - so a backend
@@ -519,7 +544,7 @@ export interface Session {
    * is waiting, and the turn that runs it names it as `queuedMessageId` so a
    * client takes it out of its queue - whether that turn starts now or later.
    */
-  ran?(turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>, queuedAs?: string): void;
+  ran?(turnId: string, command: string, run: RunCommand, queuedAs?: string): void;
 
   /**
    * Put a message into the turn that is already running.

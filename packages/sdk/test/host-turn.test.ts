@@ -4,6 +4,8 @@ import {
   resetSdk, actions, emit, hello, peer, sdk, settle,
   running,
 } from './support/host.js';
+import { undeclaredIn } from './support/wire.js';
+import { callsIn, openedFrom, replayed } from './support/replay.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -770,6 +772,32 @@ describe('one tool call, one row', () => {
   });
 });
 
+describe('what a Claude session sends', () => {
+  it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
+    const { client, peer: p, chatUri } = await running();
+    const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'read it', origin: { kind: 'user' } } } },
+    });
+    await settle();
+    await emit(
+      {
+        type: 'assistant', parent_tool_use_id: null, uuid: 'a1',
+        message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_read', name: 'Read', input: { file_path: '/home/softov/a' } }] },
+      },
+      { type: 'user', parent_tool_use_id: null, uuid: 'u1', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_read', content: 'a b c' }] } },
+      { type: 'assistant', parent_tool_use_id: null, uuid: 'a2', message: { id: 'm2', content: [{ type: 'text', text: 'Read.' }] } },
+      { type: 'result', subtype: 'success', is_error: false, duration_ms: 5, stop_reason: 'end_turn' },
+    );
+
+    const late = await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    expect(callsIn(openedFrom(late).state).map((call) => call.toolCallId)).toEqual(['toolu_read']);
+    expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+    expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
+  });
+});
+
 describe('a compacted context', () => {
   it('says so in the turn, and does not throw the conversation away', async () => {
     const { client, peer: p, chatUri } = await running();
@@ -789,6 +817,8 @@ describe('a compacted context', () => {
       .map((e) => e.action.part as Record<string, unknown>)
       .find((held) => held.kind === 'systemNotification');
     expect(part?.content).toBe('Context compacted automatically: 120000 tokens to 30000.');
+    // And as the protocol declares the notice, which has no id of its own.
+    expect(undeclaredIn(p.notes)).toEqual([]);
 
     // Not `chat/truncated`. That means "drop the turns after this one", and
     // every one of them is still in the transcript and still readable - what

@@ -27,14 +27,14 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:pat
 import { fileURLToPath } from 'node:url';
 import { activityOf, bag, callTimes, createClientCalls, idFor, partsOf, reason, startOf, statusOf, titleFrom, uriOf, withCallTimes } from '@ahpd/sdk';
 import type {
-  Bag, BoundTool, Chosen, MessageAttachment, MessageFrom, Ran, Session, Start, StatusBits, ToolEffects,
+  Bag, BoundTool, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session, Start, StatusBits, ToolEffects,
 } from '@ahpd/sdk';
 import type { AgentSessionEvent, ToolCallEvent, ToolCallEventResult } from '@earendil-works/pi-coding-agent';
 import type { AssistantMessage, ImageContent } from '@earendil-works/pi-ai';
 import { isUuid, openPi } from './backend.js';
 import type { BackendOptions, PiBackend } from './backend.js';
 import { watch } from './catalog.js';
-import { activityOf as saidFor, addUsage, describe, mapEvent, readyRow, untime } from './mapping.js';
+import { activityOf as saidFor, addUsage, callPartOf, describe, mapEvent, readyRow, untime } from './mapping.js';
 import { listed } from './models.js';
 import { replayed } from './replay.js';
 import type { ReplayPi } from './replay.js';
@@ -340,7 +340,7 @@ export function piSession(
   const releasePending = (why: string): void => {
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
-      const part = mapping?.parts.find((one) => one.id === id);
+      const part = mapping === undefined ? undefined : callPartOf(mapping, id);
       if (part !== undefined) {
         bag(part.toolCall).status = 'cancelled';
         // The question was cancelled, so the call never ran: the start
@@ -530,7 +530,7 @@ export function piSession(
     const input = bag(event.input);
     const displayName = event.toolName;
     const turnId = active === undefined ? '' : String(active.id);
-    const part = mapping?.parts.find((one) => one.id === id);
+    const part = mapping === undefined ? undefined : callPartOf(mapping, id);
     const row = part === undefined ? undefined : bag(part.toolCall);
     const owner = mapping?.ownerOf?.(event.toolName);
     const contributor = owner === undefined
@@ -1093,7 +1093,7 @@ export function piSession(
     if (typeof command.text === 'string') {
       // A `!command` that waited. What waited is the command, not its text, so
       // it is run rather than asked about.
-      runCommand(id, String(command.text), command.run as (toolCallId: string) => Promise<Ran>);
+      runCommand(id, String(command.text), command.run as RunCommand);
       return;
     }
     begin(
@@ -1112,53 +1112,81 @@ export function piSession(
    * pi has a shell of its own, but this turn is not pi's: the person asked the
    * host to run something, and the host owns the terminal a client watches.
    */
-  const runCommand = (turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>): void => {
+  const runCommand = (turnId: string, command: string, run: RunCommand): void => {
     const startedAt = new Date().toISOString();
     const toolCallId = `${turnId}:shell`;
     const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
+    /*
+     * A `terminal` call shown as `Terminal`, with the command as its intention,
+     * its line and its input, as the reference host's own: a client draws a
+     * shell by that name.
+     * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L67-L82
+     */
+    const started: Bag = { toolName: 'terminal', displayName: 'Terminal', intention: command };
     const part: Bag = {
-      id: toolCallId,
       kind: 'toolCall',
-      toolCall: { toolCallId, toolName: 'shell', displayName: command, status: 'running' },
+      toolCall: { toolCallId, ...started, status: 'running' },
     };
     active = { id: turnId, startedAt, message, responseParts: [part], state: 'running' };
     mapping = undefined;
     emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
-    emit('chat', {
-      type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'shell', displayName: command,
-    });
+    emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
     const held = bag(part.toolCall);
     held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
-    emit('chat', {
-      type: 'chat/toolCallReady',
-      turnId,
-      toolCallId,
-      invocationMessage: command,
-      confirmed: 'not-needed',
-      toolInput: JSON.stringify({ command }),
-      _meta: held._meta,
-    });
+    /*
+     * Onto the held call and into the action, from one object: the snapshot a
+     * client reads later is the call a client watching was sent.
+     */
+    const ready: Bag = { invocationMessage: command, confirmed: 'not-needed', toolInput: command };
+    Object.assign(held, ready);
+    emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, ...ready, _meta: held._meta });
     activity.say(`Running ${command}`);
 
-    void run(toolCallId).then((ran) => {
-      held.status = 'completed';
-      held.success = ran.success;
-      held.pastTenseMessage = ran.said;
+    /*
+     * The block a client opens the command's terminal from. `isPty` is the
+     * terminal's own, which a client reads to decide whether the output holds
+     * VT sequences, and it is left out where the host says nothing.
+     */
+    const terminalOf = (terminal: CommandTerminal): Bag => ({
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    });
+    void run(toolCallId, (opened) => {
+      if (active === undefined || String(active.id) !== turnId) return;
+      /*
+       * The terminal as soon as it opens, so a client watches the output
+       * arrive. Onto the call and into the action from one object, and with
+       * no `_meta`, which the reducer would put in place of the call's.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+       */
+      const content = [terminalOf(opened)];
+      held.content = content;
+      emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
+    }).then((ran) => {
+      // The terminal again, with how the command ended, and then the text it printed.
+      const content: Bag[] = [
+        ...(ran.terminal === undefined ? [] : [{
+          ...terminalOf({ uri: ran.terminal, ...(ran.isPty === undefined ? {} : { isPty: ran.isPty }) }),
+          result: {
+            ...(ran.code !== undefined ? { exitCode: ran.code } : {}),
+            ...(ran.output === '' ? {} : { preview: ran.output }),
+          },
+        }]),
+        ...(ran.output === '' ? [] : [{ type: 'text', text: ran.output }]),
+      ];
+      const result: Bag = {
+        success: ran.success,
+        pastTenseMessage: ran.said,
+        ...(content.length === 0 ? {} : { content }),
+        ...(ran.success
+          ? {}
+          : { error: { message: ran.code === undefined ? ran.said : `Exited ${ran.code}` } }),
+      };
+      Object.assign(held, result, { status: 'completed' });
       held._meta = withCallTimes(bag(held._meta), callTimes(startOf(held._meta) ?? Date.now(), Date.now()));
-      emit('chat', {
-        type: 'chat/toolCallComplete',
-        turnId,
-        toolCallId,
-        _meta: held._meta,
-        result: {
-          success: ran.success,
-          pastTenseMessage: ran.said,
-          ...(ran.output === '' ? {} : { content: [{ type: 'text', text: ran.output }] }),
-          ...(ran.success
-            ? {}
-            : { error: { message: ran.code === undefined ? ran.said : `Exited ${ran.code}` } }),
-        },
-      });
+      emit('chat', { type: 'chat/toolCallComplete', turnId, toolCallId, _meta: held._meta, result });
       finish('complete');
     }).catch((error: unknown) => {
       finish('error', reason(error));
@@ -1357,7 +1385,7 @@ export function piSession(
       pending.delete(toolCallId);
       emit('session', { type: 'session/inputNeededRemoved', id: held.id });
       const toolCall = bag(held.entry.toolCall);
-      const part = mapping?.parts.find((one) => one.id === toolCallId);
+      const part = mapping === undefined ? undefined : callPartOf(mapping, toolCallId);
       let times: Bag | undefined;
       if (part !== undefined) {
         const row = bag(part.toolCall);

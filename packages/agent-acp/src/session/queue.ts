@@ -1,5 +1,5 @@
 import { callTimes, titleFrom, withCallTimes } from '@ahpd/sdk';
-import type { Bag, Chosen, MessageAttachment, MessageFrom, Ran, Session } from '@ahpd/sdk';
+import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session } from '@ahpd/sdk';
 import { bag, UNTITLED } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -33,7 +33,7 @@ export function createQueue(ctx: SessionContext): Queue {
   const runCommand = (
     turnId: string,
     command: string,
-    run: (toolCallId: string) => Promise<Ran>,
+    run: RunCommand,
     queuedMessageId?: string,
   ): void => {
     if (ctx.closed || ctx.active !== undefined) return;
@@ -67,7 +67,7 @@ export function createQueue(ctx: SessionContext): Queue {
       status: 'running',
       _meta: callTimes(began),
     };
-    const part: Bag = { id: toolCallId, kind: 'toolCall', toolCall: call };
+    const part: Bag = { kind: 'toolCall', toolCall: call };
     ctx.active = {
       id: turnId,
       startedAt: new Date(began).toISOString(),
@@ -90,21 +90,39 @@ export function createQueue(ctx: SessionContext): Queue {
     });
     doing('Running');
     touch();
-    void run(toolCallId).then((done) => {
+    /*
+     * The block a client opens the command's terminal from. `isPty` is the
+     * terminal's own, which a client reads to decide whether the output holds
+     * VT sequences, and it is left out where the host says nothing.
+     */
+    const terminalOf = (terminal: CommandTerminal): Bag => ({
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    });
+    void run(toolCallId, (opened) => {
       if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
       /*
-       * The terminal first, so a client can watch the output arrive, then the
-       * text it printed. `content` replaces rather than appends, so the two go
-       * out together in the one action that closes the row.
+       * The terminal as soon as it opens, so a client watches the output
+       * arrive, as the reference host names its own. Onto the call and into
+       * the action from one object, and with no `_meta`, which the reducer
+       * would put in place of the call's.
+       * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L96-L104
+       */
+      const content = [terminalOf(opened)];
+      call.content = content;
+      emit('chat', { type: 'chat/toolCallContentChanged', turnId, toolCallId, content });
+    }).then((done) => {
+      if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+      /*
+       * The terminal again, with how the command ended, then the text it
+       * printed. `content` replaces rather than appends, so the two go out
+       * together in the one action that closes the row.
        */
       const content: Bag[] = [
         ...(done.terminal === undefined ? [] : [{
-          type: 'terminal',
-          resource: done.terminal,
-          title: 'Terminal',
-          // Pipes, not a pseudoterminal: a client reads this to decide whether
-          // the preview needs VT parsing.
-          isPty: false,
+          ...terminalOf({ uri: done.terminal, ...(done.isPty === undefined ? {} : { isPty: done.isPty }) }),
           result: {
             ...(done.code !== undefined ? { exitCode: done.code } : {}),
             ...(done.output === '' ? {} : { preview: done.output }),
@@ -192,7 +210,7 @@ export function createQueue(ctx: SessionContext): Queue {
     const held = bag(next.command);
     const typed = typeof held.text === 'string' ? held.text : undefined;
     if (typed !== undefined && typeof held.run === 'function') {
-      runCommand(crypto.randomUUID(), typed, held.run as (toolCallId: string) => Promise<Ran>, String(next.id));
+      runCommand(crypto.randomUUID(), typed, held.run as RunCommand, String(next.id));
       return;
     }
     const message = bag(next.message);

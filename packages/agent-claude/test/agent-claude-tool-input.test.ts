@@ -825,6 +825,58 @@ it('removes an entry once when an answer came before the abort', async () => {
   expect(entriesOf(sent, 'session/inputNeededRemoved', 'toolu_both')).toHaveLength(1);
 });
 
+/*
+ * A tool call part, as the protocol declares one.
+ *
+ * `ToolCallResponsePart` is a call and its kind, and nothing beside them. A
+ * client that subscribes late reads the parts out of the snapshot, so a key
+ * kept on a part for this host's own lookups is a key that client is sent
+ * and no declaration names.
+ */
+
+/** The keys of each tool call part in a session's turns, the running one included. */
+const partKeys = (turns: Bag[]): string[][] => turns
+  .flatMap((turn) => (turn.responseParts ?? []) as Bag[])
+  .filter((part) => part.kind === 'toolCall')
+  .map((part) => Object.keys(part).sort());
+
+const heldTurns = (session: Session): Bag[] => {
+  const chat = session.chatState() as Bag;
+  return [...(chat.turns ?? []) as Bag[], ...(chat.activeTurn ? [chat.activeTurn as Bag] : [])];
+};
+
+it('holds each call as the protocol declares a tool call part, however the call arrived', async () => {
+  const declared = ['kind', 'toolCall'];
+
+  // Whole, in an assistant message.
+  const whole = await live();
+  expect(partKeys(heldTurns(whole.session))).toEqual(calls.map(() => declared));
+
+  // Opened by its content block, while the message streams.
+  const streamed = await live([
+    { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: { id: 'msg_s' } } },
+    {
+      type: 'stream_event', parent_tool_use_id: null,
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_streamed', name: 'Read' } },
+    },
+  ]);
+  expect(partKeys(heldTurns(streamed.session))).toEqual([declared]);
+
+  // Asked about before the stream said anything of it.
+  const first = await live([], () => { void sdk.canUseTool?.('Bash', { command: 'ls' }, { toolUseID: 'toolu_first' }); });
+  expect(partKeys(heldTurns(first.session))).toEqual([declared]);
+
+  // A person's own shell command.
+  const shell = await live([]);
+  shell.session.ran?.('t-shell', 'ls', async () => ({ success: true, said: 'Ran ls', output: 'a b c', code: 0 }));
+  await settle();
+  expect(partKeys(heldTurns(shell.session))).toEqual([declared]);
+
+  // And read back after a restart.
+  const back = (await partsOf([])).filter((part) => part.kind === 'toolCall');
+  expect(back.map((part) => Object.keys(part).sort())).toEqual([declared]);
+});
+
 it('puts nothing on the chat for a call whose signal is already aborted', async () => {
   const held = new AbortController();
   held.abort();

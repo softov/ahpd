@@ -1378,13 +1378,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       ctx.commandTurns.set(queuedAs ?? turnId, false);
       const first = session.workingDirectories()[0];
       const where = first === undefined ? options.path : localPath(first);
-      session.ran(turnId, command, (toolCallId) => ctx.commanded(command, where, {
+      session.ran(turnId, command, (toolCallId, opened) => ctx.commanded(command, where, {
         kind: 'session',
         session: session.uri,
         chat: session.chatUri,
         turnId,
         toolCallId,
-      }), queuedAs);
+      }, opened), queuedAs);
       return undefined;
     };
     /*

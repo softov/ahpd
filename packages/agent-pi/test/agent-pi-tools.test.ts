@@ -9,7 +9,7 @@ import { piSession } from '../src/session.js';
 import type { OpenPi } from '../src/session.js';
 import type { BackendOptions } from '../src/backend.js';
 import { toPiTool } from '../src/tools.js';
-import { driveCall, fakePi, opened, root, settled, turn } from './fake-pi.js';
+import { callIn, driveCall, fakePi, opened, root, settled, turn } from './fake-pi.js';
 
 // Host tools --------------------------------------------------------------
 
@@ -512,7 +512,7 @@ it('marks a client-owned call with the client that runs it', () => {
   expect(actions[0]?.type).toBe('chat/toolCallStart');
   expect(actions[0]?.contributor).toEqual(contributor);
   // The snapshot row says the same thing, so a client that subscribes reads it.
-  expect((one.parts.find((part) => part.id === 'c1')?.toolCall as Bag)?.contributor).toEqual(contributor);
+  expect(callIn(one.parts, 'c1')?.contributor).toEqual(contributor);
   // A host tool is nobody's client, and a call to one carries nothing.
   expect(mapEvent(turn(), {
     type: 'tool_execution_start', toolCallId: 'c2', toolName: 'bash', args: {},

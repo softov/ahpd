@@ -405,7 +405,7 @@ export async function turnsOf(store: Store, sessionId: string): Promise<Transcri
           // finds the same object the snapshot holds.
           live.calls.set(part.callId, held);
           live.said.set(part.callId, describe(part.name, subject.get(part.callId)));
-          live.parts.push({ id: part.callId, kind: 'toolCall', toolCall: held });
+          live.parts.push({ kind: 'toolCall', toolCall: held });
         } else if (part.type === 'image') {
           /*
            * AHP has no inline image response part. A system notification is the

@@ -7,6 +7,7 @@ import { uriOf } from '../src/resources/fileuri.js';
 import { shellOf, shellTerminals } from '../src/machines/terminals.js';
 import type { SpawnShell } from '../src/machines/terminals.js';
 import type { Pty, SpawnPty, Terminal } from '../src/types/terminals.js';
+import { fakePty } from './support/pty.js';
 
 /*
  * A shell that says where it is and what it ran.
@@ -17,31 +18,6 @@ import type { Pty, SpawnPty, Terminal } from '../src/types/terminals.js';
  * become facts. The binding is handed in, so this drives a fake one rather
  * than needing native code to have been built.
  */
-
-/** A pseudoterminal that says whatever a test tells it to, and exits when told. */
-function fakePty(): {
-  spawn: SpawnPty;
-  say: (data: string) => void;
-  exit: (exitCode: number) => void;
-  typed: string[];
-  started: { shell: string; args: string[] | string }[];
-} {
-  let listen: ((data: string) => void) | undefined;
-  let gone: ((exit: { exitCode: number }) => void) | undefined;
-  const typed: string[] = [];
-  const started: { shell: string; args: string[] | string }[] = [];
-  const spawn: SpawnPty = (shell, args) => {
-    started.push({ shell, args });
-    return {
-      onData: (to) => { listen = to; },
-      onExit: (to) => { gone = to; },
-      write: (data) => { typed.push(data); },
-      resize: () => {},
-      kill: () => {},
-    };
-  };
-  return { spawn, say: (data) => listen?.(data), exit: (exitCode) => gone?.({ exitCode }), typed, started };
-}
 
 const opened = (pty?: SpawnPty) => {
   const seen: Record<string, unknown>[] = [];

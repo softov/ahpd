@@ -650,7 +650,6 @@ export function createQuery(ctx: SessionContext): Query {
             const now = typeof about.post_tokens === 'number' ? about.post_tokens : undefined;
             const how = str(about.trigger) === 'manual' ? 'Context compacted' : 'Context compacted automatically';
             ctx.addPart(ctx.mainScope, {
-              id: `${String(turn.id)}:compact:${String(ctx.turns.length)}`,
               kind: 'systemNotification',
               content: was !== undefined && now !== undefined
                 ? `${how}: ${String(was)} tokens to ${String(now)}.`

@@ -5,7 +5,7 @@ import { expect, it } from 'vitest';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import type { Bag, BoundTool, Start } from '../../sdk/src/types/index.js';
 import { piAgent } from '../src/agent.js';
-import { driveCall, opened, root, settled } from './fake-pi.js';
+import { callIn, driveCall, opened, root, settled } from './fake-pi.js';
 import { posix } from '../../../tools/posix.ts';
 
 /**
@@ -109,7 +109,7 @@ it('answers two waiting calls independently, and a cancel answers both it leaves
   expect(session.status()).not.toBe(Status.InputNeeded);
   const turns = session.chatState().turns as Bag[];
   const parts = turns[turns.length - 1]?.responseParts as Bag[];
-  expect((parts.find((part) => part.id === 'c2')?.toolCall as Bag).status).toBe('cancelled');
+  expect(callIn(parts, 'c2')?.status).toBe('cancelled');
 });
 
 it.each([
@@ -133,7 +133,7 @@ it.each([
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: name, result: 'ok', isError: false });
   expect((last('chat/toolCallComplete')?.result as Bag).pastTenseMessage).toBe(said);
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(parts.find((one) => one.id === 'c1')?.toolCall).toMatchObject({ invocationMessage: said, pastTenseMessage: said });
+  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: said, pastTenseMessage: said });
 });
 
 it('draws an asked call by what it runs on, and keeps the tool in its question', async () => {
@@ -145,7 +145,7 @@ it('draws an asked call by what it runs on, and keeps the tool in its question',
   await settled();
   expect(last('chat/toolCallReady')).toMatchObject({ invocationMessage: 'ls -la', confirmationTitle: 'Run bash?' });
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(parts.find((one) => one.id === 'c1')?.toolCall).toMatchObject({ invocationMessage: 'ls -la' });
+  expect(callIn(parts, 'c1')).toMatchObject({ invocationMessage: 'ls -la' });
   session.confirm('c1', false);
   await waiting;
 });
@@ -166,8 +166,8 @@ it('opens one row for an asked call, starts it once and readies it once', async 
   expect(readies[0]?.action.toolInput).toBe('{"command":"ls"}');
   // The start pi sent is the row the question moved, not a second one.
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect(parts.filter((one) => one.id === 'c1')).toHaveLength(1);
-  expect((parts.find((one) => one.id === 'c1')?.toolCall as Bag).status).toBe('pending-confirmation');
+  expect(parts.filter((one) => (one.toolCall as Bag | undefined)?.toolCallId === 'c1')).toHaveLength(1);
+  expect(callIn(parts, 'c1')?.status).toBe('pending-confirmation');
   expect(callStatuses(sent).get('c1')).toBe('pending-confirmation');
   session.confirm('c1', false);
   await waiting;
@@ -216,7 +216,7 @@ it('does not send a client tool to its client until the person approves it', asy
   expect(start?.contributor).toEqual(contributor);
   expect(ready?.contributor).toEqual(contributor);
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect((parts.find((one) => one.id === 'c1')?.toolCall as Bag).contributor).toEqual(contributor);
+  expect(callIn(parts, 'c1')?.contributor).toEqual(contributor);
   // It is a question before it is anyone's to run: nothing marks it ready for
   // the client until a person answers.
   expect(callStatuses(sent).get('c1')).toBe('pending-confirmation');
@@ -247,7 +247,7 @@ it('keeps a declined call cancelled in the snapshot and for a client', async () 
   pi.raise({ type: 'tool_execution_end', toolCallId: 'c1', toolName: 'bash', result: 'blocked', isError: true });
   await settled();
   const parts = (session.chatState().activeTurn as Bag).responseParts as Bag[];
-  expect((parts.find((one) => one.id === 'c1')?.toolCall as Bag).status).toBe('cancelled');
+  expect(callIn(parts, 'c1')?.status).toBe('cancelled');
   expect(callStatuses(sent).get('c1')).toBe('cancelled');
 });
 

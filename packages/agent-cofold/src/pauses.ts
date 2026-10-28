@@ -212,7 +212,8 @@ export const createPauses = (
          * Nothing applies what a client dispatched, so a call approved here
          * would stay `pending-confirmation` for anybody who subscribes next.
          */
-        const part = (ctx.active?.responseParts as Bag[] | undefined)?.find((one) => one.id === held.callId);
+        const part = (ctx.active?.responseParts as Bag[] | undefined)
+          ?.find((one) => one.kind === 'toolCall' && bag(one.toolCall).toolCallId === held.callId);
         if (part !== undefined) {
           const call = bag(part.toolCall);
           call.status = approved ? 'running' : 'cancelled';

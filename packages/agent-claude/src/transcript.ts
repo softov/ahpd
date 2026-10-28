@@ -486,7 +486,7 @@ function buildTurns(messages: unknown[]): WireTurn<Turn>[] {
         // The part is not re-checked: `call` is a `Bag` from here on, because
         // a tool result arriving later mutates it. The literal above is what
         // the protocol changes under, and the literal is what is checked.
-        parts.push({ id, kind: 'toolCall', toolCall: call });
+        parts.push({ kind: 'toolCall', toolCall: call });
       }
     }
     /*

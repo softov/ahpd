@@ -258,8 +258,21 @@ Reference: [00-host.md](host/00-host.md)
 | [124 - A shell's marks stay out of its output](host/124-a-shells-marks-stay-out-of-its-output/plan.md) | high | built 2026-10-27 ([implemented.md](host/124-a-shells-marks-stay-out-of-its-output/implemented.md)) | - | - |
 | [125 - A split character arrives whole](host/125-a-split-character-arrives-whole/plan.md) | medium | built 2026-10-27 ([implemented.md](host/125-a-split-character-arrives-whole/implemented.md)) | - | - |
 | [126 - A new session is an `ahp-session:` URI](host/126-a-new-session-is-an-ahp-session-uri/plan.md) | medium | planned 2026-10-27; five tasks, todo | - | ahpc and ahpw create `ahp-session:` sessions |
+| [127 - Every agent sends what the protocol declares, and a late client reads what a watching one built](host/127-every-agent-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27; parent of p1 to p6; [implemented.md](host/127-every-agent-sends-what-the-protocol-declares/implemented.md) | host 43 | - |
+| [127 p1 - The host describes every agent](host/127-p1-the-host-describes-every-agent/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p1-the-host-describes-every-agent/implemented.md)) | host 127 | 127 p3, 127 p4 |
+| [127 p2 - A Claude session sends what the protocol declares](host/127-p2-a-claude-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p2-a-claude-session-sends-what-the-protocol-declares/implemented.md)) | host 127, claude 07 | - |
+| [127 p3 - An ACP session sends what the protocol declares](host/127-p3-an-acp-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p3-an-acp-session-sends-what-the-protocol-declares/implemented.md)) | 127 p1 | - |
+| [127 p4 - A cofold session sends what the protocol declares](host/127-p4-a-cofold-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p4-a-cofold-session-sends-what-the-protocol-declares/implemented.md)) | 127 p1 | - |
+| [127 p5 - A pi session sends what the protocol declares](host/127-p5-a-pi-session-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p5-a-pi-session-sends-what-the-protocol-declares/implemented.md)) | host 127 | - |
+| [127 p6 - A bot chat sends what the protocol declares](host/127-p6-a-bot-chat-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p6-a-bot-chat-sends-what-the-protocol-declares/implemented.md)) | host 127 | - |
+| [128 - A shell command's call shows its terminal as it is, while it runs](host/128-a-shell-commands-call-shows-its-terminal/plan.md) | high | built 2026-10-27; parent of p1 to p5; [implemented.md](host/128-a-shell-commands-call-shows-its-terminal/implemented.md) | host 127 | - |
+| [128 p1 - The host says a command's terminal as it opens](host/128-p1-the-host-says-a-commands-terminal-as-it-opens/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p1-the-host-says-a-commands-terminal-as-it-opens/implemented.md)) | host 128 | 128 p2 to p5 |
+| [128 p2 - A Claude command shows its terminal](host/128-p2-a-claude-command-shows-its-terminal/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p2-a-claude-command-shows-its-terminal/implemented.md)) | 128 p1 | - |
+| [128 p3 - An ACP command and terminal say what they are](host/128-p3-an-acp-command-and-terminal-say-what-they-are/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p3-an-acp-command-and-terminal-say-what-they-are/implemented.md)) | 128 p1 | - |
+| [128 p4 - A cofold command shows its terminal](host/128-p4-a-cofold-command-shows-its-terminal/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p4-a-cofold-command-shows-its-terminal/implemented.md)) | 128 p1 | - |
+| [128 p5 - A pi command is a terminal call](host/128-p5-a-pi-command-is-a-terminal-call/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p5-a-pi-command-is-a-terminal-call/implemented.md)) | 128 p1 | - |
 
-Next free number in `host`: `127`.
+Next free number in `host`: `129`.
 
 ## claude
 

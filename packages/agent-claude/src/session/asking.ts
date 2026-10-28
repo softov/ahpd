@@ -401,7 +401,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // call, and one watching reads the ready.
       if (edits !== undefined) call.edits = edits;
       if (!held) {
-        const part: Bag = { id, kind: 'toolCall', toolCall: call };
+        const part: Bag = { kind: 'toolCall', toolCall: call };
         scope.parts.set(id, part);
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {

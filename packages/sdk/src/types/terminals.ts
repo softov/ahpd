@@ -218,6 +218,12 @@ export interface OpenedTerminal {
   /** The channel URI the host allocated. */
   readonly uri: string;
   /**
+   * Whether a pseudoterminal runs it, as its state says, so a call that names
+   * it can say whether the output holds VT sequences. Absent where the state
+   * says nothing.
+   */
+  readonly isPty?: boolean;
+  /**
    * Everything written so far, and the exit code once there is one.
    *
    * Reconstructed from the channel's own content, so a backend reads what a
