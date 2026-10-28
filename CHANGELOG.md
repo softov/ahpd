@@ -28,6 +28,7 @@ What changed in each release of the `@ahpd/*` packages. Every package carries th
 
 ### Agents
 
+- Claude: a call that a stopped turn was in stays cancelled when the CLI answers it after the stop. A client that subscribes later reads what a client that watched built, no `chat/toolCallComplete` without a `turnId` is sent, and the stopped session does not say it is thinking again. An edit such a call made is recorded under its own turn. See [docs/sdk/CHATS.md](docs/sdk/CHATS.md#turns).
 - Claude: a `Bash` result too large to send shows the whole output Claude saved in a terminal on the call, as VS Code does. The call keeps Claude's notice as its text, and the terminal has exited, with 0 for a command that worked. The host keeps the output for as long as the chat lasts, and a call read back from the transcript names the terminal again.
 - Claude: an answered `AskUserQuestion` reads back with its answers after a restart, in the session and in a subagent's chat. The answers are read from the transcript entry where the CLI writes them, which the SDK's reader leaves out. See [packages/agent-claude/README.md](packages/agent-claude/README.md#what-it-does).
 - Claude, ACP, cofold, pi and the bot send only what the protocol declares: no `id` on a tool call part or a notice, live or read back from a transcript. Each is driven through a host in its suite, every frame it sends and the chat a late client reads checked with the protocol's own schema. The wire suite reads the chat again after its turn, where it read only the session.

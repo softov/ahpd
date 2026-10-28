@@ -41,6 +41,8 @@ A turn says who sent it, as the same typed reference a session's owner is: `user
 
 One action ends a turn and which one says how it went: `chat/turnComplete` when it worked, `chat/error` when it did not, `chat/turnCancelled` when somebody stopped it. All three carry a required `duration`, and a message that arrives without one is `NaN` inside a client's reducer rather than a missing number - which is why `chat/error` *is* the ending rather than a message beside one.
 
+A turn that has ended takes no more results. A client's reducer completes a call in the active turn and in no other, so a call that a stop cancelled stays cancelled for every client that watched. Claude's CLI answers the call it was interrupted in after the stop, and that answer changes neither the record a later client reads nor anything a client is sent. The edit such a call made still reaches the changeset, under the turn it was made in.
+
 A message that arrives while a turn is running waits as a pending message, and its kind decides what happens: `queued` waits for the running turn, `steering` goes into it. The prompt handed to the backend's CLI is a generator that stays open for the life of the session, which is what makes steering possible at all.
 
 A draft is a `Message` rather than a string, and the session holds it rather than the chat's client, so two people in one chat see each other's. It is taken for a session nothing is running for too - somebody typing into a row from the catalogue is typing before there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into.

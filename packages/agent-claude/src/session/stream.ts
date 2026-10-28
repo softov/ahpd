@@ -68,8 +68,8 @@ export function createStream(ctx: SessionContext): Stream {
    */
   const rounds = new Map<string, { answered: boolean; stopped?: string }>();
 
-  /** Which file each running edit tool is changing, by its call id. */
-  const editing = new Map<string, string>();
+  /** Which file each running edit tool is changing, and in which turn, by its call id. */
+  const editing = new Map<string, { path: string; turn: string }>();
 
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   const pastLines = new Map<string, StringOrMarkdown>();
@@ -427,7 +427,7 @@ export function createStream(ctx: SessionContext): Stream {
          */
         const changing = edits(name, bag(block.input));
         if (changing !== undefined) {
-          editing.set(id, changing);
+          editing.set(id, { path: changing, turn: str(turn.id) ?? '' });
           ctx.options.onFileEdit?.(str(turn.id) ?? '', changing, 'before');
         }
         if (open === undefined) {
@@ -477,6 +477,34 @@ export function createStream(ctx: SessionContext): Stream {
     }
   };
 
+  /**
+   * The file an edit tool changed, as it is now the tool has run.
+   *
+   * Paired with the `before` by the call's own id, which is the only thing
+   * that survives the gap, and recorded against the turn the `before` was:
+   * the turn the call was made in, whichever turn is running when it ends.
+   */
+  const edited = (id: string): void => {
+    const changed = editing.get(id);
+    if (changed === undefined) return;
+    editing.delete(id);
+    ctx.options.onFileEdit?.(changed.turn, changed.path, 'after');
+  };
+
+  /**
+   * A spawning call's result ends the worker it ran when the call did not
+   * ask for the background. A call that did gets a result saying only that
+   * the worker was launched, and its worker ends on its notification.
+   */
+  const settleSpawn = (id: string, ok: boolean, text: string | undefined): void => {
+    const info = ctx.spawning.get(id);
+    if (info === undefined) return;
+    info.completed = true;
+    if (info.foreground) ctx.endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
+    // Ended, or never opened and not running on in the background.
+    if (ctx.ended.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
+  };
+
   const results = (message: Bag, parent = '', structured?: unknown): void => {
     const scope = ctx.scopeFor(parent);
     if (scope.waiting !== undefined) {
@@ -503,7 +531,7 @@ export function createStream(ctx: SessionContext): Stream {
        */
       if (id !== undefined) ctx.releaseHeld(id);
       const part = id ? scope.parts.get(id) : undefined;
-      if (!part) continue;
+      if (id === undefined || !part) continue;
       const call = bag(part.toolCall);
       /*
        * A tool that failed is `completed`, and says so in its result.
@@ -515,17 +543,34 @@ export function createStream(ctx: SessionContext): Stream {
        * `result.error`, which is also the only place a client looks for it.
        */
       const ok = block.is_error !== true;
+      const text = resultText(block.content);
+      // Finished, so it is no longer waiting on anything - including a
+      // sign-in nobody ever did.
+      ctx.onServer.delete(id);
+      /*
+       * A result for a call whose turn has already ended.
+       *
+       * The CLI writes one for the call a stopped turn was in, after the
+       * stop. The protocol's reducer completes a call in the active turn and
+       * in no other, so every client that watched keeps this call as the stop
+       * left it. The record a client reads afterwards says the same, and
+       * nothing is announced. What the call holds outside its turn still
+       * ends here, as it does for any other result.
+       */
+      if (!list(scope.turn?.responseParts).includes(part)) {
+        ctx.pastLines.delete(id);
+        ctx.answeredInputs.delete(id);
+        edited(id);
+        settleSpawn(id, ok, text);
+        continue;
+      }
       // A call a person declined is already `cancelled`, and it never ran, so
       // its completion carries no times.
       const ran = call.status !== 'cancelled';
       call.status = 'completed';
-      // Finished, so it is no longer waiting on anything - including a
-      // sign-in nobody ever did.
-      if (id !== undefined) ctx.onServer.delete(id);
       // Back to thinking. Leaving the last tool's name up makes a session look
       // busy with something that finished.
       if (scope === ctx.mainScope) ctx.doing('Thinking');
-      const text = resultText(block.content);
       /*
        * The result, as one object, because that is the only part of the action
        * a client reads.
@@ -542,12 +587,12 @@ export function createStream(ctx: SessionContext): Stream {
        * `success`. The row line is read back only as plain text, for a call
        * whose input never arrived.
        */
-      const said = (id === undefined ? undefined : ctx.pastLines.get(id)) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
-      if (id !== undefined) ctx.pastLines.delete(id);
+      const said = ctx.pastLines.get(id) ?? str(call.invocationMessage) ?? str(call.displayName) ?? str(call.toolName) ?? 'the tool';
+      ctx.pastLines.delete(id);
       // The input a question ran with, for a call that was answered. A denied or
       // cancelled one was never answered and settles with no input recorded.
-      const answered = id === undefined ? undefined : ctx.answeredInputs.get(id);
-      if (id !== undefined) ctx.answeredInputs.delete(id);
+      const answered = ctx.answeredInputs.get(id);
+      ctx.answeredInputs.delete(id);
       /*
        * The link survives the result.
        *
@@ -559,8 +604,8 @@ export function createStream(ctx: SessionContext): Stream {
        * its worker says anything, with a result that only says it was
        * launched, so its worker is opened here and the completion names it.
        */
-      if (id !== undefined && ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
-      const workerContent = id === undefined ? undefined : ctx.workerBlock(id);
+      if (ctx.spawning.get(id)?.foreground === false) ctx.scopeFor(id);
+      const workerContent = ctx.workerBlock(id);
       /*
        * The terminal that shows a `Bash` output too large to send, after the
        * notice that stands in for that output in the text, which is where the
@@ -607,13 +652,7 @@ export function createStream(ctx: SessionContext): Stream {
       // When it ended, measured from the start the call holds. A call a person
       // declined never ran, so it keeps none.
       if (ran) ctx.stampEnd(call);
-      // And as it is now the tool has run. Paired with the `before` above by
-      // the call's own id, which is the only thing that survives the gap.
-      const changed = id === undefined ? undefined : editing.get(id);
-      if (id !== undefined && changed !== undefined) {
-        editing.delete(id);
-        ctx.options.onFileEdit?.(str(scope.turn?.id) ?? '', changed, 'after');
-      }
+      edited(id);
       ctx.emitOn(scope, {
         type: 'chat/toolCallComplete',
         turnId: scope.turn?.id,
@@ -623,18 +662,7 @@ export function createStream(ctx: SessionContext): Stream {
         // times and the kind have to be said again here or they are gone.
         ...(call._meta === undefined ? {} : { _meta: call._meta }),
       });
-      /*
-       * A spawning call's result ends the worker it ran when the call did not
-       * ask for the background. A call that did gets a result saying only that
-       * the worker was launched, and its worker ends on its notification.
-       */
-      const info = id === undefined ? undefined : ctx.spawning.get(id);
-      if (id !== undefined && info !== undefined) {
-        info.completed = true;
-        if (info.foreground) ctx.endWorker(id, ok ? 'complete' : 'error', ok ? undefined : text);
-        // Ended, or never opened and not running on in the background.
-        if (ctx.ended.has(id) || (!ctx.scopes.has(id) && info.foreground)) ctx.spawning.delete(id);
-      }
+      settleSpawn(id, ok, text);
     }
   };
 
