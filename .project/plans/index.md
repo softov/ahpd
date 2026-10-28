@@ -44,7 +44,7 @@ Reference: [00-daemon.md](daemon/00-daemon.md)
 | [26 - ahpd paths sets the served folders](daemon/26-ahpd-paths-sets-the-served-folders/plan.md) | high | built 2026-10-15 | - | - |
 | [27 - ahpd installs with one line](daemon/27-ahpd-installs-with-one-line/plan.md) | medium | active 2026-10-19; tasks 01 to 04 implemented; task 03's site changes are in the ahpd/27-install-scripts worktree of ahpio-site, and its checks are in [pending/daemon-27-install-site-checks.md](../pending/daemon-27-install-site-checks.md) | - | - |
 | [28 - Setup finds the runtimes and agents](daemon/28-setup-finds-the-runtimes-and-agents/plan.md) | medium | active; tasks 01 to 03 implemented 2026-10-19 | 27 | 29 |
-| [29 - ahpd doctor says what is wrong](daemon/29-ahpd-doctor-says-what-is-wrong/plan.md) | medium | draft 2026-10-15 | 28 | - |
+| [29 - ahpd doctor says what is wrong](daemon/29-ahpd-doctor-says-what-is-wrong/plan.md) | medium | planned 2026-10-27; three tasks, todo | 28 | - |
 | [30 - npm says what it installs before it runs](daemon/30-npm-says-what-it-installs/plan.md) | medium | built 2026-10-19; passed on Windows 2026-10-16; [implemented.md](daemon/30-npm-says-what-it-installs/implemented.md) | - | - |
 | [31 - The service manager starts the daemon](daemon/31-the-service-manager-starts-the-daemon/plan.md) | medium | active 2026-10-16; tasks 01 to 05 implemented; Debian checks pass; macOS checks in [pending/daemon-31-service-checks.md](../pending/daemon-31-service-checks.md) | - | daemon 27 task 04 |
 | [32 - A failure has a JSON shape under --json](daemon/32-a-failure-has-a-json-shape/plan.md) | medium | built 2026-10-19; in 20edee91 on main; [implemented.md](daemon/32-a-failure-has-a-json-shape/implemented.md) | cofold commands 06 | - |
@@ -257,7 +257,6 @@ Reference: [00-host.md](host/00-host.md)
 | [123 - Agent kinds on their own channel](host/123-agent-kinds-on-their-own-channel/plan.md) | high | active 2026-10-25; tasks 02 and 03 implemented, wait on Softov | host 122 | ahpw plugins 08 |
 | [124 - A shell's marks stay out of its output](host/124-a-shells-marks-stay-out-of-its-output/plan.md) | high | built 2026-10-27 ([implemented.md](host/124-a-shells-marks-stay-out-of-its-output/implemented.md)) | - | - |
 | [125 - A split character arrives whole](host/125-a-split-character-arrives-whole/plan.md) | medium | built 2026-10-27 ([implemented.md](host/125-a-split-character-arrives-whole/implemented.md)) | - | - |
-| [126 - A new session is an `ahp-session:` URI](host/126-a-new-session-is-an-ahp-session-uri/plan.md) | medium | planned 2026-10-27; five tasks, todo | - | ahpc and ahpw create `ahp-session:` sessions |
 | [126 - A terminal a tool result names lasts as long as its chat](host/126-a-tool-results-terminal-lasts-as-long-as-its-chat/plan.md) | medium | built 2026-10-27; [implemented.md](host/126-a-tool-results-terminal-lasts-as-long-as-its-chat/implemented.md) | - | claude 24 |
 | [127 - Every agent sends what the protocol declares, and a late client reads what a watching one built](host/127-every-agent-sends-what-the-protocol-declares/plan.md) | high | built 2026-10-27; parent of p1 to p6; [implemented.md](host/127-every-agent-sends-what-the-protocol-declares/implemented.md) | host 43 | - |
 | [127 p1 - The host describes every agent](host/127-p1-the-host-describes-every-agent/plan.md) | high | built 2026-10-27 ([implemented.md](host/127-p1-the-host-describes-every-agent/implemented.md)) | host 127 | 127 p3, 127 p4 |
@@ -272,8 +271,9 @@ Reference: [00-host.md](host/00-host.md)
 | [128 p3 - An ACP command and terminal say what they are](host/128-p3-an-acp-command-and-terminal-say-what-they-are/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p3-an-acp-command-and-terminal-say-what-they-are/implemented.md)) | 128 p1 | - |
 | [128 p4 - A cofold command shows its terminal](host/128-p4-a-cofold-command-shows-its-terminal/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p4-a-cofold-command-shows-its-terminal/implemented.md)) | 128 p1 | - |
 | [128 p5 - A pi command is a terminal call](host/128-p5-a-pi-command-is-a-terminal-call/plan.md) | high | built 2026-10-27 ([implemented.md](host/128-p5-a-pi-command-is-a-terminal-call/implemented.md)) | 128 p1 | - |
+| [129 - A new session is an `ahp-session:` URI](host/129-a-new-session-is-an-ahp-session-uri/plan.md) | medium | planned 2026-10-27; five tasks, todo | - | ahpc and ahpw create `ahp-session:` sessions |
 
-Next free number in `host`: `129`.
+Next free number in `host`: `130`.
 
 ## claude
 

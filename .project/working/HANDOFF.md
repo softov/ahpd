@@ -33,7 +33,7 @@ Current progress and pending items only, as of 2026-10-27.
 
 ## Next builds
 
-- Planned with tasks: host/126, plugin/63, proxy/06, container/05 p8 and container/05 p10.
+- Planned with tasks: host/129, plugin/63, proxy/06, container/05 p8 and container/05 p10.
 - plugin/63 task 04 gives a new Cofold session a Model picker, and depends on no other task.
 - The ahpw Connect button for plugin/71 is ahpw plan plugins/09, planned.
 
