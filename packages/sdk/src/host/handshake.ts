@@ -83,7 +83,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
     clientPluginsOf, dir, fire, flushDeltas, heldAs, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
-    snapshotOf, spellingOf, TRACES,
+    snapshotOf, spellingOf, TRACES, watchedAs,
   } = ctx;
 
   /**
@@ -163,7 +163,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       delete connection.principalUntil;
       log(`${connection.clientId || 'a client'}'s sign-in expired`);
       connection.peer.notify('auth/required', {
-        channel: channelAwaiting(resource),
+        channel: channelAwaiting(resource, connection),
         resource: metadataFor(resource),
         reason: 'expired',
       });
@@ -183,8 +183,10 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     log(`${connection.clientId || 'a client'}'s token for ${resource}${target === undefined ? '' : ` at ${target.customizationId}`} expired`);
     connection.peer.notify('auth/required', {
       // An MCP server's requirement is drawn on its session, and a token
-      // aimed at one names that session itself.
-      channel: target?.session ?? channelAwaiting(resource),
+      // aimed at one names that session itself, as this connection watches it.
+      channel: target === undefined
+        ? channelAwaiting(resource, connection)
+        : watchedAs(connection, target.session) ?? target.session,
       resource: metadataFor(resource),
       reason: 'expired',
     });
@@ -223,6 +225,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     // Under whatever spelling the client knows the session by.
     const session = heldAs(asked);
     const held = sessions.get(session);
+    // A session this connection does not watch is not one its tokens are
+    // spent on, whoever else holds it open.
+    if (held !== undefined && watchedAs(connection, session) === undefined) {
+      throw new RpcError(INVALID_PARAMS, `${asked} is not a session this connection watches`);
+    }
     const lead = held === undefined ? undefined : leadOf(held);
     // Both halves of what the session publishes: what its backend reports,
     // and the plugins its clients handed it.
@@ -651,9 +658,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
        * named - the protocol's rule is that a client's `resource` matches
        * one the server advertised, and both of these are. A target has
        * already named its server, and its session's chats are the ones told.
+       *
+       * Only the sessions this connection watches: a token is spent on the
+       * sessions its client asks for and nowhere else, and these are the
+       * ones it was asked to sign in for.
        */
       const waiting = (target === undefined
-        ? [...sessions.values()].flatMap((held) => [...held.chats.values()])
+        ? [...sessions].filter(([uri]) => watchedAs(connection, uri) !== undefined).flatMap(([, held]) => [...held.chats.values()])
         : [...(sessions.get(target.session)?.chats.values() ?? [])])
         .filter((chat) => chat.awaiting?.().includes(resource) === true);
       if (target === undefined && waiting.length === 0 && !advertised().has(resource)) {

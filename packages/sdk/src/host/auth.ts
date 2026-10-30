@@ -13,12 +13,26 @@ export interface Auth {
   lent(resource: string): string | undefined;
   advertised(): Set<string>;
   metadataFor(resource: string): Bag;
-  channelAwaiting(resource: string): string;
+  channelAwaiting(resource: string, connection: Connection): string;
+  watchedAs(connection: Connection, session: string): string | undefined;
   asking(channel: string, action: Record<string, unknown>): void;
 }
 
 export function createAuth(ctx: HostContext): Auth {
   const { options, agents, connections, sessions } = ctx;
+
+  /**
+   * The name a connection watches a session under, or nothing when it does
+   * not watch it.
+   *
+   * Any spelling of the session counts, as it does for whether a client has
+   * left one, and the answer is the client's own spelling, which is the name
+   * it is told about the session under. These are the sessions a connection
+   * asks for: the ones it is asked to sign into, and the only ones its tokens
+   * are spent on.
+   */
+  const watchedAs = (connection: Connection, session: string): string | undefined =>
+    [...connection.watching].find((channel) => ctx.heldAs(channel) === session);
 
   /**
    * The resource a sign-in requirement is said as the protocol's own
@@ -31,7 +45,8 @@ export function createAuth(ctx: HostContext): Auth {
    * to keep in step.
    *
    * Only to connections watching that session, because that is the channel
-   * the notification names and the only place the requirement is visible.
+   * the notification names and the only place the requirement is visible,
+   * each under the name it watches the session by.
    */
   const asked = new Set<string>();
   const asking = (channel: string, action: Record<string, unknown>): void => {
@@ -45,8 +60,9 @@ export function createAuth(ctx: HostContext): Auth {
     if (named === undefined || asked.has(named)) return;
     asked.add(named);
     for (const connection of connections) {
-      if (connection.watching.has(channel)) {
-        connection.peer.notify('auth/required', { channel, resource, reason: 'required' });
+      const watched = watchedAs(connection, channel);
+      if (watched !== undefined) {
+        connection.peer.notify('auth/required', { channel: watched, resource, reason: 'required' });
       }
     }
   };
@@ -163,20 +179,23 @@ export function createAuth(ctx: HostContext): Auth {
     return { resource };
   };
   /**
-   * Where a requirement for that resource is visible.
+   * Where a requirement for that resource is visible, to one connection.
    *
    * A backend's own resource is the root's business; an MCP server's is the
    * session that server belongs to, which is where its `authRequired` state
-   * is drawn.
+   * is drawn. Only a session the connection watches is one it can see that
+   * state on, and it is named the way the connection watches it.
    */
-  const channelAwaiting = (resource: string): string => {
+  const channelAwaiting = (resource: string, connection: Connection): string => {
     for (const [uri, held] of sessions) {
+      const watched = watchedAs(connection, uri);
+      if (watched === undefined) continue;
       for (const chat of held.chats.values()) {
-        if (chat.awaiting?.().includes(resource) === true) return uri;
+        if (chat.awaiting?.().includes(resource) === true) return watched;
       }
     }
     return ROOT;
   };
 
-  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, asking };
+  return { loginId, resourcesOf, agentsFor, lent, advertised, metadataFor, channelAwaiting, watchedAs, asking };
 }
