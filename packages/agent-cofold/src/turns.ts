@@ -51,6 +51,13 @@ export interface Turns {
   ) => void;
   startNext: () => void;
   /**
+   * Run the turn that failed again, without its message being said twice.
+   *
+   * Answers whether there was such a turn to resume: the newest one, in
+   * `error`, whose last part is an error that says `resumable`.
+   */
+  resumeTurn: (turnId: string) => boolean;
+  /**
    * Whether the model the running turn was built on takes an image.
    *
    * Read by `steer`, which has no agent of its own: a correction reaches the
@@ -63,7 +70,7 @@ export interface Turns {
 export const createTurns = (
   ctx: SessionContext,
 ): Turns & { methods: Pick<Session, 'ran' | 'queue' | 'unqueue' | 'reorder'> } => {
-  const { start, options, harness, sessionId, where, settings, turns, queued } = ctx;
+  const { start, options, harness, sessionId, where, store, settings, turns, queued } = ctx;
 
   /**
    * Whether the model the turn now running was built on takes an image.
@@ -72,6 +79,54 @@ export const createTurns = (
    * force is known, and read by `steer` for a message sent into that same run.
    */
   let takesImages = false;
+
+  /**
+   * The values a turn runs on, and the model reference they resolve to.
+   *
+   * A model named on the turn wins over the session's, and is what the usage
+   * report names. The reference is the one `connectionOf` resolves: the values
+   * in force, then the plugin option, then the harness file.
+   */
+  const valuesFor = (model?: Chosen): { values: Record<string, unknown>; reference: string | undefined } => {
+    const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
+    return { values, reference: modelReferenceOf(options, values, harness) };
+  };
+
+  /**
+   * The mapping a turn's run is read through, on the parts the turn holds.
+   *
+   * One mapping serves a turn that opens empty and a turn reopened with the
+   * parts its failed run wrote: the mapping numbers new parts after the ones
+   * already there, so a resumed run writes its own text rather than appending
+   * to the failed one. `began` is when the run started, for the duration the
+   * ending action carries.
+   */
+  const mappingOn = (
+    turnId: string,
+    parts: Bag[],
+    began: number,
+    reference: string | undefined,
+  ): TurnMapping => mapTurn({
+    turnId,
+    chatUri: start.chatUri,
+    parts,
+    startedAt: began,
+    displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
+    ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
+    cancelled: () => ctx.cancelRequested,
+    // The operator's rule, read when a call is put to a person: a matched
+    // tool's question offers no session choice cofold would remember.
+    asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
+    // A failed turn can be put back when there is a point to cut to: the last
+    // message of the turn before, or, for a conversation's first turn, no
+    // session at all. A turn read back after a restart has no point, so it is
+    // not one this process can resume.
+    canCut: () => {
+      const before = turns.at(-1);
+      return before === undefined || ctx.points.has(String(before.id));
+    },
+    ...(reference !== undefined ? { model: reference } : {}),
+  });
 
   /**
    * Title a session nobody has named from the first thing said in it.
@@ -112,12 +167,7 @@ export const createTurns = (
     if (ctx.closed || ctx.active !== undefined) return undefined;
     ctx.cancelRequested = false;
     ctx.failed = undefined;
-    // A model named on the turn wins over the session's, and is what the
-    // usage report names; it is applied before the agent is built.
-    const values: Record<string, unknown> = model === undefined ? settings : { ...settings, model: model.id };
-    // The reference the turn runs on, by the one rule `connectionOf` resolves:
-    // the values in force, then the plugin option, then the harness file.
-    const reference = modelReferenceOf(options, values, harness);
+    const { values, reference } = valuesFor(model);
     const began = Date.now();
     // No part yet: each is opened when the model starts writing the block it holds.
     ctx.active = {
@@ -158,41 +208,103 @@ export const createTurns = (
     retitle(text);
     ctx.doing('Thinking');
 
-    const mapping = mapTurn({
-      turnId,
-      chatUri: start.chatUri,
-      parts: ctx.active.responseParts as Bag[],
-      startedAt: began,
-      displayNameOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.definition.title ?? name,
-      ownerOf: (name) => ctx.offered.find((one) => one.definition.name === name)?.owner,
-      cancelled: () => ctx.cancelRequested,
-      // The operator's rule, read when a call is put to a person: a matched
-      // tool's question offers no session choice cofold would remember.
-      asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
-      // A failed turn can be put back when there is a point to cut to: the last
-      // message of the turn before, or, for a conversation's first turn, no
-      // session at all. A turn read back after a restart has no point, so it is
-      // not one this process can resume.
-      canCut: () => {
-        const before = turns.at(-1);
-        return before === undefined || ctx.points.has(String(before.id));
-      },
-      ...(reference !== undefined ? { model: reference } : {}),
-    });
+    const mapping = mappingOn(turnId, ctx.active.responseParts as Bag[], began, reference);
     ctx.activeMapping = mapping;
     return { mapping, values, reference };
   };
 
   /**
-   * Start a turn, whoever asked for it.
+   * Run a turn's prompt, once the model it runs on is built.
    *
-   * A message with nothing attached runs in the tick the turn was opened in,
-   * on the text it arrived with. One with attachments waits a turn of the
-   * event loop first: `partsOf` reads the files the host wrote beside the
-   * message, and only then is the model given parts rather than words. The
-   * turn is open on the wire for that moment, so a stop or a close landing
-   * inside it is answered here rather than left to a run that never started.
+   * `input` is the words the turn was said with, or a reader for them: a
+   * message with attachments is read after the agent exists, because `partsOf`
+   * needs to know whether the model takes an image before it sends one. The
+   * turn is already open on the wire for that moment, so a stop or a close
+   * landing inside it is answered here rather than left to a run that never
+   * started.
+   *
+   * A turn that cannot start fails that turn, not the process. Building the
+   * agent resolves the model, and a session with none chosen, no default and a
+   * harness file that names none has nothing to run on. Thrown from here it
+   * would escape every handler and take the daemon and every other session
+   * with it; answered, it is one failed turn with the reason on it.
    */
+  const runTurn = (
+    turnId: string,
+    input: string | ((agent: CofoldAgent) => Promise<(TextPart | ImagePart)[]>),
+    values: Record<string, unknown>,
+    reference: string | undefined,
+    mapping: TurnMapping,
+  ): void => {
+    let agent: CofoldAgent;
+    try {
+      agent = ctx.agentOf(values);
+    }
+    catch (error) {
+      void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+      return;
+    }
+    // Before the run, so a correction sent the moment the turn appears is read
+    // on the model this turn is about to run on.
+    takesImages = agent.model.features.images;
+
+    const launch = (prompt: string | ContentPart[]): void => {
+      let live: ReturnType<typeof run>;
+      try {
+        live = run({
+          agent,
+          session: sessionId,
+          workspace: where,
+          input: prompt,
+          /*
+           * The prompt stored under the turn's own id, so the turn read back
+           * from cofold's store is the turn a client knows: a turn that
+           * follows is anchored by it, and a restart finds it there.
+           * `RunArgs.messageId` in npm://@cofold/agents@0.4.0: "A client that
+           * supplies it can match run.started to its send."
+           */
+          messageId: turnId,
+          // Kept on the run record, which is where a rebuilt turn reads its model.
+          ...(reference !== undefined ? { model: reference } : {}),
+        });
+      }
+      catch (error) {
+        void ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+        return;
+      }
+      ctx.handle = live;
+      ctx.read(live, mapping, turnId);
+      ctx.touch();
+    };
+
+    if (typeof input === 'string') {
+      launch(input);
+      return;
+    }
+    /*
+     * `images` is what the model this turn resolves takes, never assumed: an
+     * image part to a model without the feature throws, and the message is
+     * stored, so every later turn of the session would fail on it too.
+     */
+    void (async (): Promise<void> => {
+      try {
+        const parts = await input(agent);
+        // A turn somebody else settled while the files were being read is not
+        // this call's to start, and not this call's to fail either.
+        if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
+        if (ctx.cancelRequested || ctx.closed) {
+          await ctx.apply(mapping, turnId, stopped(turnId));
+          return;
+        }
+        launch(parts);
+      }
+      catch (error) {
+        await ctx.apply(mapping, turnId, refusal(turnId, 'start_failed', error));
+      }
+    })();
+  };
+
+  /** Open a turn and run it: the whole of what a client's new message means. */
   const startTurn = (
     turnId: string,
     text: string,
@@ -203,81 +315,17 @@ export const createTurns = (
   ): void => {
     const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
     if (opened === undefined) return;
-    /*
-     * A turn that cannot start fails that turn, not the process.
-     *
-     * Building the agent resolves the model, and a session with none chosen,
-     * no default and a harness file that names none has nothing to run on.
-     * Thrown from here it would escape every handler and take the daemon and
-     * every other session with it; answered, it is one failed turn with the
-     * reason on it.
-     */
-    let agent: CofoldAgent;
-    try {
-      agent = ctx.agentOf(opened.values);
-    }
-    catch (error) {
-      void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
-      return;
-    }
-    // Before the run, so a correction sent the moment the turn appears is read
-    // on the model this turn is about to run on.
-    takesImages = agent.model.features.images;
-
-    const launch = (input: string | ContentPart[]): void => {
-      let live: ReturnType<typeof run>;
-      try {
-        live = run({
-          agent,
-          session: sessionId,
-          workspace: where,
-          input,
-          /*
-           * The prompt stored under the turn's own id, so the turn read back
-           * from cofold's store is the turn a client knows: a turn that
-           * follows is anchored by it, and a restart finds it there.
-           * `RunArgs.messageId` in npm://@cofold/agents@0.4.0: "A client that
-           * supplies it can match run.started to its send."
-           */
-          messageId: turnId,
-          // Kept on the run record, which is where a rebuilt turn reads its model.
-          ...(opened.reference !== undefined ? { model: opened.reference } : {}),
-        });
-      }
-      catch (error) {
-        void ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
-        return;
-      }
-      ctx.handle = live;
-      ctx.read(live, opened.mapping, turnId);
-      ctx.touch();
-    };
-
     if (attachments === undefined || attachments.length === 0) {
-      launch(text);
+      runTurn(turnId, text, opened.values, opened.reference, opened.mapping);
       return;
     }
-    /*
-     * `images` is what the model this turn resolves takes, never assumed: an
-     * image part to a model without the feature throws, and the message is
-     * stored, so every later turn of the session would fail on it too.
-     */
-    void (async (): Promise<void> => {
-      try {
-        const parts = await partsFor(text, attachments, agent.model.features.images);
-        // A turn somebody else settled while the files were being read is not
-        // this call's to start, and not this call's to fail either.
-        if (ctx.active === undefined || String(ctx.active.id) !== turnId) return;
-        if (ctx.cancelRequested || ctx.closed) {
-          await ctx.apply(opened.mapping, turnId, stopped(turnId));
-          return;
-        }
-        launch(parts);
-      }
-      catch (error) {
-        await ctx.apply(opened.mapping, turnId, refusal(turnId, 'start_failed', error));
-      }
-    })();
+    runTurn(
+      turnId,
+      (agent) => partsFor(text, attachments, agent.model.features.images),
+      opened.values,
+      opened.reference,
+      opened.mapping,
+    );
   };
 
   /** The `run.finished` a turn that never ran ends with. */
@@ -345,6 +393,113 @@ export const createTurns = (
     const opened = openTurn(turnId, text, model, from, queuedMessageId, attachments);
     if (opened === undefined) return;
     void ctx.apply(opened.mapping, turnId, refusal(turnId, 'cut_refused', why));
+  };
+
+  /**
+   * Run the turn that failed again, without its message being said twice.
+   *
+   * The protocol's `chat/turnResume`: the newest turn, in `error`, whose last
+   * part says `resumable`, is reopened with its message and parts intact and
+   * the same prompt runs again under the same message id - so the store holds
+   * the prompt once rather than once per attempt. cofold's own `resume()`
+   * continues only a run that is waiting or running, so the run is put back
+   * the way a rewind is: the store is cut through the last message of the turn
+   * before, which drops the failed prompt and what the run wrote after it.
+   *
+   * A conversation's first turn has no turn before to cut to, so its session
+   * is dropped instead and `run()` makes it again, with the same workspace.
+   * Either way the calls the failed turn ran are run again, because the cut
+   * drops them with the prompt.
+   *
+   * `chat/turnResume` is said here, while the client's action is applied, so
+   * it goes out as that action's echo before the new run's first event.
+   */
+  const resumeTurn = (turnId: string): boolean => {
+    if (ctx.closed || ctx.active !== undefined || ctx.opening !== undefined) return false;
+    const last = turns.at(-1);
+    if (last === undefined || String(last.id) !== turnId || last.state !== 'error') return false;
+    const kept = Array.isArray(last.responseParts) ? last.responseParts as Bag[] : [];
+    const end = kept.at(-1);
+    if (end === undefined || end.kind !== 'error' || end.resumable !== true) return false;
+    /*
+     * The turn leaves the history before the cut is read, because the point a
+     * resume cuts at is the end of the turn *before* this one.
+     */
+    turns.pop();
+    const before = turns.at(-1);
+    const point = before === undefined ? undefined : ctx.points.get(String(before.id));
+    /*
+     * A turn read back after a restart has no entry in `points`, and a
+     * conversation this process did not watch run cannot be cut back to. The
+     * turn goes back into the history rather than running on a conversation it
+     * cannot be taken out of. Past this point a point is absent only when
+     * there is no turn before, which is a conversation starting over.
+     */
+    if (before !== undefined && point === undefined) {
+      turns.push(last);
+      return false;
+    }
+    // The record again, so a key fixed since the failure is the one this turn
+    // runs on.
+    const broken = ctx.refreshOptions();
+    const again: Bag = { ...last };
+    // `state` and `duration` are what made it a finished turn; the protocol
+    // reopens *this* turn rather than replacing it with a new one.
+    delete again.state;
+    delete again.duration;
+    ctx.active = again;
+    ctx.cancelRequested = false;
+    ctx.failed = undefined;
+    const message = bag(again.message);
+    const named = bag(message.model);
+    const id = str(named.id);
+    const chosen: Chosen | undefined = id === undefined
+      ? undefined
+      : { id, ...(named.config === undefined ? {} : { config: named.config as NonNullable<Chosen['config']> }) };
+    const { values, reference } = valuesFor(chosen);
+    const began = Date.now();
+    const mapping = mappingOn(turnId, kept, began, reference);
+    ctx.activeMapping = mapping;
+    start.emit('chat', { type: 'chat/turnResume', turnId });
+    ctx.doing('Thinking');
+    ctx.touch();
+    /*
+     * A record that can no longer be used cannot run the turn either, and the
+     * turn is open again by now: the sentence ends it rather than leaving a
+     * spinner nothing can settle.
+     */
+    if (broken !== undefined) {
+      void ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', new Error(broken)));
+      return true;
+    }
+    void (async (): Promise<void> => {
+      try {
+        // No point is no turn before: the session is the thing to drop, and
+        // `run()` makes it again with the same workspace.
+        if (point === undefined) await store.sessions.delete({ sessionId });
+        else await store.sessions.truncate({ sessionId, throughMessageId: point });
+      }
+      catch (error) {
+        // The store would not make the cut, so there is nothing to run on. The
+        // turn ends with the reason, the way a cut refused before it started.
+        await ctx.apply(mapping, turnId, refusal(turnId, 'resume_failed', error));
+        return;
+      }
+      const text = str(message.text) ?? '';
+      const attachments = attachmentsOf(message);
+      if (attachments === undefined || attachments.length === 0) {
+        runTurn(turnId, text, values, reference, mapping);
+        return;
+      }
+      runTurn(
+        turnId,
+        (agent) => partsFor(text, attachments, agent.model.features.images),
+        values,
+        reference,
+        mapping,
+      );
+    })();
+    return true;
   };
 
   /**
@@ -631,6 +786,7 @@ export const createTurns = (
 
   return {
     beginTurn,
+    resumeTurn,
     startNext,
     takesImages: () => takesImages,
     methods: { ran, queue, unqueue, reorder },

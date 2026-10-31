@@ -17,7 +17,7 @@
 import { ZERO_USAGE, addUsage } from '@cofold/agents';
 import type { AskQuestion, RunEvent, Usage } from '@cofold/agents';
 import type { Bag } from '@ahpd/sdk';
-import { bag, callTimes, startOf, withCallTimes } from '@ahpd/sdk';
+import { bag, callTimes, startOf, str, withCallTimes } from '@ahpd/sdk';
 import { contributorOf, describe, intentionOf, toolCallPart, toolCompleteAction, toolInputOf, toolMetaOf, toolReadyAction, toolStartAction } from './tools.js';
 
 /**
@@ -241,8 +241,22 @@ const questionOf = (question: AskQuestion): Bag => {
 
 export function mapTurn(options: TurnMappingOptions): TurnMapping {
   const { turnId, parts } = options;
+  /**
+   * The step a part's id names, or nothing for a part that is not numbered.
+   *
+   * A resumed turn keeps the parts its failed run opened and gets a mapping of
+   * its own on top of them. Numbering the new run from zero again would open a
+   * part under an id the turn already holds, and a delta naming that id would
+   * append to the failed run's text rather than open the new run's own.
+   */
+  const stepOf = (part: Bag): number => {
+    const id = str(part.id);
+    if (id === undefined) return 0;
+    const numbered = Number(id.split(':').at(-2));
+    return Number.isInteger(numbered) && numbered > 0 ? numbered : 0;
+  };
   /** How many model steps this turn has started, which numbers the one streaming. */
-  let step = 0;
+  let step = parts.reduce((high, part) => Math.max(high, stepOf(part)), 0);
   /**
    * The current step's reasoning and text parts, by kind.
    *

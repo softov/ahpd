@@ -330,6 +330,15 @@ export function cofoldSession(
     begin: (turnId, text, model, from, attachments) =>
       ctx.beginTurn(turnId, text, model, from, undefined, attachments),
 
+    /**
+     * Run the latest turn again, without adding a message.
+     *
+     * What `chat/turnResume` asks for, answered by the turn area: the turn is
+     * reopened as it was and its prompt runs again under the same id, after
+     * the store is cut back to the turn before it.
+     */
+    resume: (turnId) => ctx.resumeTurn(turnId),
+
     ...queueMethods,
 
     /**

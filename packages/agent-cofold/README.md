@@ -152,6 +152,12 @@ Memory is per workspace and shared by the sessions in it, under `<store>/memory/
 
 The named providers are tried in the order the configuration lists them, and a failing one is skipped.
 
+## A turn that fails
+
+A turn that fails on a model call can be resumed from the client, and the same prompt runs again under the turn's own id. cofold cuts the store through the last message of the turn before, so the failed prompt and what the run wrote after it leave the store. The conversation holds the prompt once, not once for each attempt. A conversation whose first turn failed has its session dropped, and the run makes it again on the same workspace. The calls the failed turn ran are run again, because the cut drops them with the prompt.
+
+A turn that never ran carries no resume. This is a session with no model configured, or a cut the store refused. A turn read back after a restart carries none either, because this process did not watch it run and has no point to cut to.
+
 ## Documentation
 
 | | |
