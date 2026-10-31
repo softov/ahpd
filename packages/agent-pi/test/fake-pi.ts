@@ -109,7 +109,7 @@ export function fakePi() {
       asked.push({ kind: 'prompt', text, images: images ?? [] });
       if (settle) listener?.({ type: 'agent_settled', aborted: false });
     },
-    steer: async (text, images) => { asked.push({ kind: 'steer', text, images: images ?? [] }); },
+    steer: async (text, images) => { asked.push({ kind: 'steer', text, images: images ?? [] }); return 'queued'; },
     abort: async () => { asked.push({ kind: 'abort' }); listener?.({ type: 'agent_settled', aborted: true }); },
     models: async () => runtime,
     levels: (model) => (model.provider === 'anthropic' ? ['off', 'medium', 'high'] : ['off']),

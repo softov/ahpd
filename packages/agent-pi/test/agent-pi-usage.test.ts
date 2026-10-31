@@ -34,7 +34,7 @@ function fakePi() {
     file: undefined,
     subscribe: (one) => { listener = one; return () => { listener = undefined; }; },
     prompt: async () => { if (settle) listener?.({ type: 'agent_settled', aborted: false }); },
-    steer: async () => {},
+    steer: async () => 'queued',
     resume: async () => false,
     abort: async () => { listener?.({ type: 'agent_settled', aborted: true }); },
     models: async () => [],

@@ -219,6 +219,18 @@ export function piSession(
   let spent: Bag | undefined;
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
+  /**
+   * The chat's steering message, as every client's reducer holds it: the last
+   * one said, until it is taken out.
+   */
+  let steering: Bag | undefined;
+  /**
+   * The steering messages handed to pi and not yet read, by id, oldest first.
+   *
+   * pi holds them in the order they were handed and says the queue on every
+   * change, so the ones its queue no longer counts are the oldest here.
+   */
+  const handed: string[] = [];
   let draft: Bag | undefined;
   /** The models pi reported, once it has been asked. */
   let models: { id: string; name: string }[] = [];
@@ -260,6 +272,13 @@ export function piSession(
   let watched: WatchedTurn | undefined;
 
   const touch = (): void => { modified = new Date().toISOString(); };
+
+  /** A steering message pi no longer holds, read into the turn or let go, taken out of the chat. */
+  const takenOut = (id: string): void => {
+    if (steering?.id === id) steering = undefined;
+    emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+    touch();
+  };
 
   /**
    * Calls a client is running for this session, held in one place.
@@ -772,6 +791,15 @@ export function piSession(
     }
 
     switch (event.type) {
+      /*
+       * pi's queue, said on every change. A steering message it no longer
+       * holds has been read into the turn, or let go, and is taken out.
+       */
+      case 'queue_update': {
+        for (const id of handed.splice(0, Math.max(0, handed.length - event.steering.length))) takenOut(id);
+        return;
+      }
+
       /*
        * pi's own name for the conversation, which a person may have set from
        * its terminal. It is the session's title here, and the host decides
@@ -1303,6 +1331,7 @@ export function piSession(
       ...(active !== undefined ? { activeTurn: active } : {}),
       ...(activity.current() !== undefined ? { activity: activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
+      ...(steering !== undefined ? { steeringMessage: steering } : {}),
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
     }),
 
@@ -1343,24 +1372,48 @@ export function piSession(
      * pi's own `steer`, so this is the thing the protocol means rather than a
      * queued message dressed as one. False when there is nothing to steer,
      * which the host turns into a refusal rather than an ordinary message.
+     *
+     * Said and held as the chat's steering message before pi has it, so the
+     * client that sent it is answered inside its dispatch. It is taken out
+     * once pi's queue no longer holds it, and at once when pi never queued
+     * it: an extension handled it, or the steer failed.
      */
-    steer: (id, text, attachments) => {
-      void id;
+    steer: (id, text, attachments, from) => {
       const backend = live;
       if (active === undefined || backend === undefined) return false;
+      const message: Bag = {
+        text,
+        origin: from?.origin ?? { kind: 'user' },
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      };
+      steering = { id, message };
+      emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
       // Built the way the turn's own prompt is, so a picture pasted into a
       // correction reaches pi as one when the model takes it.
       void promptFor(text, attachments, backend.takesImages())
-        .then((asked) => backend.steer(asked.text, asked.images))
-        .catch((error: unknown) => {
-          emit('chat', {
-            type: 'chat/error',
-            turnId: String(bag(active).id ?? ''),
-            part: {
-              kind: 'error',
-              error: { errorType: 'turnFailed', message: reason(error) },
-            },
-          });
+        .then((asked) => {
+          handed.push(id);
+          return backend.steer(asked.text, asked.images);
+        })
+        .then(
+          (disposition) => disposition === 'queued',
+          (error: unknown) => {
+            emit('chat', {
+              type: 'chat/error',
+              turnId: String(bag(active).id ?? ''),
+              part: {
+                kind: 'error',
+                error: { errorType: 'turnFailed', message: reason(error) },
+              },
+            });
+            return false;
+          },
+        )
+        .then((queued) => {
+          if (queued) return;
+          const at = handed.indexOf(id);
+          if (at >= 0) handed.splice(at, 1);
+          takenOut(id);
         });
       touch();
       return true;

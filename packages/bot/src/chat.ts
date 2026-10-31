@@ -988,10 +988,13 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * session rather than starting it, so the answer after the steer lands in
        * the steered turn rather than under the turn it interrupted.
        *
-       * The id the host names is the client's own entry, which is not one of
-       * this chat's queue, so the new turn takes an id of its own. A message
-       * that was already waiting stays waiting: a steer is in front of it, and
-       * it starts when the steered turn ends.
+       * The id the host names is the client's steering message. It is said
+       * back first, as the chat's steering message, so the client that sent it
+       * is answered inside its dispatch, and the new turn names it as its
+       * `queuedMessageId`, which takes it out of every client's state; the turn
+       * takes an id of its own. A message that was already waiting stays
+       * waiting: a steer is in front of it, and it starts when the steered turn
+       * ends.
        *
        * The new turn carries who sent the steered message, so a correction an
        * agent sent shows as that agent's turn rather than as the person's.
@@ -999,12 +1002,13 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * False where there is no open turn to steer, which is a message the host
        * refuses rather than one it quietly turns into a turn of its own.
        */
-      steer: (_pendingId, text, _attachments, from) => {
+      steer: (pendingId, text, _attachments, from) => {
         const held = open;
         if (held === undefined) return false;
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message: messageOf(text, from) });
         // Ended without the queue: the steered turn is in front of it.
         finish(held, 'complete', [], false);
-        beginTurn(crypto.randomUUID(), text, from);
+        beginTurn(crypto.randomUUID(), text, from, pendingId);
         return true;
       },
 
