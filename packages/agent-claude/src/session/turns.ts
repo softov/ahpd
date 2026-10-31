@@ -205,9 +205,9 @@ export function createTurns(ctx: SessionContext): Turns {
      * `active` is the one turn this chat has, and a second begun on top of it
      * takes its place and the parts it has already streamed with it - so the
      * turn a person is watching leaves the transcript while its own answer is
-     * still arriving. A turn that arrives while one runs is dropped here, and
-     * the host refuses it to the client with a sentence before it gets this
-     * far. `beginning` counts as running, which is a turn switching its model.
+     * still arriving. `begin` refuses a client's turn while one runs, and the
+     * queue takes its next message once nothing does; `beginning` counts as
+     * running, which is a turn switching its model.
      */
     if (busy()) return;
     /*
@@ -592,6 +592,19 @@ export function createTurns(ctx: SessionContext): Turns {
      * being labelled with it and answered by another one.
      */
     begin: (turnId, text, model, from, attachments, options) => {
+      /*
+       * One turn at a time, said to the client that sent this one.
+       *
+       * The host refuses a turn while the chat's state holds an active one,
+       * and a turn still beginning - switching its model, or waiting on the
+       * tools the session was handed - reaches that state only once it
+       * starts, so this session alone knows of it. Its client holds the turn
+       * until it is answered.
+       */
+      if (busy()) {
+        ctx.options.handed?.({ type: 'chat/turnStarted', turnId })?.refuse('A turn is running in this chat');
+        return;
+      }
       void beginTurn(turnId, text, model, undefined, from, attachments, options);
     },
     setTitle: (said) => { if (said !== '') ctx.title = said; },

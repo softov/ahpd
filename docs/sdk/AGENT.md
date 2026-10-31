@@ -262,7 +262,9 @@ action to that client alone. The host finds the client's action the way it
 finds the one an echo answers: the action it is applying, when `action` is of
 its kind and about its turn, or a turn or a queued message it handed over after
 waiting on a machine or a policy check, by the id `action` names. It is
-undefined for an action that answers no client.
+undefined for an action that answers no client. A turn that reaches a session
+while the one before it is still beginning, which only the session can see, is
+refused the same way, as the Claude session refuses it in `begin`.
 
 ## The rules that fail silently
 
