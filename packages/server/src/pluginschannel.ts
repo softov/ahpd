@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 import { check } from '@cofold/commands';
 import type { JsonSchema } from '@cofold/commands';
 import { formIn, HOST_CATALOGS, isRecordSlug, RECORD_SLUG, recordsChannel, RpcError, scopeOf, secretRef, translated } from '@ahpd/sdk';
-import type { Alert, Bag, Catalogs, Grant, Loaded, PluginMethod, PluginSpec, RecordsChannel, RecordsSource } from '@ahpd/sdk';
+import type { Alert, Bag, Catalogs, Grant, Loaded, PluginMethod, PluginSpec, PluginView, RecordsChannel, RecordsSource } from '@ahpd/sdk';
 import type { Applied } from './applyplugins.js';
 import { maskOption, SET, withoutSpecSecrets, withoutUserinfoIn } from './commands/config.js';
 import {
@@ -83,6 +83,45 @@ const loadProblemOf = (line: string, spec: PluginSpec, schema: Record<string, un
   return withoutUserinfoIn(text);
 };
 
+/**
+ * The views of one row, in a reader's locale.
+ *
+ * Only the words a person reads are translated: a Text's `text` and a Link's
+ * `label`. Each is read at `views.<surface>.<componentId>.<prop>`, so a catalog
+ * names the component it translates. The rest of a view is data, and it is
+ * copied as it is.
+ */
+const shownIn = (
+  views: unknown,
+  text: (path: string[], english: string) => string,
+): Record<string, unknown> => {
+  const surfaces: Record<string, unknown> = object(views) ?? {};
+  const out: Record<string, unknown> = {};
+  for (const [surface, view] of Object.entries(surfaces)) {
+    const held = object(view);
+    const components = held === undefined ? undefined : object(held['components']);
+    if (held === undefined || components === undefined) {
+      out[surface] = view;
+      continue;
+    }
+    const each: Record<string, unknown> = {};
+    for (const [id, one] of Object.entries(components)) {
+      const component = object(one);
+      if (component === undefined) {
+        each[id] = one;
+        continue;
+      }
+      const drawn: Record<string, unknown> = { ...component };
+      const prop = component['component'] === 'Text' ? 'text' : component['component'] === 'Link' ? 'label' : undefined;
+      const english = prop === undefined ? undefined : component[prop];
+      if (prop !== undefined && typeof english === 'string') drawn[prop] = text(['views', surface, id, prop], english);
+      each[id] = drawn;
+    }
+    out[surface] = { ...held, components: each };
+  }
+  return out;
+};
+
 /** What the channel and its commands are built from. */
 export interface PluginsChannelOptions {
   /** The configuration file whose `plugins` are listed and edited. */
@@ -104,6 +143,14 @@ export interface PluginsChannelOptions {
    * nothing, and one that did not says why as an `error` alert.
    */
   alerts(): Record<string, Alert[]>;
+  /**
+   * The views each plugin's row carries, by id and then by surface, once it has.
+   *
+   * A plugin with no entry has nothing to draw. A view is read when the row is
+   * built rather than handed in, because a plugin may show a new one while the
+   * daemon runs.
+   */
+  views(): Record<string, Record<string, PluginView>>;
   /**
    * Load, unload or reconfigure what the file now says, in the daemon behind
    * this channel.
@@ -243,6 +290,9 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
     const manifest = loaded?.manifest ?? row.manifest;
     // What this plugin's row carries, masked as every other answer is.
     const alerts = options.alerts()[row.name] ?? [];
+    // Only a plugin the daemon runs can show a view, so one that did not load
+    // has none to draw even if its id still held one while it went.
+    const views = loaded === undefined ? undefined : options.views()[row.name];
     const catalogs = loaded?.i18n ?? row.i18n;
     if (catalogs === undefined) catalogsByName.delete(withoutUserinfoIn(row.name));
     else catalogsByName.set(withoutUserinfoIn(row.name), catalogs);
@@ -268,6 +318,9 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
           text: loadProblemOf(alert.text, row.spec, schema),
           ...(alert.ref === undefined ? {} : { ref: withoutUserinfoIn(alert.ref) }),
         })),
+        // The view a client draws on the plugin's page, by surface. It is the
+        // plugin's own object as it sent it, which the sdk checked first.
+        ...(views === undefined ? {} : { views }),
         // The form a client draws, from the daemon's copy or the module it
         // would import; absent for one switched off, which is never imported.
         ...(schema === undefined ? {} : { optionsSchema: schema }),
@@ -328,6 +381,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
     const out: Record<string, unknown> = { ...record };
     if (typeof record.title === 'string') out.title = text(['meta', 'title'], record.title);
     if (record.optionsSchema !== undefined) out.optionsSchema = form(record.optionsSchema);
+    if (record.views !== undefined) out.views = shownIn(record.views, text);
     const manifest = object(record.manifest);
     if (manifest !== undefined) {
       const copy: Record<string, unknown> = { ...manifest };

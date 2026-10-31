@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { createHost, fileResources, fileUsers, servedRecords, type PluginHost, type PluginSpec, type Users } from '@ahpd/sdk';
+import { createHost, fileResources, fileUsers, servedRecords, type PluginHost, type PluginSpec, type PluginView, type Users } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { applyPlugins } from '../src/applyplugins.js';
 import { SET } from '../src/commands/config.js';
@@ -197,6 +197,8 @@ const served = async ({ load = true, run }: { load?: boolean; run?: Runner } = {
     where: { configDir: fixtures, cwd: here },
     loaded: () => loaded,
     alerts: () => alerts,
+    // Nothing loaded here holds a view: a case that shows one uses `live`.
+    views: () => ({}),
     restartNeeded: () => markRestart(),
     ...(run === undefined ? {} : { run }),
   });
@@ -235,6 +237,7 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
     where: { configDir: fixtures, cwd: here },
     loaded: () => set.loaded(),
     alerts: () => set.alerts(),
+    views: () => set.views(),
     apply: async (reload?: string[]) => {
       const answer = await applyPlugins({
         set,
@@ -267,7 +270,7 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
     methods: wire.methods,
     users,
   };
-  const where = { configDir: fixtures, cwd: here, log: () => {}, alertsChanged: () => { void refresh(); } };
+  const where = { configDir: fixtures, cwd: here, log: () => {}, alertsChanged: () => { void refresh(); }, viewsChanged: () => { void refresh(); } };
   set = pluginSet({ base, ...where });
   const first = await loadPlugins(held().plugins as PluginSpec[], { base, ...where, set });
   host = createHost(first.options);
@@ -1011,6 +1014,102 @@ it('keeps the newest fifty alerts on a plugin, and a reload clears its row and d
   // The host the last load had is not this plugin any more: what it says now is dropped.
   after.alert({ level: 'error', text: 'from the old load' });
   expect(set.alerts()['after']).toBeUndefined();
+});
+
+/** A view every client can draw: one sentence, and a Link under it. */
+const NOTE: PluginView = {
+  root: 'body',
+  components: {
+    body: { id: 'body', component: 'Column', children: ['note', 'site'] },
+    note: { id: 'note', component: 'Text', text: 'the store is ready' },
+    site: { id: 'site', component: 'Link', label: 'Open', href: 'https://example.test/' },
+  },
+};
+
+it('carries a view a plugin shows after its load, sends the row again, and drops it when cleared', async () => {
+  writeFileSync(config, JSON.stringify({ plugins: ['./fixtures/plugin-after/index.ts'] }));
+  const { host, users, close } = await live();
+  const ana = await as(host, users, 'ana');
+  await ana.rows();
+
+  // Shown after `apply` returned, which is the moment a plugin holding a watch
+  // draws what it found: there is no load answer left for the view to join.
+  const after = (globalThis as Record<string, unknown>).__pluginAfterHost as PluginHost;
+  after.showView(NOTE);
+  await wait(50);
+
+  expect(ana.heard(URI)).toContain('changed after');
+  const row = (await ana.rows())['after'] as Bag;
+  expect(row['views']).toEqual({ main: NOTE });
+
+  after.clearView();
+  await wait(50);
+  expect(((await ana.rows())['after'] as Bag)['views']).toBeUndefined();
+  await close();
+});
+
+it('removes the views when a load starts again, and drops the views of a host that is not current', async () => {
+  writeFileSync(config, JSON.stringify({ plugins: ['./fixtures/plugin-after/index.ts'] }));
+  const base = { path: home, agents: [echo({ path: home })] };
+  const set = pluginSet({ base, configDir: fixtures, cwd: here, log: () => {} });
+  const first = await loadPlugins(['./fixtures/plugin-after/index.ts'], { base, configDir: fixtures, cwd: here, log: () => {}, set });
+  expect(first.problems).toEqual([]);
+
+  const after = (globalThis as Record<string, unknown>).__pluginAfterHost as PluginHost;
+  after.showView(NOTE);
+  expect(set.views()['after']?.['main']).toEqual(NOTE);
+
+  await applyPlugins({ set, configFile: config, reload: ['after'], log: () => {} });
+  // A load starts a clean row: what the load before it drew is not this one's.
+  expect(set.views()['after']).toBeUndefined();
+  // The host the last load had is not this plugin any more: what it draws now
+  // is not about the plugin on the row.
+  after.showView(NOTE);
+  expect(set.views()['after']).toBeUndefined();
+});
+
+it('translates a view\'s Text and Link label in the reader\'s locale, and leaves the data as it is', async () => {
+  /*
+   * A plugin of this case's own, because a view is translated by the catalogs
+   * of the plugin that drew it: the folder is written into the test's home, and
+   * the plugin shows its view while it applies.
+   */
+  const folder = join(home, 'speaker');
+  mkdirSync(join(folder, 'i18n'), { recursive: true });
+  writeFileSync(join(folder, 'package.json'), JSON.stringify({
+    name: 'plugin-speaker',
+    version: '1.0.0',
+    private: true,
+    type: 'module',
+    exports: { '.': './index.ts' },
+    peerDependencies: { '@ahpd/sdk': '>=0.10 <1' },
+    ahpd: { entry: './index.ts', title: 'Speaker', description: 'Draws one view.', i18n: 'i18n' },
+  }));
+  writeFileSync(join(folder, 'index.ts'), [
+    "import type { Plugin, PluginView } from '@ahpd/sdk';",
+    `const NOTE: PluginView = ${JSON.stringify(NOTE)};`,
+    "export const name = 'speaker';",
+    "export const apply: Plugin['apply'] = (host): void => { host.showView(NOTE); };",
+    '',
+  ].join('\n'));
+  writeFileSync(join(folder, 'i18n', 'pt.json'), JSON.stringify({
+    views: { main: { note: { text: 'a loja está pronta' }, site: { label: 'Abrir' } } },
+  }));
+  writeFileSync(config, JSON.stringify({ plugins: [folder] }));
+  const { host, users, close } = await live();
+  const ana = await as(host, users, 'ana', 'pt-BR');
+  const cy = await as(host, users, 'cy');
+
+  const pt = (await ana.rows())['speaker'] as Bag;
+  expect(pt['views']['main']['components']['note']['text']).toBe('a loja está pronta');
+  expect(pt['views']['main']['components']['site']['label']).toBe('Abrir');
+  // A URL is data and not text, so it is served as the plugin drew it.
+  expect(pt['views']['main']['components']['site']['href']).toBe('https://example.test/');
+
+  const en = (await cy.rows())['speaker'] as Bag;
+  expect(en['views']['main']['components']['note']['text']).toBe('the store is ready');
+  expect(en['views']['main']['components']['site']['label']).toBe('Open');
+  await close();
 });
 
 it('lists a switched-off plugin with the schema its package.json declares, and imports nothing', async () => {

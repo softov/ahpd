@@ -1,6 +1,6 @@
 ---
 title: The row carries the view
-status: todo
+status: implemented
 depends:
   - task-01-a-plugin-gives-a-view.md
 layer: server
@@ -57,3 +57,10 @@ A new or cleared view sends the row again, in the reader's locale.
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Built on 2026-10-31, and not committed: `git add` is refused in this session, so the task waits with task 01.
+The server holds one view per surface of each plugin in `viewed`, and serves them as `views` on the row of a loaded plugin.
+`setView` and `dropView` say `viewsChanged` once the load has answered, and a reload or an unload removes the views.
+`translate` replaces a Text's `text` and a Link's `label` with the reader's catalog at `views.<surface>.<componentId>.<prop>`.
+`packages/server/test/plugins-channel.test.ts` holds three cases for this task, and the server suite passes.
+Files to commit: `packages/server/src/plugins.ts`, `packages/server/src/commands/run.ts`, `packages/server/src/pluginschannel.ts`, `packages/server/test/plugins-channel.test.ts` and `docs/plugins/PLUGINS.md`.
