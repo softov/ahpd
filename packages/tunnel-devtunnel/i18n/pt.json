@@ -17,7 +17,6 @@
   "views": {
     "main": {
       "address": {
-        "label": "Abrir o túnel",
         "text": "O endereço do túnel ainda não está pronto"
       },
       "tunnel-label": { "text": "Túnel" },

@@ -159,12 +159,16 @@ it('shows a view the sdk accepts, with the URL and every value on it', async () 
   const view = views[0] as PluginView;
 
   expect(() => { checkView(view, 'main', 'tunnel', {}); }).not.toThrow();
-  expect(view.components['address']).toEqual({ id: 'address', component: 'Link', label: 'Open the tunnel', href: URL });
-  expect(view.components['tunnel']?.text).toBe(TUNNEL);
-  expect(view.components['port']?.text).toBe(String(TUNNEL_PORT));
+  expect(view.components['address']).toEqual({ id: 'address', component: 'Link', label: URL, href: URL });
+  expect(view.components['tunnel-value']?.text).toBe(TUNNEL);
+  expect(view.components['port-value']?.text).toBe(String(TUNNEL_PORT));
   expect(view.components['relay-up']?.text).toBe('The relay is up');
-  expect(view.components['clients']?.text).toBe('2');
-  expect(view.components['body']?.children).toEqual(['address', 'tunnel-label', 'tunnel', 'port-label', 'port', 'relay-up', 'clients-label', 'clients']);
+  expect(view.components['clients-value']?.text).toBe('2');
+  expect(view.components['body']?.children).toEqual(['status', 'rule', 'tunnel', 'port', 'clients']);
+  expect(view.components['status']?.children).toEqual(['address', 'relay-up']);
+  expect(view.components['relay-up']?.tone).toBe('success');
+  expect(view.components['port']).toEqual({ id: 'port', component: 'Row', justify: 'spaceBetween', align: 'center', children: ['port-label', 'port-value'] });
+  expect(view.components['port-label']).toEqual({ id: 'port-label', component: 'Text', variant: 'caption', text: 'Port' });
 });
 
 it('says the address is not ready rather than drawing a Link the sdk would refuse', async () => {
@@ -173,6 +177,7 @@ it('says the address is not ready rather than drawing a Link the sdk would refus
   const view = views[0] as PluginView;
   expect(view.components['address']).toEqual({ id: 'address', component: 'Text', text: 'The tunnel address is not ready' });
   expect(view.components['relay-down']?.text).toBe('The relay is down');
+  expect(view.components['relay-down']?.tone).toBe('danger');
   expect(() => { checkView(view, 'main', 'tunnel', {}); }).not.toThrow();
 });
 
@@ -192,7 +197,7 @@ it('draws the state again only when it changed', async () => {
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(views).toHaveLength(2);
   expect((views[1] as PluginView).components['relay-down']).toBeDefined();
-  expect((views[1] as PluginView).components['clients']?.text).toBe('0');
+  expect((views[1] as PluginView).components['clients-value']?.text).toBe('0');
 });
 
 it('keeps the view when a read fails, and logs one run of failures once', async () => {
