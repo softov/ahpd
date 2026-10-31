@@ -1,14 +1,14 @@
 ---
 title: A customization switch is answered to the client that turned it
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
 refs:
   - git://ab07054c - the commit of ahpd this plan was checked at
   - "[code://packages/sdk/src/host/chatactions.ts#L1268-L1421](../../../../packages/sdk/src/host/chatactions.ts#L1268-L1421) - `session/customizationToggled`: the switch kept, the list said, the client's own action never said back"
-  - "[code://packages/sdk/src/host/tooling.ts#L947-L990](../../../../packages/sdk/src/host/tooling.ts#L947-L990) - `toggleClientPlugin`, which says the plugin's entry and nothing for the client's switch"
+  - "[code://packages/sdk/src/host/tooling.ts#L947-L982](../../../../packages/sdk/src/host/tooling.ts#L947-L982) - `toggleClientPlugin`, which says the plugin's entry and nothing for the client's switch"
   - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts#L371-L400 - the reducer applies `session/customizationToggled` to the entry it names"
   - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L30 - a client holds its action until an envelope with its own origin, or a rejection, answers it"
   - "https://github.com/microsoft/agent-host-protocol/blob/main/docs/guide/mcp.md - `enablement` is toggled with `session/customizationToggled`, its first entry the effective decision"
@@ -49,7 +49,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A customization switch is answered to the client that turned it](task-01-a-customization-switch-is-answered.md) | todo | - |
+| [01 - A customization switch is answered to the client that turned it](task-01-a-customization-switch-is-answered.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -57,13 +57,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-31.
-- **Next action:** [task-01-a-customization-switch-is-answered.md](task-01-a-customization-switch-is-answered.md).
+- **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the switch said back carries the enablement this host applied, which is the session's own decision for a sender who may not keep one for every session.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `ab07054c` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] Each new case fails on `ab07054c` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.

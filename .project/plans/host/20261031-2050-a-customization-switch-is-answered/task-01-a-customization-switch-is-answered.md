@@ -1,6 +1,6 @@
 ---
 title: A customization switch is answered to the client that turned it
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -30,3 +30,6 @@ A client's switch of a customization is said back with its origin once it is mad
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
 ## Resume
+
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.
