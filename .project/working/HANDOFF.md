@@ -18,7 +18,7 @@ Current progress and pending items only, as of 2026-10-31.
   - #161: only the echo carries the origin.
   - #151: container/05 p8, a profile's machines on another server's Docker.
   - #162: the VM plan, a VM made by libvirt or Proxmox. Nothing has run on a real hypervisor yet.
-- On 2026-10-31, eight PRs merged on green CI, Windows included:
+- On 2026-10-31, eleven PRs merged on green CI, Windows included:
   - #163: CI stages a pre-release under the `next` dist-tag.
   - #164: host/20261031-0211, every client action is answered.
   - #165: claude/20261031-0228, a skill names its own file.
@@ -27,7 +27,10 @@ Current progress and pending items only, as of 2026-10-31.
   - #168: pi/20261031-0736, a failed pi turn is resumed.
   - #169: a fix with no plan. The #166 watch started a Claude probe for each write to `~/.claude/plugins/known_marketplaces.json`, which each probe's CLI writes, so CLIs piled up and `listSessions` hung. Now only `installed_plugins.json` calls, and the host runs one probe per backend at a time.
   - #170: the second cause of the same loop. Each CLI start rewrites `skills/synced/<bucket>/manifest.json` and `.last-complete-round`. The skills watch now skips them, and skips a `change` for a folder.
-- The last code merge on main is #170 (`c9b5917a`).
+  - #171: plugin/20261031-0804, a browser gets a push.
+  - #172: host/20261028-0947, `x-ahpd/me` answers a plugin's own connection.
+  - #173: the four fork plans of host/20261031 (0804, 0931, 1019, 1118), every client action is answered. Three small gaps are in the PR text, for a follow-up.
+- The last code merge on main is #173 (`cae062e6`). The branch `host/20261031-0804-actions-answered` is still on origin.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
@@ -43,7 +46,7 @@ Current progress and pending items only, as of 2026-10-31.
 
 ## Waiting for Softov
 
-- Restart the daemon for #164 to #172. One restart covers all of them. #172 answers a plugin's own `x-ahpd/me`. A daemon on #166 to #169 probes each Claude variant without end. A stale removal is refused, and Claude sessions list their real files. A written customization shows without a restart, npm runs beside the daemon's Node, and a failed pi turn can be resumed.
+- Restart the daemon for #164 to #173. One restart covers all of them. #173 answers each client action. #172 answers a plugin's own `x-ahpd/me`. A daemon on #166 to #169 probes each Claude variant without end. A stale removal is refused, and Claude sessions list their real files. A written customization shows without a restart, npm runs beside the daemon's Node, and a failed pi turn can be resumed.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
@@ -69,9 +72,8 @@ Current progress and pending items only, as of 2026-10-31.
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
 - Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: builds in session `claude-deepseek-build:/cffdf8df-…`, worktree `build-agents-cffdf8df`.
-  - maycxc/union, four fork plans of host/20261031 (0804, 0931, 1019, 1118): PR #173, branch `host/20261031-0804-actions-answered`. The review found no blocker; three small gaps are in the PR text.
-  - claude/20261031-1200, a failed Claude turn is resumed: builds in session `claude-deepseek-build:/ec2bea86-…`, on the #173 branch. Its PR targets that branch until #173 merges.
+  - plugin/20261031-1200, a plugin shows its state: built in worktree `build-agents-cffdf8df`, not committed (the builder could not `git add`). One test fails: `tools/i18n-check.mjs` does not accept a `views` block in a plugin catalog. That waits on Softov.
+  - claude/20261031-1200, a failed Claude turn is resumed: built in worktree `build-agents-ec2bea86`, four commits on the merged #173. Its PR targets main. An API failure is recorded as a `complete` turn, so it does not resume. That waits on Softov.
   - cofold/20261031-1200, a failed cofold turn is resumed: builds after the Claude plan, which it requires.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
