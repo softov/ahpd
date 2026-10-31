@@ -1,6 +1,6 @@
 ---
 title: pi answers a steering message and takes it out when pi reads it
-status: todo
+status: done
 depends: []
 layer: agent-pi
 refs:
@@ -31,3 +31,6 @@ A steering message a client sends while a pi turn runs is said back inside the d
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
 ## Resume
+
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.

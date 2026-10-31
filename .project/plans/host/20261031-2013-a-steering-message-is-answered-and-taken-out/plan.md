@@ -1,7 +1,7 @@
 ---
 title: A steering message is answered when it is taken, and taken out when the agent reads it
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -56,8 +56,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - pi answers a steering message and takes it out when pi reads it](task-01-pi-answers-a-steering-message.md) | todo | - |
-| [02 - The bot answers a steering message and names it on the turn that takes it in](task-02-the-bot-answers-a-steering-message.md) | todo | - |
+| [01 - pi answers a steering message and takes it out when pi reads it](task-01-pi-answers-a-steering-message.md) | done | - |
+| [02 - The bot answers a steering message and names it on the turn that takes it in](task-02-the-bot-answers-a-steering-message.md) | done | - |
 | [03 - The host owes a steering message, so a session in a machine answers it](task-03-the-host-owes-a-steering-message.md) | dropped | - |
 
 ## Risks and tradeoffs
@@ -66,13 +66,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-31.
-- **Next action:** [task-01-pi-answers-a-steering-message.md](task-01-pi-answers-a-steering-message.md).
+- **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** cofold holds a steering message the same way; that half goes with upstream's cofold resume plan (#177), which reshapes its turn opening.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `ab07054c` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] Each new case fails on `ab07054c` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.
