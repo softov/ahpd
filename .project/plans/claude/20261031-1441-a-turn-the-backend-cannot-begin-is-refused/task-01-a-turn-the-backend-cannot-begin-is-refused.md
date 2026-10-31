@@ -1,6 +1,6 @@
 ---
 title: A turn the Claude session cannot begin is refused
-status: todo
+status: done
 depends: []
 layer: claude
 refs:
@@ -32,3 +32,6 @@ A turn that reaches the Claude session while a turn of that chat runs or is stil
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
 ## Resume
+
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.

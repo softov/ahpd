@@ -1,7 +1,7 @@
 ---
 title: A turn the Claude session cannot begin is refused
 domain: claude
-status: planned
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -55,7 +55,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn the Claude session cannot begin is refused](task-01-a-turn-the-backend-cannot-begin-is-refused.md) | todo | - |
+| [01 - A turn the Claude session cannot begin is refused](task-01-a-turn-the-backend-cannot-begin-is-refused.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -63,13 +63,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-31.
-- **Next action:** [task-01-a-turn-the-backend-cannot-begin-is-refused.md](task-01-a-turn-the-backend-cannot-begin-is-refused.md).
+- **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** cofold drops a turn the same way while it reopens a session; that half waits for the cofold resume plan, which reshapes its turn opening.
 
 ## Final verification checklist
 
-- [ ] The new case fails on `cae062e6` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] The new case fails on `cae062e6` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.
