@@ -47,7 +47,7 @@ Current progress and pending items only, as of 2026-10-31.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
 - On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
-- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union`, `review-maycxc-1634-2013`, `devtunnel-show-fixture` and `vm`. All but the first two are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
+- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union`, `review-maycxc-1634-2013`, `devtunnel-show-fixture`, `devtunnel-view-rows` (PR #180) and `vm`. All but the first two are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
 - The local branch `fork/maycxc-1248-1303-1334` is merged.
 
 ## Waiting for Softov
@@ -80,7 +80,7 @@ Current progress and pending items only, as of 2026-10-31.
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
 - Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; #178 adds the captured `show` answer as a fixture.
+  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; #178 adds the captured `show` answer as a fixture. PR #180 puts each label and its value on one row, Softov's layout A of two mockups, CI running.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
   - cofold/20261031-1200, a failed cofold turn is resumed: merged in #177.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
