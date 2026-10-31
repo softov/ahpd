@@ -35,6 +35,8 @@ Current progress and pending items only, as of 2026-10-31.
   - #176: MayCXC's host/20261031-1306 and claude/20261031-1441. A draft the chat already holds is answered to its sender alone, and the Claude session refuses a turn while the one before it is still beginning.
   - #177: cofold/20261031-1200, a failed cofold turn is resumed.
 - The last code merge on main is #177 (`fc63fd3f`). The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
+- PR #179 is open: MayCXC's host/20261031-1634 and host/20261031-2013, from his `union` at `ac4cbb1b`, merged onto main in the worktree `review-maycxc-1634-2013`. CI running. It waits on Softov's word to merge.
+- #178 is green on all 11 checks. It waits on Softov's word to merge.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
@@ -45,7 +47,7 @@ Current progress and pending items only, as of 2026-10-31.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
 - On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
-- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union` and `vm`. The last two are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
+- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union`, `review-maycxc-1634-2013` (PR #179), `devtunnel-show-fixture` (PR #178) and `vm`. The last two are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
 - The local branch `fork/maycxc-1248-1303-1334` is merged.
 
 ## Waiting for Softov
@@ -78,7 +80,7 @@ Current progress and pending items only, as of 2026-10-31.
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
 - Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; PR #178 adds the captured `show` answer as a fixture, CI running.
+  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; PR #178 adds the captured `show` answer as a fixture, CI green.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
   - cofold/20261031-1200, a failed cofold turn is resumed: merged in #177.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
