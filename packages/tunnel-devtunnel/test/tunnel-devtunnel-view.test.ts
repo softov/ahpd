@@ -159,7 +159,7 @@ it('shows a view the sdk accepts, with the URL and every value on it', async () 
   const view = views[0] as PluginView;
 
   expect(() => { checkView(view, 'main', 'tunnel', {}); }).not.toThrow();
-  expect(view.components['address']).toEqual({ id: 'address', component: 'Link', label: 'Open the tunnel', href: URL });
+  expect(view.components['address']).toEqual({ id: 'address', component: 'Link', label: URL, href: URL });
   expect(view.components['tunnel-value']?.text).toBe(TUNNEL);
   expect(view.components['port-value']?.text).toBe(String(TUNNEL_PORT));
   expect(view.components['relay-up']?.text).toBe('The relay is up');

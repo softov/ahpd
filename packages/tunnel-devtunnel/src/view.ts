@@ -32,13 +32,14 @@ export interface TunnelState {
  * a word and each word needs its own key in a catalog: one key cannot hold
  * both "up" and "down". The address is a Link once the service has a URL, and
  * a Text saying it has none before that, because a Link without an absolute
- * URL is one the sdk refuses. A label is a `caption`, and the relay state has
+ * URL is one the sdk refuses. The Link's label is the URL itself, which is data,
+ * so the catalogs hold no `label` for it. A label is a `caption`, and the relay state has
  * the `tone` of its state.
  */
 export const tunnelView = (state: TunnelState): PluginView => {
   const address: ViewComponent = state.url === undefined
     ? { id: 'address', component: 'Text', text: 'The tunnel address is not ready' }
-    : { id: 'address', component: 'Link', label: 'Open the tunnel', href: state.url };
+    : { id: 'address', component: 'Link', label: state.url, href: state.url };
   const relay: ViewComponent = state.hosts > 0
     ? { id: 'relay-up', component: 'Text', text: 'The relay is up', tone: 'success' }
     : { id: 'relay-down', component: 'Text', text: 'The relay is down', tone: 'danger' };
