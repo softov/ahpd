@@ -36,6 +36,13 @@ export interface Logins {
   nextLogin: () => Login | undefined;
   /** Run the failed turn again on `login`. */
   moveOn: (login: Login) => Promise<void>;
+  /**
+   * Put a new CLI on `turn`'s conversation, cut where `cut` says, on `login`.
+   *
+   * `started` is false when the session closed while the conversation was
+   * deleted; `failed` is why a conversation could not be started over.
+   */
+  restartAt: (turn: string, cut: Cut, login: Login | undefined) => Promise<{ started: boolean; failed?: string }>;
   /** The words the running turn ends with, for a failure of its login that it did not show. */
   failure: () => string | undefined;
   /**
@@ -267,21 +274,56 @@ export function createLogins(ctx: SessionContext): Logins {
   };
 
   /**
-   * Put a new CLI on the turn's conversation, on `login`, and send the turn's
-   * prompt to it again, with the steering messages the turn sent the CLI it
-   * replaces behind it.
+   * Put a new CLI on `turn`'s conversation, cut where `cut` says, on `login`.
    *
    * Cut back to the end of the turn before it, as a rewind cuts, so the failed
    * prompt is not in the conversation the new CLI resumes; or, for a
    * conversation's first turn, started over under its id. The conversation's
    * entry for this turn goes with the cut or the delete, so it is taken out of
-   * `ends`.
+   * `ends`. The turn's prompt is left to the caller to send.
    *
    * A conversation whose delete fails still holds the failed prompt and its
-   * reply. It comes back as it is, on the new login, and the turn ends with the
-   * failure, as a turn with no cut point does; the reply stays its last entry.
-   * A steering message the CLI took in is in it too; the others go to the new
-   * CLI, and are answered in a turn of their own, as a failed turn's are.
+   * reply. It comes back as it is, on the new login, and `failed` says why, for
+   * a caller that ends the turn with the failure; the reply stays its last
+   * entry. `started` is false when the session closed while the delete ran,
+   * which starts no CLI that nothing would close.
+   */
+  const restartAt = async (turn: string, cut: Cut, login: Login | undefined): Promise<{ started: boolean; failed?: string }> => {
+    const was = ctx.handle;
+    let failed: string | undefined;
+    closing = was;
+    try {
+      try { was?.close(); }
+      catch { /* A CLI already gone is the same ending. */ }
+      ctx.login = login;
+      if (cut.over === true) {
+        // Stopped before the delete, so nothing writes the conversation back.
+        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
+        if (ctx.agentId !== undefined) {
+          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, failureOf);
+        }
+        if (ctx.closed) return { started: false, ...(failed === undefined ? {} : { failed }) };
+      }
+      if (failed === undefined) ctx.ends.delete(turn);
+      ctx.gone = undefined;
+      ctx.handle = cut.over !== true
+        ? ctx.startQuery(ctx.running, false, cut.at)
+        : ctx.startQuery(ctx.running, failed === undefined);
+      void ctx.consume();
+      return { started: true, ...(failed === undefined ? {} : { failed }) };
+    }
+    finally {
+      closing = undefined;
+    }
+  };
+
+  /**
+   * Run the failed turn again on `login`, with the steering messages it sent
+   * the CLI it replaces behind its prompt.
+   *
+   * A steering message the CLI took in is in the conversation too; the others
+   * go to the new CLI, and are answered in a turn of their own, as a failed
+   * turn's are.
    */
   const moveOn = async (login: Login): Promise<void> => {
     const held = move;
@@ -290,42 +332,19 @@ export function createLogins(ctx: SessionContext): Logins {
     // The steering messages the CLI owes the turn an answer to, which it takes
     // with it when it is put away.
     const steers = [...ctx.owed.values()].filter((owed) => owed.steering && owed.turn === held.turn);
-    const was = ctx.handle;
-    let failed: string | undefined;
-    closing = was;
-    try {
-      try { was.close(); }
-      catch { /* A CLI already gone is the same ending. */ }
-      ctx.login = login;
-      if (held.over === true) {
-        // Stopped before the delete, so nothing writes the conversation back.
-        await (was as unknown as { [Symbol.asyncDispose]?: () => Promise<void> })[Symbol.asyncDispose]?.();
-        if (ctx.agentId !== undefined) {
-          failed = await forgetSession(ctx.agentId, ctx.options.cwd).then(() => undefined, failureOf);
-        }
-        // A session closed meanwhile starts no CLI that nothing would close.
-        if (ctx.closed) return;
-      }
-      if (failed === undefined) ctx.ends.delete(held.turn);
-      ctx.gone = undefined;
-      ctx.handle = held.over !== true
-        ? ctx.startQuery(ctx.running, false, held.at)
-        : ctx.startQuery(ctx.running, failed === undefined);
-      void ctx.consume();
-    }
-    finally {
-      closing = undefined;
-    }
+    const restarted = await restartAt(held.turn, held, login);
+    // A session closed while its conversation was deleted starts nothing.
+    if (!restarted.started) return;
     // A turn stopped while its conversation was deleted keeps the new CLI and
     // sends it nothing: the stop was for this turn.
     const still = moving();
     move = undefined;
     if (!still) return;
-    if (failed === undefined) {
+    if (restarted.failed === undefined) {
       await ctx.again(steers);
       return;
     }
-    const why = `The conversation could not start over on another login: ${failed}`;
+    const why = `The conversation could not start over on another login: ${restarted.failed}`;
     ctx.failTurn(held.said === '' ? why : `${held.said}\n${why}`);
     await ctx.again(steers.filter((owed) => owed.cli !== 'started'));
     ctx.startNext();
@@ -336,5 +355,5 @@ export function createLogins(ctx: SessionContext): Logins {
     if (login !== undefined) ctx.options.logins?.open.called(login.id, login.token, { ok: true });
   };
 
-  return { login: undefined, cutOf, loginFor, unready, limited, refused, nextLogin, moveOn, failure, answered, replacing };
+  return { login: undefined, cutOf, loginFor, unready, limited, refused, nextLogin, moveOn, restartAt, failure, answered, replacing };
 }
