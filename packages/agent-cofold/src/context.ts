@@ -1,5 +1,5 @@
 import type { Store, RunHandle } from '@cofold/agents';
-import type { Activity, Bag, BoundTool, Start } from '@ahpd/sdk';
+import type { Activity, Bag, BoundTool, MessageAttachment, MessageFrom, Start } from '@ahpd/sdk';
 import type { CofoldOptions, Held } from './agent.js';
 import type { HarnessConfig } from './config.js';
 import type { OpenRequest, TurnMapping } from './mapping.js';
@@ -39,6 +39,21 @@ export interface SessionContext extends TurnAgent, Runs, Pauses, Turns {
   pending: Map<string, OpenRequest>;
   points: Map<string, string>;
   queued: Bag[];
+  /**
+   * The chat's steering message, as every client's reducer holds it: the last
+   * one said, until it is taken out.
+   */
+  steering: { id: string; message: Bag } | undefined;
+  /**
+   * The steering messages the run they were sent into never took in, oldest
+   * first.
+   *
+   * cofold rejects a steer the run settled before reading, and leaves what
+   * becomes of it to the caller. Each one here is a turn of its own once the
+   * chat is idle, ahead of the queue, as a message Claude's CLI never took in
+   * is.
+   */
+  untaken: { id: string; text: string; from?: MessageFrom; attachments?: MessageAttachment[] }[];
   settings: Record<string, unknown>;
   touch: () => void;
   /**

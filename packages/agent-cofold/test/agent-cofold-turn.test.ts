@@ -422,6 +422,119 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
   expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
+/** The envelope that answers the dispatch this client numbered `clientSeq`. */
+const answer = (p: ReturnType<typeof peer>, chatUri: string, clientSeq: number) => p.notes
+  .filter((n) => n.method === 'action')
+  .map((n) => n.params as Note & { origin?: { clientId?: string; clientSeq?: number }; rejectionReason?: string })
+  .find((e) => e.channel === chatUri && e.origin?.clientId === 'probe' && e.origin.clientSeq === clientSeq);
+
+/** The chat as a client's reducer folds what the host said on it. */
+const fold = (p: ReturnType<typeof peer>, chatUri: string): ChatState => actions(p, chatUri)
+  .reduce((state, one) => chatReducer(state, one.action as unknown as ChatAction), { turns: [], status: 0, modifiedAt: 'now' } as unknown as ChatState);
+
+/** A steering message, dispatched the way a client dispatches it, under the number the client gave it. */
+const steer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string, text: string): void => {
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } } },
+  });
+};
+
+it('answers a steering message with its own action, holds it, and takes it out once the run has read it', async () => {
+  const waiting: (() => void)[] = [];
+  const tool: HostTool = {
+    definition: {
+      name: 'lookup',
+      title: 'Look something up',
+      description: 'Looks a word up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    run: () => new Promise<string>((resolve) => { waiting.push(() => resolve('found x')); }),
+  };
+  const model = createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: {} }] }, { text: 'done' }],
+    stream: true,
+  });
+  const { client, peer: p, chatUri } = await talking(model, [tool]);
+  begin(client, chatUri, 't1', 'find x');
+  await until(() => waiting.length === 1);
+
+  steer(client, chatUri, 9, 's1', 'look for y instead');
+  await until(() => answer(p, chatUri, 9) !== undefined);
+  // The client's own action is what answers it, and every client's fold holds
+  // the message while the run has not read it.
+  expect(answer(p, chatUri, 9)?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'steering', id: 's1' });
+  expect(answer(p, chatUri, 9)?.rejectionReason).toBeUndefined();
+  expect(fold(p, chatUri).steeringMessage).toMatchObject({ id: 's1', message: { text: 'look for y instead' } });
+
+  waiting[0]?.();
+  await until(() => ended(p, chatUri));
+  // The next step read it, and it was taken out once it had.
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+  expect(actions(p, chatUri).filter((e) => e.action.type === 'chat/pendingMessageRemoved').map((e) => e.action))
+    .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+  expect(types(p, chatUri).filter((type) => type === 'chat/turnStarted')).toHaveLength(1);
+});
+
+/**
+ * A model whose first answer is held until `release`, and whose later answers
+ * come at once. A steering message sent while the first answer is held reaches
+ * a run that has no step left to read it.
+ */
+function gatedModel(): { model: ModelAdapter; release: () => void; asked: string[] } {
+  let ids = 0;
+  let release = (): void => {};
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const asked: string[] = [];
+  const reply = (text: string): ModelReply => ({
+    message: {
+      id: `m${++ids}`,
+      role: 'assistant',
+      source: 'model',
+      createdAt: new Date().toISOString(),
+      parts: [{ type: 'text', text }],
+    },
+    usage: { inputTokens: 1, outputTokens: 1 },
+    finish: 'stop',
+  });
+  const model: ModelAdapter = {
+    id: 'gated',
+    modelId: 'gated',
+    features: { tools: true, streaming: true, images: false, structuredOutput: false, reasoning: false },
+    complete: async () => reply('complete'),
+    stream: async function* (request): AsyncIterable<ModelStreamEvent> {
+      asked.push(JSON.stringify(request.messages));
+      if (asked.length === 1) {
+        yield { type: 'text.delta', text: 'working' };
+        await gate;
+      }
+      yield { type: 'done', reply: reply(`answer ${asked.length}`) };
+    },
+  };
+  return { model, release, asked };
+}
+
+it('runs a steering message the run never took in as a turn of its own, named by the message', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+
+  steer(client, chatUri, 4, 's1', 'one more thing');
+  await until(() => answer(p, chatUri, 4) !== undefined);
+  release();
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnComplete').length === 2);
+
+  // The message became the next turn's prompt, and that turn names it, which
+  // is what takes it out of every client's fold.
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started).toHaveLength(2);
+  expect(started[1]).toMatchObject({ queuedMessageId: 's1', message: { text: 'one more thing' } });
+  expect(asked[1]).toContain('one more thing');
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+});
+
 it('names the cofold session id from the AHP URI in one place', () => {
   expect(sessionIdOf('ahp-session:/one')).toBe('one');
   expect(sessionIdOf('ahp-session:/a/b')).toBe('a/b');
