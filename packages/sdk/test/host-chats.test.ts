@@ -55,6 +55,37 @@ describe('two people on one chat', () => {
     };
     expect(opened.snapshot.state.draft?.text).toBe('half a th');
   });
+
+  it('answers a draft the chat already holds to the person who sent it, and to nobody else', async () => {
+    const host = serving('/home/softov');
+    const one = peer();
+    const a = host.accept(one);
+    const two = peer();
+    const b = host.accept(two);
+    await a.handle(hello(['0.9.0'], { clientId: 'one' }));
+    await b.handle(hello(['0.9.0'], { clientId: 'two' }));
+    await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
+    for (const client of [a, b]) {
+      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+    }
+    const draft = { text: 'half a th', origin: { kind: 'user' } };
+    const typed = (clientSeq: number) => a.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-chat:/live', clientSeq, action: { type: 'chat/draftChanged', draft } },
+    });
+    const drafts = (p: ReturnType<typeof peer>) => actions(p, 'ahp-chat:/live').filter((e) => e.action.type === 'chat/draftChanged');
+
+    void typed(1);
+    await settle();
+    expect(drafts(two)).toHaveLength(1);
+
+    void typed(2);
+    await settle();
+    const answer = drafts(one).find((e) => e.origin?.clientSeq === 2);
+    expect(answer?.origin?.clientId).toBe('one');
+    expect(answer?.rejectionReason).toBeUndefined();
+    expect(drafts(two)).toHaveLength(1);
+  });
 });
 
 describe('dropping the turns after one', () => {

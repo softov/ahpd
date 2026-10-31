@@ -286,7 +286,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/pendingMessageSet` | both | ✅ | Both kinds: a `queued` message waits for the running turn, a `steering` one goes into it - the prompt handed to the CLI is a generator that stays open for the life of the session. A steering message Claude's CLI answers after the turn's last answer is answered in that turn, which stays open for it, and reads back there after a restart - [CHATS.md](CHATS.md#turns). |
 | `chat/pendingMessageRemoved` | both | ✅ | When the client withdraws one, and when this host takes one up into a turn. A removal of a message the chat does not hold, matched on its id and its kind, is refused. |
 | `chat/queuedMessagesReordered` | both | ✅ | Anything the order did not name keeps its place behind what did, rather than being dropped for not having been mentioned. |
-| `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. |
+| `chat/draftChanged` | both | ✅ | A `Message`, not a string. Held by the session so two people on one chat see each other's, which is the only reason a draft is on the wire at all. Taken for a session nothing is running for too - kept by this host until one starts and handed over when it does, because typing into a row from the catalogue is what somebody does *before* there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into. The draft the chat already holds is answered to its sender alone. |
 | `chat/inputRequested` | host | ✅ | From the CLI's own elicitation. Mirrored to `session/inputNeeded` so a client watching the catalogue sees the session is blocked. |
 | `chat/inputAnswerChanged` | client | ✅ | One question of an open request, as somebody types the answer. Held on the request this host already keeps open and echoed to everyone watching the chat, for the reason `chat/draftChanged` is: two people answering one elicitation are answering one form. Kept on the request rather than beside it, so a client that arrives mid-question reads what is already filled in from `session.inputNeeded` - and so `chat/inputCompleted` carrying no answers of its own is completed with what was synced, which the protocol says is where they are. |
 | `chat/inputCompleted` | both | ✅ | Accept, decline or cancel. Declining is an answer, and the CLI is told it rather than left waiting. |
@@ -762,6 +762,10 @@ of these that names no folder is refused.
 A review is the same case. `changeset/filesReviewChanged` ticking files
 already ticked, or naming only files the changeset does not hold, moves
 nothing, and the sender alone is answered.
+
+A draft is the same case. `chat/draftChanged` naming the draft the chat
+already holds moves nothing, and the sender alone is answered, for a running
+chat and for one this host holds a draft for while nothing runs it.
 
 ### The snapshot and the actions have to agree
 
