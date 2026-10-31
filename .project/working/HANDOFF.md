@@ -76,7 +76,7 @@ Current progress and pending items only, as of 2026-10-31.
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
 - Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: merged in #175.
+  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; PR #178 adds the captured `show` answer as a fixture, CI running.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
   - cofold/20261031-1200, a failed cofold turn is resumed: PR #177, branch `cofold/20261031-1200-a-failed-cofold-turn-is-resumed`, CI running. Softov said "Open the PR" on 2026-10-31. Its hand check gets a pending file after the merge.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.

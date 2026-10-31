@@ -15,7 +15,7 @@ The plan `plugin/20261031-1200-a-plugin-shows-its-state` merged in #175, and its
 
 ## Steps
 
-1. Run `devtunnel show <id> --json` on the plugin's tunnel, and keep the output for the fixtures.
+1. Run `devtunnel show <id> --json` on the plugin's tunnel, and keep the output for the fixtures. Passed on 2026-10-31 with CLI 1.0.2094: the answer matches the parser, and PR #178 adds it as a fixture.
 2. Read `views.main` on the plugin's row. Expect the address, tunnel id, port, relay state and client count.
 3. Connect a client through the tunnel, and wait 30 seconds. Expect the client count to go up.
 4. Stop the tunnel. Expect `views.main` to be gone from the row.
@@ -23,4 +23,4 @@ The plan `plugin/20261031-1200-a-plugin-shows-its-state` merged in #175, and its
 
 ## Reply
 
-- Write "ok", or what went wrong at which step, and attach the `show` output of step 1.
+- Write "ok", or what went wrong at which step.
