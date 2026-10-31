@@ -38,7 +38,7 @@ Current progress and pending items only, as of 2026-10-31.
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
 - `/github/ahpd` is level with origin/main. `abdecb49` merges Softov's `1965724e` and keeps the two briefs deleted.
 - Fetch, and check the base before you cut a build worktree.
-- Softov's dev daemon runs from source on port 37537. He restarted it after #114.
+- Softov's dev daemon runs from source on port 37537. He restarted it after #175, on 2026-10-31.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
@@ -48,7 +48,6 @@ Current progress and pending items only, as of 2026-10-31.
 
 ## Waiting for Softov
 
-- Restart the daemon for #164 to #175. One restart covers all of them. #175 lets a plugin show a view, and the Dev Tunnel plugin shows its state. #174 resumes a failed Claude turn. #173 answers each client action. #172 answers a plugin's own `x-ahpd/me`. A daemon on #166 to #169 probes each Claude variant without end. A stale removal is refused, and Claude sessions list their real files. A written customization shows without a restart, npm runs beside the daemon's Node, and a failed pi turn can be resumed.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
