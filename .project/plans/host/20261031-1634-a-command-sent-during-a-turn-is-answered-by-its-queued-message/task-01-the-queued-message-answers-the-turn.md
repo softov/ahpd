@@ -1,6 +1,6 @@
 ---
 title: The queued message a command waits as answers its client
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -32,3 +32,6 @@ A `!command` a client sends as a turn while another turn runs is answered by the
 - `pnpm run typecheck` and `pnpm run boundary` report no errors.
 
 ## Resume
+
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.
