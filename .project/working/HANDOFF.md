@@ -78,9 +78,10 @@ Current progress and pending items only, as of 2026-10-31.
 - Four plans from 2026-10-31, in build order:
   - plugin/20261031-1200, a plugin shows its state: merged in #175.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
-  - cofold/20261031-1200, a failed cofold turn is resumed: building in session `claude-deepseek-build:/2c79b19f-3ef4-4a95-ad5d-e2bfbae386b0`, worktree `build-agents-2c79b19f`, from origin/main `067dcdc4`. Softov said "dispatch it" on 2026-10-31.
+  - cofold/20261031-1200, a failed cofold turn is resumed: building in session `claude-deepseek-build:/2c79b19f-3ef4-4a95-ad5d-e2bfbae386b0`, worktree `build-agents-2c79b19f`, from origin/main `067dcdc4`. Softov said "dispatch it" on 2026-10-31. Built in 4 commits; the gates pass except one `packages/computer` test that fails under load and passes alone. Next: a test for a message queued during a resume that fails, then the PR body for his approval.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
+- [briefs/the-change-counters-agree.md](../briefs/the-change-counters-agree.md): the ahpw change counters disagree. Softov said write the brief on 2026-10-31. A plan only when he says plan it.
 - [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md) stays for the server and plugin slices.
 - The `active` plans with all tasks implemented wait for his review. Each stays `active` until he says his review is done.
 - Three `active` plans look ready to close on his word: host/83, host/99 and plugin/69. The plan host/83 has p1 to p5 built, and host/99 has every task done. PR #104 merged plugin/69 tasks 05 and 06, which are still `implemented`.
