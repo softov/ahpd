@@ -78,7 +78,7 @@ Current progress and pending items only, as of 2026-10-31.
 - Four plans from 2026-10-31, in build order:
   - plugin/20261031-1200, a plugin shows its state: merged in #175.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
-  - cofold/20261031-1200, a failed cofold turn is resumed: building in session `claude-deepseek-build:/2c79b19f-3ef4-4a95-ad5d-e2bfbae386b0`, worktree `build-agents-2c79b19f`, from origin/main `067dcdc4`. Softov said "dispatch it" on 2026-10-31. Built in 4 commits; the gates pass except one `packages/computer` test that fails under load and passes alone. Next: a test for a message queued during a resume that fails, then the PR body for his approval.
+  - cofold/20261031-1200, a failed cofold turn is resumed: PR #177, branch `cofold/20261031-1200-a-failed-cofold-turn-is-resumed`, CI running. Softov said "Open the PR" on 2026-10-31. Its hand check gets a pending file after the merge.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
 - [briefs/the-change-counters-agree.md](../briefs/the-change-counters-agree.md): the ahpw change counters disagree. Softov said write the brief on 2026-10-31. A plan only when he says plan it.
