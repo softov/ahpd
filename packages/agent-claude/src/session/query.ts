@@ -991,7 +991,15 @@ export function createQuery(ctx: SessionContext): Query {
           const words = str(message.subtype) === 'success'
             ? str(message.result)
             : list(message.errors).map(String).join('\n');
-          const wrong = ctx.failure() ?? (message.is_error === true
+          /*
+           * A failure of the turn's login is kept apart from the result's own.
+           *
+           * It has already been through `moveOn`, which ran the turn again on
+           * another login or gave up, and it is not one a client may resume:
+           * there is either nowhere left to go or a CLI already on it.
+           */
+          const ofLogin = ctx.failure();
+          const wrong = ofLogin ?? (message.is_error === true
             ? (words || 'The turn failed')
             : str(message.subtype) !== 'success'
               ? `The turn ended ${str(message.subtype) ?? 'without succeeding'}`
@@ -1084,7 +1092,15 @@ export function createQuery(ctx: SessionContext): Query {
               ctx.emit('chat', { type: 'chat/usage', turnId: turn.id, usage: total });
             }
             ctx.settleOpen(turn);
-            const part = wrong === undefined || stopping ? undefined : ctx.addFailure(turn, wrong);
+            /*
+             * A failure a client may resume: one this result reported, on a
+             * conversation with somewhere to cut back to. A login's failure is
+             * not, and nor is a turn with no cut point - the failed prompt and
+             * its reply are still in the conversation a new CLI would resume.
+             */
+            const part = wrong === undefined || stopping
+              ? undefined
+              : ctx.addFailure(turn, wrong, ofLogin === undefined && ctx.cutOf() !== undefined);
             ctx.turns.push(turn);
             ctx.active = undefined;
             ctx.ran = undefined;

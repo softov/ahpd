@@ -13,6 +13,13 @@ export interface Logins {
    * agent's own credential or on a key a client pushed.
    */
   login: Login | undefined;
+  /**
+   * Where a failed turn is cut back to, or nothing when it cannot be.
+   *
+   * The turn before's last chain entry, or a conversation this process started
+   * from nothing, which starts over under its id.
+   */
+  cutOf: () => Cut | undefined;
   /** The login a turn that starts now runs on, from the values it starts with. */
   loginFor: (values: Bag) => Login | undefined;
   /** Why a turn that starts now cannot run: its record names logins, and none is ready. */
@@ -49,6 +56,15 @@ export interface Logins {
 /** Whether a turn is a `!` command's, which ran on no CLI. */
 const isCommand = (turn: Bag): boolean => list(turn.responseParts)
   .some((part) => str(bag(bag(part).toolCall).toolCallId) === `${String(turn.id)}:command`);
+
+/**
+ * Where a turn is put back to before it runs again.
+ *
+ * `at` is the last chain entry of the turn before it, where a cut is made.
+ * `over` is a conversation whose first turn this is, which has no entry before
+ * its prompt and starts over under its id instead.
+ */
+export type Cut = { at?: string; over?: true };
 
 export function createLogins(ctx: SessionContext): Logins {
   /**
@@ -167,7 +183,7 @@ export function createLogins(ctx: SessionContext): Logins {
    * process started holds nothing but that prompt, and starts over; one it
    * resumed, or one in a machine whose files this host cannot delete, does not.
    */
-  const cutOf = (): { at?: string; over?: true } | undefined => {
+  const cutOf = (): Cut | undefined => {
     for (let i = ctx.turns.length - 1; i >= 0; i--) {
       const turn = bag(ctx.turns[i]);
       if (isCommand(turn)) continue;
@@ -320,5 +336,5 @@ export function createLogins(ctx: SessionContext): Logins {
     if (login !== undefined) ctx.options.logins?.open.called(login.id, login.token, { ok: true });
   };
 
-  return { login: undefined, loginFor, unready, limited, refused, nextLogin, moveOn, failure, answered, replacing };
+  return { login: undefined, cutOf, loginFor, unready, limited, refused, nextLogin, moveOn, failure, answered, replacing };
 }

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
+import { bag } from '@ahpd/sdk';
 import type { Bag } from '@ahpd/sdk';
 
 /*
@@ -19,15 +20,17 @@ const sdk = vi.hoisted(() => {
   const state = {
     held: [] as Record<string, unknown>[],
     wake: undefined as (() => void) | undefined,
-    reset() { state.held = []; state.wake = undefined; },
+    /** Every CLI a session started, with the options it was given and the way to close it. */
+    queries: [] as { options: Record<string, unknown>; close: () => void }[],
+    reset() {
+      state.held = [];
+      state.wake = undefined;
+      state.queries = [];
+    },
     push(...frames: Record<string, unknown>[]) {
       state.held.push(...frames);
       state.wake?.();
       state.wake = undefined;
-    },
-    async next(): Promise<Record<string, unknown>> {
-      while (state.held.length === 0) await new Promise<void>((resolve) => { state.wake = resolve; });
-      return state.held.shift() as Record<string, unknown>;
     },
   };
   return state;
@@ -35,31 +38,61 @@ const sdk = vi.hoisted(() => {
 
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: (given: Record<string, unknown>) => ({ type: 'sdk', name: given.name, tools: given.tools }),
-  query: () => ({
-    async *[Symbol.asyncIterator]() {
-      for (;;) yield await sdk.next();
-    },
-    interrupt: async () => {},
-    setPermissionMode: async () => {},
-    setModel: async () => {},
-    applyFlagSettings: async () => {},
-    toggleMcpServer: async () => {},
-    reconnectMcpServer: async () => {},
-    setMcpServers: async () => {},
-    initializationResult: async () => ({}),
-    mcpServerStatus: async () => [],
-    reloadSkills: async () => ({ skills: [] }),
-    reloadPlugins: async () => ({ plugins: [] }),
-    supportedModels: async () => [],
-    streamInput: async () => {},
-    close: () => {},
-  }),
+  deleteSession: async () => {},
+  query: ({ options }: { options: Record<string, unknown> }) => {
+    let closed = false;
+    const fake = {
+      options,
+      close: (): void => {
+        closed = true;
+        sdk.wake?.();
+      },
+    };
+    sdk.queries.push(fake);
+    return {
+      async *[Symbol.asyncIterator]() {
+        for (;;) {
+          while (sdk.held.length > 0) yield sdk.held.shift() as Record<string, unknown>;
+          if (closed) return;
+          await new Promise<void>((resolve) => { sdk.wake = resolve; });
+        }
+      },
+      interrupt: async () => {},
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      applyFlagSettings: async () => {},
+      toggleMcpServer: async () => {},
+      reconnectMcpServer: async () => {},
+      setMcpServers: async () => {},
+      initializationResult: async () => ({}),
+      mcpServerStatus: async () => [],
+      reloadSkills: async () => ({ skills: [] }),
+      reloadPlugins: async () => ({ plugins: [] }),
+      supportedModels: async () => [],
+      streamInput: async () => {},
+      close: () => fake.close(),
+    };
+  },
 }));
 
 const { createSession } = await import('../src/session.js');
+const { OpenLogins } = await import('../src/logins.js');
 
 const settle = async (times = 30): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
+/** A session over a temporary folder, and everything it said on its chat. */
+const live = (extra: Record<string, unknown> = {}) => {
+  const chat: Bag[] = [];
+  const session = createSession({
+    uri: 'ahp-session:/failed',
+    chatUri: 'ahp-chat:/failed',
+    cwd: mkdtempSync(join(tmpdir(), 'ahpd-failed-')),
+    emit: (channel, action) => { if (channel === 'chat') chat.push(action as Bag); },
+    ...extra,
+  });
+  return { session, chat };
 };
 
 const WORDS = 'Not logged in · Please run /login';
@@ -122,4 +155,53 @@ it("ends a turn the CLI failed with the CLI's own words, said once", async () =>
   const state = chat.reduce<Bag>((held, action) => chatReducer(held as never, action as never) as unknown as Bag, before);
   const parts = ((state.turns ?? []) as Bag[]).flatMap((turn) => (turn.responseParts ?? []) as Bag[]);
   expect(parts.filter((part) => part.kind === 'markdown' && String(part.content).includes(WORDS))).toEqual([]);
+});
+
+it('marks a failed model call resumable, on chat/error and on the turn', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  session.begin('t1', 'Reply with the single word: ok');
+  await settle();
+  sdk.push(notice, result);
+  await settle();
+
+  const part = { kind: 'error', error: { errorType: 'turnFailed', message: WORDS }, resumable: true };
+  expect(chat.filter((one) => one.type === 'chat/error').at(-1)?.part).toEqual(part);
+  expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+it('does not mark a turn refused before the CLI resumable', async () => {
+  sdk.reset();
+  const { session, chat } = live();
+  await settle();
+  // The CLI ends, so the next turn is one that never reaches one.
+  sdk.queries.at(-1)?.close();
+  await settle();
+  session.begin('t1', 'one');
+  await settle();
+
+  const part = chat.find((one) => one.type === 'chat/error')?.part as Bag;
+  expect(String(bag(part.error).message)).toContain('stopped');
+  expect(part.resumable).toBeUndefined();
+  expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+});
+
+it('does not mark a turn whose login was refused resumable', async () => {
+  sdk.reset();
+  const logins = new OpenLogins();
+  logins.opened({ id: 'work', adapter: 'claude-login', owner: 'host', config: { token: 'token-work' } });
+  const { session, chat } = live({ preset: { logins: ['work'] }, logins: { open: logins, owner: () => 'host' } });
+  await settle();
+  session.begin('t1', 'one');
+  await settle();
+  sdk.push(
+    { ...notice, message: { ...notice.message, content: [{ type: 'text', text: 'denied' }] } },
+    { ...result, result: 'denied' },
+  );
+  await settle();
+
+  const part = chat.filter((one) => one.type === 'chat/error').at(-1)?.part as Bag;
+  expect(String(bag(part.error).message)).toContain('Claude refused login work (authentication_failed)');
+  expect(part.resumable).toBeUndefined();
 });
