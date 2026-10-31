@@ -116,7 +116,7 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 ## Resume state
 
 - **Done so far:** the three tasks were implemented on 2026-10-31. [implemented.md](implemented.md) says what exists now.
-- **Next action:** the PR, then the hand check of task 03 on a machine with the `devtunnel` CLI.
+- **Next action:** PR #175 merged. The hand check of task 03 waits in [pending/plugin-view-checks.md](../../../pending/plugin-view-checks.md). Then a review.
 - **Open questions:** none.
 - **Watch out for:** the `devtunnel` CLI was not on this machine. So the fixtures of `show` are built from the field names, not from captured answers.
 

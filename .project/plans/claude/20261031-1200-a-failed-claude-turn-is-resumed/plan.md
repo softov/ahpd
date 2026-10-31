@@ -101,7 +101,7 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 ## Resume state
 
 - **Done so far:** the three tasks are built on `build/agents/ec2bea86`. [implemented.md](implemented.md) says what exists now.
-- **Next action:** the hand checks of [task 02](task-02-resume-cuts-back-and-runs-again.md), with a test ahpd, a bad key and a resume from VS Code. Then a review.
+- **Next action:** PR #174 merged. The hand checks of [task 02](task-02-resume-cuts-back-and-runs-again.md) wait in [pending/claude-resume-checks.md](../../../pending/claude-resume-checks.md). Then a review.
 - **Open questions:** none.
 - **Watch out for:** the cofold plan and the push build do not touch these files. Check `git log origin/main -- packages/agent-claude/src/session` before a later change here.
 

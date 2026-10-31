@@ -18,7 +18,7 @@ Current progress and pending items only, as of 2026-10-31.
   - #161: only the echo carries the origin.
   - #151: container/05 p8, a profile's machines on another server's Docker.
   - #162: the VM plan, a VM made by libvirt or Proxmox. Nothing has run on a real hypervisor yet.
-- On 2026-10-31, eleven PRs merged on green CI, Windows included:
+- On 2026-10-31, thirteen PRs merged on green CI, Windows included:
   - #163: CI stages a pre-release under the `next` dist-tag.
   - #164: host/20261031-0211, every client action is answered.
   - #165: claude/20261031-0228, a skill names its own file.
@@ -30,7 +30,9 @@ Current progress and pending items only, as of 2026-10-31.
   - #171: plugin/20261031-0804, a browser gets a push.
   - #172: host/20261028-0947, `x-ahpd/me` answers a plugin's own connection.
   - #173: the four fork plans of host/20261031 (0804, 0931, 1019, 1118), every client action is answered. Three small gaps are in the PR text, for a follow-up.
-- The last code merge on main is #173 (`cae062e6`). The branch `host/20261031-0804-actions-answered` is still on origin.
+  - #174: claude/20261031-1200, a failed Claude turn is resumed.
+  - #175: plugin/20261031-1200, a plugin shows its state.
+- The last code merge on main is #175 (`1c6e2d9f`), after #174 (`504d7e0b`). The branch `host/20261031-0804-actions-answered` is still on origin.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
@@ -46,12 +48,14 @@ Current progress and pending items only, as of 2026-10-31.
 
 ## Waiting for Softov
 
-- Restart the daemon for #164 to #173. One restart covers all of them. #173 answers each client action. #172 answers a plugin's own `x-ahpd/me`. A daemon on #166 to #169 probes each Claude variant without end. A stale removal is refused, and Claude sessions list their real files. A written customization shows without a restart, npm runs beside the daemon's Node, and a failed pi turn can be resumed.
+- Restart the daemon for #164 to #175. One restart covers all of them. #175 lets a plugin show a view, and the Dev Tunnel plugin shows its state. #174 resumes a failed Claude turn. #173 answers each client action. #172 answers a plugin's own `x-ahpd/me`. A daemon on #166 to #169 probes each Claude variant without end. A stale removal is refused, and Claude sessions list their real files. A written customization shows without a restart, npm runs beside the daemon's Node, and a failed pi turn can be resumed.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
 - pi/20261031-0736: [pending/pi-resume-checks.md](../pending/pi-resume-checks.md).
-- host/20261031-0211, claude/20261031-0228, claude/20261031-0258, daemon/20261031-0555 and pi/20261031-0736: review. Each is `implemented`.
+- claude/20261031-1200: [pending/claude-resume-checks.md](../pending/claude-resume-checks.md).
+- plugin/20261031-1200: [pending/plugin-view-checks.md](../pending/plugin-view-checks.md).
+- host/20261031-0211, claude/20261031-0228, claude/20261031-0258, daemon/20261031-0555 and pi/20261031-0736, claude/20261031-1200 and plugin/20261031-1200: review. Each is `implemented`.
 - host/114 and host/116: review.
 - x-ahpd/me for a plugin: PR #172 merged as `44d90a59`. The plan host/20261028-0947 stays `implemented` until his review. ahpw organization/05 task 07 can start.
 - ahpw idea `a-plugin-page-draws-its-view` is on ahpw main, for the views of plan D.
@@ -71,10 +75,10 @@ Current progress and pending items only, as of 2026-10-31.
 - plugin/50: [pending/plugin-50-first-pieces.md](../pending/plugin-50-first-pieces.md).
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
-- Four plans from 2026-10-31, in build order. #174 and #175 touch no common file:
-  - plugin/20261031-1200, a plugin shows its state: PR #175, CI running. `tools/i18n-check.mjs` now accepts a `views` block (Softov: "Checker accepts views"). Review fixes: `showView` keeps a copy of the view, and a stop during the first `devtunnel show` starts no poll. Hand check: the devtunnel page on a machine with the CLI.
-  - claude/20261031-1200, a failed Claude turn is resumed: PR #174, CI running. A `result` with `is_error: true` ends the turn in `error`, also under `subtype: success` (Softov: "Save it as error"). Review fix: a failed resume sends the next queued message. Hand check: a resume against a real model from VS Code.
-  - cofold/20261031-1200, a failed cofold turn is resumed: builds after the Claude plan, which it requires. It starts from main once #174 merges, or stacks on its branch.
+- Four plans from 2026-10-31, in build order:
+  - plugin/20261031-1200, a plugin shows its state: merged in #175.
+  - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
+  - cofold/20261031-1200, a failed cofold turn is resumed: its required plan is on main, so it builds from main.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
 - [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md) stays for the server and plugin slices.
