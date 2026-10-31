@@ -202,6 +202,12 @@ export interface SessionOptions {
   /** Where state actions go. */
   emit: Emit;
   /**
+   * The client's action the host handed this session, for an action it
+   * answers or refuses after the host has stopped applying it
+   * (`Start.handed`).
+   */
+  handed?: (action: Bag) => Handed | undefined;
+  /**
    * Environment for the agent's own process.
    *
    * Merged over `process.env` by the session, never handed to the SDK alone:
