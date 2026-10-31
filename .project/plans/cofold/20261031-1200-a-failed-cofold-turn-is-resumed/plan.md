@@ -1,7 +1,7 @@
 ---
 title: A failed cofold turn is resumed
 domain: cofold
-status: draft
+status: active
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -79,8 +79,8 @@ chat/turnResume -> host check (Claude plan) -> cofold session resume -> chat/tur
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A failed run is resumable](task-01-a-failed-run-is-resumable.md) | todo | - |
-| [02 - The cofold session resumes the turn](task-02-the-cofold-session-resumes-the-turn.md) | todo | 01 |
+| [01 - A failed run is resumable](task-01-a-failed-run-is-resumable.md) | implemented | - |
+| [02 - The cofold session resumes the turn](task-02-the-cofold-session-resumes-the-turn.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -90,10 +90,10 @@ chat/turnResume -> host check (Claude plan) -> cofold session resume -> chat/tur
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-31.
-- **Next action:** Softov reviews the draft; then [task-01-a-failed-run-is-resumable.md](task-01-a-failed-run-is-resumable.md), after the Claude plan is merged.
+- **Done so far:** built 2026-10-31. Both tasks are `implemented`, and [implemented.md](implemented.md) says what was built.
+- **Next action:** Softov reviews the branch. The hand check of task 02 waits: a test ahpd, a bad cofold key, and a resume from VS Code.
 - **Open questions:** none.
-- **Watch out for:** `mapTurn` opens parts by index; a new mapping on a reopened turn must start after its existing parts.
+- **Watch out for:** `mapTurn` numbers a turn's parts by its step. A mapping on a reopened turn starts after the parts the turn kept, or a delta would append to the failed run's text.
 
 ## Final verification checklist
 

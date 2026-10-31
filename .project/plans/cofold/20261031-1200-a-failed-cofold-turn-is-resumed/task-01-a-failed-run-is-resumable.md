@@ -1,6 +1,6 @@
 ---
 title: A failed run is resumable
-status: todo
+status: implemented
 depends: []
 layer: agent-cofold
 refs:
@@ -38,3 +38,8 @@ The part is on `chat/error` and on the turn in the snapshot.
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Done, all eight steps. `failurePart` takes `resumable`. The failed `run.finished` sets it when the code is not `start_failed` and `canCut()` answers true, and `settleTurn` keeps the part on the turn.
+Found: `resumable` is a field of the part, beside `kind`, not inside `error`. The protocol's reducer, pi and Claude read it there, so step 1 is built that way.
+Found: `canCut` has to come from where the live mapping is made, which is `openTurn` in `turns.ts`. That file is the fourth this task changes.
+Tests: the failed run's part is checked on `chat/error` and on the turn in the snapshot. The no-model case checks that its part carries no `resumable`.

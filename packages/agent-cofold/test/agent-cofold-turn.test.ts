@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { textOf } from '@cofold/agents';
 import { createFakeModel } from '@cofold/agents/testing';
+import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
@@ -66,9 +68,10 @@ async function talking(
   extra: Parameters<typeof cofoldAgent>[0] = {},
 ) {
   const path = mkdtempSync(join(tmpdir(), 'ahpd-cofold-'));
+  const agent = cofoldAgent({ adapter: model, memory: true, ...extra });
   const host = createHost({
     path,
-    agents: [cofoldAgent({ adapter: model, memory: true, ...extra })],
+    agents: [agent],
     ...(tools.length > 0 ? { tools } : {}),
   });
   const p = peer();
@@ -82,7 +85,7 @@ async function talking(
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
-  return { host, client, peer: p, uri, chatUri };
+  return { host, client, peer: p, uri, chatUri, agent };
 }
 
 /** The action a turn began with, dispatched the way a client dispatches it. */
@@ -607,9 +610,13 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     begin(client, 'ahp-chat:/none', 't1', 'hi');
     const failure = () => actions(p, 'ahp-chat:/none').find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
-    const message = String(((failure()?.action.part as { error?: { message?: string } })?.error)?.message);
+    const part = failure()?.action.part as { error?: { message?: string }; resumable?: unknown };
+    const message = String(part?.error?.message);
     expect(message).toContain('add "model"');
     expect(message).toContain(join(home, 'cofold', 'config.json'));
+    // A turn that never ran is not a turn a resume can put back: there is
+    // nothing the session could cut to and run again.
+    expect(part).not.toHaveProperty('resumable');
   }
   finally {
     if (was === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -680,6 +687,216 @@ it('announces the session failed with the chat/error that ends its turn', async 
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
   expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+});
+
+it('marks a failed run resumable, on the stream and on the turn', async () => {
+  /*
+   * The host's check for `chat/turnResume` reads the last part of the newest
+   * turn, and a client that folded the stream reads the same part from the
+   * action. A resume the snapshot does not offer is one no client shows.
+   */
+  const { client, peer: p, chatUri } = await talking(failingModel(1));
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  const said = actions(p, chatUri).find((e) => e.action.type === 'chat/error');
+  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true });
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state: string; responseParts: { kind?: string; resumable?: boolean }[] }[] } };
+  };
+  const turn = opened.snapshot.state.turns.at(-1);
+  expect(turn?.state).toBe('error');
+  expect(turn?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
+});
+
+/** Ask for the turn that failed to run again, the way a client's control does. */
+const resume = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, turnId: string): void => {
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId } },
+  });
+};
+
+it('runs a failed turn again on chat/turnResume, with its prompt said once', async () => {
+  const model = failingModel(1);
+  const { client, peer: p, chatUri, agent } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  resume(client, chatUri, 't1');
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+  const said = types(p, chatUri);
+  // The reopen is the client's own action echoed first, and then the run says
+  // what it did, as a live run does.
+  expect(said.filter((type) => type === 'chat/turnResume')).toHaveLength(1);
+  expect(said.indexOf('chat/turnResume')).toBeGreaterThan(said.indexOf('chat/error'));
+  expect(said.at(-1)).toBe('chat/turnComplete');
+  expect(said.filter((type) => type === 'chat/turnStarted')).toHaveLength(1);
+  // The cut dropped the failed prompt with what the run wrote after it, so the
+  // conversation holds the prompt once rather than once per attempt.
+  const transcript = await agent.transcript?.('one') ?? [];
+  expect(transcript.map((turn) => (turn.message as { text?: string } | undefined)?.text)).toEqual(['hi']);
+});
+
+it('resumes a conversation\'s first turn by dropping the session and starting it again', async () => {
+  /*
+   * A first turn has no turn before it to cut to, so the cut is the session
+   * itself. What the store is checked for is the two halves of that: a record
+   * made again, and the workspace the one before it ran on.
+   */
+  const dir = mkdtempSync(join(tmpdir(), 'ahpd-cofold-first-'));
+  const root = join(dir, 'store');
+  const work = join(dir, 'work');
+  mkdirSync(work, { recursive: true });
+  const host = createHost({
+    path: join(dir, 'host'),
+    agents: [cofoldAgent({ adapter: failingModel(1), store: root })],
+  });
+  const p = peer();
+  const client = host.accept(p);
+  await client.handle({
+    method: 'initialize',
+    params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
+  });
+  const uri = 'ahp-session:/first';
+  const chatUri = 'ahp-chat:/first';
+  await client.handle({
+    method: 'createSession',
+    params: { channel: uri, provider: 'cofold', workingDirectories: [work] },
+  });
+  await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  const store = createFileStore({ root });
+  const [before] = await store.sessions.list({});
+  expect(before?.workspace).toBe(work);
+  const id = String(before?.sessionId);
+
+  resume(client, chatUri, 't1');
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+  const after = await store.sessions.get({ sessionId: id });
+  expect(after?.workspace).toBe(work);
+  expect(after?.createdAt).not.toBe(before?.createdAt);
+  const messages = await store.sessions.listMessages({ sessionId: id });
+  expect(messages.filter((one) => textOf(one) === 'hi')).toHaveLength(1);
+});
+
+it('leaves a resumed turn that fails again with one more error part, resumable again', async () => {
+  const model = failingModel(2);
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/error').length === 1);
+
+  resume(client, chatUri, 't1');
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/error').length === 2);
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state: string; responseParts: { kind?: string; resumable?: boolean }[] }[] } };
+  };
+  // The same turn, reopened rather than a second one beside it, with the new
+  // failure on it and the old one kept.
+  expect(opened.snapshot.state.turns).toHaveLength(1);
+  const turn = opened.snapshot.state.turns[0];
+  expect(turn?.state).toBe('error');
+  expect(turn?.responseParts.map((part) => part.kind)).toEqual(['error', 'error']);
+  expect(turn?.responseParts.at(-1)?.resumable).toBe(true);
+});
+
+it('starts a message queued during a resume once the resume has failed', async () => {
+  const model = failingModel(2);
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+  // The failed resume ends its turn as any failure does, and the queue moves
+  // on from there rather than waiting on a turn nobody will finish.
+  const said = types(p, chatUri);
+  const failedAgain = said.lastIndexOf('chat/error');
+  expect(said.filter((type) => type === 'chat/error')).toHaveLength(2);
+  expect(said.lastIndexOf('chat/turnStarted')).toBeGreaterThan(failedAgain);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state: string; message: { text?: string } }[] } };
+  };
+  expect(opened.snapshot.state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hi', 'error'], ['two', 'complete']]);
+});
+
+it('answers no for a resume the session cannot make', async () => {
+  /*
+   * The host checks the three conditions before it calls the session, and the
+   * session checks them again because it is a contract of its own. What is
+   * tested here is the session's answer: a turn running, the session closed, a
+   * turn that is not the newest or not in error, and one whose error says no
+   * resume.
+   */
+  const agent = cofoldAgent({ memory: true });
+  const open = (seed: Record<string, unknown>[]) => agent.create({
+    uri: 'ahp-session:/answers',
+    chatUri: 'ahp-chat:/answers',
+    settings: agent.defaults(),
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-answers-')),
+    schema: () => agent.schema(),
+    emit: () => {},
+    clientToolTimeoutMs: 600_000,
+    seed,
+  });
+  const failed = (id: string, resumable: boolean): Record<string, unknown> => ({
+    id,
+    state: 'error',
+    message: { text: id },
+    responseParts: [{
+      kind: 'error',
+      error: { errorType: 'turnFailed', message: 'the model gave up' },
+      ...(resumable ? { resumable: true } : {}),
+    }],
+  });
+  const done = (id: string): Record<string, unknown> => ({
+    id,
+    state: 'complete',
+    message: { text: id },
+    responseParts: [{ kind: 'markdown', content: 'an answer' }],
+  });
+
+  // Not the newest turn.
+  expect(open([done('t1'), failed('t2', true)]).resume?.('t1')).toBe(false);
+  // The newest turn, but it did not fail.
+  expect(open([done('t1')]).resume?.('t1')).toBe(false);
+  // The newest turn failed, and its error does not offer a resume.
+  expect(open([done('t1'), failed('t2', false)]).resume?.('t2')).toBe(false);
+  // It offers one, but only to a process that watched the turn before it run:
+  // this one was read back off a seed, so there is no point to cut to.
+  expect(open([done('t1'), failed('t2', true)]).resume?.('t2')).toBe(false);
+  // Closed.
+  const closed = open([failed('t1', true)]);
+  await closed.close();
+  expect(closed.resume?.('t1')).toBe(false);
+
+  // A turn still running has nothing to reopen yet.
+  const busy = cofoldAgent({ adapter: heldModel(), memory: true }).create({
+    uri: 'ahp-session:/busy',
+    chatUri: 'ahp-chat:/busy',
+    settings: {},
+    workingDirectory: mkdtempSync(join(tmpdir(), 'ahpd-cofold-busy-')),
+    schema: () => ({}),
+    emit: () => {},
+    clientToolTimeoutMs: 600_000,
+  });
+  busy.begin('t1', 'hi');
+  expect(busy.resume?.('t1')).toBe(false);
+  await busy.close();
 });
 
 it('clears a failure when the next turn starts', async () => {
