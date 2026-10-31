@@ -178,7 +178,7 @@ It starts the [Claude agent SDK](https://www.npmjs.com/package/@anthropic-ai/cla
 
 ## Supported
 
-Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, session titles, token usage, and context compaction.
+Turns and streaming, tool calls and approvals, questions from the agent, model and effort selection, permission modes, MCP servers and OAuth sign-in, skills and slash commands, multiple chats per session, forking a chat from a turn, truncating a chat back to a turn, resuming a failed turn, session titles, token usage, and context compaction.
 
 An approval offers Allow once, an "always" choice and Deny when the SDK suggests a permission to keep for the call. The "always" choice is labelled by what the suggestions do, and picking it returns them to the SDK as `updatedPermissions`. With no suggestion, the approval is approve or deny.
 
@@ -189,6 +189,8 @@ A `Bash` result too large to send shows its whole output in a terminal, as VS Co
 Sessions the host is not running are read from Claude's transcripts, so clients can browse and read them without starting a process. The agent starts when a turn is sent.
 
 A question somebody answered reads back answered, in the session and in a subagent's chat. The CLI writes the answers as the `toolUseResult` of the transcript entry that holds the question's result. The SDK's `getSessionMessages` leaves that field out, so a session's own file is read for it, one line at a time.
+
+A turn that failed on a model call can be resumed. The turn reopens with its message and its parts, the conversation is cut back to the end of the turn before with `resumeSessionAt`, and the prompt is sent again. A conversation whose first turn failed has nothing to cut back to, so it is deleted and started over under its id. The calls the failed turn ran run again, because the cut drops them with the prompt. Only the latest turn, in error, whose last part is a resumable error, can be resumed, and only while the conversation has a turn to cut back to. A turn refused before the CLI, a CLI that is gone and a login the CLI refused end with no resumable error, and a resume whose conversation cannot be started over ends the turn with the reason and no resumable error either.
 
 A session the host resumes picks up the conversation the CLI wrote under that id, in any project folder. The CLI writes a conversation when its first message reaches it, so a chat nobody spoke to, or one whose CLI could not sign in, has none, and the CLI refuses to resume it. Neither has a CLI closed after its prompt arrived and before it wrote the prompt's entry, which leaves a transcript with no entry of a conversation in it. Such a session starts a new conversation under that id instead, under the chat's own id where it has one, as VS Code's agent host does. The CLI starts a conversation under an id only when its folder's project holds no transcript for it, so a transcript there with no entry is deleted first, as VS Code's agent host deletes a transcript before it starts a conversation over under the same id.
 

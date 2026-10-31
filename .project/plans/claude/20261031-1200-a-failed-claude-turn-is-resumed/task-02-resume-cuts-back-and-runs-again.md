@@ -1,6 +1,6 @@
 ---
 title: Resume cuts back and runs again
-status: todo
+status: implemented
 depends:
   - task-01-a-failed-model-call-is-resumable.md
 layer: agent-claude
@@ -52,3 +52,7 @@ A conversation's first turn starts over under its id.
 - Check that the turn runs again with no second copy of the prompt.
 
 ## Resume
+
+Done, all fifteen steps. `resume` reopens the turn, cuts the conversation at the end of the turn before, and sends the prompt to the new CLI.
+Found: the cut is read after the failed turn leaves `turns`, not before. `cutOf` walks the history back, and a turn in flight writes its own chain entry. Read first, `cutOf` answers with the failed prompt's entry, which is the cut the plan forbids. The plan's steps 5 and 6 are in the other order for that reason.
+The hand checks of *Validation* still wait: a test ahpd, a bad key, and a resume from VS Code.

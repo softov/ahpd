@@ -1,7 +1,7 @@
 ---
 title: A failed Claude turn is resumed
 domain: claude
-status: draft
+status: active
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -73,6 +73,7 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 | The host's check that the last part is a resumable error is in this plan | (defaulted: it breaks the host's Claude resume test until Claude marks its errors, so it goes with that change) | 03 |
 | The Claude session emits `chat/turnResume` inside `resume`, so the host sends it as the echo | the pi plan's row, [`code://packages/sdk/src/host.ts#L759-L780`](../../../../packages/sdk/src/host.ts#L759-L780) | 02 |
 | A resumed turn that fails again ends with one more resumable error part | the protocol's *Error recovery* | 01, 02 |
+| A `result` with `is_error: true` ends the turn in `error`, also under `subtype: success` | Softov, 2026-10-31: "Save it as error" | 01 |
 
 ## Proposed architecture
 
@@ -86,9 +87,9 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A failed model call is resumable](task-01-a-failed-model-call-is-resumable.md) | todo | - |
-| [02 - Resume cuts back and runs again](task-02-resume-cuts-back-and-runs-again.md) | todo | 01 |
-| [03 - The host checks the last part](task-03-the-host-checks-the-last-part.md) | todo | 01 |
+| [01 - A failed model call is resumable](task-01-a-failed-model-call-is-resumable.md) | implemented | - |
+| [02 - Resume cuts back and runs again](task-02-resume-cuts-back-and-runs-again.md) | implemented | 01 |
+| [03 - The host checks the last part](task-03-the-host-checks-the-last-part.md) | implemented | 01 |
 
 ## Risks and tradeoffs
 
@@ -99,10 +100,10 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-31.
-- **Next action:** Softov reviews the draft; then [task-01-a-failed-model-call-is-resumable.md](task-01-a-failed-model-call-is-resumable.md).
+- **Done so far:** the three tasks are built on `build/agents/ec2bea86`. [implemented.md](implemented.md) says what exists now.
+- **Next action:** the hand checks of [task 02](task-02-resume-cuts-back-and-runs-again.md), with a test ahpd, a bad key and a resume from VS Code. Then a review.
 - **Open questions:** none.
-- **Watch out for:** the cofold plan and the push build do not touch these files. Check `git log origin/main -- packages/agent-claude/src/session` before task 01.
+- **Watch out for:** the cofold plan and the push build do not touch these files. Check `git log origin/main -- packages/agent-claude/src/session` before a later change here.
 
 ## Final verification checklist
 

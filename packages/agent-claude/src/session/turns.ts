@@ -743,17 +743,45 @@ export function createTurns(ctx: SessionContext): Turns {
     /*
      * The same turn, run again.
      *
-     * The protocol is precise about this: the latest turn, in `error`, reopened
-     * with its message and parts intact rather than replaced by a new one. So
-     * the turn moves back to `active` as it was and its text goes to the CLI
-     * again - which is what makes a failed turn retryable without somebody
-     * having to type it a second time.
+     * The protocol is precise about this: the latest turn, in `error`, whose
+     * last part is a resumable error, reopened with its message and parts
+     * intact rather than replaced by a new one. So the turn moves back to
+     * `active` as it was, and its text goes to a new CLI again - which is what
+     * makes a failed turn retryable without somebody having to type it a second
+     * time.
+     *
+     * A CLI cannot take the prompt without its own copy of the failed prompt
+     * still in the conversation, so the new one resumes cut at the end of the
+     * turn before this one, and the prompt goes out from here. A conversation
+     * whose first turn this is has no turn to cut back to and starts over
+     * under its id. Either way the calls the failed turn ran are run again,
+     * because the cut drops them with the prompt.
+     *
+     * `chat/turnResume` is said here, while the client's action is being
+     * applied, so it goes out as that action's echo.
      */
     resume: (turnId) => {
       if (busy()) return false;
       const last = ctx.turns.at(-1);
       if (last === undefined || String(last.id ?? '') !== turnId || last.state !== 'error') return false;
+      const end = bag((last.responseParts as Bag[] | undefined)?.at(-1));
+      if (end.kind !== 'error' || end.resumable !== true) return false;
+      /*
+       * The turn is off the history before the cut is read, because what a
+       * rewind cuts is the end of the turn *before* this one. `cutOf` walks
+       * the history back, and left on it this turn would answer with its own
+       * last chain entry - the failed prompt and its reply, kept.
+       *
+       * A turn read back after a restart has no entry in `ends`, and a
+       * conversation this process resumed cannot be started over: neither can
+       * be cut back to, and the turn stays in the history as it was.
+       */
       ctx.turns.pop();
+      const cut = ctx.cutOf();
+      if (cut === undefined) {
+        ctx.turns.push(last);
+        return false;
+      }
       const again = { ...last } as Bag;
       // `state` and `duration` are what made it a finished turn; an active one
       // has neither, and the protocol says the reducer reopens *this* turn
@@ -763,19 +791,21 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.active = again as unknown as NonNullable<typeof ctx.active>;
       ctx.startedAt = Date.now();
       ctx.failed = undefined;
+      ctx.emit('chat', { type: 'chat/turnResume', turnId });
       ctx.doing('Thinking');
-      const message = bag((ctx.active as Bag).message);
-      const uuid = writtenAs(turnId, true);
-      ctx.owed.set(uuid, { message, steering: false, turn: turnId, cli: 'sent' });
-      ctx.waiting.push({
-        type: 'user',
-        message: { role: 'user', content: str(message.text) ?? '' },
-        parent_tool_use_id: null,
-        uuid: uuid as `${string}-${string}-${string}-${string}-${string}`,
-      });
-      ctx.wake?.();
-      ctx.wake = undefined;
       ctx.touch();
+      const login = ctx.login;
+      void (async () => {
+        const restarted = await ctx.restartAt(turnId, cut, login);
+        if (!restarted.started) return;
+        if (restarted.failed === undefined) {
+          await ctx.again([]);
+          return;
+        }
+        ctx.failTurn(`The conversation could not start over: ${restarted.failed}`);
+        // A message sent while the turn ran again goes now, as after a failed `moveOn`.
+        ctx.startNext();
+      })();
       return true;
     },
 

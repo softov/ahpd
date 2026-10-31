@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Status } from '../src/sessions/catalog.js';
 import {
-  resetSdk, actions, emit, hello, peer, sdk, settle,
+  resetSdk, actions, emit, hello, peer, sdk, sessionQueries, settle,
   running,
 } from './support/host.js';
 import { undeclaredIn } from './support/wire.js';
@@ -860,7 +860,7 @@ describe('running a failed turn again', () => {
     expect(state.turns).toEqual([]);
   });
 
-  it('refuses one that is not the latest errored turn', async () => {
+  it('refuses one that is not the latest turn', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
@@ -870,6 +870,42 @@ describe('running a failed turn again', () => {
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('not a turn that can be resumed'))).toBe(true);
+    expect(refused.some((one) => one.includes('is not the latest turn'))).toBe(true);
+  });
+
+  it('refuses a turn whose last part is not a resumable error, without asking the backend', async () => {
+    const { client, peer: p, chatUri } = await running();
+    // The CLI exits, so the next turn never reaches one and ends with nothing
+    // a client could run again.
+    const cli = sessionQueries().at(-1);
+    if (cli !== undefined) {
+      // The same ending the fake's own `close()` gives: no more frames.
+      cli.closed = true;
+      cli.wake?.();
+    }
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'do it' } } },
+    });
+    await settle();
+    const clis = sessionQueries().length;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+    });
+    await settle();
+    const refused = p.notes
+      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
+      .filter((one): one is string => typeof one === 'string');
+    expect(refused.some((one) => one.includes('did not end with an error that can be resumed'))).toBe(true);
+    // Nothing started, which is what calling the backend would have begun.
+    expect(sessionQueries()).toHaveLength(clis);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { turns: { id: string }[]; activeTurn?: unknown } };
+    }).snapshot.state;
+    expect(state.turns.map((one) => one.id)).toEqual(['t1']);
+    expect(state.activeTurn).toBeUndefined();
   });
 });

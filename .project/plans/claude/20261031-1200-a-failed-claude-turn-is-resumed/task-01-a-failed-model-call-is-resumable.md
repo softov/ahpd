@@ -1,6 +1,6 @@
 ---
 title: A failed model call is resumable
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -20,7 +20,7 @@ A turn refused before the CLI, a CLI that is gone and a refused login end with n
 
 - `UPDATE: packages/agent-claude/src/session/parts.ts:314-339` - `failurePart` and `addFailure` take `resumable`; replace the comment that says this host cannot resume.
 - `UPDATE: packages/agent-claude/src/session/logins.ts` - export `cutOf` on `Logins`, so `query.ts` and `turns.ts` can ask it.
-- `UPDATE: packages/agent-claude/src/session/query.ts:1080-1090` - pass `resumable` when the failure is a `result` and `cutOf` answers a cut.
+- `UPDATE: packages/agent-claude/src/session/query.ts:1070-1090` - set the turn to `error` when the result failed, and pass `resumable` when the failure is a `result` and `cutOf` answers a cut.
 - `UPDATE: packages/agent-claude/test/agent-claude-failed-turn.test.ts` - add the cases of this task.
 
 ## Steps
@@ -41,3 +41,7 @@ A turn refused before the CLI, a CLI that is gone and a refused login end with n
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Done, all nine steps. The part is resumable on `chat/error` and on the turn, and the three tests pass.
+The CLI reports an API failure as `subtype: success` with `is_error: true`.
+The turn now ends in `error` for that result too, as the plan's *Answers* says, so a real API failure resumes.

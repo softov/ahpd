@@ -47,8 +47,8 @@ export interface Parts {
   stampEnd: (call: Bag, at?: number) => Bag;
   /** A call's bag with the times taken off. */
   untimed: (call: Bag) => Bag;
-  /** Record a failure as a part of a turn, and hand the part back. */
-  addFailure: (turn: Bag, why: string) => Bag;
+  /** Record a failure as a part of a turn, and hand the part back. `resumable` says a client may ask for the turn again. */
+  addFailure: (turn: Bag, why: string, resumable?: boolean) => Bag;
 }
 
 export function createParts(ctx: SessionContext): Parts {
@@ -317,9 +317,11 @@ export function createParts(ctx: SessionContext): Parts {
    * beside them. Without this the state says `error` and nothing anywhere says
    * what went wrong.
    *
-   * No `resumable`. It is only ever `true` to offer a resume, and this host
-   * cannot resume a turn - saying so with a `false` it never varies would be
-   * answering a question nobody asked.
+   * `resumable` is only ever `true`, and says a client may ask for the turn
+   * again. A model call the CLI failed is one, when the conversation has a
+   * turn before this one to cut back to or this process started it from
+   * nothing. A turn refused before the CLI, a CLI that is gone and a refused
+   * login have nothing to run again on, and carry none.
    */
   /*
    * Why a turn stopped, held for the snapshot rather than announced.
@@ -328,12 +330,13 @@ export function createParts(ctx: SessionContext): Parts {
    * `chat/responsePart` for the same thing is the failure printed twice. The
    * part is `{ kind, error }` and nothing else: `ErrorResponsePart` has no id.
    */
-  const failurePart = (why: string): Bag => ({
+  const failurePart = (why: string, resumable = false): Bag => ({
     kind: 'error',
     error: { errorType: 'turnFailed', message: why },
+    ...(resumable ? { resumable: true } : {}),
   });
-  const addFailure = (turn: Bag, why: string): Bag => {
-    const part = failurePart(why);
+  const addFailure = (turn: Bag, why: string, resumable = false): Bag => {
+    const part = failurePart(why, resumable);
     (turn.responseParts as Bag[]).push(part);
     return part;
   };
