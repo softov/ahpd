@@ -595,6 +595,26 @@ describe('a turn asked for while one is running', () => {
     expect(still?.responseParts).toHaveLength(1);
   });
 
+  it('is refused while the turn before it is still switching its model', async () => {
+    const { client, peer: p, chatUri } = await running();
+    // A turn naming another model waits for the switch before it says it
+    // started, so the chat's state shows it only once the switch answers.
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first', model: { id: 'claude-other' } } } },
+    });
+    say(client, chatUri, 't2', 'second');
+    await settle();
+
+    const rejected = p.notes
+      .map((n) => n.params as { action?: { turnId?: string }; rejectionReason?: string })
+      .find((one) => one.rejectionReason !== undefined);
+    expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
+    expect(rejected?.action?.turnId).toBe('t2');
+    expect(sdk.said).toEqual(['first']);
+    expect((await activeTurn(client, chatUri))?.id).toBe('t1');
+  });
+
   it('lets the next one start once the running turn has ended', async () => {
     const { client, chatUri } = await busy();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
