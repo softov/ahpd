@@ -806,6 +806,34 @@ it('leaves a resumed turn that fails again with one more error part, resumable a
   expect(turn?.responseParts.at(-1)?.resumable).toBe(true);
 });
 
+it('starts a message queued during a resume once the resume has failed', async () => {
+  const model = failingModel(2);
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnResume', turnId: 't1' } },
+  });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q2', message: { text: 'two' } } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+
+  // The failed resume ends its turn as any failure does, and the queue moves
+  // on from there rather than waiting on a turn nobody will finish.
+  const said = types(p, chatUri);
+  const failedAgain = said.lastIndexOf('chat/error');
+  expect(said.filter((type) => type === 'chat/error')).toHaveLength(2);
+  expect(said.lastIndexOf('chat/turnStarted')).toBeGreaterThan(failedAgain);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state: string; message: { text?: string } }[] } };
+  };
+  expect(opened.snapshot.state.turns.map((turn) => [turn.message.text, turn.state])).toEqual([['hi', 'error'], ['two', 'complete']]);
+});
+
 it('answers no for a resume the session cannot make', async () => {
   /*
    * The host checks the three conditions before it calls the session, and the
