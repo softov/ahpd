@@ -769,6 +769,9 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     where: { configDir: configDir(), cwd: process.cwd() },
     loaded: () => loaded,
     alerts: () => alerts,
+    // Read through the set rather than kept here: a view changes with no
+    // answer to take it from, and the row has to carry the one there is now.
+    views: () => pluginHoldings.views(),
     restartNeeded: () => markRestart(),
     apply: (reload) => applyNow(reload),
     onProblem: listProblem,
@@ -1444,6 +1447,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      */
     alertsChanged: () => {
       alerts = pluginHoldings.alerts();
+      void pluginLists.refresh();
+    },
+    /*
+     * A view a plugin shows or clears after its load answered changes its row
+     * for the same reason, and the row is read again from the set, so there is
+     * nothing to replace here.
+     */
+    viewsChanged: () => {
       void pluginLists.refresh();
     },
   };

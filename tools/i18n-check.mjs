@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
  * `<key>: {` or `<key>: build(`, or register as `registerSessionConfig('<key>'`, and an enum value
  * is one the sources, or the type declarations of a dependency, hold as a
  * quoted string: a list of modes may come from the package that defines it.
+ * A `views` path is `<surface>.<componentId>.<prop>`, and the plugin makes its
+ * views at run time, so only that shape is checked: `text` or `label`, a string.
  *
  * With no argument it reads the sdk's own catalogs and every package whose
  * manifest names `ahpd.i18n`. Each argument is one package folder instead.
@@ -120,6 +122,23 @@ for (const dir of packages) {
         for (const [name, leaf] of Object.entries(meta)) {
           if (name !== 'title' && name !== 'description') say([block, name], 'matches no field');
           else if (typeof leaf !== 'string') say([block, name], 'is not a string');
+        }
+        continue;
+      }
+      if (block === 'views') {
+        const surfaces = object(body);
+        if (surfaces === undefined) { say([block], 'is not an object'); continue; }
+        for (const [surface, ids] of Object.entries(surfaces)) {
+          const components = object(ids);
+          if (components === undefined) { say([block, surface], 'is not an object'); continue; }
+          for (const [id, props] of Object.entries(components)) {
+            const words = object(props);
+            if (words === undefined) { say([block, surface, id], 'is not an object'); continue; }
+            for (const [prop, leaf] of Object.entries(words)) {
+              if (prop !== 'text' && prop !== 'label') say([block, surface, id, prop], 'matches no field');
+              else if (typeof leaf !== 'string') say([block, surface, id, prop], 'is not a string');
+            }
+          }
         }
         continue;
       }

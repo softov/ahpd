@@ -1,6 +1,6 @@
 ---
 title: A plugin gives a view
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -64,3 +64,10 @@ A view has the shape of scena's `A2uiCreateSurface`, so a later plan adds bindin
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Built on 2026-10-31, and not committed: `git add` is refused in this session, and `git commit` cannot name a file that git does not track yet.
+The sdk has `showView` and `clearView` on `PluginHost`, and the loader's options `showView` and `clearView`.
+`checkView` and `literalOf` are in `packages/sdk/src/plugins/view.ts`, and `isWebUrl` is in `packages/sdk/src/weburl.ts`.
+`packages/sdk/test/plugin-view.test.ts` holds 19 cases, and the sdk suite passes.
+`docs/plugins/PLUGINS.md` says what a view is, after the section on `alert`.
+Files to commit: `packages/sdk/src/types/plugin.ts`, `packages/sdk/src/plugins/view.ts`, `packages/sdk/src/weburl.ts`, `packages/sdk/src/host/canvases.ts`, `packages/sdk/src/plugins/plugins.ts`, `packages/sdk/src/index.ts`, `packages/sdk/test/plugin-view.test.ts` and `docs/plugins/PLUGINS.md`.

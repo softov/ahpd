@@ -30,7 +30,7 @@ import { pathToFileURL } from 'node:url';
 import { check, type JsonSchema } from '@cofold/commands';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { checkIcons, foldHostOptions, frozenCopy, gapLine, grantProblem, isRecord, isRecordSlug, pluginHost, readSecret, reason, RECORD_SLUG, runtime, schemaGaps, sdkVersion, secretRef } from '@ahpd/sdk';
-import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, RecordStore, Route, SessionStore, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, AgentOwner, Alert, Catalogs, InstallAnswer, Contribution, FoldedOptions, Grant, HostOptions, Icon, Loaded, NodeRegistry, Plugin, PluginContext, PluginContracts, PluginHost, PluginLink, PluginManifest, PluginSpec, PluginView, RecordStore, Route, SessionStore, Usage, Vault, ViewSurface } from '@ahpd/sdk';
 import { fetchIcons, resolveIcons } from './icons.js';
 import { readCatalogs } from './i18n.js';
 import { satisfies } from './compat.js';
@@ -931,6 +931,15 @@ export interface LoadOneOptions {
   /** Where `clearAlert` removes one of those alerts, by `ref`. */
   clearAlert?: (ref: string) => void;
   /**
+   * Where a view this plugin shows goes, by surface, while it applies and after.
+   *
+   * Held the same way an alert is, and for the same reason: a plugin that keeps
+   * its host draws a new view from a watch long after `apply` returned.
+   */
+  showView?: (surface: ViewSurface, view: PluginView) => void;
+  /** Where `clearView` takes one of those views away, by surface. */
+  clearView?: (surface: ViewSurface) => void;
+  /**
    * What reaches the network for an `https:` icon, when the host loads one.
    *
    * A parameter rather than the global `fetch` so a test answers without a
@@ -1477,6 +1486,8 @@ export async function loadOne(resolved: Resolved, options: LoadOneOptions, impor
     ...(options.nodes === undefined ? {} : { nodes: options.nodes }),
     ...(options.alert === undefined ? {} : { alert: options.alert }),
     ...(options.clearAlert === undefined ? {} : { clearAlert: options.clearAlert }),
+    ...(options.showView === undefined ? {} : { showView: options.showView }),
+    ...(options.clearView === undefined ? {} : { clearView: options.clearView }),
     ...(grants.length === 0 ? {} : { grants }),
     ...(declared?.contracts === undefined ? {} : { contracts: declared.contracts }),
     ...(manifest?.i18n === undefined ? {} : { i18n: manifest.i18n }),
@@ -1654,6 +1665,15 @@ export interface LoadOptions {
    * answer.
    */
   alertsChanged?(): void;
+  /**
+   * One or more views changed after a load answered.
+   *
+   * A plugin that keeps its host may show or clear a view long after `apply`
+   * returned, and a client reading the plugin rows has to be sent them again.
+   * The load itself needs no call: the caller refreshes the rows once it has the
+   * answer.
+   */
+  viewsChanged?(): void;
   /** What reaches the network for an `https:` icon; the global `fetch` otherwise. */
   fetcher?: typeof fetch;
   /** How npm is run for a package a plugin installs; the daemon's own runner otherwise. */
@@ -1781,6 +1801,12 @@ export interface PluginSet {
   /** The alerts each plugin's row carries, by id; a plugin with none has no entry. */
   alerts(): Record<string, Alert[]>;
   /**
+   * The views each plugin's row carries, by id and then by surface.
+   *
+   * A plugin with no view has no entry, and a surface holds one view.
+   */
+  views(): Record<string, Record<string, PluginView>>;
+  /**
    * Fold the base with every contribution, and the agents made from records.
    *
    * `records` is what the agents channel opened from its stored records. It is
@@ -1816,6 +1842,14 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
    * alerts in a loop cannot grow its row.
    */
   const alerted = new Map<string, Alert[]>();
+  /**
+   * The views each plugin's row carries, by id and then by surface.
+   *
+   * A plugin sends a whole view for a surface, and a new one replaces the one
+   * before it on that surface. A clear removes that surface, and the plugin's
+   * entry once it holds no surface.
+   */
+  const viewed = new Map<string, Record<string, PluginView>>();
   /**
    * The plugins whose load has answered, by id.
    *
@@ -1857,6 +1891,21 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     list.splice(at, 1);
     if (list.length === 0) alerted.delete(id);
     if (answered.has(id)) options.alertsChanged?.();
+  };
+  /** Show one view on a plugin's row, replacing what the surface had. */
+  const setView = (id: string, surface: ViewSurface, view: PluginView): void => {
+    viewed.set(id, { ...(viewed.get(id) ?? {}), [surface]: view });
+    if (answered.has(id)) options.viewsChanged?.();
+  };
+  /** Remove one surface's view, and say so when the load has answered. */
+  const dropView = (id: string, surface: ViewSurface): void => {
+    const held = viewed.get(id);
+    if (held === undefined || !Object.hasOwn(held, surface)) return;
+    const rest = { ...held };
+    delete rest[surface];
+    if (Object.keys(rest).length === 0) viewed.delete(id);
+    else viewed.set(id, rest);
+    if (answered.has(id)) options.viewsChanged?.();
   };
   /** How many times each plugin has been imported again, by id. */
   const counts = new Map<string, number>();
@@ -1957,6 +2006,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     const { spec, id, resolved, named, unresolved } = entry;
     // A load starts a clean row: a reload replaces what the last one said.
     alerted.delete(id);
+    viewed.delete(id);
     answered.delete(id);
     if (resolved === undefined || named === undefined) {
       const line = unresolved ?? `plugin ${id} did not resolve`;
@@ -2001,6 +2051,10 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
         addAlert(id, alert);
       },
       clearAlert: (ref) => { if (current.get(id) === self) dropAlert(id, ref); },
+      // The plugin's own view, held the same way an alert is: a host that
+      // outlives its plugin is not the one on the row, and loses its say.
+      showView: (surface, view) => { if (current.get(id) === self) setView(id, surface, view); },
+      clearView: (surface) => { if (current.get(id) === self) dropView(id, surface); },
       ...(options.fetcher === undefined ? {} : { fetcher: options.fetcher }),
       ...(options.run === undefined ? {} : { run: options.run }),
     }, (counts.get(id) ?? 0) > 0 ? undefined : named);
@@ -2050,6 +2104,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     if (one === undefined) {
       // A plugin that never loaded has no row to clear, but a failed one does.
       alerted.delete(id);
+      viewed.delete(id);
       answered.delete(id);
       current.delete(id);
       return [];
@@ -2069,6 +2124,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     kept.delete(id);
     // A plugin that is gone has nothing left to say: its row carries no alerts.
     alerted.delete(id);
+    viewed.delete(id);
     answered.delete(id);
     current.delete(id);
     schemas.delete(id);
@@ -2105,6 +2161,9 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     // A copy of each list: a row a client reads is not the one the next alert
     // would push into while it is being served.
     alerts: () => Object.fromEntries([...alerted].map(([id, list]) => [id, [...list]])),
+    // A copy of each plugin's surfaces and of each view on it: what a client
+    // reads is not the object the next view of that surface would replace.
+    views: () => Object.fromEntries([...viewed].map(([id, bySurface]) => [id, { ...bySurface }])),
     /*
      * Fold what is loaded, and the records the host has opened.
      *

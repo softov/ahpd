@@ -17,7 +17,7 @@ import type { SessionConfigAnswerer } from '../types/completions.js';
 import type { ServedAdapter } from '../types/connectors.js';
 import type { EventHandler, EventListener, EventName, HostEvent, HostEventOf, HostHandlers } from '../types/events.js';
 import type { HostOptions, HostTool, NodeRegistry } from '../types/host.js';
-import type { ChannelHandle, Contribution, LoaderContext, Alert, InstallAnswer, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginStarts, SessionMetaKey, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition } from '../types/plugin.js';
+import type { ChannelHandle, Contribution, LoaderContext, Alert, InstallAnswer, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginStarts, PluginView, SessionMetaKey, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition, ViewSurface } from '../types/plugin.js';
 import type { CollectionOptions, RecordCollection, RecordStore } from '../types/records.js';
 import type { SessionStore } from '../types/sessions.js';
 import type { Usage } from '../types/usage.js';
@@ -33,6 +33,7 @@ import type { Pair } from '../utils/pair.js';
 import { reason } from '../utils/values.js';
 import { readSecret } from '../access/vault.js';
 import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, declared, miss, reservedName, type CheckedSchema } from './validate.js';
+import { checkView } from './view.js';
 import { gapLine, schemaGaps } from './schemagaps.js';
 
 /**
@@ -906,6 +907,21 @@ export interface HostRecordingOptions {
    */
   clearAlert?: (ref: string) => void;
   /**
+   * Where a `showView` goes, for the daemon to serve on the plugin's row.
+   *
+   * Collected rather than written, for the reason `alert` is: the person who
+   * reads a view is looking at the plugin's page, and the daemon is what that
+   * page reads from. A loader in a test may give none, and the view is then
+   * checked and dropped.
+   */
+  showView?: (surface: ViewSurface, view: PluginView) => void;
+  /**
+   * Where a `clearView` goes, for the daemon to serve the row without one.
+   *
+   * Beside `showView` and for the same reason; a host with no sink drops it.
+   */
+  clearView?: (surface: ViewSurface) => void;
+  /**
    * The sessions this host keeps, read when `sessionKept` is called.
    *
    * A function, and `undefined` for the store, for the same reason `usage` is:
@@ -1184,6 +1200,31 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
     ...context,
     alert: (alert) => { options.alert?.(alert); },
     clearAlert: (ref) => { options.clearAlert?.(ref); },
+    /*
+     * A view is checked before it is kept, and the check is the sdk's: a plugin
+     * may be JavaScript, and a view is the one thing a client draws from it.
+     * The surface is the call's own default, and the check refuses a name no
+     * client has a place for.
+     */
+    showView: (view, surface = 'main') => {
+      // A copy, so the view kept is the one checked: the plugin may change its
+      // own object later, and the row would follow it unchecked and unsaid.
+      let kept: PluginView;
+      try {
+        kept = structuredClone(view);
+      }
+      catch {
+        throw new Error(`plugin ${by}: showView needs the view to be JSON`);
+      }
+      checkView(kept, surface, by, contribution.methods);
+      options.showView?.(surface, kept);
+    },
+    clearView: (surface = 'main') => {
+      if (surface !== 'main') {
+        throw new Error(`plugin ${by}: clearView needs the surface to be main, the one surface a client draws`);
+      }
+      options.clearView?.(surface);
+    },
     // A problem is one kind of alert - a warning about an item the plugin went
     // without - so a plugin that says one today needs no change to say it.
     problem: (line) => { options.alert?.({ level: 'warning', text: line }); },

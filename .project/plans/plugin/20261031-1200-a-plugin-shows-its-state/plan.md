@@ -1,7 +1,7 @@
 ---
 title: A plugin shows its state
 domain: plugin
-status: draft
+status: active
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -86,6 +86,8 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 | The relay is down when `hostConnections` is 0; the URL is the `portUri` of the tunnel's port | (defaulted: the fields the CLI answers) | 03 |
 | The view also shows the count of connected clients | (defaulted: `show` answers it with no extra call) | 03 |
 | A `show` that fails keeps the last view, and the plugin logs the first failure of a run of them | (defaulted: a short network loss does not empty the page or fill the log) | 03 |
+| `tools/i18n-check.mjs` accepts a `views` block and checks its shape: surface, component id, then `text` or `label` as a string | Softov, 2026-10-31: "Checker accepts views" | 03 |
+| The sdk keeps a copy of a view, so a later change to the plugin's object does not reach the row | (defaulted: the view kept is the view checked) | 01 |
 | ahpw draws the view first, in its own plan; ahpapp and ahpc come later | (defaulted: ahpw is the only client that reads `x-ahpd-plugins`) | - |
 
 ## Proposed architecture
@@ -100,9 +102,9 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin gives a view](task-01-a-plugin-gives-a-view.md) | todo | - |
-| [02 - The row carries the view](task-02-the-row-carries-the-view.md) | todo | 01 |
-| [03 - Dev Tunnel shows its state](task-03-dev-tunnel-shows-its-state.md) | todo | 02 |
+| [01 - A plugin gives a view](task-01-a-plugin-gives-a-view.md) | implemented | - |
+| [02 - The row carries the view](task-02-the-row-carries-the-view.md) | implemented | 01 |
+| [03 - Dev Tunnel shows its state](task-03-dev-tunnel-shows-its-state.md) | implemented | 02 |
 
 ## Risks and tradeoffs
 
@@ -113,10 +115,10 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 
 ## Resume state
 
-- **Done so far:** drafted 2026-10-31.
-- **Next action:** Softov reviews the draft; then [task-01-a-plugin-gives-a-view.md](task-01-a-plugin-gives-a-view.md).
+- **Done so far:** the three tasks were implemented on 2026-10-31. [implemented.md](implemented.md) says what exists now.
+- **Next action:** the PR, then the hand check of task 03 on a machine with the `devtunnel` CLI.
 - **Open questions:** none.
-- **Watch out for:** a host that outlives its plugin must not set a view; copy the `current.get(id) === self` check of the alert sink.
+- **Watch out for:** the `devtunnel` CLI was not on this machine. So the fixtures of `show` are built from the field names, not from captured answers.
 
 ## Final verification checklist
 

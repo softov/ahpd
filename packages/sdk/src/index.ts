@@ -145,3 +145,4 @@ export type {
 } from './access/commandautoapprover.js';
 
 export type * from './types/index.js';
+export type { PluginView, ViewComponent, ViewSurface } from './types/plugin.js';

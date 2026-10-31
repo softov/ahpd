@@ -1,4 +1,5 @@
 import { canvasResource } from './channels.js';
+import { isWebUrl } from '../weburl.js';
 import type { CanvasReference, CanvasState } from '@microsoft/agent-host-protocol';
 
 /*
@@ -143,14 +144,7 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     }
     const url = state.url;
     if (url === undefined) return;
-    let parsed: URL | undefined;
-    try {
-      parsed = new URL(url);
-    }
-    catch {
-      parsed = undefined;
-    }
-    if (parsed === undefined || (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.host === '') {
+    if (!isWebUrl(url)) {
       throw new Error(`plugin ${by}: ${method} needs state.url to be an absolute http(s) URL with a host`);
     }
   };

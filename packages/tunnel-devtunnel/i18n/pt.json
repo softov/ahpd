@@ -13,5 +13,18 @@
     "anonymous": {
       "description": "Se alguém que não entrou nesta conta pode acessá-lo. false por padrão."
     }
+  },
+  "views": {
+    "main": {
+      "address": {
+        "label": "Abrir o túnel",
+        "text": "O endereço do túnel ainda não está pronto"
+      },
+      "tunnel-label": { "text": "Túnel" },
+      "port-label": { "text": "Porta" },
+      "relay-up": { "text": "O relé está ligado" },
+      "relay-down": { "text": "O relé está desligado" },
+      "clients-label": { "text": "Clientes conectados" }
+    }
   }
 }

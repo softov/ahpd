@@ -13,5 +13,18 @@
     "anonymous": {
       "description": "Si alguien que no inició sesión en esta cuenta puede acceder. false por defecto."
     }
+  },
+  "views": {
+    "main": {
+      "address": {
+        "label": "Abrir el túnel",
+        "text": "La dirección del túnel aún no está lista"
+      },
+      "tunnel-label": { "text": "Túnel" },
+      "port-label": { "text": "Puerto" },
+      "relay-up": { "text": "El relé está activo" },
+      "relay-down": { "text": "El relé no está activo" },
+      "clients-label": { "text": "Clientes conectados" }
+    }
   }
 }

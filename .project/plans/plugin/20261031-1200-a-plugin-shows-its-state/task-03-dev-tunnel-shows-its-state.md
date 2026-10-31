@@ -1,6 +1,6 @@
 ---
 title: Dev Tunnel shows its state
-status: todo
+status: implemented
 depends:
   - task-02-the-row-carries-the-view.md
 layer: tunnel-devtunnel
@@ -27,6 +27,8 @@ The plugin reads them from `devtunnel show <id> --json`, once at the start and t
 - `UPDATE: packages/tunnel-devtunnel/i18n/es.json` - the texts of the view in Spanish.
 - `CREATE: packages/tunnel-devtunnel/test/tunnel-devtunnel-view.test.ts` - the cases of this task.
 - `UPDATE: packages/tunnel-devtunnel/README.md` - say what the plugin's page shows.
+- `UPDATE: tools/i18n-check.mjs` - accept a `views` block, and check its shape.
+- `UPDATE: packages/server/test/plugin-i18n.test.ts` - the cases of a `views` block that matches no field.
 
 ## Steps
 
@@ -56,3 +58,11 @@ The plugin reads them from `devtunnel show <id> --json`, once at the start and t
 - By hand, start a test ahpd under XDG directories with the plugin, and read `views.main` on its row in `x-ahpd-plugins`.
 
 ## Resume
+
+Built on 2026-10-31, and not committed: `git add` is refused in this session, and `view.ts` and the test file are new.
+The `devtunnel` CLI is not installed here and could not be run. So the fixtures of `show` are built from the field names the plan gives, not from captured answers.
+`show(tunnel, runner)` is in `devtunnel.ts`, and `tunnelView` and `sameState` are in `src/view.ts`.
+The plugin draws the page at the start, and reads it again every `POLL_MS`. It keeps the last page when a read fails, and logs one run of failures once. It clears the page at `stopping`.
+`packages/tunnel-devtunnel/test/tunnel-devtunnel-view.test.ts` holds 8 cases, and the devtunnel suite passes.
+`tools/i18n-check.mjs` accepts the `views` block, as the plan's *Answers* says.
+A stop during the first read starts no poll.
