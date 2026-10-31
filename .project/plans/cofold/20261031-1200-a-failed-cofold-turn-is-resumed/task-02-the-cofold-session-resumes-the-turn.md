@@ -1,6 +1,6 @@
 ---
 title: The cofold session resumes the turn
-status: todo
+status: implemented
 depends:
   - task-01-a-failed-run-is-resumable.md
 layer: agent-cofold
@@ -52,3 +52,10 @@ It reopens the failed turn, emits `chat/turnResume`, cuts the store, and runs th
 - Fix the key, resume the turn in VS Code, and check that it runs again.
 
 ## Resume
+
+Done, steps 1 to 16. `valuesFor` and `mappingOn` are shared by `openTurn` and `resumeTurn`, `runTurn` holds the agent build and the launch, and `session.ts` serves `resume`.
+Found: `mapTurn` numbers a turn's parts by its step, so a mapping on a reopened turn starts after the parts the turn kept. `step` now starts at the highest number already on the turn, or a delta would be appended to the failed run's text.
+Found: a resume calls `refreshOptions`, so a key fixed after the failure is used. A record that cannot be read ends the turn with `resume_failed`.
+Found: the host's `createSession` reads `workingDirectories`, a list. The first-turn test sends that field.
+The hand check of `## Validation` waits for Softov: a test ahpd, a bad cofold key, and a resume from VS Code.
+Tests: 260 in the suite, 18 files. The new cases cover the `chat/turnResume` before the run and the prompt held once. They cover a first turn on a file store, a second failure, and each refusal.
