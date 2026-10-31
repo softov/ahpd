@@ -182,6 +182,8 @@ it('marks a failed model call resumable, on chat/error and on the turn', async (
   const part = { kind: 'error', error: { errorType: 'turnFailed', message: WORDS }, resumable: true };
   expect(chat.filter((one) => one.type === 'chat/error').at(-1)?.part).toEqual(part);
   expect((bag((session.chatState().turns as Bag[]).at(-1)).responseParts as Bag[]).at(-1)).toEqual(part);
+  // A `success` the CLI says failed is a turn in error, so it can be resumed.
+  expect(bag((session.chatState().turns as Bag[]).at(-1)).state).toBe('error');
 });
 
 it('does not mark a turn refused before the CLI resumable', async () => {
@@ -277,6 +279,25 @@ it('resumes a failed turn at the end of the turn before, and sends its prompt ag
   const state = session.chatState() as Bag;
   expect(bag(state.activeTurn).id).toBe('t2');
   expect((state.turns as Bag[]).map((one) => one.id)).toEqual(['t1']);
+});
+
+it('resumes a turn whose model call failed, as the CLI reports it', async () => {
+  sdk.reset();
+  const { session } = live();
+  await settle();
+  session.begin('t1', 'one');
+  await settle();
+  sdk.push(step('a1'), worked);
+  await settle();
+  session.begin('t2', 'two');
+  await settle();
+  sdk.push(notice, result);
+  await settle();
+
+  expect(session.resume?.('t2')).toBe(true);
+  await settle();
+  expect(sdk.queries.at(-1)?.options.resumeSessionAt).toBe('a1');
+  expect(sdk.said.at(-1)).toBe('two');
 });
 
 it("starts a conversation's first turn over under its id", async () => {

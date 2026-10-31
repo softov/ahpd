@@ -73,6 +73,7 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 | The host's check that the last part is a resumable error is in this plan | (defaulted: it breaks the host's Claude resume test until Claude marks its errors, so it goes with that change) | 03 |
 | The Claude session emits `chat/turnResume` inside `resume`, so the host sends it as the echo | the pi plan's row, [`code://packages/sdk/src/host.ts#L759-L780`](../../../../packages/sdk/src/host.ts#L759-L780) | 02 |
 | A resumed turn that fails again ends with one more resumable error part | the protocol's *Error recovery* | 01, 02 |
+| A `result` with `is_error: true` ends the turn in `error`, also under `subtype: success` | Softov, 2026-10-31: "Save it as error" | 01 |
 
 ## Proposed architecture
 
@@ -101,7 +102,7 @@ chat/turnResume -> chatactions.ts: last part is a resumable error? -> Claude ses
 
 - **Done so far:** the three tasks are built on `build/agents/ec2bea86`. [implemented.md](implemented.md) says what exists now.
 - **Next action:** the hand checks of [task 02](task-02-resume-cuts-back-and-runs-again.md), with a test ahpd, a bad key and a resume from VS Code. Then a review.
-- **Open questions:** the CLI reports an API failure as `subtype: success` with `is_error: true`, and `query.ts` records that turn `complete`. Its error part is resumable, but `resume` answers `false` for a turn that is not in `error`, so such a turn does not resume. No task names that line, so it stays as it is. It needs a decision: record an `is_error` result as an `error` turn, or keep the check as it is.
+- **Open questions:** none.
 - **Watch out for:** the cofold plan and the push build do not touch these files. Check `git log origin/main -- packages/agent-claude/src/session` before a later change here.
 
 ## Final verification checklist

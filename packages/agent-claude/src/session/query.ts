@@ -1067,7 +1067,7 @@ export function createQuery(ctx: SessionContext): Query {
              * `chat/turnComplete` - but a client that subscribes afterwards
              * reads the snapshot, and the snapshot is this.
              */
-            turn.state = stopping ? 'cancelled' : str(message.subtype) !== 'success' ? 'error' : 'complete';
+            turn.state = stopping ? 'cancelled' : wrong !== undefined ? 'error' : 'complete';
             // `duration_ms` is the CLI's last turn alone, so a turn that took
             // more than one of them, or that the result is not about, is
             // measured from its own start.
