@@ -18,7 +18,7 @@ Current progress and pending items only, as of 2026-10-31.
   - #161: only the echo carries the origin.
   - #151: container/05 p8, a profile's machines on another server's Docker.
   - #162: the VM plan, a VM made by libvirt or Proxmox. Nothing has run on a real hypervisor yet.
-- On 2026-10-31, fourteen PRs merged on green CI, Windows included:
+- On 2026-10-31, fifteen PRs merged on green CI, Windows included:
   - #163: CI stages a pre-release under the `next` dist-tag.
   - #164: host/20261031-0211, every client action is answered.
   - #165: claude/20261031-0228, a skill names its own file.
@@ -33,13 +33,14 @@ Current progress and pending items only, as of 2026-10-31.
   - #174: claude/20261031-1200, a failed Claude turn is resumed.
   - #175: plugin/20261031-1200, a plugin shows its state.
   - #176: MayCXC's host/20261031-1306 and claude/20261031-1441. A draft the chat already holds is answered to its sender alone, and the Claude session refuses a turn while the one before it is still beginning.
-- The last code merge on main is #176 (`a99b59e2`). The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
+  - #177: cofold/20261031-1200, a failed cofold turn is resumed.
+- The last code merge on main is #177 (`fc63fd3f`). The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
 - `/github/ahpd` is level with origin/main. `abdecb49` merges Softov's `1965724e` and keeps the two briefs deleted.
 - Fetch, and check the base before you cut a build worktree.
-- Softov's dev daemon runs from source on port 37537. He restarted it after #175, on 2026-10-31. #176 needs another restart.
+- Softov's dev daemon runs from source on port 37537. He restarted it after #175, on 2026-10-31. #176 and #177 need another restart.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
@@ -54,8 +55,9 @@ Current progress and pending items only, as of 2026-10-31.
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
 - pi/20261031-0736: [pending/pi-resume-checks.md](../pending/pi-resume-checks.md).
 - claude/20261031-1200: [pending/claude-resume-checks.md](../pending/claude-resume-checks.md).
+- cofold/20261031-1200: [pending/cofold-resume-checks.md](../pending/cofold-resume-checks.md).
 - plugin/20261031-1200: [pending/plugin-view-checks.md](../pending/plugin-view-checks.md).
-- host/20261031-0211, claude/20261031-0228, claude/20261031-0258, daemon/20261031-0555 and pi/20261031-0736, claude/20261031-1200 and plugin/20261031-1200: review. Each is `implemented`.
+- host/20261031-0211, claude/20261031-0228, claude/20261031-0258, daemon/20261031-0555 and pi/20261031-0736, claude/20261031-1200, plugin/20261031-1200 and cofold/20261031-1200: review. Each is `implemented`.
 - host/114 and host/116: review.
 - x-ahpd/me for a plugin: PR #172 merged as `44d90a59`. The plan host/20261028-0947 stays `implemented` until his review. ahpw organization/05 task 07 can start.
 - ahpw idea `a-plugin-page-draws-its-view` is on ahpw main, for the views of plan D.
@@ -78,7 +80,7 @@ Current progress and pending items only, as of 2026-10-31.
 - Four plans from 2026-10-31, in build order:
   - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; PR #178 adds the captured `show` answer as a fixture, CI running.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
-  - cofold/20261031-1200, a failed cofold turn is resumed: PR #177, branch `cofold/20261031-1200-a-failed-cofold-turn-is-resumed`, CI running. Softov said "Open the PR" on 2026-10-31. Its hand check gets a pending file after the merge.
+  - cofold/20261031-1200, a failed cofold turn is resumed: merged in #177.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
 - [briefs/the-change-counters-agree.md](../briefs/the-change-counters-agree.md): the ahpw change counters disagree. Softov said write the brief on 2026-10-31. A plan only when he says plan it.
