@@ -14,8 +14,8 @@ import { apply, POLL_MS } from '../src/plugin.js';
  *
  * The answers of `devtunnel show` are fixtures built from the fields the plan
  * names - `hostConnections`, `clientConnections` and each port's `portNumber`
- * and `portUri` - because the CLI is not on this machine and could not be run
- * to capture them. A fake runner and spawner stand in for it, and fake timers
+ * and `portUri` - and `CAPTURED` is one the CLI printed, with its tunnel id and
+ * URL replaced. A fake runner and spawner stand in for the CLI, and fake timers
  * stand in for the thirty seconds between one read and the next.
  */
 
@@ -75,6 +75,29 @@ const DOWN = JSON.stringify({
   },
 });
 
+/**
+ * What `devtunnel show <id> --json` printed, from CLI 1.0.2094, for a tunnel
+ * this plugin made and is hosting with no client on it. Every field is as the
+ * CLI wrote it but the tunnel id, the URL and the machine's label: the
+ * connection token is derived from the id.
+ */
+const CAPTURED = JSON.stringify({
+  tunnel: {
+    tunnelId: 'quiet-river-x1y2z3a.brs',
+    hostConnections: 1,
+    clientConnections: 0,
+    labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03'],
+    tunnelExpiration: '30 days',
+    description: '',
+    currentUploadRate: '0 MB/s (limit: 20 MB/s)',
+    currentDownloadRate: '0 MB/s (limit: 20 MB/s)',
+    uploadTotal: '290 KB',
+    downloadTotal: '318 KB',
+    ports: [{ portNumber: TUNNEL_PORT, protocol: 'http', portUri: `https://abcd1234-${String(TUNNEL_PORT)}.brs.devtunnels.ms/` }],
+    accessControl: [],
+  },
+}, null, 2);
+
 const context = (log: (line: string) => void = () => {}): LoaderContext => ({
   path: '/work', paths: ['/work'], version: '0.10.0', hostName: 'test', configDir: '/work', log, say: () => {},
 });
@@ -106,6 +129,15 @@ it('reads the URL of the tunnel\'s own port, the relay state and the client coun
 
   // A relay that is down answers 0 hosts, and the URL is still there to open.
   expect(await show(tunnel, runner({ show: ok(DOWN) }))).toEqual({ url: URL, hosts: 0, clients: 0 });
+});
+
+it('reads the answer the CLI printed', async () => {
+  const tunnel = { tunnelId: 'quiet-river-x1y2z3a.brs', labels: [] };
+  expect(await show(tunnel, runner({ show: ok(CAPTURED) }))).toEqual({
+    url: `https://abcd1234-${String(TUNNEL_PORT)}.brs.devtunnels.ms/`,
+    hosts: 1,
+    clients: 0,
+  });
 });
 
 it('has no URL to show when the service answers no port for the tunnel', async () => {
