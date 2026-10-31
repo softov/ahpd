@@ -53,12 +53,16 @@ describe('a command typed into the conversation', () => {
     return { host, client, peer: p, uri, chatUri, opened };
   };
 
-  /** Wait for a turn to end, however it ended: the named one, or any. */
-  const ended = async (p: ReturnType<typeof peer>, chatUri: string, turnId?: string) => {
+  /**
+   * Wait for a turn to end, however it ended: any, or the named one, which is
+   * the turn of that id or the turn that took the queued message of that id.
+   */
+  const ended = async (p: ReturnType<typeof peer>, chatUri: string, named?: string) => {
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 25); });
-      if (actions(p, chatUri).some((e) => e.action.type === 'chat/turnComplete'
-        && (turnId === undefined || e.action.turnId === turnId))) break;
+      const said = actions(p, chatUri).map((e) => e.action);
+      const turnId = said.find((one) => one.type === 'chat/turnStarted' && one.queuedMessageId === named)?.turnId ?? named;
+      if (said.some((one) => one.type === 'chat/turnComplete' && (named === undefined || one.turnId === turnId))) break;
     }
     return actions(p, chatUri).map((e) => e.action);
   };
@@ -304,8 +308,9 @@ describe('a command typed into the conversation', () => {
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/toolCallStart')).toBe(false);
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
-    // The command's own turn: the one in front of it ends first, and a shell
-    // can take longer to start than that one took to end.
+    // The command's own turn, the one that took its queued message: the one in
+    // front of it ends first, and a shell can take longer to start than that
+    // one took to end.
     const done = await ended(p, chatUri, 't2');
     /*
      * Run, not asked. The command waited as text so a client could see it, and
@@ -317,6 +322,32 @@ describe('a command typed into the conversation', () => {
     const completed = done.find((one) => one.type === 'chat/toolCallComplete');
     expect((completed?.result as { success: boolean }).success).toBe(true);
     expect(sdk.said).toEqual(['first']);
+  });
+
+  it('answers a command typed during a turn with the queued message it waits as', async () => {
+    const { client, peer: p, chatUri } = await shelled();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'first' } } },
+    });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
+    });
+    await settle();
+    // The client holds its turn until an action with its own origin answers
+    // it, and what became of the turn is the queued message it waits as.
+    const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
+    expect(answers().map((e) => e.action)).toEqual([
+      expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'queued', id: 't2' }),
+    ]);
+
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
+    const done = await ended(p, chatUri, 't2');
+    // Once: the turn the command runs as is the queued message's.
+    expect(done.some((one) => one.type === 'chat/turnStarted' && one.queuedMessageId === 't2')).toBe(true);
+    expect(answers()).toHaveLength(1);
   });
 
   it('refuses a command when the backend cannot hold one, rather than asking it', async () => {
