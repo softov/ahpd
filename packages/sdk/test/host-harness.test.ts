@@ -617,6 +617,20 @@ describe('turning a customization on and off', () => {
     });
   };
 
+  /** A client's start or stop of `desk`, under the sequence number its answer names. */
+  const ask = (client: Awaited<ReturnType<typeof running>>['client'], type: string, clientSeq: number) => {
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/live', clientSeq, action: { type, id: 'mcp:desk' } },
+    });
+  };
+
+  /** `desk` as a client that subscribes now reads it. */
+  const desk = async (client: Awaited<ReturnType<typeof running>>['client'], uri: string) =>
+    (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { customizations: Record<string, unknown>[] } };
+    }).snapshot.state.customizations.find((one) => one.id === 'mcp:desk');
+
   it('switches an MCP server off through the CLI, and reports what it became', async () => {
     const { client, peer: p, uri } = await withServers('connected');
     sdk.mcp = [{ name: 'desk', status: 'disabled' }];
@@ -754,6 +768,95 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
+  });
+
+  it('follows a start with the state the server comes back in, when it is the state it was in', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    ask(client, 'session/mcpServerStartRequested', 5);
+    await settle(8);
+
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+    const said = actions(p, uri);
+    const asked = said.findIndex((e) => e.origin?.clientSeq === 5);
+    expect(said[asked]?.action.type).toBe('session/mcpServerStartRequested');
+    // Every client reduced the request to `starting`, so the state the CLI
+    // reports has to follow it, the one it was in included.
+    expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
+      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+  });
+
+  it('answers a start whose sign-in fails once, and follows it with the state', async () => {
+    const { client, peer: p, uri } = await withServers('needs-auth');
+    sdk.mcpFails = 'desk did not sign in';
+    ask(client, 'session/mcpServerStartRequested', 6);
+    await settle(8);
+
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+    const said = actions(p, uri);
+    // One answer, the request said with this client's origin: a refusal after
+    // it would answer the same action twice.
+    expect(said.filter((e) => e.origin?.clientSeq === 6).map((e) => [e.action.type, e.rejectionReason]))
+      .toEqual([['session/mcpServerStartRequested', undefined]]);
+    const asked = said.findIndex((e) => e.origin?.clientSeq === 6);
+    expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
+      .toMatchObject({ id: 'mcp:desk', state: { kind: 'error', error: { errorType: 'mcpAuthRequired' } } });
+  });
+
+  it('stops a server without switching it off, and a switch off after it is the client\'s', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    // What the CLI reports once its disabled flag is set, which is the stop it has.
+    sdk.mcp = [{ name: 'desk', status: 'disabled' }];
+    ask(client, 'session/mcpServerStopRequested', 7);
+    await settle(8);
+
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
+    const said = actions(p, uri);
+    expect(said.filter((e) => e.origin?.clientSeq === 7).map((e) => [e.action.type, e.rejectionReason]))
+      .toEqual([['session/mcpServerStopRequested', undefined]]);
+    // A stop manages the process and leaves the enabled intent as it was.
+    const asked = said.findIndex((e) => e.origin?.clientSeq === 7);
+    expect(said.slice(asked + 1).filter((e) => e.action.type === 'session/customizationUpdated')).toEqual([]);
+    expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'stopped' } });
+
+    toggle(client, 'mcp:desk', false);
+    await settle(8);
+    expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: false }], state: { kind: 'stopped' } });
+  });
+
+  it('switches a server a stop switched off back on before it reconnects it', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    sdk.mcp = [{ name: 'desk', status: 'disabled' }];
+    ask(client, 'session/mcpServerStopRequested', 8);
+    await settle(8);
+    sdk.mcp = [{ name: 'desk', status: 'connected' }];
+    ask(client, 'session/mcpServerStartRequested', 9);
+    await settle(8);
+
+    // The disabled flag is what stopped it, so a start lifts it, as a switch on does.
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }, { name: 'desk', enabled: true }]);
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+    const said = actions(p, uri);
+    const asked = said.findIndex((e) => e.origin?.clientSeq === 9);
+    expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
+      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+    expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
+  });
+
+  it('follows a stop that fails with the state the server still has', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    sdk.mcpFails = 'desk would not stop';
+    ask(client, 'session/mcpServerStopRequested', 10);
+    await settle(8);
+
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
+    const said = actions(p, uri);
+    expect(said.filter((e) => e.origin?.clientSeq === 10).map((e) => [e.action.type, e.rejectionReason]))
+      .toEqual([['session/mcpServerStopRequested', undefined]]);
+    // Every client reduced the request to `stopped`, and the server is still up.
+    const asked = said.findIndex((e) => e.origin?.clientSeq === 10);
+    expect(said.slice(asked + 1).find((e) => e.action.type === 'session/mcpServerStateChanged')?.action)
+      .toEqual({ type: 'session/mcpServerStateChanged', id: 'mcp:desk', state: { kind: 'ready' } });
+    expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
   it('says nothing to a request to background a startup, since nothing here waits on one', async () => {

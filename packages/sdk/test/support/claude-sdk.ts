@@ -113,6 +113,14 @@ export const sdk = {
   interrupted: 0,
   mcpToggled: [] as { name: string; enabled: boolean }[],
   mcpReconnected: [] as string[],
+  /**
+   * What a toggle or a reconnect of an MCP server throws, when set.
+   *
+   * The SDK's contract for both calls is "Throws on failure", which is how a
+   * server that would not start or stop reaches the session. The call is
+   * recorded before it throws, as one the session made.
+   */
+  mcpFails: undefined as string | undefined,
   /** Every set of MCP servers re-declared on a running session, in order. */
   mcpDeclared: [] as Record<string, unknown>[],
   /**
@@ -255,8 +263,14 @@ export const fake = {
           else sdk.pluginsOff.add(source);
         }
       },
-      toggleMcpServer: async (name: string, enabled: boolean) => { sdk.mcpToggled.push({ name, enabled }); },
-      reconnectMcpServer: async (name: string) => { sdk.mcpReconnected.push(name); },
+      toggleMcpServer: async (name: string, enabled: boolean) => {
+        sdk.mcpToggled.push({ name, enabled });
+        if (sdk.mcpFails !== undefined) throw new Error(sdk.mcpFails);
+      },
+      reconnectMcpServer: async (name: string) => {
+        sdk.mcpReconnected.push(name);
+        if (sdk.mcpFails !== undefined) throw new Error(sdk.mcpFails);
+      },
       // Replaces the set, which is what the real one does - so the options a
       // test reads back are what the session is actually offering now.
       setMcpServers: async (servers: Record<string, unknown>) => {
@@ -305,6 +319,7 @@ export function resetSdk(): void {
   sdk.interrupted = 0;
   sdk.mcpToggled.length = 0;
   sdk.mcpReconnected.length = 0;
+  sdk.mcpFails = undefined;
   sdk.mcpDeclared.length = 0;
   sdk.toolUseIds.length = 0;
   sdk.sendsToolUseId = true;

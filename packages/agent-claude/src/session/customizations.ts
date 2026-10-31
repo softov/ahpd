@@ -48,7 +48,7 @@ export const rootOf = (plugin: Bag): string => {
  * composer that can only offer them once the conversation has started, which
  * is exactly too late.
  */
-export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = [], ours?: Set<string>, off: Bag[] = [], disk?: Disk): Bag[] {
+export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = [], wanted?: Map<string, Published>, plugins: unknown[] = [], ours?: Set<string>, off: Bag[] = [], disk?: Disk, stopRequested?: Set<string>): Bag[] {
   const out: Bag[] = [];
 
   /*
@@ -424,11 +424,13 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
        * one scope - the session's - because that is where a CLI's answer
        * about a server applies.
        *
-       * Off the CLI's own word rather than off the kind above, so a server
-       * that needs signing in stays switched *on* - it is enabled and
-       * unreachable, which is not the same as somebody having turned it off.
+       * Read off the CLI's own word about the server. One that needs signing
+       * in is enabled and unreachable, so it stays switched *on*; one the CLI
+       * reports `failed` or `disabled` reads off, except a server a client's
+       * stop switched off: the CLI's stop is its disabled flag, and a stop
+       * leaves the enabled intent where it was.
        */
-      enablement: [{ kind: 'session', enabled: reported !== 'failed' && reported !== 'disabled' }],
+      enablement: [{ kind: 'session', enabled: reported === 'disabled' ? stopRequested?.has(name) === true : reported !== 'failed' }],
       state,
     });
   }
