@@ -413,6 +413,33 @@ it('turns a steer into a turn of its own', async () => {
   expect(read?.[1]?.responseParts).toEqual([{ id: `${steeredId}:reply`, kind: 'markdown', content: 'done' }]);
 });
 
+it('answers a steer to the client that sent it, and names it on the turn that takes it in', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  turns(HELD);
+
+  await said(client, 't1', 'hello');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, clientSeq: 9, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
+  });
+
+  // The client holds its message until an action with its own origin answers it.
+  const answers = notes
+    .filter((note) => note.method === 'action')
+    .map((note) => note.params as { action: Bag; origin?: { clientSeq: number } })
+    .filter((one) => one.origin?.clientSeq === 9);
+  expect(answers.map((one) => one.action)).toEqual([
+    expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'steering', id: 's1' }),
+  ]);
+  // And the turn that takes it in names it, which takes it out of every
+  // client's state.
+  const started = actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted');
+  expect(started.at(-1)).toMatchObject({ queuedMessageId: 's1', message: { text: 'stop that' } });
+});
+
 it('keeps the sender of a steered message on its turn', async () => {
   const { host } = made();
   const notes: Notes = [];
