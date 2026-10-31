@@ -873,6 +873,26 @@ nothing behaves exactly as it did before the field existed.
 
 `alert(alert)` puts one alert on the plugin's row in the plugins channel: `{ level, text, ref? }`, where `level` is one of `notice`, `info`, `warning` and `error`. `ref` names what the alert is about, as `<kind>:<id>` such as `adapter:ap-postgres`. A client shows it beside that item, and an alert with the same `ref` replaces the one before it. `clearAlert(ref)` takes it out again. An alert raised after `apply` returned is on the row at once. The channel sends the row again, which is what a plugin holding a watch uses. A plugin holds at most 50 alerts, and the oldest goes first. A reload or an unload clears them.
 
+`showView(view, surface?)` draws what a plugin is doing on its own page, when one sentence is not enough. It is the same road an alert takes: the daemon keeps the view on the plugin's row, a client draws it, and a new view sends the row again. `clearView(surface?)` takes it away. A reload or an unload clears it too.
+
+A view is a small A2UI v0.10 surface, so a client needs no code for the plugin that sent it. The shape is `{ root, components }`: `root` is the `id` of the component drawn first, and `components` holds each component by its own `id`. A component has an `id`, a `component` kind, and the kind's own properties. `child` names one component below it, `children` names a list, and `action` is what a Button calls. The kinds are `Text`, `Link`, `Button`, `Card`, `Row`, `Column`, `List`, `Divider` and `Icon`.
+
+```ts
+host.showView({
+  root: 'card',
+  components: {
+    card: { id: 'card', component: 'Card', child: 'body' },
+    body: { id: 'body', component: 'Column', children: ['open', 'stop'] },
+    open: { id: 'open', component: 'Link', label: 'Open', href: 'https://example.test/' },
+    stop: { id: 'stop', component: 'Button', label: 'Stop', action: { event: { name: 'x-example/stop' } } },
+  },
+});
+```
+
+Every property is a literal value. A `{ path }` binding is refused, because this host sends no data model yet; bindings come in a later plan. A `Link` takes an absolute http(s) URL with a host. A Button's `action` is `{ event: { name, context? } }`, where `name` is an `x-` method the same plugin registered and `context` is the request's params. A person who clicks the Button sends a normal request, so the host checks the method's grant for that person. A view is one page of state, not a document: at most 200 components and 64 KiB of JSON.
+
+`surface` says where the view is drawn, and its default is `main`, the plugin's page. `main` is the only surface this host knows. A second view on `main` replaces the first, and a plugin sends the whole view again rather than a change to it. The check names the rule it refuses: an unknown component kind, a missing component, a component two parents name, a cycle from `root`, a bad URL, an unknown method, a binding or an unknown surface.
+
 `install(spec)` installs one npm package a plugin needs but does not ship. `installed` is the folder it installs into: `installed/` inside the plugin's own folder. `spec` is what npm takes, so a version rides in the name: `@activepieces/piece-postgres@0.5.1`. A name with no version installs the newest version at the time of the install. npm runs with `--ignore-scripts`, `--no-audit` and `--no-fund`, so a package's own install script never runs. The first install writes an `installed/package.json` of its own, so npm never changes the plugin's own manifest or `node_modules`. A source plugin is in the pnpm workspace, and its `node_modules` is not npm's to change. One install runs at a time for one plugin, and a second waits for the first. The answer is `{ version }`, the version npm left in `node_modules`, or `{ error }`, one line of npm's own error. A plugin with no folder of its own answers `{ error }`. A spec that starts with `-`, or holds whitespace, a quote or `%`, answers `{ error }` and runs no npm.
 
 ### A plugin is a client of its own host
@@ -1399,7 +1419,7 @@ agents made from the engines they register.
 One row per configured plugin, described without running it: `spec`, `name`,
 `state`, and `module`, `url`, `path`, `title` and `problem` where the daemon has
 them. A row carries the manifest the daemon loaded, and `undeclared: true` when
-the plugin declares no contracts. Four fields say what the running daemon did
+the plugin declares no contracts. Five fields say what the running daemon did
 with it:
 
 | Field | What it says |
@@ -1407,6 +1427,7 @@ with it:
 | `version` | The version the plugin's package.json declares, when it has one |
 | `loaded` | Whether this daemon loaded it at its start |
 | `alerts` | What the plugin or its loader said about it, each an `{ level, text, ref? }` alert: `error` for the line that says it did not load and `warning` for the rest. Every text has the userinfo of any URL and each `writeOnly` option value an error quoted answered `<set>`. Empty when the plugin has none |
+| `views` | The view the plugin draws on its own page, by surface: `{ main: { root, components } }`. A Text's `text` and a Link's `label` come in a reader's locale when the plugin's catalog has them. Absent when the plugin shows no view, after a clear, and on a reload or an unload |
 | `optionsSchema` | The form a client draws and the values `x-ahpd/plugins/options` is checked against, read from the manifest with no import, so a plugin switched off carries it too |
 
 Reading the channel needs `plugin:list`.

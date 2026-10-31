@@ -806,6 +806,65 @@ export interface Alert {
 }
 
 /**
+ * One surface a plugin sends a view to.
+ *
+ * A surface is a place in a client where a plugin draws. `main` is the
+ * plugin's own page, and it is the only one this host knows: a view sent to a
+ * name no client draws would be lost without a word, so another name is
+ * refused.
+ */
+export type ViewSurface = 'main';
+
+/**
+ * One component of a view, in the shape the renderer reads.
+ *
+ * `id` names the component, and it is also the key the component is held under
+ * in `PluginView.components`. `component` is the kind: `Text`, `Link`,
+ * `Button`, `Card`, `Row`, `Column`, `List`, `Divider` or `Icon`. The rest are
+ * the kind's own properties, and each is a literal value.
+ *
+ * `child` names one component below this one, `children` names a list of them,
+ * and `action` is what a Button calls when a person clicks it.
+ */
+export interface ViewComponent {
+  /** The name a parent uses, and the key this component is held under. */
+  id: string;
+  /** The kind this component is drawn as. */
+  component: string;
+  /** The one component below this one. */
+  child?: string;
+  /** The components below this one, in the order they are drawn. */
+  children?: string[];
+  /**
+   * What a Button calls, as `{ event: { name, context? } }`.
+   *
+   * `name` is an `x-` method this plugin registered, and `context` is the
+   * params a client sends with the request.
+   */
+  action?: { event: { name: string; context?: Record<string, unknown> } };
+  /** The component's own properties, such as a Text's `text`. */
+  [prop: string]: unknown;
+}
+
+/**
+ * What a plugin draws on a surface: an A2UI v0.10 surface of components.
+ *
+ * The shape is scena's `A2uiCreateSurface` without `dataModel`: `root` names
+ * the component drawn first, and `components` holds each one by its `id`. A
+ * view is sent whole on each change, so a client draws the one it last read
+ * and keeps nothing between them.
+ *
+ * A view is at most 200 components, of at most 64 KiB of JSON. A Link takes an
+ * absolute http(s) URL, and a Button calls a method this plugin registered.
+ */
+export interface PluginView {
+  /** The `id` of the component drawn first. */
+  root: string;
+  /** Every component of the view, by its own `id`. */
+  components: Record<string, ViewComponent>;
+}
+
+/**
  * What one install answered: the version it left, or why npm could not install
  * the package.
  *
@@ -849,6 +908,28 @@ export interface PluginHost extends PluginContext {
    * a closing path without asking first.
    */
   clearAlert(ref: string): void;
+  /**
+   * What this plugin wants a client to draw on one of its surfaces.
+   *
+   * A view is a small A2UI surface of components - Text, Link, Button and a
+   * few layout kinds - which a client draws on the plugin's page. It is how a
+   * plugin says what it is doing when one sentence is not enough: the state of
+   * a tunnel, the items it found, the things a person may do next.
+   *
+   * The view is checked before it is kept. A view on `main` replaces the one
+   * before it, and a plugin sends the whole view rather than a change to it.
+   * `surface` is `main` by default, and it is the only surface this host
+   * knows.
+   */
+  showView(view: PluginView, surface?: ViewSurface): void;
+  /**
+   * Take the view off one surface, if this plugin set one.
+   *
+   * Nothing happens when the surface carries no view of this plugin's, so a
+   * plugin may clear one in a closing path without asking first. `surface` is
+   * `main` by default.
+   */
+  clearView(surface?: ViewSurface): void;
   /**
    * One item of this plugin's own was skipped, and why.
    *
