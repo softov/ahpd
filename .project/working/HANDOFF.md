@@ -78,7 +78,7 @@ Current progress and pending items only, as of 2026-10-31.
 - Four plans from 2026-10-31, in build order:
   - plugin/20261031-1200, a plugin shows its state: merged in #175.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
-  - cofold/20261031-1200, a failed cofold turn is resumed: its required plan is on main, so it builds from main.
+  - cofold/20261031-1200, a failed cofold turn is resumed: building in session `claude-deepseek-build:/2c79b19f-3ef4-4a95-ad5d-e2bfbae386b0`, worktree `build-agents-2c79b19f`, from origin/main `067dcdc4`. Softov said "dispatch it" on 2026-10-31.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
 - [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md) stays for the server and plugin slices.
