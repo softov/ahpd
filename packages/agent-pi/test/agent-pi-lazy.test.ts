@@ -31,7 +31,7 @@ vi.mock('@earendil-works/pi-coding-agent', async () => {
     modelRuntime: { getAvailable: async () => [], getProviders: () => [] },
     subscribe: (one: (event: Bag) => void) => { listener = one; return () => { listener = undefined; }; },
     prompt: async () => { listener?.({ type: 'agent_settled', aborted: false }); },
-    steer: async () => {},
+    steer: async () => 'queued',
     abort: async () => {},
     model: undefined,
     thinkingLevel: 'off',
