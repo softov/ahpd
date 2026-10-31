@@ -1,6 +1,6 @@
 ---
 title: The host checks the last part
-status: todo
+status: implemented
 depends:
   - task-01-a-failed-model-call-is-resumable.md
 layer: sdk
@@ -39,3 +39,6 @@ It checks before it calls `session.resume`, with the protocol's words in the ref
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Done, all eight steps. The host checks the latest turn and its last part before it calls `session.resume`, and refuses a turn that fails either.
+Found: the case that is refused drives the Claude backend, so it also checks that no new CLI starts. The name of the test that refuses a turn that is not latest changed to the host's new words.

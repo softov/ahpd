@@ -1,6 +1,6 @@
 ---
 title: A failed model call is resumable
-status: todo
+status: implemented
 depends: []
 layer: agent-claude
 refs:
@@ -41,3 +41,7 @@ A turn refused before the CLI, a CLI that is gone and a refused login end with n
 - `pnpm typecheck` is clean.
 
 ## Resume
+
+Done, all nine steps. The part is resumable on `chat/error` and on the turn, and the three tests pass.
+Found: the CLI reports an API failure as `subtype: success` with `is_error: true`, and this turn is recorded `complete`.
+Its part is resumable, but `resume` wants a turn in `error`, so a real API failure does not resume. See the plan's *Resume state*.
