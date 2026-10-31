@@ -80,7 +80,7 @@ Current progress and pending items only, as of 2026-10-31.
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
 - Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; #178 adds the captured `show` answer as a fixture. PR #180 puts each label and its value on one row, Softov's layout A of two mockups, CI running.
+  - plugin/20261031-1200, a plugin shows its state: merged in #175. Step 1 of its check passed on this machine; #178 adds the captured `show` answer as a fixture. PR #180 puts each label and its value on one row, Softov's layout A of two mockups, and shows the tunnel's full URL as its link. CI running on 66259aa2. A Copy button beside the link waits for a brief: it needs a client-side copy action across ahpd's view checker, ahpw and ahpc.
   - claude/20261031-1200, a failed Claude turn is resumed: merged in #174.
   - cofold/20261031-1200, a failed cofold turn is resumed: merged in #177.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
