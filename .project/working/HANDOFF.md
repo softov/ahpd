@@ -71,10 +71,10 @@ Current progress and pending items only, as of 2026-10-31.
 - plugin/50: [pending/plugin-50-first-pieces.md](../pending/plugin-50-first-pieces.md).
 - The VM plan, task 01: [pending/vm-01-dev02-libvirt.md](../pending/vm-01-dev02-libvirt.md). The checks by hand of tasks 03 and 05 follow it.
 - The VM plan, task 06: [pending/vm-06-proxmox-node.md](../pending/vm-06-proxmox-node.md), when a Proxmox node is named.
-- Four plans from 2026-10-31, in build order:
-  - plugin/20261031-1200, a plugin shows its state: built in worktree `build-agents-cffdf8df`, not committed (the builder could not `git add`). One test fails: `tools/i18n-check.mjs` does not accept a `views` block in a plugin catalog. That waits on Softov.
-  - claude/20261031-1200, a failed Claude turn is resumed: built in worktree `build-agents-ec2bea86`, four commits on the merged #173. Its PR targets main. An API failure is recorded as a `complete` turn, so it does not resume. That waits on Softov.
-  - cofold/20261031-1200, a failed cofold turn is resumed: builds after the Claude plan, which it requires.
+- Four plans from 2026-10-31, in build order. #174 and #175 touch no common file:
+  - plugin/20261031-1200, a plugin shows its state: PR #175, CI running. `tools/i18n-check.mjs` now accepts a `views` block (Softov: "Checker accepts views"). Review fixes: `showView` keeps a copy of the view, and a stop during the first `devtunnel show` starts no poll. Hand check: the devtunnel page on a machine with the CLI.
+  - claude/20261031-1200, a failed Claude turn is resumed: PR #174, CI running. A `result` with `is_error: true` ends the turn in `error`, also under `subtype: success` (Softov: "Save it as error"). Review fix: a failed resume sends the next queued message. Hand check: a resume against a real model from VS Code.
+  - cofold/20261031-1200, a failed cofold turn is resumed: builds after the Claude plan, which it requires. It starts from main once #174 merges, or stacks on its branch.
 - host/20261031-1200, the sdk's text is plain: task 01 wrote [research/sdk-plain-text-strings.md](../research/sdk-plain-text-strings.md). Softov reads it and answers its *Choices to check* before any code.
 - [ideas/acp-resumable-doubt.md](../ideas/acp-resumable-doubt.md): ACP is not resumable for now.
 - [briefs/the-text-a-person-reads-is-plain.md](../briefs/the-text-a-person-reads-is-plain.md) stays for the server and plugin slices.
