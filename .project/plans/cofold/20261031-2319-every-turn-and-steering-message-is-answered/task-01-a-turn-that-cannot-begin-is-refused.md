@@ -1,6 +1,6 @@
 ---
 title: A turn that cannot begin once the session has opened is refused
-status: todo
+status: done
 depends: []
 layer: cofold
 refs:
@@ -30,4 +30,5 @@ A turn a client hands a cofold session while it opens, which finds a turn runnin
 
 ## Resume
 
-Not started.
+Done 2026-10-31.
+Every step is built, and the agent-cofold suite passes.

@@ -1,6 +1,6 @@
 ---
 title: A steering message is answered, held and taken out
-status: todo
+status: done
 depends: []
 layer: cofold
 refs:
@@ -33,4 +33,5 @@ A steering message is said back as the chat's steering message inside the dispat
 
 ## Resume
 
-Not started.
+Done 2026-10-31.
+Every step is built, and the agent-cofold suite, the type check and the boundary check pass.

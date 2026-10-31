@@ -1,7 +1,7 @@
 ---
 title: Every turn and steering message a cofold session is handed is answered
 domain: cofold
-status: active
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -66,8 +66,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A turn that cannot begin once the session has opened is refused](task-01-a-turn-that-cannot-begin-is-refused.md) | todo | - |
-| [02 - A steering message is answered, held and taken out](task-02-a-steering-message-is-answered.md) | todo | - |
+| [01 - A turn that cannot begin once the session has opened is refused](task-01-a-turn-that-cannot-begin-is-refused.md) | done | - |
+| [02 - A steering message is answered, held and taken out](task-02-a-steering-message-is-answered.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -75,13 +75,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-31.
-- **Next action:** task 01.
+- **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `handed` is read inside the dispatch, at the top of `beginTurn`; read after the wait it answers nothing.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `47d14247` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] Each new case fails on `47d14247` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.
