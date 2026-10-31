@@ -1,6 +1,6 @@
 ---
 title: Archiving the default chat is answered on the chat
-status: planned
+status: done
 depends: [01]
 layer: host
 refs:

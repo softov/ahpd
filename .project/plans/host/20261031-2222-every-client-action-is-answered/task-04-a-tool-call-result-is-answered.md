@@ -1,6 +1,6 @@
 ---
 title: A client's tool call result is answered by its completion
-status: planned
+status: done
 depends: []
 layer: host
 refs:

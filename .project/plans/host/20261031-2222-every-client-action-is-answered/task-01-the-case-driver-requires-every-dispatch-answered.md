@@ -1,6 +1,6 @@
 ---
 title: The case driver requires every dispatch answered once
-status: planned
+status: done
 depends: []
 layer: host
 refs:

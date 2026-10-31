@@ -1,7 +1,7 @@
 ---
 title: Every client action is answered, by its echo or a refusal
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-10-31
 revalidated: 2026-10-31
@@ -62,11 +62,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The case driver requires every dispatch answered once](task-01-the-case-driver-requires-every-dispatch-answered.md) | planned | - |
-| [02 - Archiving the default chat is answered on the chat](task-02-archiving-the-default-chat-is-answered.md) | planned | 01 |
-| [03 - A background request is answered](task-03-a-background-request-is-answered.md) | planned | 01 |
-| [04 - A client's tool call result is answered by its completion](task-04-a-tool-call-result-is-answered.md) | planned | - |
-| [05 - A run cancel is answered](task-05-a-run-cancel-is-answered.md) | planned | - |
+| [01 - The case driver requires every dispatch answered once](task-01-the-case-driver-requires-every-dispatch-answered.md) | done | - |
+| [02 - Archiving the default chat is answered on the chat](task-02-archiving-the-default-chat-is-answered.md) | done | 01 |
+| [03 - A background request is answered](task-03-a-background-request-is-answered.md) | done | 01 |
+| [04 - A client's tool call result is answered by its completion](task-04-a-tool-call-result-is-answered.md) | done | - |
+| [05 - A run cancel is answered](task-05-a-run-cancel-is-answered.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,13 +74,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-10-31.
-- **Next action:** task 01.
+- **Done so far:** planned and built 2026-10-31. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** an answer said by a later action needs that action to carry the origin, which `owed` gives only for what it is told to hold.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `08b1d57a` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] Each new case fails on `08b1d57a` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.
