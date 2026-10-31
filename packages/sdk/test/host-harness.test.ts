@@ -634,6 +634,24 @@ describe('turning a customization on and off', () => {
     });
   });
 
+  it('answers the client that turned a switch with its own action', async () => {
+    const { client, peer: p, uri } = await withServers('connected');
+    sdk.mcp = [{ name: 'desk', status: 'disabled' }];
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: 'ahp-session:/live',
+        clientSeq: 4,
+        action: { type: 'session/customizationToggled', id: 'mcp:desk', enablement: [{ kind: 'session', enabled: false }] },
+      },
+    });
+    await settle(8);
+    // The client holds its switch until an action with its own origin answers it.
+    const answers = actions(p, uri).filter((e) => e.origin?.clientSeq === 4);
+    expect(answers.map((e) => e.action.type)).toEqual(['session/customizationToggled']);
+    expect(answers[0]?.rejectionReason).toBeUndefined();
+  });
+
   it('reconnects one that was not ready, because that is how signing in happens', async () => {
     const { client } = await withServers('needs-auth');
     sdk.mcp = [{ name: 'desk', status: 'connected' }];

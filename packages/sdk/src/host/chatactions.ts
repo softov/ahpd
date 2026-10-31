@@ -1378,8 +1378,15 @@ export function chatAction(
        * put it. A server of a plugin is the agent's as well, and the same id
        * names it there, so that half is asked of the backend too.
        */
-      const toggled = ctx.toggleClientPlugin(session.uri, id,
-        store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }]);
+      const applied = store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }];
+      /*
+       * The client's switch, said back to every client of the session with
+       * its origin once it is made, which answers the client that turned it.
+       * It carries the enablement this host applied, which is the session's
+       * own decision for a sender who may not keep one for every session.
+       */
+      const said = { ...action, enablement: applied };
+      const toggled = ctx.toggleClientPlugin(session.uri, id, applied);
       if (toggled !== undefined) {
         /*
          * The backend is offered the switch and its answer is dropped.
@@ -1391,6 +1398,7 @@ export function chatAction(
          */
         if (toggled.server !== undefined)
           void session.setCustomizationEnabled(id, onFor(session.uri, asked));
+        dispatch(session.uri, said, origin);
         break;
       }
       const on = onFor(session.uri, asked);
@@ -1403,8 +1411,10 @@ export function chatAction(
          * nothing about one it has stopped loading. So the decision is kept
          * here, by id, and the list below is what reads it back.
          */
-        if (took)
+        if (took) {
           ctx.keepDecision(session.uri, id, on);
+          dispatch(session.uri, said, origin);
+        }
         else
           no(`${id} has no runtime switch`);
         /*
