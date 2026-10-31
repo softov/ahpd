@@ -12,8 +12,7 @@ refs:
   - "[code://packages/agent-pi/src/session.ts#L1340-L1367](../../../../packages/agent-pi/src/session.ts#L1340-L1367) - pi's `steer`, which hands the message to pi and says nothing"
   - "[code://packages/agent-pi/src/backend.ts#L44](../../../../packages/agent-pi/src/backend.ts#L44) - the backend's `steer`, which drops what pi did with the message"
   - "[code://packages/bot/src/chat.ts#L990-L1009](../../../../packages/bot/src/chat.ts#L990-L1009) - the bot's `steer`, which ends the open turn and starts one under a fresh id with nothing naming the message"
-  - "[code://packages/sdk/src/host/chatactions.ts#L1219-L1233](../../../../packages/sdk/src/host/chatactions.ts#L1219-L1233) - a client's steering message, handed to the session with nothing owed for it"
-  - "[code://packages/sdk/src/sessions/nested.ts#L1308-L1313](../../../../packages/sdk/src/sessions/nested.ts#L1308-L1313) - the proxy hands it to the host inside, whose answer comes back later"
+  - "[code://packages/sdk/src/sessions/nested.ts#L1308-L1313](../../../../packages/sdk/src/sessions/nested.ts#L1308-L1313) - the proxy hands it to the host inside, and carries the answer back with the dispatch it took through `start.handed`"
   - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L374-L381 - a steering message is consumed by `chat/pendingMessageRemoved` with `kind: 'steering'`, then injected"
   - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L899-L929 - the reducer holds it in `steeringMessage`, and a removal or a turn naming it clears that"
   - "https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L30 - a client holds its action until an envelope with its own origin, or a rejection, answers it"
@@ -22,7 +21,7 @@ refs:
 
 ## Goal
 
-A steering message a client sends while a turn runs is answered at once with its own origin, held in the chat's state while it waits, and taken out when the agent reads it, in pi, in the bot, and in a session inside a machine, as the Claude session does.
+A steering message a client sends while a turn runs is answered at once with its own origin, held in the chat's state while it waits, and taken out when the agent reads it, in pi and in the bot, as the Claude session does.
 
 ## Reconnaissance
 
@@ -38,7 +37,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 - pi: the client's steering message is never answered, the chat's state never holds it, and nothing takes it out when pi reads it.
 - The bot: the client's steering message is never answered, and the turn that takes it in names nothing, so a client that holds it holds it for good.
-- A session in a machine: the host inside answers the proxy, and the answer goes out with no origin, because nothing was owed for the message.
+- A session in a machine is answered already: the proxy carries the message with `start.handed` taken inside the dispatch ([`code://packages/sdk/src/sessions/nested.ts#L531`](../../../../packages/sdk/src/sessions/nested.ts#L531)), so the answer from the host inside goes out with the client's origin. A case with an inner backend that takes the message passed on `ab07054c`.
 
 ## Answers
 
@@ -46,13 +45,12 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 | --- | --- | --- |
 | pi says the message inside the dispatch, holds it as the chat's `steeringMessage`, and takes out each message pi's queue no longer holds | Claude's `steer`; pi's `queue_update`, said on every change of its steering queue | 01 |
 | The bot says the message inside the dispatch and starts the turn that takes it in with `queuedMessageId` naming it | the reducer clears `steeringMessage` for a turn that names it | 02 |
-| The host owes a client's steering message as it owes a queued one, so a backend that answers later answers with the client's origin | `owed`, and the proxy's `start.handed` | 03 |
 
 ## Proposed architecture
 
-- **Event flow** - a client's `chat/pendingMessageSet` with `kind: 'steering'` reaches the host, which owes it and hands it to the session; the session says it back inside the dispatch, or later through `start.handed`; the session takes it out with `chat/pendingMessageRemoved`, or with the turn that takes it in, once the agent reads it.
-- **Layer responsibilities** - the host: who a steering message answers. pi and the bot: when the agent reads it.
-- **Source-of-truth files** - [`code://packages/agent-pi/src/session.ts`](../../../../packages/agent-pi/src/session.ts), [`code://packages/bot/src/chat.ts`](../../../../packages/bot/src/chat.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts)
+- **Event flow** - a client's `chat/pendingMessageSet` with `kind: 'steering'` reaches the host, which hands it to the session; the session says it back inside the dispatch; the session takes it out with `chat/pendingMessageRemoved`, or with the turn that takes it in, once the agent reads it.
+- **Layer responsibilities** - pi and the bot: saying the message, and when the agent reads it.
+- **Source-of-truth files** - [`code://packages/agent-pi/src/session.ts`](../../../../packages/agent-pi/src/session.ts), [`code://packages/bot/src/chat.ts`](../../../../packages/bot/src/chat.ts)
 
 ## Tasks
 
@@ -60,7 +58,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 | --- | --- | --- |
 | [01 - pi answers a steering message and takes it out when pi reads it](task-01-pi-answers-a-steering-message.md) | todo | - |
 | [02 - The bot answers a steering message and names it on the turn that takes it in](task-02-the-bot-answers-a-steering-message.md) | todo | - |
-| [03 - The host owes a steering message, so a session in a machine answers it](task-03-the-host-owes-a-steering-message.md) | todo | - |
+| [03 - The host owes a steering message, so a session in a machine answers it](task-03-the-host-owes-a-steering-message.md) | dropped | - |
 
 ## Risks and tradeoffs
 
