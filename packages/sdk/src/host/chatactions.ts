@@ -1113,8 +1113,27 @@ export function chatAction(
         no('this backend cannot run a turn again');
         break;
       }
-      if (!session.resume(String(action.turnId ?? ''))) {
-        no(`${String(action.turnId ?? '')} is not a turn that can be resumed`);
+      /*
+       * The protocol's conditions, checked here rather than left to a backend
+       * that may not: the latest turn, in error, whose last part is a
+       * resumable error. Asking anyway turns a client's mistake into the
+       * backend's, and a backend that reopens a turn it should not takes a
+       * prompt out of the transcript for nothing.
+       */
+      const named = String(action.turnId ?? '');
+      const turns = (session.chatState() as { turns?: Bag[] }).turns ?? [];
+      const last = turns.at(-1);
+      if (last === undefined || String(last.id ?? '') !== named) {
+        no(`${named} is not the latest turn`);
+        break;
+      }
+      const part = (last.responseParts as Bag[] | undefined)?.at(-1) ?? {};
+      if (part.kind !== 'error' || part.resumable !== true) {
+        no(`${named} did not end with an error that can be resumed`);
+        break;
+      }
+      if (!session.resume(named)) {
+        no(`${named} is not a turn that can be resumed`);
       }
       break;
     }

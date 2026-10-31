@@ -170,17 +170,39 @@ it('gives a stop that names no turn its origin, under the turn it stopped', asyn
 });
 
 it('gives a resume its origin when the backend says it reopened the turn', async () => {
-  // A backend that reopens the turn and says so while the dispatch is being
-  // applied, as pi does.
+  /*
+   * A backend that reopens the turn and says so while the dispatch is being
+   * applied, as pi does. The chat's latest turn is one a model call failed,
+   * which is the only kind the protocol lets a client resume - the host
+   * checks that before it asks the backend anything.
+   */
   const resuming = (agent: Agent): Agent => ({
     ...agent,
-    create: (start: Start): Session => ({
-      ...(agent.create(start) as Session),
-      resume: (turnId: string) => {
-        start.emit('chat', { type: 'chat/turnResume', turnId });
-        return true;
-      },
-    }),
+    create: (start: Start): Session => {
+      const session = agent.create(start) as Session;
+      return {
+        ...session,
+        chatState: () => ({
+          ...session.chatState(),
+          turns: [{
+            id: 't1',
+            startedAt: new Date().toISOString(),
+            message: { text: 'one', origin: { kind: 'user' } },
+            responseParts: [{
+              kind: 'error',
+              error: { errorType: 'turnFailed', message: 'the model call failed' },
+              resumable: true,
+            }],
+            state: 'error',
+            duration: 5,
+          }],
+        }) as ReturnType<Session['chatState']>,
+        resume: (turnId: string) => {
+          start.emit('chat', { type: 'chat/turnResume', turnId });
+          return true;
+        },
+      };
+    },
   });
   const { host, p, dispatch } = await serving(resuming(echo({ path: dir, pace: 0 })));
   p.heard.length = 0;
