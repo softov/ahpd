@@ -1,6 +1,6 @@
 ---
 title: A start or a stop is answered once and followed by the state
-status: pending
+status: done
 depends: []
 layer: claude
 refs:
@@ -33,4 +33,5 @@ A start or a stop said with the client's origin gives the session's own entry th
 
 ## Resume
 
-Not started.
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.

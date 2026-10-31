@@ -1,6 +1,6 @@
 ---
 title: A stop keeps the enablement, and a start after it switches the server on
-status: pending
+status: done
 depends: [01]
 layer: claude
 refs:
@@ -32,4 +32,5 @@ A server the session switched off to serve a client's stop keeps the enablement 
 
 ## Resume
 
-Not started.
+Done 2026-10-31.
+Every step is built, and the touched suites, the type check and the boundary check pass.
