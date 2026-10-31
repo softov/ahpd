@@ -1380,17 +1380,18 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return true;
     },
     /*
-     * Handed inside rather than answered here.
+     * Handed inside, and answered from there.
      *
      * Whether the server was blocking is the inner session's own state, so
-     * there is nothing to decide out here: the action goes to the host inside,
-     * which answers through its own backend's state. True, because the request
-     * reached the host that can do something about it - and no `holds` check,
-     * because the answer either way is the same action, and the inner host
-     * treats one for a server it does not have as the no-op it is.
+     * there is nothing to decide out here: the action is carried to the host
+     * inside, whose answer reaches the client outside that sent it. True,
+     * because the request reached the host that can do something about it -
+     * and no `holds` check, because the answer either way is the same action,
+     * and the inner host treats one for a server it does not have as the no-op
+     * it is.
      */
     backgroundMcpServerStartup: async (serverId: string): Promise<boolean> => {
-      deliver('session', { type: 'session/mcpServerBackgroundRequested', id: serverId });
+      carry('session', { type: 'session/mcpServerBackgroundRequested', id: serverId });
       return true;
     },
     awaiting: () => [...awaited],

@@ -1102,9 +1102,17 @@ it('stops a running run, and keeps the session it was running in', async () => {
   // arrives on - which is the protocol's own shape for this one.
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: run.resource, action: { type: 'automationRun/cancelRequested' } },
+    params: { channel: run.resource, clientSeq: 5, action: { type: 'automationRun/cancelRequested' } },
   });
   await until(async () => (await runState(client, run.resource)).lifecycle.status === 'cancelled');
+
+  // Answered once, to the client that asked, with its own action: the request
+  // changes no state of its own, and the run's lifecycle says what came of it.
+  const answered = p.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { channel: string; action: { type: string }; origin?: { clientSeq?: number }; rejectionReason?: string })
+    .filter((n) => n.channel === run.resource && n.origin?.clientSeq === 5);
+  expect(answered.map((n) => [n.action.type, n.rejectionReason])).toEqual([['automationRun/cancelRequested', undefined]]);
 
   const after = await runState(client, run.resource);
   expect(after.lifecycle.status).toBe('cancelled');

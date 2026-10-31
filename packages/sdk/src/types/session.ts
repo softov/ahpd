@@ -800,13 +800,14 @@ export interface Session {
    * Code's own for the same seam. The server keeps starting; what changes is
    * that the next message does not wait for it.
    *
-   * The backend says how it went by emitting, not by answering: the action and
-   * the `session/mcpServerStateChanged` that follows it when it took the
-   * request, and a state restoring `blocking: true` when it could not.
+   * True when the backend took the request, which it says by emitting: the
+   * action, and the `session/mcpServerStateChanged` that follows it, or a state
+   * restoring `blocking: true` when it could not stop waiting. False when
+   * nothing here was waiting on that server.
    *
    * Optional, and absent is not a refusal. No backend here holds a message back
-   * on a starting server, so the host calls this where it exists and says
-   * nothing where it does not.
+   * on a starting server, so where this is absent or answers false the host
+   * answers the client itself, with the request back and nothing moved.
    */
   backgroundMcpServerStartup?(id: string): Promise<boolean>;
 

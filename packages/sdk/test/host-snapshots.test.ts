@@ -800,12 +800,17 @@ describe('the fields a client reads by name', () => {
   });
 
   it('takes archiving the default chat as archiving the session', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { host, client, peer: p, uri, chatUri } = await running();
+    // A second client on the same chat, which archived nothing.
+    const q = peer();
+    const other = host.accept(q);
+    await other.handle(hello(['0.9.0'], { clientId: 'other' }));
+    await other.handle({ method: 'subscribe', params: { channel: chatUri } });
     p.notes.length = 0;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+      params: { channel: chatUri, clientSeq: 4, action: { type: 'chat/isArchivedChanged', isArchived: true } },
     });
     await settle();
 
@@ -813,10 +818,14 @@ describe('the fields a client reads by name', () => {
     // the action the protocol declares for it.
     expect(actions(p, uri).some((e) => e.action.type === 'session/isArchivedChanged'
       && e.action.isArchived === true)).toBe(true);
-    // And not on the chat channel. The default chat *is* the session, so a
-    // chat action here would be a chat a client hides while the session it
+    // The client that archived the chat is answered on the chat, once, with
+    // its own action: it holds what it sent until that comes back.
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 4);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([['chat/isArchivedChanged', undefined]]);
+    // And to it alone. The default chat *is* the session, so a chat action
+    // said to everyone would be a chat a client hides while the session it
     // names says it is still there.
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/isArchivedChanged')).toBe(false);
+    expect(actions(q, chatUri).some((e) => e.action.type === 'chat/isArchivedChanged')).toBe(false);
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead | Status.IsArchived);
     // The chat's own entry carries no archive bit: the session is what is
     // archived, and an entry repeating it says one thing twice.

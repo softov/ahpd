@@ -756,29 +756,32 @@ describe('turning a customization on and off', () => {
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }]);
   });
 
-  it('says nothing to a request to background a startup, since nothing here waits on one', async () => {
+  it('answers a request to background a startup to its sender, since nothing here waits on one', async () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
     const { client, peer: p, uri } = await running({ onEvent: (message) => said.push(message) });
     await settle(8);
 
-    const before = actions(p, uri).length;
+    const seq = actions(p, uri).at(-1)?.serverSeq;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
     });
     await settle(8);
 
     /*
      * The Claude CLI's startup is not blocking unless a server says
      * `alwaysLoad`, and this backend never reports one, so there is no seam on
-     * this session and the action changes nothing. A refusal would be worse
-     * than nothing: it would tell a client its request was wrong when the
-     * truth is that nothing was waiting on the server to begin with.
+     * this session and the action changes nothing. A refusal would tell a
+     * client its request was wrong when nothing was waiting on the server to
+     * begin with; the client is holding the request all the same, so it hears
+     * it back, alone, with nothing moved.
      */
     expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
-    expect(actions(p, uri).length).toBe(before);
+    const answered = actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 6);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason, e.serverSeq]))
+      .toEqual([['session/mcpServerBackgroundRequested', undefined, seq]]);
   });
 
   it('hands a background request to a backend that has the call, once, with the id', async () => {

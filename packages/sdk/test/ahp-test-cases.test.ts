@@ -612,6 +612,14 @@ const sameValue = (a: unknown, b: unknown): boolean => {
 interface Driven {
   /** Whether the host refused one of the case's actions. */
   refused: boolean;
+  /**
+   * For each of the case's actions, how many envelopes carried its origin.
+   *
+   * A client holds what it dispatched until an envelope with its own origin
+   * answers it, an echo of any action type or a refusal, so each action is
+   * answered exactly once.
+   */
+  answers: number[];
   /** The keys the case moves whose starting value the host agreed with, which it then answered differently. */
   differs: string[];
   after: Record<string, unknown>;
@@ -646,12 +654,14 @@ async function driven(one: HostCase, name: string): Promise<Driven> {
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
   // Unread, which is where almost every case starts. A new session and its
   // chat start read here, and a session with one chat takes its chat with it.
-  await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isReadChanged', isRead: false } } });
+  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/isReadChanged', isRead: false } } });
   await settle();
   const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : opened.snapshot.state.defaultChat;
   const before = await stateOf(client, channel);
-  for (const action of one.actions) {
-    await client.handle({ method: 'dispatchAction', params: { channel, action } });
+  // Numbered as a client numbers what it sends, so each answer names its action.
+  const sent = one.actions.map((action, at) => ({ action, clientSeq: at + 2 }));
+  for (const { action, clientSeq } of sent) {
+    await client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
     await settle();
   }
   const reader = host.accept(peer());
@@ -662,12 +672,16 @@ async function driven(one: HostCase, name: string): Promise<Driven> {
   const after = await stateOf(reader, channel);
   const refused = asked.notes.some((note) => note.method === 'action'
     && (note.params as { rejectionReason?: string }).rejectionReason !== undefined);
+  const answers = sent.map(({ clientSeq }) => asked.notes.filter((note) => {
+    const origin = (note.params as { origin?: { clientId?: string; clientSeq?: number } }).origin;
+    return note.method === 'action' && origin?.clientId === `cases-${name}` && origin.clientSeq === clientSeq;
+  }).length);
   const named = Object.keys(one.expected);
   const started = named.filter((key) => sameValue(one.initial[key], before[key]));
   const differs = started.length === 0
     ? named.filter((key) => !sameValue(one.initial[key], before[key]))
     : started.filter((key) => !sameValue(after[key], one.expected[key]));
-  return { refused, differs, after, expected: one.expected };
+  return { refused, answers, differs, after, expected: one.expected };
 }
 
 /** Whether every action a case names is one a client may send. */
@@ -683,6 +697,8 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
   for (const one of hostCases) {
     it(one.name, async () => {
       const outcome = await driven(one, one.name);
+      expect(outcome.answers, `${one.name}: each action answered once, echoed or refused`)
+        .toEqual(one.actions.map(() => 1));
       if (outcome.refused) {
         // Refused, and named for it. Which list it belongs in is the
         // protocol's answer to whether a client may send what it names: an

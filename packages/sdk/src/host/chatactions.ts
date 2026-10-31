@@ -242,9 +242,11 @@ export function chatAction(
      * the session is archived.
      */
     if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
-      if (!sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on })) {
-        echoTo(connection.peer, channel, action, origin);
-      }
+      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
+      // The client that sent it holds it until it is answered, and what the
+      // session says carries no word of this chat: so it hears its own action
+      // back, to it alone, whether or not the session's bit moved.
+      echoTo(connection.peer, channel, action, origin);
       return;
     }
     // Said again, a bit that did not move is not a change: it would move the
@@ -1442,17 +1444,22 @@ export function chatAction(
      * A startup a client asked to stop waiting on.
      *
      * Handed to the backend, which is the only thing that knows whether this
-     * server was blocking and how to stop holding a turn on it. The backend
-     * answers by emitting - the action and the state that follows - so there
-     * is nothing to report here on either answer.
+     * server was blocking and how to stop holding a turn on it. A backend that
+     * takes it answers by emitting: the action, and the state that follows.
      *
-     * No refusal, and no `no(...)`: a backend without the call, and a server
-     * that was not blocking, both leave the state alone. The protocol's own
-     * reducer is a no-op for them, and a refusal would tell the client its
-     * request was wrong when there was simply nothing to do.
+     * A backend without the call, or one that did not take it, leaves the
+     * state alone, as the protocol's own reducer does for a server that was
+     * not blocking. The client is holding its request all the same, so it
+     * hears it back, to it alone. A refusal would tell it its request was
+     * wrong when nothing was waiting on the server to begin with.
      */
     case 'session/mcpServerBackgroundRequested':
-      void session.backgroundMcpServerStartup?.(String(action.id ?? ''));
+      if (session.backgroundMcpServerStartup === undefined) echoTo(connection.peer, channel, action, origin);
+      else {
+        void session.backgroundMcpServerStartup(String(action.id ?? '')).then((took) => {
+          if (!took) echoTo(connection.peer, channel, action, origin);
+        });
+      }
       break;
     case 'chat/draftChanged': {
       // A `Message`, not a string: `ChatState.draft` is the message
@@ -1764,12 +1771,12 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * Nothing is echoed from here. The result goes back to the harness,
-     * the harness writes the tool result, and the session reports the
-     * completion to every client from that - the same path every other
-     * tool call takes. Relaying it here as well would draw the row
-     * finished twice, once from a client's word and once from what
-     * actually happened.
+     * The result goes back to the harness, the harness writes the tool
+     * result, and the session reports the completion to every client from
+     * that - the same path every other tool call takes, so the row is drawn
+     * finished once, from what actually happened. That completion is the
+     * answer to the client that gave the result: owed to it under the call,
+     * it goes out with that client's origin.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
@@ -1781,6 +1788,7 @@ export function chatAction(
         no('This backend runs no tools on a client\'s behalf');
         break;
       }
+      ctx.owe('chat/toolCallComplete', toolCallId);
       // The blocks go through whole, because a client's tool can answer with
       // an image or a file as readily as a sentence and the backend's harness
       // is the thing that decides which it can take. The joined text is the

@@ -701,10 +701,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * the sentence the store or the state of the run gives, refused in the
      * hearing of the client that asked - the same answer every other refused
      * dispatch gets, because this one has no result to carry it.
+     *
+     * A stop taken is a side effect that changes no state of its own, which is
+     * how the protocol's reducer reads it too, so it is answered to its sender
+     * alone, and the run's lifecycle, said to everyone, is what came of it.
      */
     if (type === 'automationRun/cancelRequested') {
       const refused = cancelRun(channel);
       if (refused !== undefined) no(refused);
+      else echoTo(connection.peer, channel, action, origin);
       return;
     }
 
