@@ -391,6 +391,35 @@ describe('the fields a client reads by name', () => {
     expect(state.draft?.text).toBe('/');
   });
 
+  it('answers a draft it already holds for a session nothing is running for to its sender alone', async () => {
+    sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
+    const host = serving('/home/softov');
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { clientId: 'one', initialSubscriptions: ['ahp-root://'] }));
+    const other = peer();
+    const watching = host.accept(other);
+    await watching.handle(hello(['0.9.0'], { clientId: 'two', initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
+    const chat = 'ahp-chat://default/Y2xhdWRlOi9oZWxk';
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await watching.handle({ method: 'subscribe', params: { channel: chat } });
+
+    const draft = { text: '/', origin: { kind: 'user' } };
+    const drafts = (q: ReturnType<typeof peer>) => actions(q, chat).filter((one) => one.action.type === 'chat/draftChanged');
+    client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 1, action: { type: 'chat/draftChanged', draft } } });
+    await settle();
+    expect(drafts(other)).toHaveLength(1);
+
+    client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq: 2, action: { type: 'chat/draftChanged', draft } } });
+    await settle();
+    const answer = drafts(p).find((one) => one.origin?.clientSeq === 2);
+    expect(answer?.origin?.clientId).toBe('one');
+    expect(answer?.rejectionReason).toBeUndefined();
+    expect(drafts(other)).toHaveLength(1);
+    expect(sessionQueries()).toHaveLength(0);
+  });
+
   it('hands the draft to the session when one is finally started', async () => {
     sdk.sessions.push({ sessionId: 'carried', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     sdk.transcript = [];

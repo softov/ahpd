@@ -439,6 +439,12 @@ export function chatAction(
       const next = typeof action.draft === 'object' && action.draft !== null
         ? action.draft as Bag
         : undefined;
+      // The draft this host holds already moves nothing, and is answered to
+      // its sender alone, as a flag that did not move is.
+      if (JSON.stringify(next) === JSON.stringify(drafts.get(channel))) {
+        echoTo(connection.peer, channel, action, origin);
+        return;
+      }
       if (next === undefined) drafts.delete(channel);
       else drafts.set(channel, next);
       // Echoed, because the point of a draft being on the wire at all is
@@ -1439,14 +1445,26 @@ export function chatAction(
     case 'session/mcpServerBackgroundRequested':
       void session.backgroundMcpServerStartup?.(String(action.id ?? ''));
       break;
-    case 'chat/draftChanged':
+    case 'chat/draftChanged': {
       // A `Message`, not a string: `ChatState.draft` is the message
       // somebody is part-way through writing, model and all. Absent
       // clears it, which is what the action says `undefined` means.
-      session.setDraft(typeof action.draft === 'object' && action.draft !== null
+      const next = typeof action.draft === 'object' && action.draft !== null
         ? action.draft as Bag
-        : undefined);
+        : undefined;
+      /*
+       * The draft the chat holds already moves nothing, and is answered to
+       * its sender alone, as a flag that did not move is. Read from the
+       * chat's own state, which is what every client was told it holds; a
+       * client that never synced a draft clears it once its message is sent.
+       */
+      if (JSON.stringify(next) === JSON.stringify((session.chatState() as Bag).draft)) {
+        echoTo(connection.peer, channel, action, origin);
+        break;
+      }
+      session.setDraft(next);
       break;
+    }
     case 'chat/pendingMessageRemoved': {
       const id = String(action.id ?? '');
       const kind = action.kind === 'steering' ? 'steering' : 'queued';
