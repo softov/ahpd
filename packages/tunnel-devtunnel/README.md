@@ -93,6 +93,12 @@ A daemon on loopback with no connection token of its own accepts it, and that ne
 tunnel token 4d8f...  - what a client presents over the tunnel; this daemon requires its own
 ```
 
+## The plugin's page
+
+A client that reads `x-ahpd-plugins` draws this plugin's row as a page: a card with the tunnel's address as a link, then the tunnel id, the port, whether the relay holds the tunnel, and how many clients are connected. The plugin reads that state from `devtunnel show <id> --json` when the tunnel starts and every 30 seconds after, and draws the page again only when the state changed.
+
+A read that fails keeps the page as it was, and the plugin logs the first failure of a run of them. When the tunnel stops, the page is cleared. The page's words come in Portuguese or Spanish from the plugin's own catalogs.
+
 ## What it does at startup
 
 1. Finds the tunnel it made before, by its own label, or makes one.

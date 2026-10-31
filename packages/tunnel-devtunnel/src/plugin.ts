@@ -19,16 +19,28 @@ import { hostname as machineName } from 'node:os';
 import {
   deriveConnectionToken, displayLabel, IDENTITY_LABEL, nameLabel, TUNNEL_PORT,
 } from './discovery.js';
-import { create, find, host, prepare, remove, TunnelError } from './devtunnel.js';
-import type { Runner, Spawner, Tunnel } from './devtunnel.js';
+import { create, find, host, prepare, remove, show, TunnelError } from './devtunnel.js';
+import type { Runner, Shown, Spawner, Tunnel } from './devtunnel.js';
 import { forward } from './forward.js';
 import type { Forward } from './forward.js';
+import { sameState, tunnelView } from './view.js';
+import type { TunnelState } from './view.js';
 
 /** The plugin's id, unique among the plugins a daemon loads. */
 export const name = 'tunnel-devtunnel';
 
 /** What a listing prints. */
 export const title = 'Dev Tunnel';
+
+/**
+ * How often the tunnel's state is read from the service, in milliseconds.
+ *
+ * A relay that drops and comes back shows on the plugin's page within this
+ * long. Each read is one `devtunnel show` process and one request to the
+ * service, and the numbers it answers change rarely, so this is slow on
+ * purpose.
+ */
+export const POLL_MS = 30_000;
 
 /** What an option falls back to. */
 export const defaults = {
@@ -90,6 +102,44 @@ export const apply: Plugin['apply'] = (plugin, options) => {
   const wanted = asked.name;
 
   let held: Held | undefined;
+  /** The state the page draws, so a poll that found nothing new says nothing. */
+  let drawn: TunnelState | undefined;
+  /** The poll, once the tunnel is hosted. */
+  let poll: ReturnType<typeof setInterval> | undefined;
+  /** Whether the read before this one failed, so one run of failures is logged once. */
+  let failing = false;
+
+  /**
+   * Read the tunnel's state and draw it, when it is not what the page shows.
+   *
+   * A read that fails keeps the page as it was: a short loss of the network
+   * should not empty it. The first failure of a run is logged and the rest of
+   * that run is not, so a tunnel that stays unreachable costs one line.
+   */
+  const read = async (tunnel: Tunnel): Promise<void> => {
+    let shown: Shown;
+    try {
+      shown = await show(tunnel, seams.runner);
+    }
+    catch (error) {
+      if (!failing) plugin.log(`${name}: ${error instanceof TunnelError ? error.message : String(error)}`);
+      failing = true;
+      return;
+    }
+    // A stop, or a new tunnel, may have happened while the CLI was answering.
+    if (held?.tunnel.tunnelId !== tunnel.tunnelId) return;
+    failing = false;
+    const next: TunnelState = {
+      id: tunnel.tunnelId,
+      port: TUNNEL_PORT,
+      ...(shown.url === undefined ? {} : { url: shown.url }),
+      hosts: shown.hosts,
+      clients: shown.clients,
+    };
+    if (drawn !== undefined && sameState(drawn, next)) return;
+    drawn = next;
+    plugin.showView(tunnelView(next));
+  };
 
   plugin.on('listening', async (event) => {
     // Reused before it is made, so a restart keeps the id - and therefore the
@@ -154,12 +204,29 @@ export const apply: Plugin['apply'] = (plugin, options) => {
         + ' - what a client presents over the tunnel; this daemon requires its own',
       );
     }
+
+    // The page first, and then the same question every `POLL_MS` while the
+    // tunnel is up: the relay and the clients change without this plugin's
+    // doing, and the page is where a person looks for them.
+    await read(tunnel);
+    // A stop during that first read has already cleared the poll it would start.
+    if (held?.tunnel !== tunnel) return;
+    clearInterval(poll);
+    poll = setInterval(() => { void read(tunnel); }, POLL_MS);
   });
 
   plugin.on('stopping', async () => {
+    if (poll !== undefined) {
+      clearInterval(poll);
+      poll = undefined;
+    }
+    drawn = undefined;
+    failing = false;
     const stood = held;
     held = undefined;
     if (stood === undefined) return;
+    // The page has no tunnel behind it any more.
+    plugin.clearView();
     stood.child.kill();
     await stood.hop?.close();
     // Kept unless the run asked otherwise, because the id is what the

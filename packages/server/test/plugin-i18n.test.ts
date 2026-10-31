@@ -144,6 +144,7 @@ describe('tools/i18n-check.mjs', () => {
       meta: { title: 'Velho', subtitle: 'Nada' },
       options: { region: { title: 'Região', enum: { eu: 'Europa', mars: 'Marte' } }, gone: { title: 'Sumiu' } },
       session: { mode: { enum: { fast: 'Rápido', warp: 'Dobra' } }, lost: { title: 'Perdido' } },
+      views: { main: { state: { text: 'Pronto', color: 'verde' }, open: { label: 1 } }, side: 'Lado' },
       labels: {},
     }));
     const dir = pkg('i18n-stale', {
@@ -159,6 +160,9 @@ describe('tools/i18n-check.mjs', () => {
       'options.gone matches no field',
       'session.mode.enum.warp matches no enum value',
       'session.lost matches no field',
+      'views.main.state.color matches no field',
+      'views.main.open.label is not a string',
+      'views.side is not an object',
       'labels is not a block a lookup reads',
     ]);
   });

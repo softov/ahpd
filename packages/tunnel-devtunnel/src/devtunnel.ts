@@ -129,6 +129,61 @@ export async function find(runner: Runner = run): Promise<Tunnel | undefined> {
   return mine[mine.length - 1];
 }
 
+/**
+ * What `devtunnel show` says about a tunnel that is hosted: where it is
+ * reached, whether the relay holds it, and how many clients are on it.
+ */
+export interface Shown {
+  /** The URL its port answers at, when the service answered one. */
+  url?: string;
+  /** How many hosts are connected to the relay: 0 is a relay that is down. */
+  hosts: number;
+  /** How many clients are connected to the tunnel. */
+  clients: number;
+}
+
+/**
+ * Read the tunnel's state from the service.
+ *
+ * The answer is read from `tunnel` when it is wrapped, and from the top level
+ * otherwise: both spellings are what the CLI has printed, and which one a
+ * person has installed is not this plugin's to decide. The URL is the one of
+ * the well-known port, which is the port this plugin put on the tunnel and the
+ * one a client opens. A field that is missing counts as none, and one that is
+ * there and is not a number refuses: a page that says "0 clients" because it
+ * misread the answer is worse than one that says it could not read it.
+ */
+export async function show(tunnel: Tunnel, runner: Runner = run): Promise<Shown> {
+  const done = await ok(runner, ['show', tunnel.tunnelId, '--json']);
+  const said = parse('show', done.stdout);
+  const inside = typeof said.tunnel === 'object' && said.tunnel !== null && !Array.isArray(said.tunnel)
+    ? said.tunnel as Record<string, unknown>
+    : said;
+  const ports = Array.isArray(inside.ports) ? inside.ports : Array.isArray(said.ports) ? said.ports : [];
+  let url: string | undefined;
+  for (const one of ports) {
+    if (typeof one !== 'object' || one === null) continue;
+    const port = one as Record<string, unknown>;
+    if (port.portNumber !== TUNNEL_PORT) continue;
+    if (typeof port.portUri === 'string' && port.portUri !== '') url = port.portUri;
+    break;
+  }
+  return {
+    ...(url === undefined ? {} : { url }),
+    hosts: countOf('hostConnections', inside.hostConnections),
+    clients: countOf('clientConnections', inside.clientConnections),
+  };
+}
+
+/** A connection count, or the refusal that says the CLI printed something else. */
+function countOf(field: string, value: unknown): number {
+  if (value === undefined || value === null) return 0;
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TunnelError(`devtunnel show printed a ${field} that is not a number`);
+  }
+  return value;
+}
+
 /** Make one, labelled so the convention's clients will look at it. */
 export async function create(name: string | undefined, runner: Runner = run): Promise<Tunnel> {
   const labels = [...LABELS, ...(name === undefined ? [] : [name])];
