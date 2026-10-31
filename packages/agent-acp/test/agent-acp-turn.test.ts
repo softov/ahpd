@@ -50,7 +50,7 @@ const until = async (check: () => boolean | Promise<boolean>, times = 2000): Pro
   throw new Error(`still waiting after ${times} tries`);
 };
 
-type Note = { channel: string; action: Record<string, unknown> };
+type Note = { channel: string; action: Record<string, unknown>; origin?: { clientId: string; clientSeq: number } };
 
 const actions = (p: ReturnType<typeof peer>, channel: string): Note[] => p.notes
   .filter((n) => n.method === 'action')
@@ -770,6 +770,35 @@ it("runs a !command in the host's shell rather than asking the server", async ()
   expect(kept.at(-1)?.responseParts[0]?.kind).toBe('toolCall');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.toolName).toBe('terminal');
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
+});
+
+it('answers a !command typed during a turn with the queued message it waits as', async () => {
+  const { client, peer: p, uri, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'hold it');
+  await until(() => types(p, uri).includes('session/inputNeededSet'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-queued' } } },
+  });
+  await until(() => types(p, chatUri).includes('chat/pendingMessageSet'));
+  // The client holds its turn until an action with its own origin answers it,
+  // and what became of the turn is the queued message it waits as.
+  const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
+  expect(answers().map((e) => e.action)).toEqual([
+    expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'queued', id: 't2' }),
+  ]);
+
+  client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: chatUri,
+      action: { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-hold', approved: true },
+    },
+  });
+  await until(() => finished(p, chatUri, 2));
+  // Once: the turn the command runs as is the queued message's.
+  expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnStarted' && e.action.queuedMessageId === 't2')).toBe(true);
+  expect(answers()).toHaveLength(1);
 });
 
 /**

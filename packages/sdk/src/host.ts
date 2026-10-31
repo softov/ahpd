@@ -762,10 +762,23 @@ export function createHost(options: HostOptions): Host {
    */
   const owed = new Map<string, Dispatched>();
   const owedKey = (type: string, name: string): string => `${type}\n${name}`;
-  /** What an action is owed under: the queued message it is, or the turn it names. */
-  const owedName = (action: Record<string, unknown>): string => {
-    const named = action.type === 'chat/pendingMessageSet' ? action.id : action.turnId;
-    return typeof named === 'string' ? named : '';
+  /**
+   * Where the dispatch an action says back is owed: under the action's kind
+   * and the queued message it is, or the turn it names.
+   *
+   * A queued message is also what a client's turn of the same id became. A
+   * command sent as a turn while another turn runs waits behind it as a queued
+   * message under the turn's id, and runs as any queued message runs once the
+   * turn in front of it ends, so the client is told of its turn by that
+   * message. An absent `kind` is `queued`, as the protocol reads one.
+   */
+  const owedUnder = (action: Record<string, unknown>): string | undefined => {
+    const queued = action.type === 'chat/pendingMessageSet';
+    const named = queued ? action.id : action.turnId;
+    if (typeof named !== 'string' || named === '') return undefined;
+    const own = owedKey(String(action.type ?? ''), named);
+    const turn = owedKey('chat/turnStarted', named);
+    return queued && action.kind !== 'steering' && !owed.has(own) && owed.has(turn) ? turn : own;
   };
   /**
    * The client's dispatch an action says back: the dispatch being applied,
@@ -777,8 +790,8 @@ export function createHost(options: HostOptions): Host {
     const turnId = typeof action.turnId === 'string' ? action.turnId : '';
     if (applying !== undefined && !applying.answered && applying.type === type
       && (applying.turnId === '' || applying.turnId === turnId)) return applying;
-    const name = owedName(action);
-    return name === '' ? undefined : owed.get(owedKey(type, name));
+    const key = owedUnder(action);
+    return key === undefined ? undefined : owed.get(key);
   };
   /**
    * The origin an action goes out with when its caller named none: the
@@ -788,14 +801,14 @@ export function createHost(options: HostOptions): Host {
     const answered = answering(action);
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
-    owed.delete(owedKey(String(action.type ?? ''), owedName(action)));
+    owed.delete(owedUnder(action) ?? '');
     return answered.origin;
   };
   /** The dispatch being applied, answered by `origin` on a road that says so itself. */
   const answeredBy = (origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
     if (applying?.origin === origin) applying.answered = true;
-    owed.delete(owedKey(String(action.type ?? ''), owedName(action)));
+    owed.delete(owedUnder(action) ?? '');
   };
   /**
    * One state action, to everyone watching that channel.
