@@ -803,6 +803,8 @@ export function createTurns(ctx: SessionContext): Turns {
           return;
         }
         ctx.failTurn(`The conversation could not start over: ${restarted.failed}`);
+        // A message sent while the turn ran again goes now, as after a failed `moveOn`.
+        ctx.startNext();
       })();
       return true;
     },
