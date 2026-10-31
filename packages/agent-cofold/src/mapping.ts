@@ -93,6 +93,16 @@ export interface TurnMappingOptions {
    * was asked then.
    */
   asksEveryTime?(name: string): boolean;
+  /**
+   * Whether the turn can be run again, cut back to the turn before it.
+   *
+   * Read when the run fails, so the error part says a resume is possible only
+   * when there is a point to cut back to - or no turn before, for a
+   * conversation's first turn, which starts over under its id. A replay passes
+   * none: it rebuilds a paused run rather than a failed one, and a failure read
+   * back is not one this process can put on the store.
+   */
+  canCut?(): boolean;
 }
 
 /** One turn's event translation. */
@@ -156,10 +166,17 @@ export const compactionNotice = (
     : `${said}: ${String(tokens.before)} tokens to ${String(tokens.after)}.`;
 };
 
-/** The part that ends a turn which failed, in the shape `chat/error` carries. */
-const failurePart = (message: string): Bag => ({
+/**
+ * The part that ends a turn which failed, in the shape `chat/error` carries.
+ *
+ * `resumable` says a client may ask for the turn again. It is set only for a
+ * failure the session can put back: a model call, cut back to the turn before,
+ * or a conversation's first turn, which is started over.
+ */
+const failurePart = (message: string, resumable = false): Bag => ({
   kind: 'error',
   error: { errorType: 'turnFailed', message },
+  ...(resumable ? { resumable: true } : {}),
 });
 
 /** One tool call as it is held between its proposal and its result. */
@@ -742,8 +759,13 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
              * own ending carries the reason as an error part, which is what a
              * client draws; reporting it as complete would leave the failure
              * in the snapshot and nowhere on the stream.
+             *
+             * A failure the turn never ran on - an agent that could not be
+             * built, a prompt with nothing to run on - is not one a resume can
+             * put back, and neither is one with no point to cut to.
              */
-            actions.push({ type: 'chat/error', turnId, duration, part: failurePart(outcome.error.message) });
+            const resumable = outcome.error.code !== 'start_failed' && options.canCut?.() === true;
+            actions.push({ type: 'chat/error', turnId, duration, part: failurePart(outcome.error.message, resumable) });
             return only(actions);
           }
           /*

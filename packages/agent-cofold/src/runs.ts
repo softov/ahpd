@@ -52,12 +52,18 @@ export const createRuns = (ctx: SessionContext): Runs => {
    * Called before the ending action goes out: the host reads `status()` as it
    * passes that action on, and a turn still active there reads as running.
    * Answers whether there was a turn to settle. `why` is what an `error`
-   * ending failed with.
+   * ending failed with, and `part` is the error part the ending carried: the
+   * turn keeps it, because a client that reads the turn back from the snapshot
+   * has to find the same failure and the same `resumable` there as on the
+   * stream.
    */
-  const settleTurn = (ending: 'complete' | 'cancelled' | 'error', why?: string): boolean => {
+  const settleTurn = (ending: 'complete' | 'cancelled' | 'error', why?: string, part?: Bag): boolean => {
     const turn = ctx.active;
     if (turn === undefined) return false;
     if (ending === 'error') ctx.failed = why === undefined || why === '' ? 'The turn failed' : why;
+    if (ending === 'error' && part !== undefined && Array.isArray(turn.responseParts)) {
+      turn.responseParts.push(part);
+    }
     turn.state = ending;
     turn.duration = Date.now() - Date.parse(String(turn.startedAt));
     turns.push(turn);
@@ -134,7 +140,8 @@ export const createRuns = (ctx: SessionContext): Runs => {
           : type === 'chat/error' ? 'error'
             : undefined;
       const why = ending === 'error' ? str(bag(bag(action.part).error).message) : undefined;
-      const ended = ending !== undefined && settleTurn(ending, why);
+      const part = ending === 'error' ? bag(action.part) : undefined;
+      const ended = ending !== undefined && settleTurn(ending, why, part);
       /*
        * A pause lives on the session channel and a turn on the chat channel;
        * the action's own name is what says which, so a client watching the

@@ -169,6 +169,14 @@ export const createTurns = (
       // The operator's rule, read when a call is put to a person: a matched
       // tool's question offers no session choice cofold would remember.
       asksEveryTime: (name) => start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask',
+      // A failed turn can be put back when there is a point to cut to: the last
+      // message of the turn before, or, for a conversation's first turn, no
+      // session at all. A turn read back after a restart has no point, so it is
+      // not one this process can resume.
+      canCut: () => {
+        const before = turns.at(-1);
+        return before === undefined || ctx.points.has(String(before.id));
+      },
       ...(reference !== undefined ? { model: reference } : {}),
     });
     ctx.activeMapping = mapping;

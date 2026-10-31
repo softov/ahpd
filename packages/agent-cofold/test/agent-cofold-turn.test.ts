@@ -607,9 +607,13 @@ it('fails the turn, and not the daemon, when there is no model to run on', async
     begin(client, 'ahp-chat:/none', 't1', 'hi');
     const failure = () => actions(p, 'ahp-chat:/none').find((e) => e.action.type === 'chat/error');
     await until(() => failure() !== undefined);
-    const message = String(((failure()?.action.part as { error?: { message?: string } })?.error)?.message);
+    const part = failure()?.action.part as { error?: { message?: string }; resumable?: unknown };
+    const message = String(part?.error?.message);
     expect(message).toContain('add "model"');
     expect(message).toContain(join(home, 'cofold', 'config.json'));
+    // A turn that never ran is not a turn a resume can put back: there is
+    // nothing the session could cut to and run again.
+    expect(part).not.toHaveProperty('resumable');
   }
   finally {
     if (was === undefined) delete process.env.XDG_CONFIG_HOME;
@@ -680,6 +684,27 @@ it('announces the session failed with the chat/error that ends its turn', async 
   await until(() => types(p, chatUri).includes('chat/error'));
   expect(types(p, chatUri)).toContain('chat/error');
   expect(statusAtEnd(p, uri, chatUri, 'chat/error')).toBe(Status.Error);
+});
+
+it('marks a failed run resumable, on the stream and on the turn', async () => {
+  /*
+   * The host's check for `chat/turnResume` reads the last part of the newest
+   * turn, and a client that folded the stream reads the same part from the
+   * action. A resume the snapshot does not offer is one no client shows.
+   */
+  const { client, peer: p, chatUri } = await talking(failingModel(1));
+  begin(client, chatUri, 't1', 'hi');
+  await until(() => types(p, chatUri).includes('chat/error'));
+
+  const said = actions(p, chatUri).find((e) => e.action.type === 'chat/error');
+  expect(said?.action.part).toMatchObject({ kind: 'error', resumable: true });
+
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+    snapshot: { state: { turns: { state: string; responseParts: { kind?: string; resumable?: boolean }[] }[] } };
+  };
+  const turn = opened.snapshot.state.turns.at(-1);
+  expect(turn?.state).toBe('error');
+  expect(turn?.responseParts.at(-1)).toMatchObject({ kind: 'error', resumable: true });
 });
 
 it('clears a failure when the next turn starts', async () => {
