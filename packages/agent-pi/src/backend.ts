@@ -40,8 +40,11 @@ export interface PiBackend {
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   /** Run a turn. The promise spans the whole run. */
   prompt(text: string, images?: ImageContent[]): Promise<void>;
-  /** Put a message into the turn that is already running. */
-  steer(text: string, images?: ImageContent[]): Promise<void>;
+  /**
+   * Put a message into the turn that is already running, answering with what
+   * pi did with it: queued for the turn, or handled by an extension.
+   */
+  steer(text: string, images?: ImageContent[]): ReturnType<AgentSession['steer']>;
   /** Stop the running turn. */
   abort(): Promise<void>;
   /** The models this session could run on. */
@@ -366,7 +369,7 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       source: INPUT_SOURCE,
       ...(images !== undefined && images.length > 0 ? { images } : {}),
     }),
-    steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }).then(() => undefined),
+    steer: (text, images) => session.steer(text, images, { source: INPUT_SOURCE }),
     abort: () => session.abort(),
     models,
     leaf: () => session.sessionManager.getLeafId() ?? undefined,

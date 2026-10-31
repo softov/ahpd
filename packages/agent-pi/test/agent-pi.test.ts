@@ -418,6 +418,29 @@ it('has nothing to steer when no turn is running, and says so', () => {
   expect(session.steer?.('t1', 'hello')).toBe(false);
 });
 
+it('says a steering message as it takes it, holds it, and takes it out once pi has read it', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  expect(session.steer?.('s1', 'actually, stop')).toBe(true);
+  // Said before the call returns, so the host answers the client that sent it.
+  expect(sent.at(-1)?.action).toMatchObject({
+    type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'actually, stop' },
+  });
+  expect((session.chatState() as Bag).steeringMessage).toMatchObject({ id: 's1', message: { text: 'actually, stop' } });
+
+  await settled();
+  // pi says its steering queue as it takes the message, and again once the
+  // turn has read it.
+  pi.raise({ type: 'queue_update', steering: ['actually, stop'], followUp: [] });
+  expect(sent.some((one) => one.action.type === 'chat/pendingMessageRemoved')).toBe(false);
+  pi.raise({ type: 'queue_update', steering: [], followUp: [] });
+  expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
+    .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
+  expect((session.chatState() as Bag).steeringMessage).toBeUndefined();
+});
+
 it('queues a second message and runs it when the first turn ends', async () => {
   const { session, pi, types } = opened();
   pi.hold();
