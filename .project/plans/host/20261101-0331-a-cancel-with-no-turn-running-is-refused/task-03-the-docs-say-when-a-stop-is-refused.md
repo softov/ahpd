@@ -1,6 +1,6 @@
 ---
 title: The docs say when a stop is refused
-status: todo
+status: done
 depends: [task-01-a-stop-with-no-turn-running-is-refused.md, task-02-the-backend-stops-the-turn-the-host-names.md]
 layer: docs
 refs:
@@ -32,3 +32,10 @@ The spec of sessions and chats says a stop in a worker chat whose worker has end
 - `node .agents/skills/do-spec/scripts/lint-prose.mjs .project/specs/sessions-and-chats.md` prints nothing.
 
 ## Resume
+
+Built 2026-11-01 in `d5674ef7`.
+
+- `AHP.md` says when a stop is refused, in its `chat/turnCancelled` row and in the paragraph on a stop that changes nothing.
+- `AGENT.md` and `PLUGINS.md` say what `cancel` is handed and that a stop on an ended worker's chat is refused.
+- The spec gained the scenario of a stop with no turn running, and its worker chat scenario names a worker that runs.
+- The spec's refs name the stop's lines in `chatactions.ts` as they are now.

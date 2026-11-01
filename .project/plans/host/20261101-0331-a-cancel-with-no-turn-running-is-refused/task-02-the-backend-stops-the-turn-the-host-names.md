@@ -1,6 +1,6 @@
 ---
 title: The backend stops the turn the host names
-status: todo
+status: done
 depends: [task-01-a-stop-with-no-turn-running-is-refused.md]
 layer: "host, bot"
 refs:
@@ -40,3 +40,10 @@ The bot's stop reads that contract, as pi, ACP and cofold already do.
 - `bot-chat.test.ts` passes.
 
 ## Resume
+
+Built 2026-11-01 in `d5674ef7`.
+
+- The host hands `cancel` the running turn's id, so pi, ACP and cofold stop a turn that a stop naming no turn meant.
+- Claude's own `stopWorker` calls its `cancel` with an empty id, and its `cancel` reads that as the running turn.
+- The examples read an empty id the same way, and the host hands them the running turn's id.
+- The nested proxy carries the id it is handed inward, so the inner host gets the running turn's id.

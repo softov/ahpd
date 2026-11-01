@@ -1,12 +1,14 @@
 ---
 title: A cancel with no turn running is refused
 domain: host
-status: draft
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
 requires:
   - plans/host/20261101-0207-the-protocol-cases-are-the-oracle/plan.md
+  - plans/host/20261101-0329-the-hosts-state-is-the-reducers-output/plan.md
+  - plans/host/20261101-1357-a-case-starts-from-its-initial/plan.md
 changes:
   - specs/sessions-and-chats.md
 refs:
@@ -94,9 +96,9 @@ client chat/turnCancelled -> applyDispatch -> chatAction
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop with no turn running is refused](task-01-a-stop-with-no-turn-running-is-refused.md) | todo | - |
-| [02 - The backend stops the turn the host names](task-02-the-backend-stops-the-turn-the-host-names.md) | todo | 01 |
-| [03 - The docs say when a stop is refused](task-03-the-docs-say-when-a-stop-is-refused.md) | todo | 01, 02 |
+| [01 - A stop with no turn running is refused](task-01-a-stop-with-no-turn-running-is-refused.md) | done | - |
+| [02 - The backend stops the turn the host names](task-02-the-backend-stops-the-turn-the-host-names.md) | done | 01 |
+| [03 - The docs say when a stop is refused](task-03-the-docs-say-when-a-stop-is-refused.md) | done | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -104,14 +106,14 @@ client chat/turnCancelled -> applyDispatch -> chatAction
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-stop-with-no-turn-running-is-refused.md](task-01-a-stop-with-no-turn-running-is-refused.md).
+- **Done so far:** tasks 01 to 03, 2026-11-01, and the build on the held-state plan.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** the worker chat's turn is the host's own, held in `subagents`, and the backend's `chatState` is the lead chat's.
+- **Watch out for:** the worker chat's turn is the host's own, in the chat's held state, and the backend's `chatState` is the lead chat's.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `c7899eff` for the reason it names, and passes after the change.
-- [ ] Every protocol case passes through the host.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `c7899eff` for the reason it names, and passes after the change.
+- [x] Every protocol case passes through the host.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
