@@ -1,6 +1,6 @@
 ---
 title: The docs say each bit is its own
-status: todo
+status: done
 depends: [task-01-each-read-bit-moves-alone.md]
 layer: docs
 refs:
@@ -27,3 +27,9 @@ refs:
 - `rg -n -i "read together|in step|session follows|counted" docs packages/sdk/src/host` names no read bit moved with another.
 
 ## Resume
+
+Built 2026-11-01 in `252f8c74`.
+
+- The `session/isReadChanged` row says it marks the session alone, in the protocol's words.
+- The `chat/isReadChanged` row says this host marks a chat unread as a turn starts and as it ends, and what a `!` command's end does.
+- The grep names one line, in `docs/updates/v0_12.md`: the 0.12 release's note, which records what that release did.

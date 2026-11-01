@@ -1,6 +1,6 @@
 ---
 title: Each read bit moves alone
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -50,3 +50,14 @@ A chat archived on its own is marked read, with the session's bit left as it is.
 - Run the suites of every test file that reads a read bit.
 
 ## Resume
+
+Built 2026-11-01 in `252f8c74`.
+
+- The reference host's turn's end marks the chat at its lines 27-39, and the host's turn's end keeps that, cited at `spawn.ts`.
+- Its lines 40-48 then mark a read session unread when the chat counts in its read aggregate, and the host carries none of it.
+- `isChatInSessionReadAggregate` is VS Code's own, and session-channel.md keeps the session's read bit out of the aggregation rule.
+- A `!` command turn's end puts back its chat's bit, as plan 89's answer has it.
+- The reference's line 28 says the same of a local command: "Local commands preserve read state".
+- A worker's end marks its chat unread; the reference fires its turn's end for a worker chat too.
+- Eight tests of a session's activity read the whole status, read bit included, which a turn's start leaves set.
+- They read the status without the read bit, as agent-acp's `statusAtEnd` does.

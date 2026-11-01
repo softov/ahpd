@@ -1,7 +1,7 @@
 ---
 title: A chat's read state is its own
 domain: host
-status: draft
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -88,8 +88,8 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Each read bit moves alone](task-01-each-read-bit-moves-alone.md) | todo | - |
-| [02 - The docs say each bit is its own](task-02-the-docs-say-each-bit-is-its-own.md) | todo | 01 |
+| [01 - Each read bit moves alone](task-01-each-read-bit-moves-alone.md) | done | - |
+| [02 - The docs say each bit is its own](task-02-the-docs-say-each-bit-is-its-own.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -98,14 +98,14 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-each-read-bit-moves-alone.md](task-01-each-read-bit-moves-alone.md).
+- **Done so far:** tasks 01 and 02, 2026-11-01.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `commandTurns` keeps a `!` command turn's start bit, which its end puts back on the chat alone.
 
 ## Final verification checklist
 
-- [ ] Each changed case fails on `c7899eff` for the reason it names, and passes after the change.
-- [ ] Case 072 passes through the host with no divergence listed.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each changed case fails on `c7899eff` for the reason it names, and passes after the change.
+- [x] Case 072 passes through the host with no divergence listed.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
