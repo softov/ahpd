@@ -4,7 +4,7 @@ title: "Handoff: where ahpd stands, and what is pending"
 
 # Handoff: where `ahpd` stands, and what is pending
 
-Current progress and pending items only, as of 2026-10-31.
+Current progress and pending items only, as of 2026-11-01.
 `node ~/.claude/skills/do-spec/scripts/plans.mjs` lists the backlog, and each plan's Resume state is its detail. What merged is in `git log`, and what was released is in [CHANGELOG.md](../../CHANGELOG.md).
 
 ## Main
@@ -36,22 +36,25 @@ Current progress and pending items only, as of 2026-10-31.
   - #177: cofold/20261031-1200, a failed cofold turn is resumed.
   - #178: the Dev Tunnel plugin is tested against a captured `devtunnel show` answer. A test only.
   - #179: MayCXC's host/20261031-1634 and host/20261031-2013. A `!` command sent during a turn is answered by its queued message, and a pi or bot steering message is answered and taken out.
-- The last code merge on main is #179 (`b436043f`). The branch `host/20261031-1634-commands-and-steering-answered` is still on origin. The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
+  - #180: the Dev Tunnel page puts each label and its value on one row, and shows the tunnel's full URL as its link.
+- The last code merge on main is #180 (`33bab1d9`). The branch `host/20261031-1634-commands-and-steering-answered` is still on origin. The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
-- `/github/ahpd` is level with origin/main. `abdecb49` merges Softov's `1965724e` and keeps the two briefs deleted.
+- `/github/ahpd` is at #180's merge (`33bab1d9`). Another session's uncommitted edits sit there: the plain-text brief, an Answers row in plugin/20261031-1200, and the new brief `a-claude-agent-signs-in-without-a-connector.md`. Leave them.
 - Fetch, and check the base before you cut a build worktree.
-- Softov's dev daemon runs from source on port 37537. He restarted it after #175, on 2026-10-31. #176, #177 and #179 need another restart.
+- Softov's dev daemon runs from source on port 37537. He restarted it after #180, on 2026-11-01, so it runs #176 to #180.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
 - On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
-- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union`, `review-maycxc-1634-2013`, `devtunnel-show-fixture`, `devtunnel-view-rows` and `vm`. All but the first two are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
+- The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits), `release-prerelease`, `review-maycxc-union`, `review-maycxc-1634-2013`, `devtunnel-show-fixture`, `devtunnel-view-rows`, `vm` and `review-maycxc-20261101`. All but the first two and the last are merged, and they wait for Softov's word to remove. The old container/05 p8 build `build-agents-fda88f4a` is removed: main does all that it did. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
 - The local branch `fork/maycxc-1248-1303-1334` is merged.
 
 ## Waiting for Softov
 
+- MayCXC's `union` at `fc4fe451` holds nine plans after main. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at that tip, and its suite passes. The review found four blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. MayCXC is still working on `union`, with two more branches to come. Softov, 2026-11-01: plans first, then the review. No PR yet.
+- For the read-state plan, Softov chose on 2026-11-01 to keep `session/isReadChanged` true marking every counted chat read, as plan host/89 says and VS Code does.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
