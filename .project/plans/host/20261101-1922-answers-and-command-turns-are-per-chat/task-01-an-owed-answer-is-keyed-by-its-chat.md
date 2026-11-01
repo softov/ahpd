@@ -1,6 +1,6 @@
 ---
 title: An owed answer is keyed by its chat
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -40,3 +40,4 @@ Two chats that use one id each get their own answer, and a refusal in one chat l
 
 ## Resume
 
+Done 2026-11-01 in `35a74788`; [implemented.md](implemented.md) says what was verified.

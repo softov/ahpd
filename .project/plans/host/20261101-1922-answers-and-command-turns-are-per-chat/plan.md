@@ -1,7 +1,7 @@
 ---
 title: Owed answers and command turns are held per chat
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -77,8 +77,8 @@ backend B says chat/turnStarted t1 -> nothing owed -> B's echo carries no origin
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an owed answer is keyed by its chat](task-01-an-owed-answer-is-keyed-by-its-chat.md) | todo | - |
-| [02 - a command turn is keyed by its chat](task-02-a-command-turn-is-keyed-by-its-chat.md) | todo | - |
+| [01 - an owed answer is keyed by its chat](task-01-an-owed-answer-is-keyed-by-its-chat.md) | done | - |
+| [02 - a command turn is keyed by its chat](task-02-a-command-turn-is-keyed-by-its-chat.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -87,13 +87,13 @@ backend B says chat/turnStarted t1 -> nothing owed -> B's echo carries no origin
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-owed-answer-is-keyed-by-its-chat.md](task-01-an-owed-answer-is-keyed-by-its-chat.md).
+- **Done so far:** tasks 01 and 02, 2026-11-01; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** `chatOf` keeps a recorded session's URI as its own name, so it is not the chat a session channel's dispatch is about.
 
 ## Final verification checklist
 
-- [ ] Two chats that start turn `t1` each get their own echo's origin.
-- [ ] Two chats that run command turn `t1` each end read.
-- [ ] A turn started on the session's channel still gets its echo's origin.
+- [x] Two chats that start turn `t1` each get their own echo's origin.
+- [x] Two chats that run command turn `t1` each end read.
+- [x] A turn started on the session's channel still gets its echo's origin.

@@ -1,6 +1,6 @@
 ---
 title: A command turn is keyed by its chat
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -35,3 +35,4 @@ Two chats that run a turn of the same id each put back their own chat's read bit
 
 ## Resume
 
+Done 2026-11-01 in `35a74788`; [implemented.md](implemented.md) says what was verified.
