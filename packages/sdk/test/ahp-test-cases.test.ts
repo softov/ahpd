@@ -7,32 +7,30 @@
  * copy from a checkout. What these cases check is therefore not what this
  * suite believes the protocol says. It is what the protocol says.
  *
- * They are used three ways.
+ * Every comparison here reads a value the one way the protocol's conformance
+ * tests read it, `canonical` below.
  *
- * The reducer cases go through the same reducers this host applies, one case
- * per test, with a key holding `null` read as a key that is absent - the rule
- * the reference's own harness uses, and the rule a state this host serves is
- * written to.
+ * The reducer cases go through the installed package's reducers, as the
+ * protocol's own harness runs them, so they check the package this host is
+ * built on.
  *
- * The round-trip cases go through the JSON round trip a TypeScript host
- * performs, because a TypeScript host has no runtime decoder to go through,
- * and are compared the way `KNOWN-FIDELITY-GAPS.md` says to compare them: key
- * order does not matter, presence does, and a group B case - a known type
- * carrying a key the protocol does not model - is asserted against its
- * `preservedOutput` rather than skipped.
+ * The round-trip cases go through what JSON does to a payload, which is all a
+ * TypeScript peer does to one before its own code reads it.
  *
- * The root, session and chat cases go through ahpd's own host, one host per
- * case. Most of them cannot be driven into it, and the two lists below name
- * every one of those with the reason, so that a case which stops running, or
- * one which starts, changes the test rather than the count.
+ * The negotiation rows and the root, session and chat cases go through this
+ * host. Each place it answers otherwise than the protocol is named in
+ * `DIVERGES` or `NEGOTIATION_DIVERGES`, with the rule it breaks, so a host that
+ * stops breaking one fails the test until its entry goes.
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   annotationsReducer, automationReducer, automationRunReducer, canvasReducer, changesetReducer, chatReducer,
-  IS_CLIENT_DISPATCHABLE, resourceWatchReducer, rootReducer, negotiateProtocolVersion, sessionReducer,
+  IS_CLIENT_DISPATCHABLE, resourceWatchReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS,
   terminalReducer,
 } from '@microsoft/agent-host-protocol';
 import type { Peer } from '../src/types/rpc.js';
@@ -74,20 +72,31 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 const { createHost } = await import('../src/host.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
-function peer(): Peer & { notes: { method: string; params: unknown }[] } {
+function peer(): Peer & { notes: { method: string; params: unknown }[]; closed: boolean } {
   const notes: { method: string; params: unknown }[] = [];
-  return {
+  const told = {
     notes,
+    closed: false,
     send: () => {},
-    notify: (method, params) => notes.push({ method, params }),
+    notify: (method: string, params: unknown) => { notes.push({ method, params }); },
     request: async () => ({}),
     answered: () => {},
-    close: () => {},
+    close: () => { told.closed = true; },
   };
+  return told;
 }
 
 const settle = async (times = 4): Promise<void> => {
   for (let i = 0; i < times; i++) await new Promise((r) => { setTimeout(r, 0); });
+};
+
+/** Until a round of ticks tells a peer nothing new, so what it hears next is what was asked of the host. */
+const quiet = async (p: { notes: unknown[] }): Promise<void> => {
+  let heard = -1;
+  for (let round = 0; round < 50 && p.notes.length !== heard; round++) {
+    heard = p.notes.length;
+    await settle();
+  }
 };
 
 beforeEach(() => { sdk.queries.length = 0; });
@@ -98,6 +107,21 @@ const aHost = () => createHost({ path: '/home/softov', agents: [claude({ paths: 
 const CASES = join(import.meta.dirname, 'fixtures/ahp-test-cases');
 const filesIn = (where: string): string[] => readdirSync(join(CASES, where)).filter((one) => one.endsWith('.json')).sort();
 const read = <T>(where: string, file: string): T => JSON.parse(readFileSync(join(CASES, where, file), 'utf8')) as T;
+
+/**
+ * A value as the protocol's conformance tests compare it: as JSON carries it,
+ * with an object member holding `null` dropped and a slot in a list kept.
+ *
+ * The protocol's .NET tests give the reason, in `JsonCanon`: "null-valued
+ * object members dropped (so an omitted optional field equals an explicit null
+ * - matching the Go/TS conformance harnesses)".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/clients/dotnet/tests/AgentHostProtocol.Tests/JsonCanon.cs#L10-L13
+ */
+const canonical = (value: unknown): unknown => (value === undefined
+  ? undefined
+  : JSON.parse(JSON.stringify(value), function (this: unknown, _key: string, held: unknown) {
+    return held === null && !Array.isArray(this) ? undefined : held;
+  }) as unknown);
 
 /*
  * The reducer cases.
@@ -125,31 +149,21 @@ const REDUCERS: Record<string, (state: never, action: never) => unknown> = {
   automationRun: automationRunReducer,
 };
 
-/** One case's actions, applied to its own initial state, in order. */
-const reduced = (reducer: string, state: Record<string, unknown>, actions: Record<string, unknown>[]): unknown =>
-  actions.reduce((held, action) => REDUCERS[reducer]?.(held as never, action as never), state as unknown);
+/** Actions applied to a state through one channel's reducer, in order. */
+const reduced = (reducer: string, state: Record<string, unknown>, actions: Record<string, unknown>[]): Record<string, unknown> =>
+  actions.reduce((held, action) => REDUCERS[reducer]?.(held as never, action as never), state as unknown) as Record<string, unknown>;
 
-/**
- * A value with every key that holds `null` taken out, all the way down.
- *
- * The cases write `null` where the protocol's types let a field be absent, so
- * a reducer that leaves the field off entirely has said the same thing. A
- * `null` inside a list stays: a slot in a list is not a missing key.
+/*
+ * The protocol's harness runs each case the same way: its actions through the
+ * reducer from its initial state, the result held to its expected state.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/reducers.test.ts#L116-L145
  */
-const withoutNulls = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(withoutNulls);
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
-    .filter(([, held]) => held !== null && held !== undefined)
-    .map(([key, held]) => [key, withoutNulls(held)]));
-};
-
 describe('the protocol’s reducer cases', () => {
   for (const file of filesIn('reducers')) {
     const one = read<ReducerCase>('reducers', file);
     it(file.replace(/\.json$/u, ''), () => {
       expect(REDUCERS[one.reducer], `${file} names a channel this suite has no reducer for`).toBeDefined();
-      expect(withoutNulls(reduced(one.reducer, one.initial, one.actions))).toEqual(withoutNulls(one.expected));
+      expect(canonical(reduced(one.reducer, one.initial, one.actions))).toEqual(canonical(one.expected));
     });
   }
 });
@@ -173,10 +187,11 @@ describe('the protocol’s round-trip cases', () => {
     const one = read<RoundTripCase>('round-trips', file);
     it(one.name, () => {
       /*
-       * What a TypeScript host does with a payload: `JSON.parse` into a value,
+       * What a TypeScript peer does with a payload: `JSON.parse` into a value,
        * `JSON.stringify` back out. Nothing is dropped and nothing is added,
        * which is why a group B case asserts the preserved form and a group A
-       * case asserts the canonical one.
+       * case asserts the canonical one. Compared the way
+       * `KNOWN-FIDELITY-GAPS.md` says: key order does not matter, presence does.
        */
       const back = JSON.parse(JSON.stringify(one.input)) as unknown;
       expect(one.acceptableOutputs.length, `${file} must carry exactly one acceptable form`).toBe(1);
@@ -186,7 +201,7 @@ describe('the protocol’s round-trip cases', () => {
 });
 
 /*
- * Version negotiation.
+ * Version negotiation, through the host.
  */
 
 interface NegotiationRow {
@@ -195,390 +210,327 @@ interface NegotiationRow {
   invalid?: boolean;
 }
 
-/*
- * The rows are the package's caret rule, so they run against the package's
- * `negotiateProtocolVersion`, as VS Code runs them. The host also answers
- * `0.10.0`, which the rule refuses; `host-handshake.test.ts` covers that.
- * Every row that does not offer `0.10.0` also goes through the host, which
- * answers it the same way, refuses a malformed entry with `-32602`, and
- * refuses an offer it cannot answer with `-32005` and the versions it speaks.
+/** What a host answered `initialize` with, in the terms a row speaks. */
+type Answered =
+  | { protocolVersion: string }
+  | { code: number; supportedVersions?: unknown; closed: boolean };
+
+/**
+ * A rule this host breaks: the protocol's words, the audit row that names the
+ * assumption behind it, and the correction that takes it out.
  */
-describe('the protocol’s version negotiation cases', () => {
+interface Broken {
+  breaks: string;
+  row: string;
+  by: string;
+}
+
+const ECHOED = '"the server echoes them back as an ActionEnvelope once accepted" (types/common/commands.ts, dispatchAction)';
+const SOLE_MUTATION = '"Actions are the sole mutation mechanism for subscribable state." (docs/guide/actions.md)';
+
+/** The rules the divergences in this file break. */
+const BROKEN = {
+  baselines: {
+    breaks: 'versioning.md: hosts accept ">=1.0.0 <2.0.0 or >=0.9.0 <0.10.0, regardless of offer order"; this host also agrees on 0.10.0',
+    row: 'E14',
+    by: '12',
+  },
+  refusalLeftOpen: {
+    breaks: 'versioning.md: "A missing result means the host must send UnsupportedProtocolVersion with its supported baselines and close the connection."',
+    row: 'E18',
+    by: '10',
+  },
+  echoRewritten: {
+    breaks: `${ECHOED}; the echo of chat/turnStarted carries the host's own startedAt and leaves queuedMessageId off`,
+    row: 'E8',
+    by: '3, the answer',
+  },
+  clientRewritten: {
+    breaks: `${ECHOED}; the echo of session/activeClientSet carries the connection's clientId in place of the one sent`,
+    row: 'C12',
+    by: '3, the answer',
+  },
+  readCoupled: {
+    breaks: 'chat-channel.md: "session/isReadChanged independently changes the owning session\'s read state; neither action implies the other"',
+    row: 'A1',
+    by: '6, read bits independent',
+  },
+  chatTitleUntold: {
+    breaks: `${SOLE_MUTATION}; the chat's title moves to its first message with no action on the chat channel`,
+    row: 'E4',
+    by: 'R1, state through the reducers',
+  },
+  catalogueUntold: {
+    breaks: 'chat-channel.md: "Producers MUST keep the chat\'s ChatSummary in the session catalog consistent with these inlined summary fields"; the default chat\'s row takes the session\'s new title with no session/chatUpdated',
+    row: 'E4',
+    by: 'R1, state through the reducers',
+  },
+  queueUntold: {
+    breaks: `${SOLE_MUTATION}; the chat is served an empty queuedMessages where its actions leave none`,
+    row: 'E4',
+    by: 'R1, state through the reducers',
+  },
+  modifiedUntold: {
+    breaks: `${SOLE_MUTATION}; the chat's modifiedAt moves with no action carrying it`,
+    row: 'E4',
+    by: 'R1, state through the reducers',
+  },
+  idleSteering: {
+    breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
+    row: 'A10',
+    by: '10',
+  },
+  removalUnserved: {
+    breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
+    row: 'A11',
+    by: '10',
+  },
+  toggleNoOp: {
+    breaks: 'types/channels-session/actions.ts, session/customizationToggled: "Is a no-op when no customization has the given id."',
+    row: 'C2',
+    by: '10',
+  },
+  startNoOp: {
+    breaks: 'types/channels-session/actions.ts, session/mcpServerStartRequested: "Is a no-op when no matching McpServerCustomization is found."',
+    row: 'C2',
+    by: '10',
+  },
+} satisfies Record<string, Broken>;
+
+/** The rows this host answers otherwise than the protocol, and what it answers. */
+const NEGOTIATION_DIVERGES: Record<number, Broken & { answered: Answered }> = {
+  1: { answered: { code: -32005, supportedVersions: ['1.0.0', '0.10.0', '0.9.0'], closed: false }, ...BROKEN.refusalLeftOpen },
+  9: { answered: { protocolVersion: '0.10.0' }, ...BROKEN.baselines },
+  10: { answered: { protocolVersion: '0.10.0' }, ...BROKEN.baselines },
+};
+
+/*
+ * A row with a version in common is answered with it; an invalid offer is
+ * malformed params; a row with nothing in common is `-32005` with the
+ * protocol's baselines in `supportedVersions`, and the connection closed.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/versioning.md#L52-L68
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/clients/dotnet/tests/AgentHostProtocol.Tests/interop/session-host.ts#L85-L101
+ */
+describe('the protocol’s version negotiation cases, through ahpd', () => {
   for (const [at, row] of read<NegotiationRow[]>('', 'version-negotiation.json').entries()) {
     const offered = row.offered.length === 0 ? 'nothing' : row.offered.join(' ');
     it(`${at + 1}. ${offered}`, async () => {
       const asked = peer();
       const client = aHost().accept(asked);
-      const hello = client.handle({
+      const answered: Answered = await (client.handle({
         method: 'initialize',
         params: { channel: 'ahp-root://', clientId: 'negotiation', protocolVersions: row.offered },
-      });
-      if (row.invalid === true) {
-        expect(() => negotiateProtocolVersion(row.offered)).toThrow(/Invalid protocol version/);
-        // Not a version at all, so not a version this host can decline politely.
-        await expect(hello).rejects.toMatchObject({ code: -32602 });
+      }) as Promise<{ protocolVersion: string }>).then(
+        (result) => ({ protocolVersion: result.protocolVersion }),
+        (error: { code: number; data?: { supportedVersions?: unknown } }) => ({
+          code: error.code,
+          ...(error.data?.supportedVersions === undefined ? {} : { supportedVersions: error.data.supportedVersions }),
+          closed: asked.closed,
+        }),
+      );
+      const owed: Answered = row.invalid === true
+        ? { code: -32602, closed: asked.closed }
+        : row.expected === null || row.expected === undefined
+          ? { code: -32005, supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS], closed: true }
+          : { protocolVersion: row.expected };
+      const departs = NEGOTIATION_DIVERGES[at + 1];
+      if (departs !== undefined) {
+        expect(answered, `row ${at + 1}: ${departs.breaks}`).toEqual(departs.answered);
+        expect(answered, `row ${at + 1}: listed, so it departs`).not.toEqual(owed);
         return;
       }
-      expect(negotiateProtocolVersion(row.offered) ?? null).toBe(row.expected ?? null);
-      if (row.offered.includes('0.10.0')) {
-        // The host answers `0.10.0` here, where the rule does not.
-        await hello.catch(() => undefined);
-        return;
-      }
-      if (row.expected === null) {
-        // Nothing in common, which is recoverable: the answer says what to try.
-        await expect(hello).rejects.toMatchObject({
-          code: -32005,
-          data: { supportedVersions: ['1.0.0', '0.10.0', '0.9.0'] },
-        });
-        return;
-      }
-      expect((await hello as { protocolVersion: string }).protocolVersion).toBe(row.expected);
+      expect(answered).toEqual(owed);
     });
   }
 });
 
 /*
- * The same cases, through ahpd's host.
+ * The root, session and chat cases, through ahpd's host.
  */
 
 interface HostCase extends ReducerCase {
   name: string;
 }
 
-/**
- * The cases a dispatch cannot carry, so their expected state is never reached.
- *
- * Two things put a case here. Most of them name an action a client may not
- * originate at all: `IS_CLIENT_DISPATCHABLE` says which those are, and this
- * host refuses one arriving from a client, so the case cannot be driven into
- * it. The rest name actions a client *may* send, refused because the state
- * the case describes is not a state this host has; those are named again in
- * `HOST_REFUSED` below, with the reason the host gave.
- *
- * Every name here is asserted to be refused, and every case refused is
- * asserted to be here, so a case that starts running or stops being refused
- * fails the test rather than the count.
- */
-const NOT_REPLAYED = [
-  '001-root-agentschanged',
-  '002-root-activesessionschanged',
-  '003-session-ready',
-  '004-session-creationfailed',
-  '010-session-delta-appends-content',
-  '011-session-delta-with-wrong-turnid-is-no-op',
-  '012-session-delta-without-activeturn-is-no-op',
-  '013-session-responsepart-adds-to-responseparts',
-  '014-session-turncomplete-finalizes-turn',
-  '016-session-error-finalizes-turn-with-error',
-  '017-turncomplete-force-cancels-in-progress-tool-calls',
-  '018-turncomplete-with-wrong-turnid-is-no-op',
-  '019-tool-call-full-lifecycle-start-delta-ready-confirmed-complete',
-  '020-tool-call-ready-with-auto-confirm-transitions-to-running',
-  '021-tool-call-denied-transitions-to-cancelled',
-  '022-tool-call-result-confirmation-pending-approved',
-  '023-tool-call-result-denied-cancelled-with-result-denied-reason',
-  '024-tool-call-complete-from-pending-confirmation-defaults-confirmed',
-  '025-tool-call-actions-for-unknown-toolcallid-are-no-op',
-  '026-toolcallready-transitions-running-tool-back-to-pending-confirmation',
-  '027-toolcallready-re-confirmation-approved-transitions-back-to-running',
-  '028-toolcallready-re-confirmation-denied-transitions-to-cancelled',
-  '029-toolcallready-updates-pending-confirmation-tool-calls',
-  '031-session-usage-updates-usage-on-active-turn',
-  '032-session-reasoning-appends-reasoning-content',
-  '034-session-servertoolschanged-sets-server-tools',
-  '039-set-steering-message',
-  '040-replace-existing-steering-message',
-  '041-update-steering-message-content-via-set-with-same-id',
-  '042-remove-steering-message',
-  '043-remove-steering-message-is-no-op-for-mismatched-id',
-  '044-remove-steering-message-is-no-op-when-none-exists',
-  '048-remove-a-queued-message',
-  '049-remove-last-queued-message-sets-array-to-undefined',
-  '050-remove-queued-message-is-no-op-for-unknown-id',
-  '051-remove-queued-message-is-no-op-when-array-is-empty',
-  '052-steering-and-queued-messages-are-independent',
-  '058-session-customizationschanged-replaces-entire-list',
-  '059-session-customizationschanged-replaces-existing-customizations',
-  '060-session-customizationtoggled-toggles-by-id',
-  '061-session-customizationtoggled-is-no-op-for-unknown-id',
-  '062-session-customizationtoggled-is-no-op-when-customizations-undefined',
-  '063-session-truncated-keeps-turns-up-to-turnid',
-  '064-session-truncated-keeps-all-when-turnid-is-last',
-  '065-session-truncated-keeps-only-first-when-turnid-is-first',
-  '067-session-truncated-drops-active-turn',
-  '069-session-truncated-is-no-op-for-unknown-turnid',
-  '070-full-turn-flow-with-tool-calls-and-re-confirmation',
-  '071-root-terminalschanged',
-  '084-toolcall-contentchanged-updates-running',
-  '085-toolcall-contentchanged-noop-non-running',
-  '086-toolcall-contentchanged-replaces-existing',
-  '087-root-unknown-action-type-is-no-op',
-  '088-session-unknown-action-type-is-no-op',
-  '090-toolcalldelta-wrong-turnid-is-no-op',
-  '091-responsepart-wrong-turnid-is-no-op',
-  '092-toolcallstart-wrong-turnid-is-no-op',
-  '093-usage-wrong-turnid-is-no-op',
-  '094-delta-nonexistent-partid-is-no-op',
-  '095-toolcalldelta-wrong-status-is-no-op',
-  '096-toolcallconfirmed-wrong-status-is-no-op',
-  '097-toolcallcomplete-wrong-status-is-no-op',
-  '098-toolcallresultconfirmed-wrong-status-is-no-op',
-  '099-endturn-force-cancels-running-tool-call',
-  '100-delta-targeting-toolcall-partid-is-no-op',
-  '101-toolcalldelta-without-invocationmessage',
-  '102-reasoning-targeting-non-reasoning-is-no-op',
-  '103-delta-skips-parts-without-id',
-  '105-session-input-full-draft-and-complete-flow',
-  '106-session-input-requested-with-drafts-status',
-  '107-session-input-turn-end-cleans-turn-scoped-only',
-  '108-session-input-upsert-and-clear-answer',
-  '109-session-input-unknown-actions-are-no-op',
-  '110-session-input-completion-and-truncation-filtering',
-  '111-toolcall-pending-confirmation-sets-input-needed-status',
-  '112-toolcall-pending-result-confirmation-sets-input-needed-status',
-  '113-session-configchanged-merges-into-config-values',
-  '114-session-configchanged-noops-when-config-undefined',
-  '127-root-configchanged-merges-into-config-values',
-  '127-toolcallready-with-confirmation-options',
-  '128-root-configchanged-noops-when-config-undefined',
-  '128-toolcallconfirmed-approved-with-selectedoption',
-  '129-session-configchanged-replace-replaces-all-values',
-  '129-toolcallconfirmed-denied-with-selectedoption',
-  '130-root-configchanged-replace-replaces-all-values',
-  '130-selectedoption-carries-through-to-completed',
-  '131-selectedoption-carries-through-result-confirmation',
-  '132-selectedoption-carries-through-result-denied',
-  '133-session-activitychanged-sets-activity',
-  '134-session-activitychanged-clears-activity',
-  '135-session-metachanged-sets-meta',
-  '137-session-customizationupdated-replaces-existing-container',
-  '138-session-customizationupdated-appends-unknown-id',
-  '139-session-customizationupdated-creates-list',
-  '145-session-changesetschanged-sets-catalogue',
-  '146-session-changesetschanged-clears-catalogue',
-  '147-session-ready-preserves-inprogress-status',
-  '152-session-customizationremoved-removes-container-and-children',
-  '153-session-customizationremoved-removes-child',
-  '154-session-customizationremoved-noop-unknown-id',
-  '156-session-default-chat-changed',
-  '158-toolcallconfirmed-approved-with-editedtoolinput-overrides-original',
-  '159-session-mcpserverstatechanged-upserts-top-level-server',
-  '160-session-default-chat-changed-unsets',
-  '160-session-mcpserverstatechanged-upserts-container-child',
-  '161-chat-turn-lifecycle-on-chat',
-  '161-session-mcpserverstatechanged-noop-unknown-id',
-  '162-session-mcpserverstatechanged-noop-non-mcp-id',
-  '163-toolcallstart-carries-mcp-contributor-through-lifecycle',
-  '170-session-chatadded-appends',
-  '171-session-chatadded-upserts',
-  '172-session-chatremoved',
-  '173-session-chatupdated',
-  '174-session-chatremoved-noop',
-  '175-session-chatupdated-noop',
-  '220-toolcall-actions-update-meta',
-  '221-session-activeclientremoved-removes-client',
-  '222-session-activeclientremoved-no-op-unknown-client',
-  '223-chat-activitychanged-sets-activity',
-  '223-session-inputneededset-adds-chat-input',
-  '224-chat-activitychanged-clears-activity',
-  '224-session-inputneededset-appends-tool-confirmation',
-  '225-session-customizationtoggled-toggles-child-by-id',
-  '225-session-inputneededset-replaces-existing',
-  '226-session-customizationtoggled-is-no-op-for-unknown-child-id',
-  '226-session-inputneededremoved-removes-entry',
-  '227-session-inputneededremoved-no-op-unknown-id',
-  '228-session-inputneededremoved-no-op-absent',
-  '229-session-inputneededremoved-clears-status-when-empty',
-  '230-session-inputneededremoved-preserves-orthogonal-flags',
-  '231-session-inputneededset-preserves-orthogonal-flags',
-  '232-chat-turnsloaded-prepends-older-turns',
-  '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor',
-  '235-session-input-completion-records-declined-request-in-turn',
-  '235-session-mcpserverstartrequested-starts-top-level-server',
-  '236-session-input-completion-without-active-turn-records-nothing',
-  '236-session-mcpserverstoprequested-stops-auth-required-server',
-  '237-session-input-completion-no-op-unknown-id-with-open-requests',
-  '237-session-mcpserverstoprequested-stops-container-child',
-  '238-session-mcpserverstartrequested-no-op-absent-customizations',
-  '239-session-mcpserverstartrequested-no-op-unknown-id',
-  '240-turn-duration-is-clamped-to-zero',
-  '241-session-workingdirectoryset-adds-to-empty-set',
-  '241-toolcallready-stores-loading-risk-assessment',
-  '242-session-workingdirectoryset-appends-to-existing-set',
-  '242-toolcallready-completes-risk-assessment',
-  '243-session-workingdirectoryset-no-op-when-already-present',
-  '243-toolcallauthrequired-full-lifecycle-running-authrequired-running-completed',
-  '243-toolcallready-ignores-finished-tool-calls',
-  '244-toolcallauthrequired-noop-for-non-mcp-contributor',
-  '245-toolcallauthrequired-noop-when-contributor-absent',
-  '246-toolcallauthrequired-noop-when-not-running',
-  '247-chat-workingdirectoryset-adds-to-empty-set',
-  '247-toolcallauthresolved-noop-when-not-auth-required',
-  '248-chat-workingdirectoryset-appends-to-existing-set',
-  '248-toolcallauthrequired-sets-input-needed-status-and-preserves-metadata',
-  '249-chat-workingdirectoryset-no-op-when-already-present',
-  '249-toolcallauthresolved-preserves-fields-and-clears-input-needed',
-  '250-turncomplete-force-cancels-auth-required-tool-call',
-  '251-session-inputneededset-appends-tool-authentication',
-  '252-session-inputneededremoved-removes-tool-authentication',
-  '253-toolcallcomplete-cancels-auth-required-tool-call',
-  '254-toolcallcomplete-ignores-successful-result-from-auth-required',
-  '255-toolcallcomplete-ignores-requiresresultconfirmation-when-cancelling-auth-required',
-  '256-session-chatadded-preserves-sidechat-selection',
-  '257-toolcallready-refines-metadata-without-changing-client-ownership',
-  '260-edited-tool-input-survives-reconfirmation',
-  '261-session-inputneededset-client-execution-keeps-inprogress',
-  '262-session-inputneededremoved-client-execution-remains-inprogress',
-  '263-chat-turn-resume-reopens-turn',
-  '263-session-customizationtoggled-clears-enablement',
-  '264-chat-turn-resume-noop-with-active-turn',
-  '265-chat-turn-resume-noop-for-unknown-turn',
-  '266-chat-turn-resume-noop-for-nonlatest-turn',
-  '267-chat-turn-resume-noop-for-unresumable-error',
-  '268-chat-turn-resume-preserves-errors-across-retries',
-  '269-chat-turn-resume-completes-one-turn',
-  '270-chat-responsepart-cannot-append-error',
-  '271-chat-changesetschanged-sets-catalogue',
-  '271-chat-movablechanged-sets-true',
-  '271-turn-end-normalizes-offset-and-rollover',
-  '272-chat-changesetschanged-clears-catalogue',
-  '272-chat-movablechanged-sets-false',
-  '272-toolcallready-typed-edit-previews',
-  '274-chat-canvaseschanged-sets-canvases',
-  '275-chat-canvaseschanged-clears-canvases',
-  '277-chat-backgroundworkset-adds',
-  '277-session-chatsreordered-authoritative-order-to-start',
-  '278-chat-backgroundworkset-replaces',
-  '278-session-chatsreordered-authoritative-order-to-end',
-  '279-chat-backgroundworkremoved-removes',
-  '279-session-chatsreordered-before-default',
-  '280-chat-backgroundworkremoved-absent',
-  '280-session-chatsreordered-after-default',
-  '281-session-chatsreordered-authoritative-full-order',
-  '282-session-chatsreordered-incomplete-order-noop',
-  '283-chat-backgroundworkset-keeps-unknown-kind',
-  '283-session-chatsreordered-idempotent-reapplication',
-  '284-chat-backgroundworkremoved-removes-unknown-kind',
-  '284-session-chatsreordered-unknown-order-noop',
-  '285-session-chatsreordered-duplicate-order-noop',
-  '288-session-chatupdated-mirrors-chat-read-status',
+/** The keys a case's answer differs on, by check, or the host's words for a refusal. */
+interface Differs {
+  /** Keys where a client that only watched holds other than the protocol's reducer makes of what the host accepted. */
+  reduced?: string[];
+  /** Keys where a client that subscribes afterwards is served other than what that watching client holds. */
+  served?: string[];
+  /** The host's words for a refusal of an action a client may send. */
+  refused?: string[];
+}
+
+const turnStartRewritten: (Differs & Broken)[] = [
+  { reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten },
+  { served: ['title'], ...BROKEN.chatTitleUntold },
 ];
+const queuedTurnRewritten: (Differs & Broken)[] = [
+  { reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten },
+  { served: ['title'], ...BROKEN.chatTitleUntold },
+];
+const queueConsumed: (Differs & Broken)[] = [
+  { served: ['queuedMessages'], ...BROKEN.queueUntold },
+  { served: ['title'], ...BROKEN.chatTitleUntold },
+];
+const modifiedUntold: (Differs & Broken)[] = [{ served: ['modifiedAt'], ...BROKEN.modifiedUntold }];
 
 /**
- * The cases the host refuses although a client may send what they name.
+ * Where this host answers a case otherwise than the protocol.
  *
- * Each of these is a state this host does not have, and it says which: a
- * method it does not serve yet, a directory nobody trusted here, a config key
- * this backend does not take, a root config key no schema here declares, a
- * turn or a tool call this session has never had. The reason is the host's own
- * words, and the groups below are the ones it gave, so the field each case
- * names is refused rather than reaching the host's state and coming back
- * different.
- *
- * A case here that the host starts accepting fails the test, because it would
- * then be in neither this list nor a comparison.
+ * Each entry names the keys or the refusal, the rule it breaks, the audit row
+ * that names the assumption behind it, and the correction that takes it out. A
+ * host that stops answering this way fails its case until the entry goes.
  */
-const HOST_REFUSED = [
-  // `session/activeClientRemoved is not served yet`
-  '221-session-activeclientremoved-removes-client',
-  '222-session-activeclientremoved-no-op-unknown-client',
-  // `Nothing is running in this chat to steer`
-  '039-set-steering-message',
-  '040-replace-existing-steering-message',
-  '041-update-steering-message-content-via-set-with-same-id',
-  '052-steering-and-queued-messages-are-independent',
-  // `<id> is not a <kind> message this chat holds`: no case's pending message is one this chat was sent
-  '042-remove-steering-message',
-  '043-remove-steering-message-is-no-op-for-mismatched-id',
-  '044-remove-steering-message-is-no-op-when-none-exists',
-  '048-remove-a-queued-message',
-  '049-remove-last-queued-message-sets-array-to-undefined',
-  '050-remove-queued-message-is-no-op-for-unknown-id',
-  '051-remove-queued-message-is-no-op-when-array-is-empty',
-  // `<directory> is not a working directory of <session>`, and the workspace was never trusted here
-  '241-session-workingdirectoryset-adds-to-empty-set',
-  '242-session-workingdirectoryset-appends-to-existing-set',
-  '243-session-workingdirectoryset-no-op-when-already-present',
-  '247-chat-workingdirectoryset-adds-to-empty-set',
-  '248-chat-workingdirectoryset-appends-to-existing-set',
-  '249-chat-workingdirectoryset-no-op-when-already-present',
-  // `<turn> is not a completed turn in <chat>`
-  '063-session-truncated-keeps-turns-up-to-turnid',
-  '064-session-truncated-keeps-all-when-turnid-is-last',
-  '065-session-truncated-keeps-only-first-when-turnid-is-first',
-  '067-session-truncated-drops-active-turn',
-  '069-session-truncated-is-no-op-for-unknown-turnid',
-  '110-session-input-completion-and-truncation-filtering',
-  // `<turn> is not a turn that can be resumed`
-  '263-chat-turn-resume-reopens-turn',
-  '264-chat-turn-resume-noop-with-active-turn',
-  '265-chat-turn-resume-noop-for-unknown-turn',
-  '266-chat-turn-resume-noop-for-nonlatest-turn',
-  '267-chat-turn-resume-noop-for-unresumable-error',
-  // `<id> is not a call a client is running here`, and no call here asks for its result to be confirmed
-  '084-toolcall-contentchanged-updates-running',
-  '085-toolcall-contentchanged-noop-non-running',
-  '086-toolcall-contentchanged-replaces-existing',
-  '097-toolcallcomplete-wrong-status-is-no-op',
-  '098-toolcallresultconfirmed-wrong-status-is-no-op',
-  // `<id> is not a call this chat is waiting to have confirmed`
-  '096-toolcallconfirmed-wrong-status-is-no-op',
-  // `<key> is not a config key this backend takes`
-  '113-session-configchanged-merges-into-config-values',
-  '114-session-configchanged-noops-when-config-undefined',
-  '129-session-configchanged-replace-replaces-all-values',
-  // `root config does not declare theme`, the root half of the same refusal
-  '127-root-configchanged-merges-into-config-values',
-  '128-root-configchanged-noops-when-config-undefined',
-  '130-root-configchanged-replace-replaces-all-values',
-  // `<id> has no runtime switch`
-  '060-session-customizationtoggled-toggles-by-id',
-  '061-session-customizationtoggled-is-no-op-for-unknown-id',
-  '062-session-customizationtoggled-is-no-op-when-customizations-undefined',
-  '225-session-customizationtoggled-toggles-child-by-id',
-  '226-session-customizationtoggled-is-no-op-for-unknown-child-id',
-  '263-session-customizationtoggled-clears-enablement',
-  // `<id> would not start`, or would not stop: this host runs no such server
-  '235-session-mcpserverstartrequested-starts-top-level-server',
-  '236-session-mcpserverstoprequested-stops-auth-required-server',
-  '237-session-mcpserverstoprequested-stops-container-child',
-  '238-session-mcpserverstartrequested-no-op-absent-customizations',
-  '239-session-mcpserverstartrequested-no-op-unknown-id',
-  // `<id> is not a question this chat is waiting on`
-  '109-session-input-unknown-actions-are-no-op',
-  '235-session-input-completion-records-declined-request-in-turn',
-  '237-session-input-completion-no-op-unknown-id-with-open-requests',
-];
+const DIVERGES: Record<string, (Differs & Broken)[]> = {
+  '005-session-turnstarted': turnStartRewritten,
+  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': queuedTurnRewritten,
+  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
+  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': queuedTurnRewritten,
+  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
+  '030-session-titlechanged-updates-title': [{ served: ['chats'], ...BROKEN.catalogueUntold }],
+  '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
+  '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
+  '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
+  '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
+  '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
+  '045-set-a-new-queued-message': queueConsumed,
+  '046-append-queued-message-when-id-is-new': queueConsumed,
+  '047-update-queued-message-in-place-when-id-already-exists': queueConsumed,
+  '052-steering-and-queued-messages-are-independent': [
+    ...queueConsumed,
+    { refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering },
+  ],
+  '053-reorders-queued-messages': modifiedUntold,
+  '054-keeps-messages-not-in-order-at-end-in-original-order': modifiedUntold,
+  '055-ignores-unknown-ids-in-reorder': modifiedUntold,
+  '056-empty-reorder-preserves-all-messages-in-original-order': modifiedUntold,
+  '057-reorder-is-no-op-when-no-queued-messages-exist': modifiedUntold,
+  '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '066-session-truncated-clears-all-when-turnid-omitted': modifiedUntold,
+  '068-session-truncated-drops-active-turn-even-when-clearing-all': modifiedUntold,
+  '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
+  '072-session-isreadchanged-marks-session-as-unread': [{ reduced: ['chats'], ...BROKEN.readCoupled }],
+  '075-turnstarted-clears-isread': turnStartRewritten,
+  '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
+  '161-chat-turn-lifecycle-on-chat': turnStartRewritten,
+  '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
+  '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
+  '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '226-session-customizationtoggled-is-no-op-for-unknown-child-id': [{ refused: ['does-not-exist has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': modifiedUntold,
+  '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
+  '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
+  '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],
+  '263-session-customizationtoggled-clears-enablement': [{ refused: ['server-a has no runtime switch'], ...BROKEN.toggleNoOp }],
+};
+
+const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
+const CONSUMED = 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."';
 
 /**
- * The cases the host runs and answers differently, and the fields it keeps
- * its own value on.
- *
- * `activeTurn` and `turns` carry this host's own clock and its own turn ids,
- * `status` is what the session's backend is doing rather than what the case
- * says it is, and `activeClients` names the connections that are actually
- * here. The case's expectation for those fields is a state ahpd never makes,
- * so the difference is asserted rather than passed over: a case that starts
- * agreeing fails the test and has to come off this list.
- *
- * A chat truncated whole starts over with no turn running, and this host
- * leaves `activeTurn` off such a chat where the two cases write `null`.
+ * Where a case's answer differs because the host did what the protocol has it
+ * do on its own: each with the sentence that says so.
  */
-const HOST_OWNS: Record<string, string[]> = {
-  '005-session-turnstarted': ['activeTurn'],
-  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': ['activeTurn'],
-  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': ['activeTurn'],
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': ['activeTurn'],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': ['activeTurn'],
-  '015-session-turncancelled-finalizes-turn': ['turns'],
-  '035-session-activeclientset-adds-client': ['activeClients'],
-  '045-set-a-new-queued-message': ['status'],
-  '046-append-queued-message-when-id-is-new': ['status'],
-  '047-update-queued-message-in-place-when-id-already-exists': ['status'],
-  '066-session-truncated-clears-all-when-turnid-omitted': ['activeTurn'],
-  '075-turnstarted-clears-isread': ['activeTurn'],
-  '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': ['activeTurn'],
+const ALLOWED: Record<string, (Differs & { because: string })[]> = {
+  '005-session-turnstarted': [{ reduced: ['activity'], because: THINKING }],
+  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': [{ reduced: ['activity'], because: THINKING }],
+  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
+  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
+  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
+  '045-set-a-new-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '070-full-turn-flow-with-tool-calls-and-re-confirmation': [{ reduced: ['activity'], because: THINKING }],
+  '073-session-isarchivedchanged-marks-session-as-archived': [{
+    reduced: ['chats'],
+    because: 'types/channels-chat/actions.ts, chat/isArchivedChanged: "Archiving the session\'s default chat is equivalent to archiving the session"; the default chat\'s row takes the session\'s archived bit',
+  }],
+  '075-turnstarted-clears-isread': [{ reduced: ['activity'], because: THINKING }],
+  '105-session-input-full-draft-and-complete-flow': [{ reduced: ['activity'], because: THINKING }],
+  '161-chat-turn-lifecycle-on-chat': [{ reduced: ['activity'], because: THINKING }],
+};
+
+/** Where a refusal happened, in the terms the host's words use. */
+interface Where {
+  client: string;
+  channel: string;
+  session: string;
+}
+
+const MAY_NOT_ORIGINATE = 'types/common/reducer-helpers.ts, isClientDispatchable: servers "reject any action the client is not allowed to originate"';
+const CONTRIBUTOR = 'the server SHOULD reject this action if the dispatching client does not match the contributor\'s `clientId`';
+
+/**
+ * Why this host refuses an action a client may send, by its type: the host's
+ * words for it, and the specification row or the host policy that allows it.
+ *
+ * An action a client may not originate is not here: the protocol's
+ * `IS_CLIENT_DISPATCHABLE` names those, and each is refused with one sentence.
+ */
+const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: Where) => string; source: string }[]> = {
+  'chat/toolCallConfirmed': [{
+    said: (action) => `${String(action.toolCallId)} is not a call this chat is waiting to have confirmed`,
+    source: 'chat-channel.md: "chat/toolCallConfirmed | Tool call not in pending-confirmation state | Server MUST reject the action"',
+  }],
+  'chat/turnResume': [{
+    said: (action) => `${String(action.turnId)} is not the latest turn`,
+    source: 'chat-channel.md: "chat/turnResume | An active turn exists, turnId is not the latest errored turn, or its final error part is not resumable | Server MUST reject the action"',
+  }],
+  'chat/inputAnswerChanged': [{
+    said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
+    source: 'chat-channel.md: "chat/inputAnswerChanged | No input request with matching requestId | Server SHOULD reject the action"',
+  }],
+  'chat/inputCompleted': [{
+    said: (action) => `${String(action.requestId)} is not a question this chat is waiting on`,
+    source: 'chat-channel.md: "chat/inputCompleted | No input request with matching requestId | Server SHOULD reject the action"',
+  }],
+  'chat/pendingMessageRemoved': [{
+    said: (action) => `${String(action.id)} is not a ${String(action.kind)} message this chat holds`,
+    source: 'chat-channel.md: "chat/pendingMessageRemoved | No pending message with matching id and kind | Server SHOULD reject the action"',
+  }],
+  'chat/toolCallComplete': [{
+    said: (action, where) => `${String(action.toolCallId)} is not a call ${where.client} is running here`,
+    source: `types/channels-chat/actions.ts, chat/toolCallComplete: ${CONTRIBUTOR}`,
+  }],
+  'chat/toolCallContentChanged': [{
+    said: (action) => `${String(action.toolCallId)} is not a call a client is running here`,
+    source: `types/channels-chat/actions.ts, chat/toolCallContentChanged: ${CONTRIBUTOR}`,
+  }],
+  'chat/workingDirectorySet': [{
+    said: (action, where) => `${fileURLToPath(String(action.directory))} is not a working directory of ${where.session}`,
+    source: 'types/channels-chat/actions.ts, chat/workingDirectorySet: "`directory` MUST be one of the owning session\'s SessionState.workingDirectories; a host MUST reject a directory that is not."',
+  }],
+  'session/configChanged': [{
+    said: (action) => `${Object.keys(action.config as object)[0] ?? ''} is not a config key this backend takes`,
+    source: 'types/channels-session/actions.ts, session/configChanged: "Only properties with `sessionMutable: true` in the config schema may be changed."',
+  }],
+  'session/mcpServerStopRequested': [{
+    said: (action) => `${String(action.id)} would not stop`,
+    source: 'types/channels-session/actions.ts, session/mcpServerStopRequested: "The host remains authoritative and MAY reject the action"',
+  }],
+  'root/nonExistentAction': [{ said: (action) => `${String(action.type)} names nothing here`, source: MAY_NOT_ORIGINATE }],
+  'session/nonExistentAction': [{ said: (action) => `${String(action.type)} is not served yet`, source: MAY_NOT_ORIGINATE }],
+  'root/configChanged': [{
+    said: (action) => `root config does not declare ${Object.keys(action.config as object)[0] ?? ''}`,
+    source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
+  }],
+  'session/workingDirectorySet': [{
+    said: (action) => `Workspace trust was not granted for '${fileURLToPath(String(action.directory))}'`,
+    source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
+  }],
+  'chat/truncated': [{
+    said: (action, where) => `${String(action.turnId)} is not a completed turn in ${where.channel}`,
+    source: 'host policy, host/chatactions.ts: a truncation names a turn this chat holds completed',
+  }],
+  'chat/toolCallResultConfirmed': [{
+    said: () => 'No tool call here asks for its result to be confirmed',
+    source: 'host policy, host/chatactions.ts: no call on this host asks for its result to be confirmed',
+  }],
 };
 
 /** The snapshot the host serves for one channel: its state, and the sequence it was taken at. */
@@ -587,125 +539,104 @@ const stateOf = async (client: { handle(r: { method: string; params: unknown }):
   return opened.snapshot;
 };
 
-/** Whether two values are the same value: keys in any order, and `null` not read as absent. */
-const sameValue = (a: unknown, b: unknown): boolean => {
-  if (a === b) return true;
-  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((one, at) => sameValue(one, b[at]));
-  }
-  const right = b as Record<string, unknown>;
-  return Object.entries(a as Record<string, unknown>)
-    .every(([key, held]) => key in right && sameValue(held, right[key]))
-    && Object.keys(right).length === Object.keys(a as object).length;
+/** Every key either state holds where the two differ, compared the protocol's way. */
+const parted = (a: Record<string, unknown>, b: Record<string, unknown>): string[] => {
+  const left = canonical(a) as Record<string, unknown>;
+  const right = canonical(b) as Record<string, unknown>;
+  return [...new Set([...Object.keys(left), ...Object.keys(right)])].sort()
+    .filter((key) => !isDeepStrictEqual(left[key], right[key]));
 };
 
 interface Driven {
-  /** Whether the host refused one of the case's actions. */
-  refused: boolean;
-  /**
-   * For each of the case's actions, how many envelopes carried its origin.
-   *
-   * A client holds what it dispatched until an envelope with its own origin
-   * answers it, an echo of any action type or a refusal, so each action is
-   * answered exactly once.
-   */
-  answers: number[];
-  /** The keys the case moves whose starting value the host agreed with, which it then answered differently. */
-  differs: string[];
-  /**
-   * The same keys, read from a client that subscribed before the case's
-   * actions and only watched: its snapshot with every action it was told of
-   * since, through the protocol's own reducer.
-   *
-   * Every subscriber reduces what it is told, and the case's expectation is
-   * what that reduction comes to, so a client that only watched holds what
-   * the case expects wherever the state does. An action the host applied but
-   * said to fewer than all of its subscribers shows here and not in the state.
-   */
-  watched: string[];
-  after: Record<string, unknown>;
-  expected: Record<string, unknown>;
+  /** For each of the case's actions, the envelopes that carried its origin back to the client that sent it. */
+  answers: { rejectionReason?: string }[][];
+  /** What a client that only watched holds: its snapshot, and every action it was told of since. */
+  view: Record<string, unknown>;
+  /** What the protocol's reducer makes of that same snapshot and the case's actions the host did not refuse. */
+  reduced: Record<string, unknown>;
+  /** The state a client that subscribes after the actions is served. */
+  served: Record<string, unknown>;
 }
 
 /**
  * One case, driven through a host of its own.
  *
- * A session and its default chat are opened, the case's actions are sent on
- * the channel the case names, and the state is read back by a second
- * connection. A second one because the first has been watching every delta
- * since it opened, and what a delta-built view says is a different question
- * from what the state is. That question is put to a third client, which
- * subscribes before the actions and sends nothing.
+ * A session and its default chat are opened, and the host is left to go
+ * quiet. A second client subscribes and only watches. The first client sends
+ * the case's actions on the channel the case names, and a third client
+ * subscribes afterwards.
  *
- * What can be compared is a key the host and the case *start* agree on. A key
- * they already disagree on - a title this host took from its backend where
- * the case wrote its own, a timestamp of the host's - says nothing about what
- * the action did, and comparing it would report the starting difference as a
- * defect in the action.
+ * The case starts from the host's own state, not the case's `initial`: this
+ * host builds its root, session and chat state itself, so there is no state to
+ * seed. The protocol's reducer is applied to the state the watching client was
+ * served instead, which is the reducer cases' own rule from another start.
+ *
+ * The clock stands still within each of those steps and moves a minute between
+ * them, so a time the host stamps while it applies the actions differs from one
+ * it stamps while it serves the later client, the same way on every run.
  */
-async function driven(one: HostCase, name: string): Promise<Driven> {
-  const host = aHost();
-  const asked = peer();
-  const client = host.accept(asked);
-  await client.handle({
-    method: 'initialize',
-    params: { channel: 'ahp-root://', clientId: `cases-${name}`, protocolVersions: ['0.9.0'] },
-  });
-  const uri = `ahp-session:/${name}`;
-  await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-  const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
-  // Unread, which is where almost every case starts. A new session and its
-  // chat start read here, and a session with one chat takes its chat with it.
-  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/isReadChanged', isRead: false } } });
-  await settle();
-  const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : opened.snapshot.state.defaultChat;
-  const before = await stateOf(client, channel);
-  const watched = peer();
-  const watcher = host.accept(watched);
-  await watcher.handle({
-    method: 'initialize',
-    params: { channel: 'ahp-root://', clientId: `cases-watch-${name}`, protocolVersions: ['0.9.0'] },
-  });
-  const watching = await stateOf(watcher, channel);
-  // Numbered as a client numbers what it sends, so each answer names its action.
-  const sent = one.actions.map((action, at) => ({ action, clientSeq: at + 2 }));
-  for (const { action, clientSeq } of sent) {
-    await client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
-    await settle();
+async function driven(one: HostCase): Promise<Driven & { channel: string; session: string }> {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const host = aHost();
+    const asked = peer();
+    const client = host.accept(asked);
+    await client.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: `cases-${one.name}`, protocolVersions: ['0.9.0'] },
+    });
+    const uri = `ahp-session:/${one.name}`;
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    const opened = await stateOf(client, uri) as unknown as { state: { defaultChat: string } };
+    const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : opened.state.defaultChat;
+    await stateOf(client, channel);
+    await quiet(asked);
+    const watched = peer();
+    const watcher = host.accept(watched);
+    await watcher.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: `cases-watch-${one.name}`, protocolVersions: ['0.9.0'] },
+    });
+    const watching = await stateOf(watcher, channel);
+    vi.setSystemTime(new Date('2026-01-01T00:01:00.000Z'));
+    // Numbered as a client numbers what it sends, so each answer names its action.
+    const sent = one.actions.map((action, at) => ({ action, clientSeq: at + 1 }));
+    for (const { action, clientSeq } of sent) {
+      await client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
+      await settle();
+    }
+    await quiet(asked);
+    vi.setSystemTime(new Date('2026-01-01T00:02:00.000Z'));
+    const reader = host.accept(peer());
+    await reader.handle({
+      method: 'initialize',
+      params: { channel: 'ahp-root://', clientId: `cases-read-${one.name}`, protocolVersions: ['0.9.0'] },
+    });
+    const served = await stateOf(reader, channel);
+    const answers = sent.map(({ clientSeq }) => asked.notes
+      .filter((note) => note.method === 'action')
+      .map((note) => note.params as { origin?: { clientId?: string; clientSeq?: number }; rejectionReason?: string })
+      .filter((envelope) => envelope.origin?.clientId === `cases-${one.name}` && envelope.origin.clientSeq === clientSeq));
+    // A refused envelope reaches only its sender, and a client applies none.
+    const view = reduced(one.reducer, watching.state, watched.notes
+      .filter((note) => note.method === 'action')
+      .map((note) => note.params as { channel: string; action: Record<string, unknown>; serverSeq: number; rejectionReason?: string })
+      .filter((envelope) => envelope.channel === channel && envelope.serverSeq > watching.fromSeq && envelope.rejectionReason === undefined)
+      .map((envelope) => envelope.action));
+    const accepted = sent
+      .filter((_, at) => (answers[at] ?? []).every((envelope) => envelope.rejectionReason === undefined))
+      .map(({ action }) => action);
+    return { answers, view, reduced: reduced(one.reducer, watching.state, accepted), served: served.state, channel, session: uri };
   }
-  const reader = host.accept(peer());
-  await reader.handle({
-    method: 'initialize',
-    params: { channel: 'ahp-root://', clientId: `cases-read-${name}`, protocolVersions: ['0.9.0'] },
-  });
-  const after = await stateOf(reader, channel);
-  const refused = asked.notes.some((note) => note.method === 'action'
-    && (note.params as { rejectionReason?: string }).rejectionReason !== undefined);
-  const answers = sent.map(({ clientSeq }) => asked.notes.filter((note) => {
-    const origin = (note.params as { origin?: { clientId?: string; clientSeq?: number } }).origin;
-    return note.method === 'action' && origin?.clientId === `cases-${name}` && origin.clientSeq === clientSeq;
-  }).length);
-  const named = Object.keys(one.expected);
-  const started = named.filter((key) => sameValue(one.initial[key], before.state[key]));
-  const differs = started.length === 0
-    ? named.filter((key) => !sameValue(one.initial[key], before.state[key]))
-    : started.filter((key) => !sameValue(after.state[key], one.expected[key]));
-  // A refused action changes nothing, and a client leaves it out.
-  const view = watched.notes
-    .filter((note) => note.method === 'action')
-    .map((note) => note.params as { channel: string; action: Record<string, unknown>; serverSeq: number; rejectionReason?: string })
-    .filter((envelope) => envelope.channel === channel && envelope.serverSeq > watching.fromSeq && envelope.rejectionReason === undefined)
-    .reduce((held, envelope) => REDUCERS[one.reducer]?.(held as never, envelope.action as never), watching.state as unknown) as Record<string, unknown>;
-  const seen = started.length === 0
-    ? differs
-    : started.filter((key) => !sameValue(view[key], one.expected[key]));
-  return { refused, answers, differs, watched: seen, after: after.state, expected: one.expected };
+  finally {
+    vi.useRealTimers();
+  }
 }
 
-/** Whether every action a case names is one a client may send. */
-const sendable = (one: HostCase): boolean => one.actions.every((action) =>
-  (IS_CLIENT_DISPATCHABLE as Record<string, boolean | undefined>)[String((action as { type?: unknown }).type)] === true);
+/** Whether the protocol says a client may not originate an action. */
+const hostOnly = (action: Record<string, unknown>): boolean =>
+  (IS_CLIENT_DISPATCHABLE as Record<string, boolean | undefined>)[String(action.type)] === false;
 
 const hostCases: HostCase[] = ['root', 'session', 'chat'].flatMap((reducer) =>
   filesIn('reducers')
@@ -715,43 +646,49 @@ const hostCases: HostCase[] = ['root', 'session', 'chat'].flatMap((reducer) =>
 describe('the protocol’s root, session and chat cases, through ahpd', () => {
   for (const one of hostCases) {
     it(one.name, async () => {
-      const outcome = await driven(one, one.name);
-      expect(outcome.answers, `${one.name}: each action answered once, echoed or refused`)
+      const outcome = await driven(one);
+      const departs = DIVERGES[one.name] ?? [];
+      const keys = (check: 'reduced' | 'served'): string[] => [...departs, ...(ALLOWED[one.name] ?? [])]
+        .flatMap((entry) => entry[check] ?? []).sort();
+      expect(outcome.answers.map((list) => list.length), `${one.name}: each action answered once, echoed or refused`)
         .toEqual(one.actions.map(() => 1));
-      if (outcome.refused) {
-        // Refused, and named for it. Which list it belongs in is the
-        // protocol's answer to whether a client may send what it names: an
-        // action a client may not send is refused before its state is
-        // reached, and one it may send is refused because this host has no
-        // such state, which is a different thing to write down.
-        const why = sendable(one) ? HOST_REFUSED : NOT_REPLAYED;
-        expect(why, `${one.name}: refused, and named for the reason`).toContain(one.name);
-        expect(NOT_REPLAYED, `${one.name}: refused, and in the whole list`).toContain(one.name);
-        return;
+      /*
+       * Every refusal with its reason. One of an action a client may not
+       * originate is the protocol's own rule, read off its map: servers
+       * "reject any action the client is not allowed to originate".
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/common/reducer-helpers.ts#L41-L46
+       */
+      const reasons = outcome.answers.map((list) => list[0]?.rejectionReason);
+      const listed = departs.flatMap((entry) => entry.refused ?? []);
+      const where: Where = { client: `cases-${one.name}`, channel: outcome.channel, session: outcome.session };
+      for (const [at, action] of one.actions.entries()) {
+        const reason = reasons[at];
+        if (reason === undefined || listed.includes(reason)) continue;
+        const type = String(action.type);
+        if (hostOnly(action)) expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
+        else expect((REFUSALS[type] ?? []).map((rule) => rule.said(action, where)), `${one.name}: ${type} refused for a reason a source allows`).toContain(reason);
       }
-      // It ran, so nothing about it may be refused: a client may send every
-      // action it names, and it is in neither list.
-      expect(sendable(one), `${one.name}: ran, so a client may send it`).toBe(true);
-      expect(NOT_REPLAYED, `${one.name}: ran, so it cannot be listed as refused`).not.toContain(one.name);
-      expect(outcome.differs, `${one.name}: the fields the host answers differently`)
-        .toEqual(HOST_OWNS[one.name] ?? []);
-      expect(outcome.watched, `${one.name}: what a client that only watched holds`)
-        .toEqual(HOST_OWNS[one.name] ?? []);
+      expect(listed.filter((reason) => !reasons.includes(reason)), `${one.name}: every refusal named a divergence still happens`).toEqual([]);
+      expect(parted(outcome.view, outcome.reduced), `${one.name}: what a client that only watched holds`).toEqual(keys('reduced'));
+      expect(parted(outcome.served, outcome.view), `${one.name}: what a client subscribing afterwards is served`).toEqual(keys('served'));
     });
   }
 
-  it('names every case it cannot replay, and no other', () => {
-    expect(NOT_REPLAYED).toHaveLength(202);
-    expect(new Set(NOT_REPLAYED).size).toBe(202);
-    expect(HOST_REFUSED).toHaveLength(56);
-    // The rest of the refused cases are the ones a client may not send, and
-    // each of those is checked against the protocol's own answer per case.
-    expect(NOT_REPLAYED.length - HOST_REFUSED.length).toBe(146);
-    expect(Object.keys(HOST_OWNS)).toHaveLength(13);
-    // And 33 that ran and agreed, which need no entry in either list: they are
-    // the coverage this suite is for, and a case joining or leaving them is
-    // what moves this number.
-    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 33).toBe(hostCases.length);
+  it('lists only cases it drives, and names a source for every difference and refusal', () => {
+    const names = new Set(hostCases.map((one) => one.name));
+    for (const [name, entries] of [...Object.entries(DIVERGES), ...Object.entries(ALLOWED)]) {
+      expect(names, `${name} is a case`).toContain(name);
+      for (const entry of entries) expect([entry.reduced, entry.served, entry.refused].some((one) => one !== undefined), `${name} names what differs`).toBe(true);
+    }
+    for (const entries of Object.values(DIVERGES)) {
+      for (const entry of entries) expect(entry.breaks !== '' && entry.row !== '' && entry.by !== '', 'a divergence names its rule, its row and its correction').toBe(true);
+    }
+    for (const entries of Object.values(ALLOWED)) {
+      for (const entry of entries) expect(entry.because, 'an allowed difference quotes the sentence that allows it').toContain('"');
+    }
+    for (const rules of Object.values(REFUSALS)) {
+      for (const rule of rules) expect(rule.source, 'a refusal names its source').not.toBe('');
+    }
   });
 });
 
