@@ -470,6 +470,8 @@ export function createHost(options: HostOptions): Host {
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2971
    */
   const states = new Map<string, HeldState>();
+  /** The channels each client was served a state of that has gone since, by client id. */
+  const lapsed = new Map<string, Set<string>>();
   /**
    * One action through the protocol's reducer for the kind of state it lands
    * on. A type the reducer does not know is said in this host's log, which is
@@ -1176,6 +1178,9 @@ export function createHost(options: HostOptions): Host {
    * still looking at it. The reference host lets a session's state go on the
    * same terms, never while a client is subscribed to it.
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   *
+   * Each client that was served a state let go is owed the state its channel
+   * opens with next, since what it holds is the state let go.
    */
   const statesUnwatched = (channel: string): void => {
     const open = states.get(channel);
@@ -1191,7 +1196,13 @@ export function createHost(options: HostOptions): Host {
         if (connection.watching.has(one) || (alias !== undefined && connection.watching.has(alias))) return;
       }
     }
-    for (const one of its) states.delete(one);
+    for (const one of its) {
+      for (const client of states.get(one)?.baselines ?? []) {
+        const channels = lapsed.get(client) ?? new Set<string>();
+        lapsed.set(client, channels.add(one));
+      }
+      states.delete(one);
+    }
   };
 
   /** Who this session currently has in it. Always a list, because the field is required. */
@@ -1344,12 +1355,13 @@ export function createHost(options: HostOptions): Host {
       const open = states.get(channel);
       if (open !== undefined) return open.state;
       const state = options.opening?.(channel, kind) ?? seed;
-      states.set(channel, { kind, state });
+      states.set(channel, { kind, state, baselines: new Set() });
       return state;
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,
     statesUnwatched,
+    lapsed,
     asleep: new Set<string>(),
   } as HostContext;
   // Before any area is built, because everything a person or a backend does

@@ -72,6 +72,8 @@ interface Knobs {
   status?: number;
   /** What a `close` waits on before it finishes, as an agent slow to exit. */
   exiting?: Promise<void>;
+  /** What a read of the record answers in place of the turns the backend kept. */
+  read?: (turns: Bag[]) => Bag[];
 }
 
 /** The echo backend, with the knobs a case turns. */
@@ -79,6 +81,12 @@ const wrapped = (dir: string, knobs: Knobs): Agent => {
   const base = echo({ path: dir, pace: 0 });
   return {
     ...base,
+    transcript: async (id, at) => {
+      const turns = await base.transcript?.(id, at);
+      return knobs.read === undefined || turns === undefined
+        ? turns
+        : knobs.read(turns as unknown as Bag[]) as unknown as typeof turns;
+    },
     create: (start: Start): Session => {
       const session = base.create(start);
       knobs.starts = (knobs.starts ?? 0) + 1;
@@ -300,6 +308,35 @@ it('keeps a session awake while a client is subscribed to it', async () => {
   await settle();
   expect(await active()).toBe(1);
   expect(knobs.closes).toEqual([]);
+});
+
+it('answers a client back from a drop with the state read again while it was away', async () => {
+  /*
+   * A session asleep holds its state while somebody watches it, and opens
+   * again from its record. A client whose state came from the earlier opening
+   * cannot be replayed onto the one held now: the actions since apply to a
+   * state it never had. The reference answers a client that holds no baseline
+   * from the state the host holds with the state itself.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   */
+  const knobs: Knobs = { closes: [] };
+  const { host, client, time, open } = await serving(knobs);
+  const one = await open('one');
+  const seen = await client.handle({ method: 'subscribe', params: { channel: one.chatUri } }) as { snapshot: { fromSeq: number } };
+  client.close();
+  time.pass(31);
+  await until(() => knobs.closes.length > 0);
+
+  // The record says the turn was stopped, which the client never held.
+  knobs.read = (turns) => turns.map((turn) => ({ ...turn, state: 'cancelled' }));
+  const back = host.accept(peer());
+  const answer = await back.handle({
+    method: 'reconnect',
+    params: { clientId: 'window', lastSeenServerSeq: seen.snapshot.fromSeq, subscriptions: [one.channel, one.chatUri] },
+  }) as { type: string; snapshots?: { resource: string; state: Bag }[] };
+  expect(answer.type).toBe('snapshot');
+  const chat = answer.snapshots?.find((one_) => one_.resource === one.chatUri);
+  expect(((chat?.state.turns ?? []) as Bag[]).map((turn) => turn.state)).toEqual(['cancelled']);
 });
 
 it('sleeps the least recently used quiet session over the count limit', async () => {
