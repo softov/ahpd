@@ -82,6 +82,7 @@ client: draws row.views.main on the plugin's page -> Button -> request { method:
 | The views are a field `views` on the row in `x-ahpd-plugins`, a map from the surface to its view, sent again on each change | (defaulted: the path an alert takes) | 02 |
 | A reload or an unload removes the views | (defaulted: the same as alerts) | 02 |
 | The `text` of a Text and the `label` of a Link are translated at `views.<surface>.<componentId>.<prop>` in the plugin's catalogs | (defaulted: the keys `translate` reads for the title and the form) | 02 |
+| The view's English follows the writing rules of [the-text-a-person-reads-is-plain.md](../../../briefs/the-text-a-person-reads-is-plain.md), and its `pt` and `es` are translated from it | Softov, 2026-10-31, chose "Brief for all plugin text" | 03 |
 | The Dev Tunnel plugin reads its state from `devtunnel show <id> --json`, once at the start and then every 30 seconds | Softov, 2026-10-31, chose "Poll show --json" | 03 |
 | The relay is down when `hostConnections` is 0; the URL is the `portUri` of the tunnel's port | (defaulted: the fields the CLI answers) | 03 |
 | The view also shows the count of connected clients | (defaulted: `show` answers it with no extra call) | 03 |
