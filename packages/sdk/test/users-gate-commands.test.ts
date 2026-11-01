@@ -477,9 +477,11 @@ it('lets a person read their own usage pools, and refuses them another person\'s
    * is what opens those.
    */
   const usage = fileUsage({ folder: join(root, 'usage') });
+  // Now, because `/month` is the month the read happens in.
+  const at = new Date().toISOString();
   for (const [who, pool] of [['ana', 'user:ana'], ['bob', 'user:bob']] as const) {
     await usage.record({
-      at: '2026-10-02T10:00:00.000Z',
+      at,
       kind: 'model',
       source: 'proxy',
       owner: `user:${who}`,
