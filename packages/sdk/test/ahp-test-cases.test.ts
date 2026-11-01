@@ -663,8 +663,9 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
       const where: Where = { client: `cases-${one.name}`, channel: outcome.channel, session: outcome.session };
       for (const [at, action] of one.actions.entries()) {
         const reason = reasons[at];
-        if (reason === undefined || listed.includes(reason)) continue;
         const type = String(action.type);
+        if (hostOnly(action)) expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBeDefined();
+        if (reason === undefined || listed.includes(reason)) continue;
         if (hostOnly(action)) expect(reason, `${one.name}: ${type} refused by the protocol's rule`).toBe(`${type} is this host's to say, not a client's`);
         else expect((REFUSALS[type] ?? []).map((rule) => rule.said(action, where)), `${one.name}: ${type} refused for a reason a source allows`).toContain(reason);
       }
