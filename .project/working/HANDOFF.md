@@ -53,8 +53,8 @@ Current progress and pending items only, as of 2026-11-01.
 
 ## Waiting for Softov
 
-- MayCXC's last `union`, `5af4418d`, holds nine plans after main. It rebuilds the read-state and cancel merges of `fc4fe451`, with the same code. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at `5af4418d`. The full suite passed at `fc4fe451`. The review found four blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. Softov, 2026-11-01: plans first, then the review. No PR yet.
-- For the read-state plan, Softov chose on 2026-11-01 to keep `session/isReadChanged` true marking every counted chat read, as plan host/89 says and VS Code does.
+- MayCXC's last `union`, `5af4418d`, holds nine plans after main. It rebuilds the read-state and cancel merges of `fc4fe451`, with the same code. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at `5af4418d`. The full suite passed at `fc4fe451`. The review, rewritten after MayCXC's agent replied, has three blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. Softov, 2026-11-01: plans first, then the review. No PR yet. MayCXC is fixing the findings and will push a branch; review it when it comes.
+- Softov, 2026-11-01: the read-state plan follows the specification, and a session marked read leaves its chats' bits alone; this replaces host/89's answer. The restart flag becomes a read-only root config value; ahpw and ahpapp follow in their repositories.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).

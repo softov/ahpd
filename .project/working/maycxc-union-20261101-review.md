@@ -4,25 +4,30 @@ title: Review of MayCXC's union at 5af4418d
 
 # Review of MayCXC's `union` at `5af4418d`
 
-Softov's review of the nine plans merged on `union` up to `fc4fe451`, on 2026-11-01. The suite passes on that tree (typecheck, 8092 tests, i18n-check). Each finding below was checked against the code at `fc4fe451`. The last `union`, `5af4418d`, rebuilds the read-state and cancel merges on the held-state branch; against `fc4fe451` it changes only plan records and `agent-cofold-turn.test.ts`, so every finding still holds there. That test file and the case driver pass on `5af4418d`, 685 tests. Fix the blockers and the bug on `union`; the notes can be fixes or follow-up plans, your call.
+Softov's review of the nine plans merged on `union` up to `fc4fe451`, on 2026-11-01. The suite passes on that tree (typecheck, 8092 tests, i18n-check). Each finding below was checked against the code at `fc4fe451`. The last `union`, `5af4418d`, rebuilds the read-state and cancel merges on the held-state branch; against `fc4fe451` it changes only plan records and `agent-cofold-turn.test.ts`, so every finding still holds there. That test file and the case driver pass on `5af4418d`, 685 tests. Fix the three blockers and the bug on `union`; the notes can be fixes or follow-up plans, your call.
 
 ## Blockers
 
 1. **The root state lost `ahpd.restartNeeded`** (host/20261101-0329, the host's state is the reducers' output).
    - On main, `rootFor` puts `'ahpd.restartNeeded': true` in the root state's `_meta` (`packages/sdk/src/host/root.ts`, line 627 on main). On `union` it is only in the handshake `_meta` (`handshake.ts:468`) and the `x-ahpd/restartNeeded` notify.
    - ahpw (`src/bridges/plugins.ts:171`) and ahpapp (`src/useRootConfig.ts:100`) read it from the root state, and read the root again after a change to pick it up. On `union`, neither shows the restart notice after a plugin switch or a daemon key save.
-   - `rootFor` already builds `_meta` per connection (`root.ts:643`), so the mark can go back there with no action. Restore it, and make the two tests that now assert its absence (`root-config.test.ts` "says restartNeeded to every reader...", `plugins-channel.test.ts` "says a restart to every client...") assert it in the root state again.
+   - Do not put it back in `_meta`: no protocol action changes the root's `_meta`, so that would change state outside the reducers again.
+   - Softov, 2026-11-01, chose "A root config value": the host holds a read-only `restartNeeded` value in the root config, like the read-only property at `root.ts:338`, and changes it with `root/configChanged`. ahpw and ahpapp then read the config value; those changes are in their own repositories, after this merges.
+   - Make the two tests that now assert the flag's absence (`root-config.test.ts` "says restartNeeded to every reader...", `plugins-channel.test.ts` "says a restart to every client...") assert the config value and its `root/configChanged`.
 2. **The root's daemon values are read once** (host/20261101-0329).
    - `snapshots.ts:268` calls `ctx.daemonValues()` only when the root is not held yet, and the root is never released.
-   - `packages/server/src/pluginschannel.ts` writes the config when a plugin is enabled, disabled or installed, and sends no `root/configChanged`. The CLI does the same. Every later root snapshot shows the old `plugins.*` values and schema until the daemon restarts. On main, each subscribe read the port again.
-   - Fix: send a `root/configChanged` for each write to the daemon's config that does not come from a client's own `root/configChanged`, or read the port again at each root subscribe. Add a test that switches a plugin through the plugins channel and then reads the root.
+   - `packages/server/src/pluginschannel.ts` writes the config when a plugin is enabled, disabled or installed, and sends no `root/configChanged`. The CLI does the same. Every later root snapshot shows the old `plugins.*` values and schema until the daemon restarts.
+   - Fix: send a `root/configChanged` for each write to the daemon's config that does not come from a client's own `root/configChanged`. Do not read the port again at each subscribe: that brings back the mismatch between a late subscriber and a client that only watched.
+   - Add a test that switches a plugin through the plugins channel and then reads the root.
 3. **The case driver no longer checks that a host-only action is refused** (host/20261101-0207, the protocol cases are the oracle).
    - `packages/sdk/test/ahp-test-cases.test.ts:703` skips every action that got no refusal, so a host-only action the host accepted passes. If `actions.ts` started taking `chat/responsePart` from a client, every case would still pass. The old driver checked `sendable(one)` on the 146 cases it ran.
    - Fix: when `hostOnly(action)` is true, expect `reason` to be defined before the `continue`.
-4. **The read-state plan reverses an answer of Softov's** (host/20261101-0331, a chat's read state is its own).
-   - Plan host/89 records Softov's 2026-10-14 answer "Mark every chat read" for what `session/isReadChanged` true does to unread chats (`.project/plans/host/89-chat-and-session-read-state-stay-in-step/plan.md:62`). This plan removes it, with the specification's "neither action implies the other" as its only source. The 2026-10-15 "Follow the protocol" answer it cites is about when a chat's bit clears, not this.
-   - Softov, 2026-11-01, chose "Keep linking them, like VS Code": `session/isReadChanged` true marks every counted chat read, as plan 89 says and as VS Code's host does (`agentHostStateManager.ts#L2869-L3006`, already in your plan's refs).
-   - Put that one link back. Keep the rest of the plan's per-chat changes. Add an Answers row with Softov's words and the date, and a test for it.
+
+## Read state
+
+- The read-state plan (host/20261101-0331) follows the specification: `session/isReadChanged` changes only the session's bit, and "neither action implies the other" (`chat-channel.md:35-36` in 1.0.0 and on main).
+- Softov, 2026-11-01, chose "Follow the spec". It replaces his 2026-10-14 answer "Mark every chat read" in plan host/89, which went against that sentence.
+- Keep the plan's code. Add an Answers row with Softov's words and the date in place of the specification-only source.
 
 ## Bug
 
@@ -30,6 +35,7 @@ Softov's review of the nine plans merged on `union` up to `fc4fe451`, on 2026-11
   - `chatactions.ts:1821` calls `ctx.owe('chat/toolCallComplete', toolCallId)` before `session.completeToolCall` checks who runs the call. The owed key is the type and the call id only. When the check fails, the refusal goes through `answeredBy`, which deletes that key (`host.ts:835`).
   - Scenario: client A completes call X, and the harness takes the result asynchronously. A second `toolCallComplete` for X arrives before the session says the completion, from A sending twice or from another client. It is refused, the refusal deletes A's entry, and the completion then goes out with no origin, so A's first dispatch is never answered.
   - Fix: call `owe` only after `completeToolCall` returns true. Add a test for the double send.
+  - The cause under it is that an owed answer is keyed by the action's type and id alone, with no channel or session. `ctx.commandTurns` (`spawn.ts:1477`, in *Notes*) has the same flaw, keyed by turn id across chats. Keying both by channel fixes the class.
 
 ## Notes
 
