@@ -1341,8 +1341,9 @@ export function createHost(options: HostOptions): Host {
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
       const open = states.get(channel);
       if (open !== undefined) return open.state;
-      states.set(channel, { kind, state: seed });
-      return seed;
+      const state = options.opening?.(channel, kind) ?? seed;
+      states.set(channel, { kind, state });
+      return state;
     },
     closeState: (channel: string) => { states.delete(channel); },
     heldStates: states as ReadonlyMap<string, HeldState>,

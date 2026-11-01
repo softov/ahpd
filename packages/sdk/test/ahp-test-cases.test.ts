@@ -70,6 +70,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
 function peer(): Peer & { notes: { method: string; params: unknown }[]; closed: boolean } {
@@ -101,8 +102,14 @@ const quiet = async (p: { notes: unknown[] }): Promise<void> => {
 
 beforeEach(() => { sdk.queries.length = 0; });
 
-/** A host, with nothing asked of it yet. */
-const aHost = () => createHost({ path: '/home/softov', agents: [claude({ paths: ['/home/softov'] })] });
+/** A host, with nothing asked of it yet, and the one channel that opens with a state given it. */
+const aHost = (seeded?: { channel: string; initial: Record<string, unknown> }) => createHost({
+  path: '/home/softov',
+  agents: [claude({ paths: ['/home/softov'] })],
+  ...(seeded === undefined ? {} : {
+    opening: (opened: string) => (opened === seeded.channel ? structuredClone(seeded.initial) : undefined),
+  }),
+});
 
 const CASES = join(import.meta.dirname, 'fixtures/ahp-test-cases');
 const filesIn = (where: string): string[] => readdirSync(join(CASES, where)).filter((one) => one.endsWith('.json')).sort();
@@ -249,10 +256,20 @@ const BROKEN = {
     row: 'C12',
     by: '3, the answer',
   },
-  readCoupled: {
-    breaks: 'chat-channel.md: "session/isReadChanged independently changes the owning session\'s read state; neither action implies the other"',
-    row: 'A1',
-    by: '6, read bits independent',
+  reorderRewritten: {
+    breaks: `${ECHOED}; the echo of chat/queuedMessagesReordered carries the order the backend holds in place of the one sent`,
+    row: 'E8',
+    by: '3, the answer',
+  },
+  senderOnly: {
+    breaks: 'subscriptions.md: "Session actions go to all clients subscribed to that session\'s URI." and "Chat actions go to all clients subscribed to that chat\'s URI."; an action the host\'s own records say moves nothing is echoed to its sender alone',
+    row: 'E5',
+    by: '4, one audience',
+  },
+  rootPerConnection: {
+    breaks: 'authentication.md: "Root state is global and visible to all subscribed clients."; the root a connection is served carries a `_meta` and config values of its own',
+    row: 'E46',
+    by: '8, root state is global',
   },
   idleSteering: {
     breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
@@ -333,6 +350,8 @@ interface HostCase extends ReducerCase {
 
 /** The keys a case's answer differs on, by check, or the host's words for a refusal. */
 interface Differs {
+  /** Keys where the state a client watching from the start is served differs from the case's `initial`. */
+  start?: string[];
   /** Keys where a client that only watched holds other than the protocol's reducer makes of what the host accepted. */
   reduced?: string[];
   /** Keys where a client that subscribes afterwards is served other than what that watching client holds. */
@@ -343,6 +362,9 @@ interface Differs {
 
 const turnStartRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten }];
 const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten }];
+const reorderRewritten: (Differs & Broken)[] = [{ reduced: ['queuedMessages'], ...BROKEN.reorderRewritten }];
+const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
+const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
 
 /**
  * Where this host answers a case otherwise than the protocol.
@@ -352,37 +374,61 @@ const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'mo
  * host that stops answering this way fails its case until the entry goes.
  */
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
+  '001-root-agentschanged': rootPerConnection,
+  '002-root-activesessionschanged': rootPerConnection,
   '005-session-turnstarted': turnStartRewritten,
   '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': queuedTurnRewritten,
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': queuedTurnRewritten,
+  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'steeringMessage'], ...BROKEN.echoRewritten }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
+  '015-session-turncancelled-finalizes-turn': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'turns'], ...BROKEN.senderOnly }],
   '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
+  '053-reorders-queued-messages': reorderRewritten,
+  '054-keeps-messages-not-in-order-at-end-in-original-order': reorderRewritten,
+  '055-ignores-unknown-ids-in-reorder': reorderRewritten,
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
-  '072-session-isreadchanged-marks-session-as-unread': [{ reduced: ['chats'], ...BROKEN.readCoupled }],
+  '071-root-terminalschanged': rootPerConnection,
+  '071-session-isreadchanged-marks-session-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
+  '074-session-isarchivedchanged-unarchives-session': [{ reduced: ['status'], ...BROKEN.senderOnly }],
   '075-turnstarted-clears-isread': turnStartRewritten,
+  '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
+  '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
+  '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
+  '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
   '161-chat-turn-lifecycle-on-chat': turnStartRewritten,
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
+  '224-chat-draftchanged-clears-draft': [{ reduced: ['draft'], ...BROKEN.senderOnly }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
   '226-session-customizationtoggled-is-no-op-for-unknown-child-id': [{ refused: ['does-not-exist has no runtime switch'], ...BROKEN.toggleNoOp }],
   '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],
+  '244-session-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
+  '250-chat-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
   '263-session-customizationtoggled-clears-enablement': [{ refused: ['server-a has no runtime switch'], ...BROKEN.toggleNoOp }],
+  '267-session-workingdirectoryreplaced-replaces-and-deduplicates': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
+  '268-session-workingdirectoryreplaced-replaces-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
+  '269-session-workingdirectoryreplaced-replaces-non-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
+  '270-session-workingdirectoryreplaced-deduplicates-earlier-replacement': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
+  '273-chat-isarchivedchanged-unarchives-chat': [{ reduced: ['status'], ...BROKEN.senderOnly }],
+  '286-chat-isreadchanged-marks-default-chat-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
 const CONSUMED = 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."';
+const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
+const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
+const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
 
 /**
  * Where a case's answer differs because the host did what the protocol has it
@@ -399,14 +445,32 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
   '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': [{ reduced: ['activity'], because: THINKING }],
-  '073-session-isarchivedchanged-marks-session-as-archived': [{
-    reduced: ['chats'],
-    because: 'types/channels-chat/actions.ts, chat/isArchivedChanged: "Archiving the session\'s default chat is equivalent to archiving the session"; the default chat\'s row takes the session\'s archived bit',
-  }],
   '075-turnstarted-clears-isread': [{ reduced: ['activity'], because: THINKING }],
   '105-session-input-full-draft-and-complete-flow': [{ reduced: ['activity'], because: THINKING }],
+  '135-session-metachanged-sets-meta': [{
+    start: ['_meta'],
+    because: 'types/channels-session/state.ts, SessionState._meta: "Additional provider-specific metadata for this session."; the host says its own once the session is read',
+  }],
+  '146-session-changesetschanged-clears-catalogue': [{
+    start: ['changesets'],
+    because: 'types/channels-session/state.ts, SessionState.changesets: "Catalogue of changesets the server can produce for this session."; the host says the ones its folder has once the session is read',
+  }],
   '161-chat-turn-lifecycle-on-chat': [{ reduced: ['activity'], because: THINKING }],
+  '232-chat-turnsloaded-prepends-older-turns': [{ start: ['turnsNextCursor'], because: RETAINED }],
+  '233-chat-turnsloaded-dedupes-overlap-and-clears-cursor': [{ start: ['turnsNextCursor'], because: RETAINED }],
+  '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': [{ start: ['turnsNextCursor'], because: RETAINED }],
 };
+
+/**
+ * What a session the driver creates says as it comes up, after its state
+ * opened with the case's `initial` and before the case's first action: the
+ * customizations its backend offers, in place of the case's, and
+ * `session/ready` for a session that starts `creating`.
+ */
+const cameUp = (one: HostCase): (Differs & { because: string })[] => (one.reducer !== 'session' ? [] : [
+  { start: ['customizations'], because: CUSTOMIZED },
+  ...(one.initial.lifecycle === 'ready' ? [] : [{ start: ['lifecycle'], because: READY }]),
+]);
 
 /** Where a refusal happened, in the terms the host's words use. */
 interface Where {
@@ -503,26 +567,39 @@ const parted = (a: Record<string, unknown>, b: Record<string, unknown>): string[
 interface Driven {
   /** For each of the case's actions, the envelopes that carried its origin back to the client that sent it. */
   answers: { rejectionReason?: string }[][];
+  /** What the watching client was served before the case's actions: the case's `initial`, and what the host said on the channel since it opened. */
+  start: Record<string, unknown>;
   /** What a client that only watched holds: its snapshot, and every action it was told of since. */
   view: Record<string, unknown>;
-  /** What the protocol's reducer makes of that same snapshot and the case's actions the host did not refuse. */
+  /**
+   * What the protocol's reducer makes of that start and the actions the host
+   * did not refuse: the case's `expected` when the start is its `initial` and
+   * the host refused nothing.
+   */
   reduced: Record<string, unknown>;
   /** The state a client that subscribes after the actions is served. */
   served: Record<string, unknown>;
 }
 
+/** The cases whose chat is a peer chat of the session, beside its default one: their `initial` titles it "Peer Chat". */
+const PEER_CHATS = new Set(['272-chat-isarchivedchanged-archives-chat', '273-chat-isarchivedchanged-unarchives-chat']);
+
 /**
  * One case, driven through a host of its own.
  *
- * A session and its default chat are opened, and the host is left to go
- * quiet. A second client subscribes and only watches. The first client sends
- * the case's actions on the channel the case names, and a third client
- * subscribes afterwards.
+ * The case's channel opens with the case's `initial`: the root, the session
+ * the driver creates, its default chat, or the peer chat a case names, created
+ * beside it. The host is left to go quiet. A second client subscribes and only
+ * watches. The first client sends the case's actions on that channel, and a
+ * third client subscribes afterwards.
  *
- * The case starts from the host's own state, not the case's `initial`: this
- * host builds its root, session and chat state itself, so there is no state to
- * seed. The protocol's reducer is applied to the state the watching client was
- * served instead, which is the reducer cases' own rule from another start.
+ * The state the watching client is served is held to `initial`, each key the
+ * host said otherwise before the case's first action named. What that client
+ * holds afterwards is held to what the protocol's reducer makes of the state
+ * it was served and the actions the host accepted: the case's `expected`
+ * where it was served `initial` and the host refused nothing, which is the
+ * reducer cases' own rule run through this host.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/reducers.test.ts#L116-L145
  *
  * The clock stands still within each of those steps and moves a minute between
  * them, so a time the host stamps while it applies the actions differs from one
@@ -532,17 +609,18 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
   vi.useFakeTimers({ toFake: ['Date'] });
   try {
     vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
-    const host = aHost();
+    const uri = `ahp-session:/${one.name}`;
+    const peerChat = PEER_CHATS.has(one.name) ? String(one.initial.resource) : undefined;
+    const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : peerChat ?? chatUriFor(uri);
+    const host = aHost({ channel, initial: one.initial });
     const asked = peer();
     const client = host.accept(asked);
     await client.handle({
       method: 'initialize',
       params: { channel: 'ahp-root://', clientId: `cases-${one.name}`, protocolVersions: ['0.9.0'] },
     });
-    const uri = `ahp-session:/${one.name}`;
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    const opened = await stateOf(client, uri) as unknown as { state: { defaultChat: string } };
-    const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : opened.state.defaultChat;
+    if (peerChat !== undefined) await client.handle({ method: 'createChat', params: { channel: uri, chat: peerChat } });
     await stateOf(client, channel);
     await quiet(asked);
     const watched = peer();
@@ -580,7 +658,10 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
     const accepted = sent
       .filter((_, at) => (answers[at] ?? []).every((envelope) => envelope.rejectionReason === undefined))
       .map(({ action }) => action);
-    return { answers, view, reduced: reduced(one.reducer, watching.state, accepted), served: served.state, channel, session: uri };
+    const goal = accepted.length === one.actions.length && parted(watching.state, one.initial).length === 0
+      ? one.expected
+      : reduced(one.reducer, watching.state, accepted);
+    return { answers, start: watching.state, view, reduced: goal, served: served.state, channel, session: uri };
   }
   finally {
     vi.useRealTimers();
@@ -601,7 +682,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
     it(one.name, async () => {
       const outcome = await driven(one);
       const departs = DIVERGES[one.name] ?? [];
-      const keys = (check: 'reduced' | 'served'): string[] => [...departs, ...(ALLOWED[one.name] ?? [])]
+      const keys = (check: 'start' | 'reduced' | 'served'): string[] => [...departs, ...(ALLOWED[one.name] ?? []), ...cameUp(one)]
         .flatMap((entry) => entry[check] ?? []).sort();
       expect(outcome.answers.map((list) => list.length), `${one.name}: each action answered once, echoed or refused`)
         .toEqual(one.actions.map(() => 1));
@@ -623,6 +704,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
         else expect((REFUSALS[type] ?? []).map((rule) => rule.said(action, where)), `${one.name}: ${type} refused for a reason a source allows`).toContain(reason);
       }
       expect(listed.filter((reason) => !reasons.includes(reason)), `${one.name}: every refusal named a divergence still happens`).toEqual([]);
+      expect(parted(outcome.start, one.initial), `${one.name}: where a client watching from the start starts`).toEqual(keys('start'));
       expect(parted(outcome.view, outcome.reduced), `${one.name}: what a client that only watched holds`).toEqual(keys('reduced'));
       expect(parted(outcome.served, outcome.view), `${one.name}: what a client subscribing afterwards is served`).toEqual(keys('served'));
     });
@@ -632,7 +714,7 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
     const names = new Set(hostCases.map((one) => one.name));
     for (const [name, entries] of [...Object.entries(DIVERGES), ...Object.entries(ALLOWED)]) {
       expect(names, `${name} is a case`).toContain(name);
-      for (const entry of entries) expect([entry.reduced, entry.served, entry.refused].some((one) => one !== undefined), `${name} names what differs`).toBe(true);
+      for (const entry of entries) expect([entry.start, entry.reduced, entry.served, entry.refused].some((one) => one !== undefined), `${name} names what differs`).toBe(true);
     }
     for (const entries of Object.values(DIVERGES)) {
       for (const entry of entries) expect(entry.breaks !== '' && entry.row !== '' && entry.by !== '', 'a divergence names its rule, its row and its correction').toBe(true);

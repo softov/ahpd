@@ -733,6 +733,13 @@ export interface HostOptions {
   sessionResidencyLimit?: number;
   /** The clock sleep and wakes read. A test supplies its own so a timeout can be reached without waiting for it. */
   now?(): Date;
+  /**
+   * The state a root, session or chat channel opens with, where the caller
+   * holds one. A channel this answers nothing for opens with the host's own
+   * seed. A test supplies it to start a channel from a protocol case's
+   * `initial`, which is where the protocol's reducer cases start.
+   */
+  opening?(channel: string, kind: 'root' | 'session' | 'chat'): Record<string, unknown> | undefined;
   /** How a timer is armed for sleep and wakes. Handed in for the same reason the clock is. */
   timer?(fire: () => void, ms: number): { cancel(): void };
   /**
