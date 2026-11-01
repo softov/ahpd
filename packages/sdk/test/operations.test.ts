@@ -110,10 +110,11 @@ async function watching(source: ChangesetSource, pace = 0) {
   return { host, client, peer: p, uri, chatUri: 'ahp-chat:/one', changeset, snapshot };
 }
 
+// A refused envelope is left out, as a client leaves it.
 const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .filter((n) => n.method === 'action')
-  .map((n) => (n.params as { channel: string; action: Record<string, unknown> }))
-  .filter((n) => n.channel === channel)
+  .map((n) => (n.params as { channel: string; action: Record<string, unknown>; rejectionReason?: string }))
+  .filter((n) => n.channel === channel && n.rejectionReason === undefined)
   .map((n) => n.action);
 
 const refused = async (run: Promise<unknown>): Promise<{ code: number; message: string; data?: unknown }> => {
