@@ -773,12 +773,10 @@ describe('turning a customization on and off', () => {
     await settle(8);
 
     /*
-     * The Claude CLI's startup is not blocking unless a server says
-     * `alwaysLoad`, and this backend never reports one, so there is no seam on
-     * this session and the action changes nothing. A refusal would tell a
-     * client its request was wrong when nothing was waiting on the server to
-     * begin with; the client is holding the request all the same, so it hears
-     * it back, alone, with nothing moved.
+     * The Claude CLI's startup holds a turn back only on a server that says
+     * `alwaysLoad`, and this backend reports none, so the server is not
+     * blocking and the protocol's reducer changes nothing for the request: its
+     * sender hears it back, alone, with nothing moved.
      */
     expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
     const answered = actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 6);
@@ -815,10 +813,9 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
 
-    // The backend is the only thing that knows whether that server was
-    // blocking, so the host asks it and says nothing of its own. Once: the
-    // host is not the thing that decides, and asking twice would run whatever
-    // the backend does twice.
+    // A backend that has the call is asked first, and one that takes the
+    // request says what follows it, so the host says nothing of its own.
+    // Once: asking twice would run whatever the backend does twice.
     expect(asked).toEqual(['mcp:desk']);
   });
 
