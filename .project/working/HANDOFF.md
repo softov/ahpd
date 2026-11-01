@@ -55,6 +55,7 @@ Current progress and pending items only, as of 2026-11-01.
 
 - MayCXC's last `union`, `5af4418d`, holds nine plans after main. It rebuilds the read-state and cancel merges of `fc4fe451`, with the same code. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at `5af4418d`. The full suite passed at `fc4fe451`. The review, rewritten after MayCXC's agent replied, has three blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. Softov, 2026-11-01: plans first, then the review. No PR yet. MayCXC is fixing the findings and will push a branch; review it when it comes. Blocker 1 (`restartNeeded`) is fixed on `5af4418d` in `5bf47993`, branch `host/20261101-0329-restart-needed-is-config` on origin, pushed for MayCXC to merge into `union`. It is a read-only root config value the host sets with its own `root/configChanged`. `nested-start.test.ts` times out on that tree and on the older union worktree alike. MayCXC's `host/20261101-1556-every-backend-says-its-state-by-actions` (`402d9844`) is not on `5af4418d` and fixes neither blocker 1 nor blocker 2. Softov, 2026-11-01: the union waits for MayCXC's fix branch before it goes to main, through a PR with CI; 1556 stays out. Still open: whether `restartNeeded` stays a root config value (the pushed branch) or ahpw and ahpapp read the handshake and the notification through their transport; the config value adds only a line in VS Code's agent host settings file. MayCXC says ahpw and ahpc cannot clear a session with an unread chat now that marking a session read leaves its chats; Softov handles those fixes.
 - Softov, 2026-11-01: the read-state plan follows the specification, and a session marked read leaves its chats' bits alone; this replaces host/89's answer. The restart flag becomes a read-only root config value; ahpw and ahpapp follow in their repositories.
+- plugin/20261101-1803, a plugin that fails says so: built, PR #181 open, waiting for CI and his merge word. Checks by hand: [pending/plugin-fails-says-so-checks.md](../pending/plugin-fails-says-so-checks.md), on the branch until it merges.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
 - daemon/20261031-0555: [pending/install-path-checks.md](../pending/install-path-checks.md).
@@ -100,7 +101,6 @@ Current progress and pending items only, as of 2026-11-01.
 
 - The VM plan `20261030-1141-a-vm-is-made-on-a-server` has its code merged. It waits on the checks by hand above.
 - container/05 p10 (task 03 next).
-- [plugin/20261101-1803-a-plugin-that-fails-says-so](../plans/plugin/20261101-1803-a-plugin-that-fails-says-so/plan.md), planned: the Dev Tunnel `-p` flag, `listening` and `stopping` for a plugin loaded or unloaded late, and alerts for a failing plugin. Not started.
 - The ahpw Connect button for plugin/71 is ahpw plan plugins/09, planned.
 
 ## Outside this repository
