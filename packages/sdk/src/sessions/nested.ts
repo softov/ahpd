@@ -1152,12 +1152,34 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       await make();
       return await held.subscribe(innerSession);
     });
+    // The title the clients out here were told, before the host inside answers.
+    const toldTitle = session?.title ?? chat?.title ?? 'Nested session';
     session = lead.result.snapshot?.state as SessionState | undefined;
     const named = (session as { defaultChat?: unknown } | undefined)?.defaultChat;
     if (typeof named === 'string' && named !== '') innerChat = named;
     outerOf.set(innerChat, start.chatUri);
     const talk = await held.subscribe(innerChat);
+    const wasChat = chat;
     chat = talk.result.snapshot?.state as ChatState | undefined;
+    /*
+     * What the host inside holds, said to the clients out here where it is not
+     * what they were told: the session's title, and the chat's conversation as
+     * `chat/truncated` then `chat/turnsLoaded`, the actions the reference host
+     * refreshes a chat's persisted history with. A session resumed inside is
+     * one the clients out here opened before its conversation was readable.
+     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+     */
+    if (session?.title !== undefined && session.title !== toldTitle) {
+      start.emit('session', { type: 'session/titleChanged', title: session.title });
+    }
+    const told = wasChat?.turns ?? [];
+    const now = chat?.turns ?? [];
+    if (JSON.stringify(now) !== JSON.stringify(told)) {
+      const cut = told.length > 0 ? served('chat', { type: 'chat/truncated' }) : undefined;
+      if (cut !== undefined) start.emit('chat', cut);
+      const loaded = now.length > 0 ? served('chat', { type: 'chat/turnsLoaded', turns: now }) : undefined;
+      if (loaded !== undefined) start.emit('chat', loaded);
+    }
     void pump(lead.subscription, 'session');
     void pump(talk.subscription, 'chat');
     ready = true;
