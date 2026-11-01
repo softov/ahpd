@@ -194,25 +194,35 @@ session channel. A session never needs to know either URI to do it.
 | customizations | `setCustomizationEnabled`, `startMcpServer`, `stopMcpServer` |
 | the end | `close()` |
 
-Every setter returns false for a value it will not take, and **false is a real
+Every setter refuses a value it will not take, and **a refusal is a real
 answer**: a control that reports success and changes nothing is worse than one
 that refuses, because a client then draws a session in a state it is not in.
 
 ### Config keys
 
-`permissionMode`, `model`, `effortLevel` and `outputStyle` have setters of their
-own, because they mean something to the *host*: it applies a permission mode and
-an output style to every chat in a session, not only the one that was asked.
+Every key a client sets arrives at `setConfig(key, value)`, the keys you publish
+in `schema()` among them. The host reads the schema for how a key behaves, and
+applies a key the schema does not scope to one chat to every chat in the session.
+A backend without `setConfig` takes none of them - and a client draws its
+controls from that schema, so a key that reaches nothing is a control somebody
+moves that changes the session not at all.
 
-Everything else you publish in `schema()` arrives at `setConfig(key, value)`. A
-backend without `setConfig` takes none of them - and a client draws its controls
-from that schema, so a key that reaches nothing is a control somebody moves that
-changes the session not at all.
+`setConfig` answers one of three things:
+
+| answer | means | what every client is told |
+| --- | --- | --- |
+| `true` | taken as it was sent | the key and the value sent |
+| a sentence | refused, in your words | nothing; the sender gets the sentence |
+| an object | taken under keys of your own | the object, which the host also keeps for a restart |
+
+The object is for a client's own name for a setting your schema declares under
+another: Claude takes a client's `mode` as the `permissionMode` it moves, and
+answers `{ permissionMode }`, so the state holds the setting the session runs on.
 
 ```ts
 setConfig: (key, value) => {
-  if (key !== 'ask') return false;
-  if (value !== 'writes' && value !== 'always' && value !== 'never') return false;
+  if (key !== 'ask') return `${key} is not a config key this backend takes`;
+  if (value !== 'writes' && value !== 'always' && value !== 'never') return `ask takes writes, always or never`;
   settings.ask = value;
   return true;
 },

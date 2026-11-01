@@ -425,6 +425,13 @@ export interface TurnOptions {
   instructions?: () => string[];
 }
 
+/**
+ * A backend's answer to one config value: `true` for taken as asked, the
+ * values it was taken as under the backend's own keys, or the refusal in the
+ * backend's words.
+ */
+export type ConfigTaken = true | string | Record<string, unknown>;
+
 /** A live session. */
 export interface Session {
   /** The session channel URI. */
@@ -776,14 +783,21 @@ export interface Session {
    * behaves - whether it can move on a running session, whether it belongs to
    * the session or to one chat - and knows nothing about what any key means.
    *
-   * `true` when it was taken. A string is the refusal, in the backend's own
-   * words, and it is a string rather than `false` because only the backend
-   * knows which of the two things went wrong: a key it does not serve, or a
-   * value it will not take for a key it does. A host that answered both with
-   * one sentence would be telling a client its control does not exist when
-   * the truth is that the value was wrong.
+   * `true` when it was taken as it was asked. A string is the refusal, in the
+   * backend's own words, and it is a string rather than `false` because only
+   * the backend knows which of the two things went wrong: a key it does not
+   * serve, or a value it will not take for a key it does. A host that answered
+   * both with one sentence would be telling a client its control does not
+   * exist when the truth is that the value was wrong.
+   *
+   * The values it was taken as, when the backend took it under keys of its
+   * own: a client's conventional name for a setting the backend's schema
+   * declares under another. Those are what the host says back to every client
+   * and keeps for a restart, so the state holds the setting the backend runs
+   * on, as the reference host takes a client's vocabulary into its own keys.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L585-L597
    */
-  setConfig?(key: string, value: unknown): true | string | Promise<true | string>;
+  setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */
   settings(): Record<string, unknown>;
 

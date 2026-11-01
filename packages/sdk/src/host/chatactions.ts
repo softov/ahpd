@@ -1038,12 +1038,26 @@ export function chatAction(
             .filter((chat) => chat !== session);
         for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
         void Promise.resolve(session.setConfig(key, value)).then((answer) => {
-          // The backend's own words when it refused, because only it
-          // knows whether the key or the value was the problem.
           if (answer === true) {
             remember(key, value);
             dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
           }
+          /*
+           * Taken under the backend's own keys: those are what the session
+           * runs on, so they are what is kept and what every client is told,
+           * the sender's own key with them, as the server's echo wins.
+           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+           */
+          else if (typeof answer === 'object') {
+            undo(key);
+            for (const [taken, held] of Object.entries(answer)) {
+              if (owning !== undefined) owning.config[taken] = held;
+              remember(taken, held);
+            }
+            dispatch(session.uri, { type: 'session/configChanged', config: answer }, origin);
+          }
+          // The backend's own words when it refused, because only it
+          // knows whether the key or the value was the problem.
           else {
             undo(key);
             no(answer);
