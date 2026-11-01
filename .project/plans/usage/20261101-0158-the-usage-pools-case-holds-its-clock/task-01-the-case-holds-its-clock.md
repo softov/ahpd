@@ -1,6 +1,6 @@
 ---
 title: The usage pools case holds its clock
-status: todo
+status: done
 depends: []
 layer: "sdk tests"
 refs:
@@ -31,3 +31,5 @@ The usage pools case reads its records' month on any day, because `Date` is held
 - `pnpm exec vitest run packages/sdk/test/users-gate-commands.test.ts` passes whole.
 
 ## Resume
+
+Done 2026-11-01 in cdbbed1a. Before it, the case failed reading `{}` for the month; after it, all 21 cases in the file pass.

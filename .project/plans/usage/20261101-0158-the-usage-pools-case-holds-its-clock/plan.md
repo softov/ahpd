@@ -1,7 +1,7 @@
 ---
 title: The usage pools case holds its clock
 domain: usage
-status: draft
+status: built
 priority: medium
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -55,7 +55,7 @@ resourceRead usage://team%3Abackend/month -> usageProvider read -> periods(pool)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the case holds its clock](task-01-the-case-holds-its-clock.md) | todo | - |
+| [01 - the case holds its clock](task-01-the-case-holds-its-clock.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -63,12 +63,12 @@ resourceRead usage://team%3Abackend/month -> usageProvider read -> periods(pool)
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-case-holds-its-clock.md](task-01-the-case-holds-its-clock.md).
+- **Done so far:** task 01, 2026-11-01.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the clock is let go in a `finally`, so a failing assertion does not leave it faked for the cases after it.
 
 ## Final verification checklist
 
-- [ ] `pnpm exec vitest run packages/sdk/test/users-gate-commands.test.ts` passes on 2026-11-01, where the case failed before the change.
-- [ ] Every other case in the file passes as before.
+- [x] `pnpm exec vitest run packages/sdk/test/users-gate-commands.test.ts` passes on 2026-11-01, where the case failed before the change.
+- [x] Every other case in the file passes as before.
