@@ -1,6 +1,6 @@
 ---
 title: Negotiation through the host
-status: todo
+status: done
 depends: [01]
 layer: "sdk tests"
 refs:
@@ -31,3 +31,6 @@ Where the host answers otherwise, a divergence entry names the row and the rule 
 - `pnpm exec vitest run packages/sdk/test/ahp-test-cases.test.ts -t "version negotiation"` passes, with the host's departures named.
 
 ## Resume
+
+Done 2026-11-01 in 21bd8d33. The host departs on three rows.
+Row 1 lists `0.10.0` among the versions it speaks and leaves the connection open, and rows 9 and 10 agree on `0.10.0`.

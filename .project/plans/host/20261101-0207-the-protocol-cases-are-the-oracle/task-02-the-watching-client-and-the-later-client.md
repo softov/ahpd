@@ -1,6 +1,6 @@
 ---
 title: The watching client and the later client
-status: todo
+status: done
 depends: [01]
 layer: "sdk tests"
 refs:
@@ -39,3 +39,7 @@ Each place the host does otherwise is a divergence entry naming its keys and the
 - Two runs list the same divergences.
 
 ## Resume
+
+Done 2026-11-01 in 21bd8d33. Seventeen cases differ for the watching client and twenty-two for the later one.
+`ALLOWED` holds the differences the protocol has the host make on its own, each with its sentence.
+The clock is held within each step of a case, which the plan did not know it needed.

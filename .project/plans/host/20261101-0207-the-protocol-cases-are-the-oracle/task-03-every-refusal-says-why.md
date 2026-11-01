@@ -1,6 +1,6 @@
 ---
 title: Every refusal says why
-status: todo
+status: done
 depends: [02]
 layer: "sdk tests"
 refs:
@@ -31,3 +31,6 @@ A refusal the specification does not allow is a divergence entry.
 - `pnpm exec vitest run packages/sdk/test/ahp-test-cases.test.ts` passes, and a changed reason fails its case.
 
 ## Resume
+
+Done 2026-11-01 in 21bd8d33. `REFUSALS` is keyed by action type, and each rule builds the host's words from the action itself.
+Fifteen cases meet a refusal no source allows, and `DIVERGES` names each one.

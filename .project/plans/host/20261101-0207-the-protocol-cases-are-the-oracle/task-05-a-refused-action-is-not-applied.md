@@ -1,6 +1,6 @@
 ---
 title: A refused action is not applied
-status: todo
+status: done
 depends: []
 layer: "sdk tests"
 refs:
@@ -36,3 +36,5 @@ The conformance suite sends only what the protocol declares.
 - `pnpm exec vitest run packages/sdk/test/conformance.test.ts packages/sdk/test/notes.test.ts packages/sdk/test/operations.test.ts` passes.
 
 ## Resume
+
+Done 2026-11-01 in a2d286cb. The notes and operations suites' own dispatches still send no `clientSeq`; see [deferred.md](deferred.md).

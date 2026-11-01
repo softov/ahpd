@@ -1,7 +1,7 @@
 ---
 title: The protocol's cases are the oracle
 domain: host
-status: draft
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -94,11 +94,11 @@ case actions -> dispatchAction from one client -> host -> envelopes
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - one comparison](task-01-one-comparison.md) | todo | - |
-| [02 - the watching client and the later client](task-02-the-watching-client-and-the-later-client.md) | todo | 01 |
-| [03 - every refusal says why](task-03-every-refusal-says-why.md) | todo | 02 |
-| [04 - negotiation through the host](task-04-negotiation-through-the-host.md) | todo | 01 |
-| [05 - a refused action is not applied](task-05-a-refused-action-is-not-applied.md) | todo | - |
+| [01 - one comparison](task-01-one-comparison.md) | done | - |
+| [02 - the watching client and the later client](task-02-the-watching-client-and-the-later-client.md) | done | 01 |
+| [03 - every refusal says why](task-03-every-refusal-says-why.md) | done | 02 |
+| [04 - negotiation through the host](task-04-negotiation-through-the-host.md) | done | 01 |
+| [05 - a refused action is not applied](task-05-a-refused-action-is-not-applied.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -107,14 +107,14 @@ case actions -> dispatchAction from one client -> host -> envelopes
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-one-comparison.md](task-01-one-comparison.md).
+- **Done so far:** tasks 01 to 05, 2026-11-01.
+- **Next action:** none; see [implemented.md](implemented.md) and [deferred.md](deferred.md).
 - **Open questions:** none.
 - **Watch out for:** a divergence entry must name the keys exactly, so a correction that fixes one fails the test until its entry goes.
 
 ## Final verification checklist
 
-- [ ] Every root, session and chat case runs through the host with checks 1 to 4, and the divergence list matches what the host does.
-- [ ] Two runs give the same divergence list.
-- [ ] The conformance, notes and operations suites pass with the refused envelopes left out.
-- [ ] `pnpm run typecheck` exits 0, and the prose lint is clean.
+- [x] Every root, session and chat case runs through the host with checks 1 to 4, and the divergence list matches what the host does.
+- [x] Two runs give the same divergence list.
+- [x] The conformance, notes and operations suites pass with the refused envelopes left out.
+- [x] `pnpm run typecheck` exits 0, and the prose lint is clean.

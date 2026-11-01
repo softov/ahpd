@@ -1,6 +1,6 @@
 ---
 title: One comparison
-status: todo
+status: done
 depends: []
 layer: "sdk tests"
 refs:
@@ -31,3 +31,5 @@ Every comparison in the case driver reads a value the one way the protocol's con
 - `pnpm exec vitest run packages/sdk/test/ahp-test-cases.test.ts -t "reducer cases"` passes all 308 cases.
 
 ## Resume
+
+Done 2026-11-01 in 21bd8d33. `canonical` reads a value through `JSON.parse` with a reviver that drops object members holding `null`. The 308 reducer cases pass under it.
