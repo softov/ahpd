@@ -1,6 +1,6 @@
 ---
 title: pi says its state by actions
-status: todo
+status: done
 depends: []
 layer: "agent-pi"
 refs:
@@ -36,4 +36,4 @@ pi says its thinking level by the field the action declares, a failed steer leav
 
 ## Resume
 
-<Empty until started.>
+Done; [implemented.md](implemented.md) says what was built.

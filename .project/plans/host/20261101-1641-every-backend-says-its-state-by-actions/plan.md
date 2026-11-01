@@ -1,7 +1,7 @@
 ---
 title: Every backend says its state by actions
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -104,11 +104,11 @@ The work list is the backends' plan's [deferred.md](../20261101-1357-backends-sa
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Claude says its state by actions](task-01-claude-says-its-state-by-actions.md) | todo | - |
-| [02 - pi says its state by actions](task-02-pi-says-its-state-by-actions.md) | todo | - |
-| [03 - ACP declares only declared fields](task-03-acp-declares-only-declared-fields.md) | todo | - |
-| [04 - cofold asks on its chat](task-04-cofold-asks-on-its-chat.md) | todo | - |
-| [05 - the nested proxy says the outer names](task-05-the-nested-proxy-says-outer-names.md) | todo | - |
+| [01 - Claude says its state by actions](task-01-claude-says-its-state-by-actions.md) | done | - |
+| [02 - pi says its state by actions](task-02-pi-says-its-state-by-actions.md) | done | - |
+| [03 - ACP declares only declared fields](task-03-acp-declares-only-declared-fields.md) | done | - |
+| [04 - cofold asks on its chat](task-04-cofold-asks-on-its-chat.md) | done | - |
+| [05 - the nested proxy says the outer names](task-05-the-nested-proxy-says-outer-names.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -117,13 +117,13 @@ The work list is the backends' plan's [deferred.md](../20261101-1357-backends-sa
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-claude-says-its-state-by-actions.md](task-01-claude-says-its-state-by-actions.md).
+- **Done so far:** tasks 01 to 05.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a backend action said inside a client's dispatch of the same type is taken as that dispatch's echo.
 
 ## Final verification checklist
 
-- [ ] Each backend's suite and the sdk suite pass, and each changed case failed before its change for its reason.
-- [ ] `undeclaredIn` finds nothing in each backend's frames and snapshots.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.
+- [x] Each backend's suite and the sdk suite pass, and each changed case failed before its change for its reason.
+- [x] `undeclaredIn` finds nothing in each backend's frames and snapshots.
+- [x] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.

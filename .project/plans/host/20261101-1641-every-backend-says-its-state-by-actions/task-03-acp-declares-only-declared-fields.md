@@ -1,6 +1,6 @@
 ---
 title: ACP declares only declared fields
-status: todo
+status: done
 depends: []
 layer: "agent-acp"
 refs:
@@ -30,4 +30,4 @@ An ACP session's state carries only the fields the protocol's types declare.
 
 ## Resume
 
-<Empty until started.>
+Done; [implemented.md](implemented.md) says what was built.

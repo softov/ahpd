@@ -1,6 +1,6 @@
 ---
 title: Claude says its state by actions
-status: todo
+status: done
 depends: []
 layer: "agent-claude, sdk host"
 refs:
@@ -29,6 +29,9 @@ Its state carries no field a type does not declare.
 - `UPDATE: packages/agent-claude/src/session/customizations.ts:278-288` - a prompt's hint goes under `_meta['ahpd.argumentHint']`.
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts:728-745` - the hint is read where the protocol lets a prompt carry one.
 - `UPDATE: docs/sdk/AGENT.md:193-215` - what `setConfig` answers.
+- `UPDATE: packages/sdk/src/types/index.ts:19` - `ConfigTaken` is exported beside `Session`.
+- `UPDATE: packages/agent-claude/src/session/context.ts:208-219` - what `failed` reads into.
+- `UPDATE: docs/sdk/AHP.md:807` - a prompt's hint is where a skill's is.
 
 ## Steps
 
@@ -48,4 +51,5 @@ Its state carries no field a type does not declare.
 
 ## Resume
 
-<Empty until started.>
+Done; [implemented.md](implemented.md) says what was built.
+A stop also ends the stopped session's worker turns, since none of them runs after it.

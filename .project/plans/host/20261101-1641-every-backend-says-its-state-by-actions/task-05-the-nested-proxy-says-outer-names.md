@@ -1,6 +1,6 @@
 ---
 title: The nested proxy says the outer names
-status: todo
+status: done
 depends: []
 layer: "sdk sessions"
 refs:
@@ -17,6 +17,8 @@ It says the inner host's activity as the inner reducer made it.
 - `UPDATE: packages/sdk/src/sessions/nested.ts:1180-1186` - a chat's status is the mirror chat's activity bits.
 - `UPDATE: packages/sdk/src/sessions/nested.ts:1223-1224` - `customizations()` and `allTurns()` answer under the outer names.
 - `UPDATE: packages/sdk/src/sessions/nested.ts:882-906` - inner terminals are relayed and renamed; inner changesets, canvases and lead-chat rows are kept back.
+- `UPDATE: packages/sdk/src/types/terminals.ts:319-322` - an output terminal takes `isPty`.
+- `UPDATE: packages/sdk/src/host/terminals.ts:293-330` - the output terminal's state says it.
 
 ## Steps
 
@@ -34,4 +36,5 @@ It says the inner host's activity as the inner reducer made it.
 
 ## Resume
 
-<Empty until started.>
+Done; [implemented.md](implemented.md) says what was built.
+The output terminal's `isPty` was not in the plan: a copy of a pseudoterminal needs it to say what its text is.

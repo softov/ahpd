@@ -1,6 +1,6 @@
 ---
 title: cofold asks on its chat
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
@@ -15,6 +15,7 @@ So the chat holds the request a client answers.
 ## Files
 
 - `UPDATE: packages/agent-cofold/src/mapping.ts:628-651` - `chat/inputRequested` goes out before the session's entry.
+- `UPDATE: packages/agent-cofold/src/runs.ts:131-137` - the run holds the request from its first announcement.
 
 ## Steps
 
@@ -29,4 +30,5 @@ So the chat holds the request a client answers.
 
 ## Resume
 
-<Empty until started.>
+Done; [implemented.md](implemented.md) says what was built.
+The run holds the request from its first announcement, the chat's or the session's, so a client answering inside either finds it.
