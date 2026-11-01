@@ -1,6 +1,6 @@
 ---
 title: The echo backend says a message's attachments
-status: todo
+status: done
 depends: []
 layer: "examples"
 refs:
@@ -30,4 +30,4 @@ A turn the echo backend starts carries the attachments its message was handed, o
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

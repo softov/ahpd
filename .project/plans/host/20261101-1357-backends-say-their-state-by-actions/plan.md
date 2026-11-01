@@ -1,7 +1,7 @@
 ---
 title: Backends say their state by actions
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -57,22 +57,22 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the echo backend says a message's attachments](task-01-echo-says-a-messages-attachments.md) | todo | - |
-| [02 - a cofold replay says its seed gave way](task-02-a-cofold-replay-says-its-seed-gave-way.md) | todo | - |
-| [03 - the nested proxy says a reopened session](task-03-the-proxy-says-a-reopened-session.md) | todo | - |
+| [01 - the echo backend says a message's attachments](task-01-echo-says-a-messages-attachments.md) | done | - |
+| [02 - a cofold replay says its seed gave way](task-02-a-cofold-replay-says-its-seed-gave-way.md) | done | - |
+| [03 - the nested proxy says a reopened session](task-03-the-proxy-says-a-reopened-session.md) | done | - |
 
 ## Risks and tradeoffs
 
-- A backend change this plan does not name stays at its seed for every client, until its backend says it by its action.
+- A backend change this plan did not name stays at its seed for every client - [deferred.md](deferred.md) lists the ones the audit names.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-echo-says-a-messages-attachments.md](task-01-echo-says-a-messages-attachments.md).
+- **Done so far:** tasks 01 to 03.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a backend's state read after its own action names that change twice; say each change once.
 
 ## Final verification checklist
 
-- [ ] Each backend's suite and the sdk suite pass with the change.
-- [ ] Each case changed failed before its change, for the reason the change names.
+- [x] Each backend's suite and the sdk suite pass with the change.
+- [x] Each case changed failed before its change, for the reason the change names.

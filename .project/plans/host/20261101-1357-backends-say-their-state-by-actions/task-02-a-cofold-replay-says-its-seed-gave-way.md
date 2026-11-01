@@ -1,6 +1,6 @@
 ---
 title: A cofold replay says its seed gave way
-status: todo
+status: done
 depends: []
 layer: "agent-cofold"
 refs:
@@ -29,4 +29,4 @@ A paused cofold run resumed after a restart shows its open turn once, to every c
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

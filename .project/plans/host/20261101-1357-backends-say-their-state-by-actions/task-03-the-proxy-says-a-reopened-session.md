@@ -1,6 +1,6 @@
 ---
 title: The nested proxy says a reopened session
-status: todo
+status: done
 depends: []
 layer: "sdk sessions"
 refs:
@@ -30,4 +30,4 @@ A nested session whose inner host is reopened says the title and the turns it re
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.
