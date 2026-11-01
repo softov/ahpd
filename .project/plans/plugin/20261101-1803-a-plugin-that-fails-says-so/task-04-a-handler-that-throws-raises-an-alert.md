@@ -1,6 +1,6 @@
 ---
 title: A handler that throws raises an alert
-status: todo
+status: implemented
 depends: []
 layer: "sdk, server"
 refs:
@@ -39,3 +39,7 @@ When a plugin's handler throws at an event the daemon raises, the plugin's row g
 - `pnpm --filter @ahpd/sdk test` and `pnpm --filter @ahpd/server test` pass, one at a time.
 
 ## Resume
+
+`eventFailed` is in `applyplugins.ts`, so `run.ts` and `plugin-live.test.ts` use the same function.
+The set's `alert` drops an alert for a plugin it does not hold.
+The alert text does not carry the error message, which can be internal. It says when the plugin failed, and that the ahpd log has the details.

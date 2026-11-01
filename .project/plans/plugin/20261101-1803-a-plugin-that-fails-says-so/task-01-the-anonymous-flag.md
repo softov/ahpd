@@ -1,6 +1,6 @@
 ---
 title: The anonymous flag
-status: todo
+status: implemented
 depends: []
 layer: "tunnel-devtunnel"
 refs:
@@ -29,3 +29,5 @@ With anonymous access on, `prepare` runs `devtunnel access create <id> --anonymo
 - By hand: with anonymous on, start the daemon; the log has no `access create failed` line, and the tunnel URL opens.
 
 ## Resume
+
+`prepare` passes `-p` to `access create`, and the test expects it. `devtunnel access create --help` in CLI 1.0.2094 lists `-p, --port-number`.
