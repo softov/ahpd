@@ -317,8 +317,13 @@ export interface OutputTerminal {
  * to spawn, so nothing here needs one.
  */
 export interface OutputTerminals {
-  /** Open one, on a channel of the host's own, held by the session's chat. */
-  create(options: { title: string; chat: string }): OutputTerminal;
+  /**
+   * Open one, on a channel of the host's own, held by the session's chat.
+   *
+   * `isPty` says the text holds a pseudoterminal's VT sequences, as a copy of
+   * one does; absent, it is plain text.
+   */
+  create(options: { title: string; chat: string; isPty?: boolean }): OutputTerminal;
 }
 
 /**
