@@ -1,7 +1,8 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import { sessionReducer } from '@microsoft/agent-host-protocol';
 import { uriOf } from '@ahpd/sdk';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { resolveNeeds } from '../../sdk/src/machines/machine.js';
@@ -441,6 +442,34 @@ it('says a steering message as it takes it, holds it, and takes it out once pi h
   expect((session.chatState() as Bag).steeringMessage).toBeUndefined();
 });
 
+/*
+ * A steer pi will not take is the steering message's failure, and the turn
+ * runs on in pi, so every client holds it running: the message comes out of
+ * the chat and the reason goes to the log, as the reference drops a steering
+ * message it cannot hand its agent.
+ * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
+ */
+it('keeps the turn running when pi will not take a steer, and takes the message out', async () => {
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const { session, pi, sent } = opened();
+    pi.hold();
+    session.begin('t1', 'hello');
+    await settled();
+    pi.failSteer(new Error('pi is compacting'));
+    expect(session.steer?.('s1', 'actually, stop')).toBe(true);
+    await settled();
+    expect(sent.some((one) => one.action.type === 'chat/error')).toBe(false);
+    expect(sent.filter((one) => one.action.type === 'chat/pendingMessageRemoved').map((one) => one.action))
+      .toEqual([{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }]);
+    expect(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id).toBe('t1');
+    expect(warned.mock.calls.flat().join(' ')).toContain('pi is compacting');
+  }
+  finally {
+    warned.mockRestore();
+  }
+});
+
 it('queues a second message and runs it when the first turn ends', async () => {
   const { session, pi, types } = opened();
   pi.hold();
@@ -506,12 +535,18 @@ it('opens pi under the chat\'s own name, so a second chat is a conversation of i
   expect(pi.opens[0]?.id).toBe(CHAT);
 });
 
-it('reports the level pi moved to as a value in force', async () => {
+it('reports the level pi moved to as a value in force, which a client reduces', async () => {
   const { session, pi, last } = opened();
   session.begin('t1', 'hello');
   await settled();
   pi.raise({ type: 'thinking_level_changed', level: 'high' as never });
-  expect((last('session/configChanged')?.values as Bag).thinkingLevel).toBe('high');
+  // Through the protocol's reducer, which merges the action's `config` into
+  // the values a client holds.
+  const held = sessionReducer(
+    { config: { schema: { type: 'object', properties: {} }, values: {} } } as never,
+    last('session/configChanged') as never,
+  ) as unknown as { config: { values: Bag } };
+  expect(held.config.values.thinkingLevel).toBe('high');
   expect(session.settings().thinkingLevel).toBe('high');
 });
 

@@ -612,7 +612,6 @@ export function piSession(
     type: 'object',
     properties: {
       projectTrust: {
-        scope: 'session',
         type: 'string',
         title: 'Project resources',
         description: "Whether this project's own pi extensions, skills and prompts are loaded.",
@@ -824,7 +823,9 @@ export function piSession(
        */
       case 'thinking_level_changed': {
         settings.thinkingLevel = event.level;
-        emit('session', { type: 'session/configChanged', values: { ...settings } });
+        // `config`, the action's own field, which a reducer merges into the
+        // values every client holds.
+        emit('session', { type: 'session/configChanged', config: { thinkingLevel: event.level } });
         return;
       }
 
@@ -1071,12 +1072,13 @@ export function piSession(
         : {}),
     };
     // No part yet: each is opened when pi starts writing the block it holds.
+    // The fields `ActiveTurn` declares; `finish` gives it the `state` a `Turn`
+    // carries once it ends.
     active = {
       id: turnId,
       startedAt,
       message,
       responseParts: [],
-      state: 'running',
     };
     mapping = {
       turnId,
@@ -1200,7 +1202,7 @@ export function piSession(
       kind: 'toolCall',
       toolCall: { toolCallId, ...started, status: 'running' },
     };
-    active = { id: turnId, startedAt, message, responseParts: [part], state: 'running' };
+    active = { id: turnId, startedAt, message, responseParts: [part] };
     mapping = undefined;
     emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
     emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
@@ -1397,15 +1399,15 @@ export function piSession(
         })
         .then(
           (disposition) => disposition === 'queued',
+          /*
+           * A steer pi would not take is the steering message's failure: the
+           * turn runs on in pi, and a client holds it running. Said in the
+           * log and taken out, as the reference drops a steering message it
+           * cannot hand its agent.
+           * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeSdkPipeline.ts#L449-L474
+           */
           (error: unknown) => {
-            emit('chat', {
-              type: 'chat/error',
-              turnId: String(bag(active).id ?? ''),
-              part: {
-                kind: 'error',
-                error: { errorType: 'turnFailed', message: reason(error) },
-              },
-            });
+            console.warn(`@ahpd/agent-pi: pi did not take the steering message ${id}: ${reason(error)}`);
             return false;
           },
         )
