@@ -14,7 +14,8 @@ import { acpAgent, watchSession } from '../src/index.js';
 import { mapUpdate } from '../src/mapping.js';
 import { MACHINE_KEYS } from '../src/plugin.js';
 import { toolsReachable } from '../src/session/opening.js';
-import type { AcpOptions, AcpTurn } from '../src/types.js';
+import { replayedTurns, turnsOf } from '../src/transcript.js';
+import type { AcpOptions, AcpTurn, WatchedSession } from '../src/types.js';
 
 /*
  * The catalogue, the config schema and a resumed session.
@@ -1161,6 +1162,30 @@ it('reads a loaded session back with its replayed turns ahead of the new one', a
   expect(said(1)).toEqual(['weighing it up', 'we left it for later']);
   expect(said(2)).toEqual(['hello there']);
   expect(turns?.map((one) => one.state)).toEqual(['complete', 'complete', 'complete']);
+});
+
+it('reads a replayed call with no end back as one its turn ended around, and that turn as stopped', () => {
+  /*
+   * A call a replay never says finished was cut off: the protocol's reducer
+   * holds a call still open when its turn ends as cancelled and skipped, and
+   * the reference reads a transcript's call with no result back that way,
+   * with the turn that held it cancelled.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+   */
+  const at = '2026-11-01T00:00:00.000Z';
+  const updates = [
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'read it' } },
+    { sessionUpdate: 'tool_call', toolCallId: 'call-1', title: 'Read a.ts', kind: 'read', status: 'in_progress' },
+    { sessionUpdate: 'user_message_chunk', content: { type: 'text', text: 'and then' } },
+    { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Done.' } },
+  ] as SessionUpdate[];
+  const turns = turnsOf({
+    provider: 'acp', id: 'replayed', cwd: '/tmp', additional: [], title: 'replayed',
+    createdAt: at, modifiedAt: at, held: [], turns: replayedTurns(updates, at),
+  } as unknown as WatchedSession);
+  expect(turns.map((one) => one.state)).toEqual(['cancelled', 'complete']);
+  const call = (turns[0]?.responseParts as Bag[]).find((part) => part.kind === 'toolCall')?.toolCall as Bag | undefined;
+  expect(call).toMatchObject({ toolCallId: 'call-1', status: 'cancelled', reason: 'skipped' });
 });
 
 it('reads a message that arrived in several chunks as one turn', async () => {
