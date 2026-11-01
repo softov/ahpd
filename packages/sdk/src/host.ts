@@ -821,11 +821,20 @@ export function createHost(options: HostOptions): Host {
     owed.delete(owedUnder(channel, action) ?? '');
     return answered.origin;
   };
-  /** The dispatch being applied, answered by `origin` on a road that says so itself. */
+  /**
+   * The dispatch being applied, answered by `origin` on a road that says so
+   * itself, and the answer owed to that dispatch let go of.
+   *
+   * Only an answer owed to `origin`'s own dispatch: a client that sends a
+   * call's result twice is refused the second, under the key the first is
+   * still owed its answer by.
+   */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
     if (applying?.origin === origin) applying.answered = true;
-    owed.delete(owedUnder(channel, action) ?? '');
+    const key = owedUnder(channel, action) ?? '';
+    const held = owed.get(key)?.origin;
+    if (held?.clientId === origin.clientId && held.clientSeq === origin.clientSeq) owed.delete(key);
   };
   /**
    * One state action, to everyone watching that channel.
@@ -1226,7 +1235,7 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    owe: (type: string, name: string) => { if (applying !== undefined) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
+    owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
     answering,
     flushDeltas: deltas.flush,
   } as HostContext;

@@ -1820,7 +1820,6 @@ export function chatAction(
         no('This backend runs no tools on a client\'s behalf');
         break;
       }
-      ctx.owe('chat/toolCallComplete', toolCallId);
       // The blocks go through whole, because a client's tool can answer with
       // an image or a file as readily as a sentence and the backend's harness
       // is the thing that decides which it can take. The joined text is the
@@ -1841,7 +1840,13 @@ export function chatAction(
         ok,
         text: ok ? text : (wrong || text || 'The tool failed'),
         content: content as ClientCallAnswer['content'],
-      })) no(`${toolCallId} is not a call ${clientId} is running here`);
+      })) {
+        no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
+      // Owed once the harness holds the result: a second result for the call
+      // is refused, and the completion still answers the result it took.
+      ctx.owe('chat/toolCallComplete', toolCallId);
       break;
     }
     /*

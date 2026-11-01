@@ -338,7 +338,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * `chat/pendingMessageSet` under the queued message's id, and
    * `chat/toolCallComplete` under the tool call's, each in the chat the
    * dispatch is about, go out carrying the client's origin, however long the
-   * backend takes; nothing else does.
+   * backend takes; nothing else does. A dispatch the backend already said
+   * back owes nothing.
    */
   owe: (type: 'chat/turnStarted' | 'chat/turnCancelled' | 'chat/pendingMessageSet' | 'chat/toolCallComplete', name: string) => void;
   /**
