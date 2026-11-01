@@ -36,6 +36,15 @@ Each place the host answers otherwise is named, with the rule it breaks.
 - Task 02 - the clock stands still within each step of a case and moves a minute between steps. A stamp the host takes in a later step then differs on every run. Two stamps taken in one step are equal under it; see [deferred.md](deferred.md).
 - Task 04 - the package's own negotiation rule is no longer asserted beside the host's answer; the host's answer is what the rows check.
 
+## After Softov's review of 2026-11-01
+
+The review's blocker 3: the driver skipped every action that got no refusal, so a host-only action the host took passed.
+
+- [`code://packages/sdk/test/ahp-test-cases.test.ts`](../../../../packages/sdk/test/ahp-test-cases.test.ts) - a host-only action must have a refusal before the driver reads its reason.
+- With the host echoing a client's `chat/responsePart` as taken, the driver before this change passes all 647 cases.
+- With this change, 8 of those cases fail with "expected undefined to be defined".
+- All 647 pass on the host as it is.
+
 ## Left for later
 
 - Starting a case from its `initial`, and the other waits - see [deferred.md](deferred.md).
