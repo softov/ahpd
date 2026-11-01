@@ -100,6 +100,7 @@ Current progress and pending items only, as of 2026-11-01.
 
 - The VM plan `20261030-1141-a-vm-is-made-on-a-server` has its code merged. It waits on the checks by hand above.
 - container/05 p10 (task 03 next).
+- [plugin/20261101-1803-a-plugin-that-fails-says-so](../plans/plugin/20261101-1803-a-plugin-that-fails-says-so/plan.md), planned: the Dev Tunnel `-p` flag, `listening` and `stopping` for a plugin loaded or unloaded late, and alerts for a failing plugin. Not started. The brief is still untracked in `/github/ahpd`, where another session works; remove it there before that checkout pulls main.
 - The ahpw Connect button for plugin/71 is ahpw plan plugins/09, planned.
 
 ## Outside this repository
