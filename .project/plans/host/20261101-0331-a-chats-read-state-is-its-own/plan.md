@@ -7,6 +7,7 @@ created: 2026-11-01
 revalidated: 2026-11-01
 requires:
   - plans/host/20261101-0207-the-protocol-cases-are-the-oracle/plan.md
+  - plans/host/20261101-0329-the-hosts-state-is-the-reducers-output/plan.md
 refs:
   - git://c7899eff - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36 - `chat/isReadChanged` changes only the addressed chat, `session/isReadChanged` only the session, and \"neither action implies the other\""
@@ -103,7 +104,7 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-01, and the session's mark at a turn's end the same day.
+- **Done so far:** tasks 01 and 02, 2026-11-01, the session's mark at a turn's end the same day, and the build on the held-state plan.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `commandTurns` keeps a `!` command turn's start bit, which its end puts back on the chat alone.
