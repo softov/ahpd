@@ -956,6 +956,11 @@ it('draws every option of its own as a control, and sets each through the server
     sessionMutable: true,
     default: false,
   });
+  // The keys `SessionConfigPropertySchema` declares, and no others: the
+  // session's state is what a host seeds every client with.
+  expect(Object.keys(properties['acp.thinking'] as Bag).sort())
+    .toEqual(['default', 'enum', 'enumLabels', 'sessionMutable', 'title', 'type']);
+  expect(Object.keys(properties['acp.telemetry'] as Bag).sort()).toEqual(['default', 'sessionMutable', 'title', 'type']);
 
   expect(await session.setConfig?.('acp.thinking', 'deep')).toBe(true);
   expect(await session.setConfig?.('acp.telemetry', true)).toBe(true);
