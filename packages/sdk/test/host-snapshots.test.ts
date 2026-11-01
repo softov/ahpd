@@ -707,7 +707,6 @@ describe('the fields a client reads by name', () => {
       params: { channel: second, action: { type: 'chat/isReadChanged', isRead: false } },
     });
     await settle();
-    p.notes.length = 0;
 
     client.handle({
       method: 'dispatchAction',
@@ -717,7 +716,7 @@ describe('the fields a client reads by name', () => {
 
     // On the chat's own channel, which is where the client watching that one
     // chat reduces it.
-    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged')).toBe(true);
+    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged' && e.action.isRead === true)).toBe(true);
     // And on the session channel, which is where a client watching the session
     // reads what each of its chats is doing. `changes` carries the status the
     // protocol says to project, not a chat summary it has no field for.

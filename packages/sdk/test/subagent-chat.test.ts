@@ -734,11 +734,12 @@ async function busyHost() {
   const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
   await ask('subscribe', { channel: lead });
   await settle();
-  /** The session's catalogue row as the root has announced it so far, one change at a time. */
+  /** The session's catalogue row as the root has announced it so far: the row it was added with, then each change. */
   const row = (): Bag[] => wire
     // Published under the name it was created with.
-    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy')
-    .map((one) => one.params.changes as Bag);
+    .filter((one) => (one.method === 'root/sessionAdded' && (one.params.summary as Bag | undefined)?.resource === 'ahp-session:/busy')
+      || (one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy'))
+    .map((one) => (one.method === 'root/sessionAdded' ? one.params.summary : one.params.changes) as Bag);
   /** The activity bits of a status, without the read and archived flags. */
   const activity = (status: unknown): number => Number(status) & 31;
   return { ask, uri, lead, row, activity };
