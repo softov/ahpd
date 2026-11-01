@@ -14,7 +14,8 @@ refs:
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/state-model.md#L149-L152 - read state is scoped to the addressed channel"
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372 - a turn's start clears the chat's `IsRead`"
   - "https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L172-L237 - a turn's end leaves the chat's `IsRead` as it is"
-  - "https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48 - VS Code's host marks a chat unread at a turn's end, except a local command or a rejected request; then a read session, when the chat counts in its read aggregate"
+  - "https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48 - VS Code's host marks a chat unread at a turn's end, except a local command or a rejected request; then a read session, with the session's own action, unless the chat is a tool's or hidden"
+  - "https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070 - `isChatInSessionReadAggregate`: a chat whose origin is not a tool and whose interactivity is not hidden; the others \"retain exact per-chat state without making the session unread\""
   - "https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51 - VS Code's host marks a chat it archives read"
   - "https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2869-L3006 - VS Code's host moves the session's read bit with its chats' and the chats' with the session's"
   - "[code://packages/sdk/src/host/chatactions.ts#L12-L75](../../../../packages/sdk/src/host/chatactions.ts#L12-L75) - `sessionFlag`, which moves the session's chats with a read bit it moves"
@@ -35,7 +36,8 @@ refs:
 A chat's read bit and its session's read bit are independent, as the protocol has them.
 A client that marks a chat read or unread changes that chat alone, and one that marks the session changes the session alone.
 Each action keeps its own summaries in step: the chat's row in its session, and the session's row in the catalogue.
-A turn's start clears its chat's bit and a turn's end marks its chat unread, and neither moves the session's.
+A turn's start clears its chat's bit, and leaves the session's.
+A turn's end marks its chat unread, then a read session unread with the session's own action, unless the chat is a tool's or hidden.
 
 ## Reconnaissance
 
@@ -46,7 +48,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 - `rg -n "sessionFollows|countedChats" packages/sdk/src` - `sessionFollows` runs after a client's chat bit, a chat's archive, a turn's start and a turn's end; `countedChats` serves it and `sessionFlag`.
 - `rg -n "isReadChanged|IsRead" packages/*/src` - no backend moves a read bit; the host's `chatFlag`, `sessionFlag` and `startsRead` are the only writers.
 - VS Code main at `1306698e`: `markUnreadContribution.ts` marks a chat unread at a turn's end, and `chatArchiveContribution.ts` marks an archived chat read.
-- The same host keeps the session's bit as an aggregate of its chats, in `agentHostStateManager.ts` and in the second half of `markUnreadContribution.ts`.
+- The same turn's end then marks a read session unread with `session/isReadChanged`, filtered by the chat's own origin and interactivity.
+- The same host also moves the session's bit with its chats' bits, in `agentHostStateManager.ts`, after a client's read action.
 - The protocol's session reducer keeps `IsRead` through every action but `session/isReadChanged`, an input request included.
 
 ### Runtime path
@@ -72,7 +75,8 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 | `session/isReadChanged` moves the session's bit and its row in the catalogue, and nothing else | [chat-channel.md#L35-L36](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L35-L36); [session-channel.md#L95](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L95) | 01 |
 | A turn's start, a resumed turn and an input request clear the chat's bit, as the chat reducer does | [reducer.ts#L358-L372](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L358-L372) | 01 |
 | A turn's end marks its chat unread, a worker's chat included, and a `!` command turn's end puts back the bit its chat had at its start | [markUnreadContribution.ts#L27-L39](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L39); Softov, 2026-10-15, chose "Follow the protocol" | 01 |
-| A turn's end leaves the session's bit as it is; VS Code's lines 40-48 apply its read aggregate, which the session's aggregation rule leaves out | [session-channel.md#L95](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L95) | 01 |
+| A turn's end, a `!` command's excepted, then marks a read session unread with this host's own `session/isReadChanged`, unless the chat's origin is a tool or its interactivity is hidden | [markUnreadContribution.ts#L27-L48](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48); [sessionState.ts#L2063-L2070](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070) | 01 |
+| A turn's end is neither client action, so the specification's "neither action implies the other" leaves it to the reference; its session mark derives no summary field from a chat | [chat-channel.md#L26-L36](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36); [session-channel.md#L95](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L95) | 01 |
 | A chat archived on its own is marked read, and the session's bit stays as it is | [chatArchiveContribution.ts#L50-L51](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51) | 01 |
 | A new session and a new chat start read | [code://packages/sdk/src/host/lifecycle.ts#L1828-L1829](../../../../packages/sdk/src/host/lifecycle.ts#L1828-L1829) | 01 |
 | The protocol case driver lists no divergence for case 072 | [code://packages/sdk/test/ahp-test-cases.test.ts#L416](../../../../packages/sdk/test/ahp-test-cases.test.ts#L416) | 01 |
@@ -81,7 +85,8 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 
 - **Event flow** - a client's read action and the host's own read marks each move one bit, on the channel the action names.
 - **State flow** - the store keeps one read bit per session and one per chat, and none is computed from another.
-- **Layer responsibilities** - `chatFlag` and `sessionFlag` each move one bit and its summaries; `spawn.ts` marks a chat at a turn's start and end.
+- **Layer responsibilities** - `chatFlag` and `sessionFlag` each move one bit and its summaries.
+- **Turn marks** - `spawn.ts` marks a chat at a turn's start and end, and a session at a turn's end.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/spawn.ts`](../../../../packages/sdk/src/host/spawn.ts)
 
 ## Tasks
@@ -93,12 +98,12 @@ backend turn start or end -> chatFlag on the chat -> sessionFollows -> session/i
 
 ## Risks and tradeoffs
 
-- A client that reads only the session's bit sees no new turn there - each chat's bit in the session's list names the chat.
+- A client that marks only a chat read leaves its session unread - the protocol keeps the two apart, and a client marks the session itself.
 - A session that is unread in the store stays unread until a client marks it - a restart keeps the bits as they were.
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-01.
+- **Done so far:** tasks 01 and 02, 2026-11-01, and the session's mark at a turn's end the same day.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `commandTurns` keeps a `!` command turn's start bit, which its end puts back on the chat alone.

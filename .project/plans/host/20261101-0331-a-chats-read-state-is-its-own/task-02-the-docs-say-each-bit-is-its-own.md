@@ -31,5 +31,6 @@ refs:
 Built 2026-11-01 in `252f8c74`.
 
 - The `session/isReadChanged` row says it marks the session alone, in the protocol's words.
+- The same row says this host sends it at a turn's end, and which chats leave the session's bit as it is.
 - The `chat/isReadChanged` row says this host marks a chat unread as a turn starts and as it ends, and what a `!` command's end does.
 - The grep names one line, in `docs/updates/v0_12.md`: the 0.12 release's note, which records what that release did.
