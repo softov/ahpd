@@ -784,7 +784,8 @@ it('shows the call it is waiting on in its state, and the turn stays in progress
   // entry that awaits one.
   expect(snapshot.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
   // The turn this call belongs to is still running, and the chat's row in the
-  // session says so.
+  // session says so. Without the read bit, which is the person's and not the
+  // turn's.
   const row = snapshot.snapshot.state.chats.find((one) => one.resource === chatUri);
   expect((row?.status ?? 0) & (Status.IsRead - 1)).toBe(Status.InProgress);
 

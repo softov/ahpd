@@ -19,11 +19,10 @@ import type { ConnectionContext, HostContext } from './context.js';
  * on the session's default chat, which archives the session because that chat
  * is what the session's row is.
  *
- * A read bit that moved moves its chats with it. A session marked read marks
- * every counted chat read, and a session marked unread with one counted chat
- * marks that chat unread: with one chat there is no other place the unread
- * conversation can be. With several, which one is new is not the session's
- * to say, and each chat keeps its own bit.
+ * The read bit is the session's alone, as the protocol has it:
+ * "`session/isReadChanged` independently changes the owning session's read
+ * state; neither action implies the other".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
  *
  * An archived bit that moved moves the default chat's with it. The protocol
  * makes archiving the default chat the same act as archiving the session, and
@@ -59,11 +58,6 @@ export function sessionFlag(
       ?? chatUriFor(ctx.nameOf(id));
     chatFlag(ctx, uri, lead, Status.IsArchived, on);
   }
-  if (bit === Status.IsRead) {
-    const counted = countedChats(ctx, uri);
-    if (on) for (const chat of counted) chatFlag(ctx, uri, chat, Status.IsRead, true);
-    else if (counted.length === 1) chatFlag(ctx, uri, counted[0] as string, Status.IsRead, false);
-  }
   if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
   // Unarchived: the tree back before anything wakes the session into it, and
   // the session is no longer one the host archived.
@@ -72,20 +66,6 @@ export function sessionFlag(
     void ctx.restore(uri);
   }
   return true;
-}
-
-/**
- * The chats whose read bits make up their session's.
- *
- * The open chats the store records for the session, so a session that is not
- * running answers as well as one that is. A worker is left out: it is the
- * harness's work inside another chat's call, and a person reads the chat that
- * called it rather than the worker.
- */
-export function countedChats(ctx: HostContext, session: string): string[] {
-  return ctx.recordedChats(idOf(session))
-    .filter((one) => one.origin?.['kind'] !== 'tool' && toolCallOfSubagentChat(one.uri) === undefined)
-    .map((one) => one.uri);
 }
 
 /**
@@ -128,24 +108,6 @@ export function chatFlag(
     ctx.summaryMoved(session);
   }
   return true;
-}
-
-/**
- * The session's read bit, brought into step with one chat's.
- *
- * A counted chat that is unread makes a read session unread. A counted chat
- * that is read makes an unread session read once no counted chat is left
- * unread. A chat that is not counted moves nothing.
- */
-export function sessionFollows(ctx: HostContext, session: string, chat: string): void {
-  const counted = countedChats(ctx, session);
-  if (!counted.includes(chat)) return;
-  const id = idOf(session);
-  const read = (ctx.kept.chatFlags(id, chat) & Status.IsRead) !== 0;
-  const sessionRead = (ctx.kept.flags(id) & Status.IsRead) !== 0;
-  if (read === sessionRead) return;
-  if (read && counted.some((one) => (ctx.kept.chatFlags(id, one) & Status.IsRead) === 0)) return;
-  sessionFlag(ctx, session, Status.IsRead, read, { type: 'session/isReadChanged', isRead: read });
 }
 
 /**
@@ -240,8 +202,10 @@ export function chatAction(
    * one - a chat read back off a disk is a row nothing was recorded for, and
    * the guard below answers for it.
    *
-   * A read bit that moves brings the session's into step with it - see
-   * `sessionFollows`.
+   * A chat's read bit is its own, as the protocol has it: the action "toggles
+   * `SessionStatus.IsRead` only on the addressed `ChatState`; it does not
+   * change the read state of the owning session or sibling chats".
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
    */
   const bitOf = type === 'chat/isReadChanged' ? Status.IsRead
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
@@ -276,10 +240,13 @@ export function chatAction(
       echoTo(connection.peer, channel, action, origin);
       return;
     }
-    if (bitOf === Status.IsRead) sessionFollows(ctx, flagSession, channel);
-    // A chat filed away is read: nobody is going to come back to it for what
-    // is new in it. Taking one back out leaves its read bit as it is.
-    else if (on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel);
+    /*
+     * A chat filed away is read: nobody is going to come back to it for what
+     * is new in it, and the reference host marks it so. Taking one back out
+     * leaves its read bit as it is.
+     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+     */
+    if (bitOf === Status.IsArchived && on) chatFlag(ctx, flagSession, channel, Status.IsRead, true);
     return;
   }
   /*

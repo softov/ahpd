@@ -640,7 +640,9 @@ const statusAtEnd = (p: ReturnType<typeof peer>, uri: string, chatUri: string, t
   // client created the session as.
   const row = p.notes.slice(at + 1).find((n) => n.method === 'root/sessionSummaryChanged'
     && idOf((n.params as { session: string }).session) === idOf(uri));
-  return (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+  const status = (row?.params as { changes: { status?: unknown } } | undefined)?.changes.status;
+  // Without the read bit, which is the person's and not the turn's.
+  return typeof status === 'number' ? status & ~Status.IsRead : status;
 };
 
 it('announces the session idle with the turnComplete that ends its turn', async () => {

@@ -802,9 +802,7 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
-  // The lead turn has ended, which made the session unread; read it again.
-  await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
-  await settle();
+  // The lead turn has ended, and its end marks its own chat alone.
   expect(await readOn(ask, uri)).toBe(true);
   // Its turn's start made the worker unread; read it, so its end has a bit to move.
   await ask('dispatchAction', { channel: worker, action: { type: 'chat/isReadChanged', isRead: true } });
@@ -814,7 +812,6 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   finishWorker();
   await settle();
   expect(await readOn(ask, worker)).toBe(false);
-  // A worker is the harness's work inside the lead's call, and does not count.
   expect(await readOn(ask, uri)).toBe(true);
 });
 
@@ -822,8 +819,6 @@ it('leaves the session read when a worker chat is marked unread', async () => {
   const { ask, uri, lead } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
-  await settle();
-  await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
   await settle();
 
   // Its turn's start made it unread, as a client reduces it; read it first.

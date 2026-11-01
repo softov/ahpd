@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import { checker } from '../../../tools/wire.mjs';
 import { fileSessions } from '../src/sessions/sessions.js';
+import { Status } from '../src/sessions/catalog.js';
 import {
   resetSdk, actions, emit, sdk, settle, running, peer, hello,
 } from './support/host.js';
@@ -40,8 +41,9 @@ describe('driving a turn', () => {
       snapshot: { state: { status: number } };
     };
     // InputNeeded is 24 and carries InProgress. A status that lost it reads
-    // as merely running, and nobody goes to answer it.
-    expect(state.snapshot.state.status).toBe(24);
+    // as merely running, and nobody goes to answer it. Without the read bit,
+    // which is the person's and not the turn's.
+    expect(state.snapshot.state.status & ~Status.IsRead).toBe(24);
 
     client.handle({
       method: 'dispatchAction',
