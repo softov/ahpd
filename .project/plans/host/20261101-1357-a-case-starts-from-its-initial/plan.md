@@ -1,7 +1,7 @@
 ---
 title: A case starts from its initial
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -57,8 +57,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a channel opens with the state it is handed](task-01-a-channel-opens-with-a-given-state.md) | todo | - |
-| [02 - each case starts from its initial](task-02-each-case-starts-from-its-initial.md) | todo | 01 |
+| [01 - a channel opens with the state it is handed](task-01-a-channel-opens-with-a-given-state.md) | done | - |
+| [02 - each case starts from its initial](task-02-each-case-starts-from-its-initial.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -67,12 +67,12 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-channel-opens-with-a-given-state.md](task-01-a-channel-opens-with-a-given-state.md).
+- **Done so far:** tasks 01 and 02.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a session the driver creates says its customizations and `session/ready` after its state opens.
 
 ## Final verification checklist
 
-- [ ] `ahp-test-cases.test.ts` passes, and each new entry failed before it was written.
-- [ ] The oracle plan's [deferred.md](../20261101-0207-the-protocol-cases-are-the-oracle/deferred.md) lists only what still waits.
+- [x] `ahp-test-cases.test.ts` passes, and each new entry failed before it was written.
+- [x] The oracle plan's [deferred.md](../20261101-0207-the-protocol-cases-are-the-oracle/deferred.md) lists only what still waits.

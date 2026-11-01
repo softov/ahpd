@@ -1,6 +1,6 @@
 ---
 title: A channel opens with the state it is handed
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -29,4 +29,4 @@ A host handed `opening` opens a root, session or chat channel with the state it 
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

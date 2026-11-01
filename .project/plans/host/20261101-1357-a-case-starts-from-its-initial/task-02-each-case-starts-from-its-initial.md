@@ -1,6 +1,6 @@
 ---
 title: Each case starts from its initial
-status: todo
+status: done
 depends: [01]
 layer: "sdk tests"
 refs:
@@ -33,4 +33,4 @@ Each case's channel opens with its `initial`, and the oracle names every key the
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.
