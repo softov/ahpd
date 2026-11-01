@@ -1,6 +1,6 @@
 ---
 title: A watching subscriber holds what each case expects
-status: planned
+status: done
 depends: []
 layer: host
 refs:

@@ -1,6 +1,6 @@
 ---
 title: The default chat's archive is said to every subscriber
-status: planned
+status: done
 depends: [01]
 layer: host
 refs:

@@ -1,7 +1,7 @@
 ---
 title: An action that changes state is said to every subscriber
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -55,9 +55,9 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A watching subscriber holds what each case expects](task-01-a-watching-subscriber-holds-what-each-case-expects.md) | planned | - |
-| [02 - The default chat's archive is said to every subscriber](task-02-the-default-chats-archive-is-said-to-every-subscriber.md) | planned | 01 |
-| [03 - A declined background request is said and restored](task-03-a-declined-background-request-is-said-and-restored.md) | planned | - |
+| [01 - A watching subscriber holds what each case expects](task-01-a-watching-subscriber-holds-what-each-case-expects.md) | done | - |
+| [02 - The default chat's archive is said to every subscriber](task-02-the-default-chats-archive-is-said-to-every-subscriber.md) | done | 01 |
+| [03 - A declined background request is said and restored](task-03-a-declined-background-request-is-said-and-restored.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -65,13 +65,13 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-01.
-- **Next action:** task 01.
+- **Done so far:** planned and built 2026-11-01. See [implemented.md](implemented.md).
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a host action said inside a client's dispatch carries no origin when its type differs from the client's; one of the same type would take it.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `5da31824` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors.
+- [x] Each new case fails on `5da31824` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors.
