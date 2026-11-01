@@ -171,6 +171,35 @@ describe('a command typed into the conversation', () => {
     }
   });
 
+  it('leaves each chat read when two chats run a command turn of the same id', async () => {
+    // A client names its own turns, so two chats can each run turn `t1` at
+    // once. The short one ends first, and the long one still ends as a
+    // command turn of its own chat.
+    const { client, peer: p, uri, chatUri } = await shelled();
+    const other = 'ahp-session:/banged-too';
+    await client.handle({ method: 'createSession', params: { channel: other, provider: 'claude', workingDirectories: [uriOf(tmpdir())] } });
+    const otherChat = (await client.handle({ method: 'subscribe', params: { channel: other } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: otherChat } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!sleep 0.5; echo long' } } },
+    });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: otherChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: '!echo short' } } },
+    });
+    await ended(p, otherChat);
+    await ended(p, chatUri);
+    for (const channel of [uri, chatUri, other, otherChat]) {
+      const state = (await client.handle({ method: 'subscribe', params: { channel } }) as {
+        snapshot: { state: { status: number } };
+      }).snapshot.state;
+      expect([channel, state.status & 32]).toEqual([channel, 32]);
+    }
+  });
+
   it('says a command failed when it did', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({

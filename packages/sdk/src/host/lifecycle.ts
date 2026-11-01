@@ -13,7 +13,7 @@ import { openLink } from '../tools/session.js';
 import { readCreatedBy, readOrigin } from '../sessions/remotesession.js';
 import { BANG, HOSTS_OWN } from './common.js';
 import { BINDINGS_KEY, checkBindings } from '../connectors/bindings.js';
-import { startsRead } from './chatactions.js';
+import { commandTurnKey, startsRead } from './chatactions.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
 import type { Session, MessageAttachment, MessageFrom } from '../types/session.js';
@@ -1391,7 +1391,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         forgetKeys(queuedAs ?? turnId);
         return `${provider} cannot run a command in a turn; use a terminal instead`;
       }
-      ctx.commandTurns.set(queuedAs ?? turnId, false);
+      ctx.commandTurns.set(commandTurnKey(session.chatUri, queuedAs ?? turnId), false);
       const first = session.workingDirectories()[0];
       const where = first === undefined ? options.path : localPath(first);
       session.ran(turnId, command, (toolCallId, opened) => ctx.commanded(command, where, {

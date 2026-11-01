@@ -141,6 +141,15 @@ export function startsRead(ctx: HostContext, session: string, chat: string): voi
 }
 
 /**
+ * The key a `!` command's turn is held under in `commandTurns`: its chat, then
+ * the turn's id.
+ *
+ * A client names its own turns, so two chats can each run a turn of the same
+ * id at once, and one chat's command turn says nothing about the other's.
+ */
+export const commandTurnKey = (chat: string, turn: string): string => `${chat}\u0000${turn}`;
+
+/**
  * A session's and a chat's actions.
  *
  * The part of a dispatch that needs the session the action is about: a

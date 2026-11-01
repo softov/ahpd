@@ -16,7 +16,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
 import { chatUriFor, subagentChatUri } from './channels.js';
 import { CLOSING } from './common.js';
-import { chatFlag, sessionFollows, startsRead } from './chatactions.js';
+import { chatFlag, commandTurnKey, sessionFollows, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
 import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
@@ -1202,7 +1202,7 @@ export function createSpawn(ctx: HostContext): Spawn {
        * the refusal goes to the client that sent it.
        */
       handed: (action) => {
-        const at = ctx.answering(action);
+        const at = ctx.answering(chatUri, action);
         if (at === undefined) return undefined;
         const handed: Handed = {
           refuse: (reason) => {
@@ -1260,7 +1260,7 @@ export function createSpawn(ctx: HostContext): Spawn {
           moveKeys(action.queuedMessageId, turn);
           if (action.queuedMessageId !== turn) forgetSender(action.queuedMessageId);
           // And a command waiting its turn is a command turn once it runs.
-          if (ctx.commandTurns.delete(action.queuedMessageId)) ctx.commandTurns.set(turn, false);
+          if (ctx.commandTurns.delete(commandTurnKey(chatUri, action.queuedMessageId))) ctx.commandTurns.set(commandTurnKey(chatUri, turn), false);
         }
         // A turn the chat began, under its own id: the id a read after a
         // restart holds it by, unless the backend says it wrote it otherwise.
@@ -1480,22 +1480,23 @@ export function createSpawn(ctx: HostContext): Spawn {
          * A chat its session no longer holds is left as it is: there is no
          * row left to mark.
          */
+        const commandKey = commandTurnKey(chatUri, turn);
         if (moved !== undefined && clearsRead(action.type)) {
-          if (action.type === 'chat/turnStarted' && ctx.commandTurns.has(turn)) {
-            ctx.commandTurns.set(turn, (ctx.kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0);
+          if (action.type === 'chat/turnStarted' && ctx.commandTurns.has(commandKey)) {
+            ctx.commandTurns.set(commandKey, (ctx.kept.chatFlags(idOf(uri), chatUri) & Status.IsRead) !== 0);
           }
           if (chatFlag(ctx, uri, chatUri, Status.IsRead, false)) sessionFollows(ctx, uri, chatUri);
         }
         if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
-          const wasRead = ctx.commandTurns.get(turn) === true;
+          const wasRead = ctx.commandTurns.get(commandKey) === true;
           /*
            * A `!` command's turn is the host's, so no transcript holds it: the
            * host keeps it for its chat, as the reference keeps a local turn
            * once the turn has completed.
            * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L224
            */
-          if (moved !== undefined && ctx.commandTurns.has(turn)) ctx.keepLocalTurn(uri, chatUri, moved.allTurns(), turn);
-          ctx.commandTurns.delete(turn);
+          if (moved !== undefined && ctx.commandTurns.has(commandKey)) ctx.keepLocalTurn(uri, chatUri, moved.allTurns(), turn);
+          ctx.commandTurns.delete(commandKey);
           if (moved !== undefined && chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead)) sessionFollows(ctx, uri, chatUri);
         }
         // A turn starting or finishing moves the catalogue too, and a client
