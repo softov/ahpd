@@ -1337,6 +1337,7 @@ export function createHost(options: HostOptions): Host {
     dispatch,
     owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
     answering,
+    unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {

@@ -142,6 +142,11 @@ export interface Dispatched {
   channel: string;
   action: Record<string, unknown>;
   origin: Origin;
+  /**
+   * Set once a backend has taken the dispatch through `Start.handed`, to say
+   * its answer later.
+   */
+  taken?: true;
 }
 
 /** What a name this host holds is. */

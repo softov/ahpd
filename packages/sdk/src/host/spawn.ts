@@ -1171,11 +1171,13 @@ export function createSpawn(ctx: HostContext): Spawn {
       /*
        * The client's action `action` answers, held for the backend that
        * answers it later. The origin stays with this host, in `handedFrom`, and
-       * the refusal goes to the client that sent it.
+       * the refusal goes to the client that sent it. The dispatch is marked
+       * taken, so the host leaves its answer to the backend.
        */
       handed: (action) => {
         const at = ctx.answering(chatUri, action);
         if (at === undefined) return undefined;
+        at.taken = true;
         const handed: Handed = {
           refuse: (reason) => {
             ctx.refuse(at.peer, at.channel, at.action, at.origin, reason);

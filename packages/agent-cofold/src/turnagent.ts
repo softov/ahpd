@@ -407,10 +407,8 @@ export const createTurnAgent = (
     needed,
     methods: {
       /**
-       * The client running a tool call, for a call that is one client's to run.
-       *
-       * Nothing for a call this host is running itself, which is what the host
-       * checks before letting a client stream into one.
+       * The client running a tool call, for a call that is one client's to
+       * run, and nothing for a call this backend runs itself.
        */
       toolCallOwner: (toolCallId) => calls.owner(toolCallId),
 

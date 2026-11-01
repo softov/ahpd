@@ -351,6 +351,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
   /**
+   * Whether the dispatch being applied still has no answer: nothing has said
+   * it back or refused it, and no backend has taken it to answer later.
+   *
+   * What the host reads after handing a client's action to a backend, so an
+   * action the held state accepts and the backend has nothing to say for is
+   * said back by the host, and every client reduces it.
+   */
+  unanswered: () => boolean;
+  /**
    * Send every streamed delta still held in the window, oldest first.
    *
    * A held delta has no sequence number yet, so anything answering a client
