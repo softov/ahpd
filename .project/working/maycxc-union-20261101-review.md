@@ -1,10 +1,10 @@
 ---
-title: Review of MayCXC's union at fc4fe451
+title: Review of MayCXC's union at 5af4418d
 ---
 
-# Review of MayCXC's `union` at `fc4fe451`
+# Review of MayCXC's `union` at `5af4418d`
 
-Softov's review of the nine plans merged on `union` up to `fc4fe451`, on 2026-11-01. The suite passes on that tree (typecheck, 8092 tests, i18n-check). Each finding below was checked against the code at `fc4fe451`. Fix the blockers and the bug on `union`; the notes can be fixes or follow-up plans, your call.
+Softov's review of the nine plans merged on `union` up to `fc4fe451`, on 2026-11-01. The suite passes on that tree (typecheck, 8092 tests, i18n-check). Each finding below was checked against the code at `fc4fe451`. The last `union`, `5af4418d`, rebuilds the read-state and cancel merges on the held-state branch; against `fc4fe451` it changes only plan records and `agent-cofold-turn.test.ts`, so every finding still holds there. That test file and the case driver pass on `5af4418d`, 685 tests. Fix the blockers and the bug on `union`; the notes can be fixes or follow-up plans, your call.
 
 ## Blockers
 

@@ -53,7 +53,7 @@ Current progress and pending items only, as of 2026-11-01.
 
 ## Waiting for Softov
 
-- MayCXC's `union` at `fc4fe451` holds nine plans after main. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at that tip, and its suite passes. The review found four blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. MayCXC is still working on `union`, with two more branches to come. Softov, 2026-11-01: plans first, then the review. No PR yet.
+- MayCXC's last `union`, `5af4418d`, holds nine plans after main. It rebuilds the read-state and cancel merges of `fc4fe451`, with the same code. The branch `host/20261101-0329-maycxc-union` in the worktree `review-maycxc-20261101` is at `5af4418d`. The full suite passed at `fc4fe451`. The review found four blockers and a bug: [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md), the text Softov sends to MayCXC's agent. Softov, 2026-11-01: plans first, then the review. No PR yet.
 - For the read-state plan, Softov chose on 2026-11-01 to keep `session/isReadChanged` true marking every counted chat read, as plan host/89 says and VS Code does.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
 - claude/20261031-0258: [pending/claude-reload-checks.md](../pending/claude-reload-checks.md).
