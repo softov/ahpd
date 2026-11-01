@@ -854,9 +854,9 @@ export interface RootConfigAnswer {
   /**
    * Whether the change cannot apply while this process runs.
    *
-   * True puts `_meta["ahpd.restartNeeded"]` on every root state until the
-   * daemon restarts, which is what a client reads to know a setting it just
-   * wrote is not in force yet.
+   * True marks the host until the daemon restarts, which is what a client
+   * reads to know a setting it just wrote is not in force yet: see
+   * `markRestartNeeded`.
    */
   restartNeeded?: boolean;
 }
@@ -1452,13 +1452,13 @@ export interface Host {
   /**
    * Say that a restart is what puts the configuration in force.
    *
-   * From here on every root state carries `_meta["ahpd.restartNeeded"]`: for
-   * every connection, and for one that subscribes afterwards. It lives only in
-   * memory, so a restarted daemon starts without it.
-   *
    * A connection watching the root is sent `x-ahpd/restartNeeded` with
-   * `{ channel: "ahp-root://" }` as it is set, so it does not have to read the
-   * state again; a second call sends nothing, because the mark is the same fact
+   * `{ channel: "ahp-root://" }` as it is set, and so is one that subscribes to
+   * the root or comes back to it afterwards. A connection that arrives
+   * afterwards reads `_meta["ahpd.restartNeeded"]` on its `initialize`
+   * answer. No root action carries `_meta`, so the mark is no part of the
+   * root's state. It lives only in memory, so a restarted daemon starts
+   * without it, and a second call sends nothing: the mark is the same fact
    * said once.
    */
   markRestartNeeded(): void;

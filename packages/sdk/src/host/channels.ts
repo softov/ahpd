@@ -6,6 +6,16 @@ import type { Owner } from '../types/usage.js';
 
 export const ROOT = 'ahp-root://';
 /**
+ * The notification that says a configuration change waits for a restart.
+ *
+ * An `x-ahpd` extension: no root action carries `_meta`, so the mark is no
+ * part of the root's state. It goes to every connection watching the root as
+ * it is set, and to one that subscribes to the root or comes back to it after;
+ * the handshake says it as `ahpd.restartNeeded` in its own `_meta`. A client
+ * that does not know the name ignores it.
+ */
+export const RESTART_NEEDED = 'x-ahpd/restartNeeded';
+/**
  * Whether a channel is the root, in either spelling.
  *
  * `ahp-root://` is the protocol's, and `ahp-root:` is the same URI after a

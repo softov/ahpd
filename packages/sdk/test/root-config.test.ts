@@ -159,7 +159,13 @@ function served(withDaemon = true) {
     await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
     return { client, heard };
   };
-  return { signedIn, asRoot, rootOf, heardOnRoot, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
+  /** What a new connection is told on its handshake's `_meta`. */
+  const handshakeOf = async (clientId: string): Promise<Record<string, unknown>> => {
+    const client = host.accept(peer());
+    const answer = await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'] } }) as { _meta?: Record<string, unknown> };
+    return answer._meta ?? {};
+  };
+  return { signedIn, asRoot, rootOf, heardOnRoot, handshakeOf, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
 }
 
 it('shows the daemon its keys beside the host own, and nobody else', async () => {
@@ -862,10 +868,13 @@ it('asks the daemon for its key alone when an undeclared key is beside it', asyn
   ]);
 });
 
-it('answers restartNeeded in the _meta of every root state, and only once asked', async () => {
-  const { signedIn, rootOf, answerRestart } = served();
+it('says restartNeeded to every reader of the root and to every connection after it, once asked, and keeps it out of the root state', async () => {
+  const { signedIn, rootOf, handshakeOf, answerRestart } = served();
   const admin = await signedIn('admin', 'admin');
   const member = await signedIn('member', 'member');
+  const told = (heard: { notes: { method: string; params: unknown }[] }): unknown[] =>
+    heard.notes.filter((one) => one.method === 'x-ahpd/restartNeeded').map((one) => one.params);
+  expect((await handshakeOf('before'))['ahpd.restartNeeded']).toBeUndefined();
   // The principal is the only thing about the host's own state in there yet:
   // nobody has asked for a restart, and the notice is the whole of what this is
   // about. What the host says about itself to everybody - `ahpd.grants`, the
@@ -879,6 +888,7 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
     return rest;
   };
   expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.principal': 'user:ana' });
+  expect(told(admin.heard)).toEqual([]);
 
   answerRestart(true);
   await admin.client.handle({
@@ -887,10 +897,15 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
   });
   await settle();
   // Held until the daemon restarts, and said to whoever reads the root, so a
-  // member sees the notice without seeing the keys it is about - and each
-  // snapshot names the person it was built for rather than the host's.
-  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:ana' });
-  expect(apart((await rootOf(member.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:bo' });
+  // member hears the notice without seeing the keys it is about. No root
+  // action carries `_meta`, so the root's state carries no mark, and each
+  // snapshot names the person it was built for.
+  expect(told(admin.heard)).toEqual([{ channel: ROOT }]);
+  expect(told(member.heard)).toEqual([{ channel: ROOT }]);
+  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.principal': 'user:ana' });
+  expect(apart((await rootOf(member.client))._meta)).toEqual({ 'ahpd.principal': 'user:bo' });
+  // A connection that arrives afterwards reads it on its handshake.
+  expect((await handshakeOf('after'))['ahpd.restartNeeded']).toBe(true);
 });
 
 it('gives a running session the advanced tools as soon as the daemon key is written', async () => {

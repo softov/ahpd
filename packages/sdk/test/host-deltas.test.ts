@@ -142,14 +142,14 @@ describe('a streamed delta', () => {
     expect(deltas(p, chatUri)).toEqual(['a', 'b', 'c']);
   });
 
-  it('is not written twice into a client whose snapshot read awaited', async () => {
+  it('is written once into a client whose snapshot read awaited', async () => {
     sdk.sessions.push({ sessionId: 'older', summary: 'Older', lastModified: 1, cwd: DIR });
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'earlier' } });
     /*
-     * A backend whose worker list this test finishes itself, so a delta can
-     * arrive while the snapshot is out. A resumed session is what reads it:
-     * the workers of the session's own transcript, listed beside the live
-     * ones, and nothing can list them until the backend has answered.
+     * A backend whose worker list this test finishes itself, so a snapshot
+     * read is out while the session resumes. A resumed session is what reads
+     * it: the workers of the session's own transcript, read before its chats
+     * open, and nothing can list them until the backend has answered.
      */
     const workers = deferred<undefined>();
     const host = createHost({
@@ -170,35 +170,37 @@ describe('a streamed delta', () => {
       params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle(6);
-    await emit(
-      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
-      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
-    );
 
     const latePeer = peer();
     const late = host.accept(latePeer);
     await late.handle(hello(['0.9.0']));
-    // Parked in the backend's answer, so the delta below lands while it waits.
+    // Parked in the backend's answer, which the resume waits on as well.
     const reading = late.handle({ method: 'subscribe', params: { channel: chatUri } }) as Promise<{
       snapshot: { state: { activeTurn?: { responseParts?: { content?: unknown }[] } }; fromSeq: number };
     }>;
     await settle();
-    await emit(said('held'));
     workers.finish(undefined);
+    await settle(6);
+    // A word the window holds while the snapshot is answered.
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      { type: 'stream_event', event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } } },
+      said('held'),
+    );
     const { snapshot } = await reading;
+    await emit(said(' more'));
     // Whatever was held has left by now, and this client has been watching
     // since the snapshot, so anything sent from here it would draw.
     await pastWindow();
 
     /*
-     * The words once. The state holds them, because the backend wrote them
-     * into the part before it emitted the action - so the action has to sit at
-     * or below `fromSeq`, where no client replaying what it missed is handed
-     * it again.
+     * The words once: what the snapshot holds, and every delta after its
+     * `fromSeq`, are the text the backend wrote, with nothing said twice.
      */
-    const arrived = actions(latePeer, chatUri);
-    expect(inSnapshot(snapshot.state)).toBe('held');
-    expect(arrived.filter((one) => one.serverSeq > snapshot.fromSeq)).toEqual([]);
+    const later = actions(latePeer, chatUri)
+      .filter((one) => one.serverSeq > snapshot.fromSeq && one.action.type === 'chat/delta')
+      .map((one) => String(one.action.content ?? ''));
+    expect(inSnapshot(snapshot.state) + later.join('')).toBe('held more');
   });
 });
 

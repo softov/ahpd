@@ -214,6 +214,16 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     const touched = new Set<string>();
     for (const one of [...held.values()]) {
       if (one.by !== by) continue;
+      /*
+       * The plugin that drew it is going, so its source is: the canvas's own
+       * channel is told so before the canvas goes, as the protocol has a host
+       * clear `url` when the provider becomes unavailable.
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-canvas/state.ts#L48-L50
+       */
+      if (one.state.url !== undefined) {
+        const { url: _url, ...left } = one.state;
+        ctx.dispatch(one.resource, { type: 'canvas/stateChanged', canvas: left });
+      }
       drop(one);
       touched.add(one.chat);
     }

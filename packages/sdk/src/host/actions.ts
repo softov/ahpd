@@ -379,6 +379,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         const echoConfig = { ...config, ...said };
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
+         * A `replace` keeps what is not the pusher's to clear: the daemon's
+         * values and every backend's account stay where they are, so the echo
+         * carries them, and the root's state a client reduces from it is the
+         * one this host holds. The reference host keeps its provider-backed
+         * values in a replace the same way.
+         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
+         */
+        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
+        /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client
          * watching the root learns of it only from here.
@@ -391,7 +400,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * sent them, so a value the port holds back is not carried to the
          * second admin by the echo.
          */
-        dispatch(ROOT, { ...action, config: echoConfig }, origin);
+        dispatch(ROOT, { ...action, config: echoed }, origin);
       };
       /*
        * The daemon's keys, which are not this host's to keep.

@@ -2092,7 +2092,7 @@ describe('a client\'s call, held by the backend', () => {
     }]);
   });
 
-  it('keeps the session in progress while the call is out, not waiting on a person', async () => {
+  it('leaves the session not waiting on a person while the call is out', async () => {
     const { held, clients, uri, chatUri } = await open(['a']);
     const { calls } = held();
     const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
@@ -2101,7 +2101,9 @@ describe('a client\'s call, held by the backend', () => {
     const held_ = await state(clients[0] as Client, uri);
     const entry = (held_.inputNeeded ?? []).find((one) => one.id === id);
     expect(entry).toBeDefined();
-    expect(held_.status).toBe(IN_PROGRESS | 32);
+    // The session's own status is its reducer's, which the entry does not
+    // move: idle and read, as it opened.
+    expect(held_.status).toBe(1 | 32);
 
     /*
      * The protocol's own reducer, on the state the host serves.
@@ -2109,11 +2111,12 @@ describe('a client\'s call, held by the backend', () => {
      * `channels-session/reducer.ts` counts every entry that blocks on a person
      * and deliberately does not count a `toolClientExecution`: the call has
      * cleared its confirmation gate and is running somewhere else. Reducing
-     * this entry must leave the session running, and a question must not -
-     * which is what makes this an assertion rather than a tautology.
+     * this entry must leave the session as it was, waiting on nobody, and a
+     * question must not - which is what makes this an assertion rather than
+     * a tautology.
      */
     const again = raised(held_, entry as SessionInputRequest);
-    expect(again.status & IN_PROGRESS).toBe(IN_PROGRESS);
+    expect(again.status).toBe(held_.status);
     expect(again.status & NEEDS_PERSON).toBe(0);
 
     const asked = raised(again, { id: 'q-1', kind: 'chatInput', chat: chatUri } as SessionInputRequest);

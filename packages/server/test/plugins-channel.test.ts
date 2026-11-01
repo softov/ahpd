@@ -286,10 +286,10 @@ const as = async (host: Host, users: Users, id: string, locale?: string) => {
     send: () => {}, request: async () => ({}), answered: () => {}, close: () => {},
     notify: (method, params) => { seen.push({ method, params: params as Bag }); },
   });
-  await client.handle({
+  const hello = await client.handle({
     method: 'initialize',
     params: { clientId: id, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT], ...(locale === undefined ? {} : { locale }) },
-  });
+  }) as { _meta?: Bag };
   await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: users.resource.resource, token } });
   const call = async (method: string, params: Bag) => client.handle({ method, params }).then(
     (result) => ({ result: result as Bag }),
@@ -314,7 +314,9 @@ const as = async (host: Host, users: Users, id: string, locale?: string) => {
     const answer = await call('subscribe', { channel: ROOT });
     return (answer.result as Bag)['snapshot'].state as Bag;
   };
-  return { call, actions, heard, rows, root, close: () => { client.close(); } };
+  /** The parameters of each notification of `method` this client was sent. */
+  const told = (method: string): Bag[] => seen.filter((one) => one.method === method).map((one) => one.params);
+  return { call, actions, heard, rows, root, told, met: hello._meta ?? {}, close: () => { client.close(); } };
 };
 
 /** The authority the served handler is asked at; nothing listens on it. */
@@ -1175,24 +1177,30 @@ it('masks a secret option on a switched-off plugin, and lists its schema', async
   await close();
 });
 
-it('marks a restart on the root every client reads, and a new host over the same file starts without it', async () => {
+it('says a restart to every client of the root and to every client after it, and a new host over the same file starts without it', async () => {
   const { host, users, close } = await served();
   const ana = await as(host, users, 'ana');
   const cy = await as(host, users, 'cy');
   await ana.rows();
-  expect(((await cy.root())['_meta'] as Bag | undefined)?.['ahpd.restartNeeded']).toBeUndefined();
+  expect(cy.met['ahpd.restartNeeded']).toBeUndefined();
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([]);
 
   expect(await cy.call('x-ahpd/plugins/enable', { id: 'declared' })).toEqual({
     result: { id: 'declared', enabled: true, restart: true },
   });
-  // Ana sent nothing: the mark is the host's, not the calling client's.
-  expect((((await ana.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBe(true);
+  // Ana sent nothing: the mark is the host's, not the calling client's, and it
+  // is said to her on the root she watches.
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([{ channel: ROOT }]);
+  // A client that connects afterwards reads it on its handshake.
+  const bo = await as(host, users, 'bo');
+  expect(bo.met['ahpd.restartNeeded']).toBe(true);
 
   // The mark lives only in memory, so the daemon that reads the file next
   // starts without it.
   const again = await served();
-  const bo = await as(again.host, again.users, 'bo');
-  expect((((await bo.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBeUndefined();
+  const later = await as(again.host, again.users, 'bo');
+  expect(later.met['ahpd.restartNeeded']).toBeUndefined();
+  expect(later.told('x-ahpd/restartNeeded')).toEqual([]);
   await again.close();
   await close();
 });
@@ -1207,7 +1215,8 @@ it('does not mark a restart for a refused command', async () => {
   // file is written, and a refusal is not a change a restart would apply.
   expect(await cy.call('x-ahpd/plugins/options', { id: 'secret', key: 'retries', value: -1 }))
     .toMatchObject({ code: -32602 });
-  expect((((await ana.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBeUndefined();
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([]);
+  expect((await as(host, users, 'bo')).met['ahpd.restartNeeded']).toBeUndefined();
   await close();
 });
 

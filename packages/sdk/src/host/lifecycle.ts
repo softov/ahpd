@@ -209,7 +209,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     checked, principalFor, machineFor, ownerFor,
     contributedDefaults, rootConfig,
     spawn, keepTitle, keepProvider, forgetChats,
-    sessionAdded, forgetSent, activeSessionsMoved,
+    sessionComing, sessionAdded, forgetSent, activeSessionsMoved,
   } = ctx;
 
   const respawning = new Map<string, Held>();
@@ -279,7 +279,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     for (const [chatUri, one] of [...subagents]) {
       if (one.session !== uri) continue;
       subagents.delete(chatUri);
-      ctx.describedSub.delete(chatUri);
       ctx.endedWorkers.delete(chatUri);
       ctx.links.forgetChat(chatUri);
       ctx.links.forget(one.parentChat, one.toolCallId);
@@ -683,6 +682,15 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      */
     ctx.drop(uri);
     forgetSent(uri);
+    /*
+     * And the state each of its channels held, the session's and its chats',
+     * which nothing reaches once the session is disposed, asleep or running.
+     */
+    for (const [channel, open] of ctx.heldStates) {
+      if (channel === uri || (open.kind === 'chat' && ctx.sessionFor(channel) === uri)) ctx.closeState(channel);
+    }
+    ctx.asleep.delete(uri);
+    activeSessionsMoved();
     broadcast(ROOT, 'root/sessionRemoved', { channel: ROOT, session: uri });
     log(`disposed ${uri}`);
     if (failure !== undefined) throw failure;
@@ -1777,6 +1785,23 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * `true`, so a request that said nothing writes nothing.
      */
     if (asked !== undefined) kept.setUserSettings?.(idOf(uri), asked.userSettings);
+    /*
+     * What the session and its first chat open with, written down before the
+     * backend starts: the chat's state opens as `spawn` starts it, from what
+     * is kept here, and a fact written after that would be one its state never
+     * held. What started it, and that it and its chat are read: a session
+     * nobody has said anything in has nothing new in it.
+     */
+    if (origin !== undefined) origins.set(uri, origin);
+    kept.setFlags(idOf(uri), kept.flags(idOf(uri)) | Status.IsRead);
+    startsRead(ctx, uri, chatUriFor(uri));
+    // Named before it is announced, when the maker had a name for it: a row
+    // that appears as "New session" and is renamed a moment later is two rows
+    // to a client that lists once. `spawn` hands the backend the name it finds
+    // here, before the chat's state opens.
+    if (title !== undefined) kept.setChatTitle(idOf(uri), chatUriFor(uri), title);
+    // Its row goes out whole once it is added, and moves from then on.
+    sessionComing(uri);
     try {
       /*
        * The backend is handed everything but this host's own keys, and the
@@ -1789,11 +1814,9 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * starts keeps the keys the same way.
        */
       const lead = spawn(agent, uri, chatUriFor(uri), chatIdFor(uri, chatUriFor(uri)), backendsOwn(config), undefined, where, credentials, additional, by?.sender, asked?.instructions);
-      // Named before it is announced, when the maker had a name for it: a
-      // row that appears as "New session" and is renamed a moment later is
-      // two rows to a client that lists once. Written down for the same
-      // reason a rename is: a first name outlives a restart too.
-      if (title !== undefined) { lead.setTitle?.(title); keepTitle(uri, chatUriFor(uri), title); }
+      // Written down for the same reason a rename is: a first name outlives a
+      // restart too.
+      if (title !== undefined) keepTitle(uri, chatUriFor(uri), title);
       // What it was made with, so a resume after a restart starts from the
       // same place rather than from the defaults.
       if (Object.keys(config).length > 0) kept.setConfig(idOf(uri), { ...config });
@@ -1802,6 +1825,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       keepProvider(uri, agent, lead);
     }
     catch (error) {
+      forgetSent(uri);
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an
       // internal error it cannot.
@@ -1822,11 +1846,6 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         : [];
       captureBaseline(uri, urls);
     }
-    if (origin !== undefined) origins.set(uri, origin);
-    // Read, and its chat with it, before anybody is told about it: a session
-    // nobody has said anything in has nothing new in it.
-    kept.setFlags(idOf(uri), kept.flags(idOf(uri)) | Status.IsRead);
-    startsRead(ctx, uri, chatUriFor(uri));
     log(`created ${uri}${where ? ` in ${where}` : ''}`);
     // Ready, then announced. A client that hears about a session before
     // it can be subscribed to has been told about something that is not

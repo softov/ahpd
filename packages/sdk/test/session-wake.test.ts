@@ -77,6 +77,8 @@ interface Counts {
   forks?: boolean;
   /** Every start the backend was handed, in order. */
   made?: Start[];
+  /** The chats running now, by the session each is a chat of. */
+  running?: Map<string, number>;
 }
 
 /** The echo backend, counting the sessions it starts and resumes. */
@@ -94,6 +96,8 @@ const counted = (dir: string, counts: Counts): Agent => {
       counts.starts.push(start.resume);
       counts.made?.push(start);
       counts.tools?.set(start.chatUri, start.tools ?? []);
+      const running = counts.running ??= new Map<string, number>();
+      running.set(start.uri, (running.get(start.uri) ?? 0) + 1);
       const session = base.create(start);
       const holds = (turnId: string): boolean => session.allTurns().some((turn) => turn.id === turnId);
       return {
@@ -101,6 +105,7 @@ const counted = (dir: string, counts: Counts): Agent => {
         ...(counts.forks === true ? { forkPoint: (turnId: string) => (holds(turnId) ? `end:${turnId}` : undefined) } : {}),
         close: (reason?: 'dispose' | 'stopping') => {
           counts.closes += 1;
+          running.set(start.uri, (running.get(start.uri) ?? 1) - 1);
           return session.close(reason);
         },
       };
@@ -147,7 +152,12 @@ async function serving(counts: Counts, automations?: AutomationStore) {
 
   const read = async (channel: string): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
-  const active = async (): Promise<number> => Number((await read('ahp-root://')).activeSessions);
+  /**
+   * The sessions with an agent running now: one with a chat started and not
+   * closed. A sleep lets the agents go and keeps the session open, so the
+   * root's count of the open ones is not this.
+   */
+  const awake = async (): Promise<number> => [...(counts.running ?? new Map<string, number>()).values()].filter((chats) => chats > 0).length;
   const turnsOf = async (chat: string): Promise<Bag[]> => (await read(chat)).turns as Bag[];
 
   let seq = 0;
@@ -180,7 +190,7 @@ async function serving(counts: Counts, automations?: AutomationStore) {
 
   const textsOf = async (chat: string): Promise<string[]> => (await turnsOf(chat)).map((turn) => String((turn.message as Bag).text));
 
-  return { host, client, peer: p, kept, time, open, sleep, prompt, read, active, turnsOf, textsOf, dir };
+  return { host, client, peer: p, kept, time, open, sleep, prompt, read, awake, turnsOf, textsOf, dir };
 }
 
 /** One automation that runs pinned to `session`. */
@@ -195,14 +205,14 @@ const pinnedTo = (dir: string, session: string): Bag => ({
 
 it('wakes a sleeping session on a prompt and answers with the earlier conversation', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { open, sleep, prompt, active, turnsOf } = await serving(counts);
+  const { open, sleep, prompt, awake, turnsOf } = await serving(counts);
   const one = await open('one');
   await sleep(one);
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
 
   await prompt(one.chat, 'again');
   await until(async () => (await turnsOf(one.chat)).length === 2, 'the woken turn');
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
   // Resumed as the conversation it was, not started afresh.
   expect(counts.starts).toEqual([undefined, 'one']);
   const turns = await turnsOf(one.chat);
@@ -211,13 +221,13 @@ it('wakes a sleeping session on a prompt and answers with the earlier conversati
 
 it('gives the turn that woke a session the origin of the prompt that woke it', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { open, sleep, prompt, read, active, turnsOf, peer: p } = await serving(counts);
+  const { open, sleep, prompt, read, awake, turnsOf, peer: p } = await serving(counts);
   const one = await open('one');
   await sleep(one);
   // Watched again before the prompt, so the echo has somewhere to go, and
   // still asleep: reading a chat does not wake it.
   await read(one.chat);
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
   p.notes.length = 0;
 
   await prompt(one.chat, 'again');
@@ -230,7 +240,7 @@ it('gives the turn that woke a session the origin of the prompt that woke it', a
 it('wakes a pinned session for an automation run and makes no new session', async () => {
   const counts: Counts = { starts: [], closes: 0 };
   const store = memoryAutomations();
-  const { client, open, sleep, active, turnsOf, dir } = await serving(counts, store);
+  const { client, open, sleep, awake, turnsOf, dir } = await serving(counts, store);
   const one = await open('one');
   await sleep(one);
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
@@ -241,28 +251,28 @@ it('wakes a pinned session for an automation run and makes no new session', asyn
   expect(run.primarySession).toBe(one.resource);
   expect(counts.starts).toEqual([undefined, 'one']);
   await until(async () => (await turnsOf(one.chat)).length === 2, 'the run\'s turn');
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
 });
 
 it('wakes a parent for a child\'s childFinished', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { open, sleep, prompt, active, kept } = await serving(counts);
+  const { open, sleep, prompt, awake, kept } = await serving(counts);
   const parent = await open('parent');
   await sleep(parent);
   const child = await open('child');
   kept.setParent?.('child', 'parent');
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
 
   // The child's turn ends with nothing behind it, which is what its parent waits to hear.
   await prompt(child.chat, 'done');
-  await until(async () => await active() === 2, 'the parent waking');
+  await until(async () => await awake() === 2, 'the parent waking');
   expect(counts.starts).toEqual([undefined, undefined, 'parent']);
 });
 
 it('resumes once when two wakers arrive together', async () => {
   const counts: Counts = { starts: [], closes: 0 };
   const store = memoryAutomations();
-  const { client, open, sleep, prompt, active, dir } = await serving(counts, store);
+  const { client, open, sleep, prompt, awake, dir } = await serving(counts, store);
   const one = await open('one');
   await sleep(one);
   store.create('ahp-automation:/check', pinnedTo(dir, one.resource));
@@ -274,12 +284,12 @@ it('resumes once when two wakers arrive together', async () => {
   await until(() => (store.get('ahp-automation:/check')?.runs ?? []).length === 1, 'the run');
   await settle();
   expect(counts.starts).toEqual([undefined, 'one']);
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
 });
 
 it('fails the action with the resume error when a session cannot resume', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { open, sleep, prompt, active, peer: p } = await serving(counts);
+  const { open, sleep, prompt, awake, peer: p } = await serving(counts);
   const one = await open('one');
   await sleep(one);
 
@@ -289,15 +299,15 @@ it('fails the action with the resume error when a session cannot resume', async 
   const refused = p.notes.find((note) => note.rejectionReason !== undefined) as Bag;
   expect(refused.rejectionReason).toBe('The conversation could not be loaded');
   // Left as it was: asleep, and still a session a later prompt can wake.
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
   counts.failResume = false;
   await prompt(one.chat, 'once more');
-  await until(async () => await active() === 1, 'the later wake');
+  await until(async () => await awake() === 1, 'the later wake');
 });
 
 it('does not sleep a session while it is waking', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { client, time, open, sleep, prompt, read, active, textsOf } = await serving(counts);
+  const { client, time, open, sleep, prompt, read, awake, textsOf } = await serving(counts);
   const one = await open('one');
   const lead = String((await read(one.resource)).defaultChat);
   await client.handle({ method: 'createChat', params: { channel: one.resource, chat: 'ahp-chat:/second' } });
@@ -326,7 +336,7 @@ it('does not sleep a session while it is waking', async () => {
   await until(async () => (await textsOf(lead)).at(-1) === 'after sleep', 'the woken turn');
   expect((await textsOf('ahp-chat:/second')).at(-1)).toBe('second hi');
   expect(counts.closes).toBe(closes);
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
 });
 
 it('refuses a second Run of a pinned automation while the first wakes the session', async () => {
@@ -384,7 +394,7 @@ it('starts no agent for a resume still going when the host closes', async () => 
 it('refuses another owner\'s pinned automation without waking the session', async () => {
   const counts: Counts = { starts: [], closes: 0 };
   const store = memoryAutomations();
-  const { client, kept, open, sleep, active, dir } = await serving(counts, store);
+  const { client, kept, open, sleep, awake, dir } = await serving(counts, store);
   const one = await open('one');
   kept.setOwner?.('one', 'user:alice');
   await sleep(one);
@@ -394,16 +404,16 @@ it('refuses another owner\'s pinned automation without waking the session', asyn
     .catch(() => undefined);
   await settle(20);
   expect(counts.starts).toEqual([undefined]);
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
 });
 
 it('wakes a sleeping session for a send_message from another', async () => {
   const counts: Counts = { starts: [], closes: 0, tools: new Map() };
-  const { open, sleep, read, active, textsOf } = await serving(counts);
+  const { open, sleep, read, awake, textsOf } = await serving(counts);
   const a = await open('a');
   const b = await open('b');
   await sleep(b);
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
 
   const own = String((await read(a.resource)).defaultChat);
   const send = counts.tools?.get(own)?.find((tool) => tool.definition.name === 'send_message');
@@ -412,20 +422,20 @@ it('wakes a sleeping session for a send_message from another', async () => {
   await until(async () => (await textsOf(b.chat)).length === 2, 'the sent turn');
   expect(await textsOf(b.chat)).toEqual(['hello b', 'ping']);
   expect(counts.starts).toEqual([undefined, undefined, 'b']);
-  expect(await active()).toBe(2);
+  expect(await awake()).toBe(2);
 });
 
 it('wakes a sleeping session to rename it', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { client, kept, open, sleep, read, active, peer: p } = await serving(counts);
+  const { client, kept, open, sleep, read, awake, peer: p } = await serving(counts);
   const one = await open('one');
   await sleep(one);
   // Opened again, as a client opening a sleeping row does: reading it wakes nothing.
   await read(one.resource);
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
 
   await client.handle({ method: 'dispatchAction', params: { channel: one.resource, clientSeq: 50, action: { type: 'session/titleChanged', title: 'renamed' } } });
-  await until(async () => await active() === 1, 'the wake');
+  await until(async () => await awake() === 1, 'the wake');
   await settle();
   expect(p.notes.filter((note) => note.rejectionReason !== undefined)).toEqual([]);
   expect(counts.starts).toEqual([undefined, 'one']);
@@ -435,16 +445,16 @@ it('wakes a sleeping session to rename it', async () => {
 
 it('wakes a sleeping session for a chat forked from it, and forks at the turn', async () => {
   const counts: Counts = { starts: [], closes: 0, forks: true, made: [] };
-  const { client, open, sleep, read, active } = await serving(counts);
+  const { client, open, sleep, read, awake } = await serving(counts);
   const one = await open('one');
   await sleep(one);
-  expect(await active()).toBe(0);
+  expect(await awake()).toBe(0);
 
   await client.handle({
     method: 'createChat',
     params: { channel: one.channel, chat: 'ahp-chat:/copy', source: { kind: 'fork', chat: one.chat, turnId: 't1' } },
   });
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
   // The wake resumes the session, and the fork resumes it again at the turn's point.
   expect(counts.starts).toEqual([undefined, 'one', 'one']);
   expect(counts.made?.at(-1)).toMatchObject({ chatUri: 'ahp-chat:/copy', resume: 'one', forkAt: 'end:t1' });
@@ -454,12 +464,12 @@ it('wakes a sleeping session for a chat forked from it, and forks at the turn', 
 
 it('wakes a sleeping session for a new chat in it', async () => {
   const counts: Counts = { starts: [], closes: 0 };
-  const { client, open, sleep, read, active } = await serving(counts);
+  const { client, open, sleep, read, awake } = await serving(counts);
   const one = await open('one');
   await sleep(one);
 
   await client.handle({ method: 'createChat', params: { channel: one.channel, chat: 'ahp-chat:/second' } });
-  expect(await active()).toBe(1);
+  expect(await awake()).toBe(1);
   expect(counts.starts).toEqual([undefined, 'one', undefined]);
   const chats = ((await read(one.channel)).chats as Bag[]).map((chat) => chat.resource);
   expect(chats).toContain('ahp-chat:/second');

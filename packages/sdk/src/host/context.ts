@@ -10,7 +10,7 @@ import type { Terminal } from '../types/terminals.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
-import type { Claiming, Claimed, Dispatched, Held, Learned, LiveSubagent, Origin } from './state.js';
+import type { Claiming, Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
 import type { ChatRecord } from './chatrecord.js';
@@ -152,7 +152,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * puts the chat's read bit back as it was.
    */
   commandTurns: Map<string, boolean>;
-  /** What each chat's summary last said, so an unchanged one is not re-sent. */
+  /** The title each chat's backend said last, so a move of it is noticed. */
   described: Map<string, string>;
   /** The side index a worker's link is written from, fed from `dispatch`. */
   links: CallLinks;
@@ -304,9 +304,9 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * Say that a change is not in force until this process starts again.
    *
    * Sets the flag and sends `x-ahpd/restartNeeded` to every connection
-   * watching the root, because a client that already holds the root state has
-   * no other way to learn of it. The second call changes nothing and sends
-   * nothing: the mark is the same fact said once.
+   * watching the root, because the root's state carries no mark and a client
+   * holding it has no other way to learn of it. The second call changes
+   * nothing and sends nothing: the mark is the same fact said once.
    */
   markRestart: () => void;
   /** What this host has learned about a backend, made on first asking. */
@@ -359,6 +359,38 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * client that comes back is replayed a delta it has already applied.
    */
   flushDeltas: () => void;
+  /**
+   * The state this host holds for a root, session or chat channel, as the
+   * protocol's reducers made it from its seed and every action sent on it, or
+   * nothing for a channel it holds no state for.
+   */
+  stateOf: (channel: string) => Bag | undefined;
+  /**
+   * Hold a channel's state from `seed`, once: the state the channel opens
+   * with, from what its backend restores and what this host keeps beside it.
+   * A channel already held keeps its state, and that state is the answer.
+   */
+  openState: (channel: string, kind: HeldState['kind'], seed: Bag) => Bag;
+  /** Let a channel's state go, for a session or chat this host has closed. */
+  closeState: (channel: string) => void;
+  /**
+   * A session's customizations as its state opens with them: the backend's
+   * with this host's entries, then its clients' plugins, or nothing when there
+   * are none.
+   */
+  laidCustomizations: (channel: string, reported: unknown) => Bag[] | undefined;
+  /** Every state held, by channel. */
+  heldStates: ReadonlyMap<string, HeldState>;
+  /**
+   * Let the state of a session this host is not running go, with its chats',
+   * once no connection watches any of them.
+   */
+  statesUnwatched: (channel: string) => void;
+  /**
+   * The sessions this host put to sleep and has not disposed, by their own
+   * URI: open sessions with no agent running, counted with the running ones.
+   */
+  asleep: Set<string>;
   /**
    * Answer one client's dispatch with the reason it was not applied.
    *

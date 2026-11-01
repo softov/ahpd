@@ -226,7 +226,6 @@ interface Broken {
 }
 
 const ECHOED = '"the server echoes them back as an ActionEnvelope once accepted" (types/common/commands.ts, dispatchAction)';
-const SOLE_MUTATION = '"Actions are the sole mutation mechanism for subscribable state." (docs/guide/actions.md)';
 
 /** The rules the divergences in this file break. */
 const BROKEN = {
@@ -254,26 +253,6 @@ const BROKEN = {
     breaks: 'chat-channel.md: "session/isReadChanged independently changes the owning session\'s read state; neither action implies the other"',
     row: 'A1',
     by: '6, read bits independent',
-  },
-  chatTitleUntold: {
-    breaks: `${SOLE_MUTATION}; the chat's title moves to its first message with no action on the chat channel`,
-    row: 'E4',
-    by: 'R1, state through the reducers',
-  },
-  catalogueUntold: {
-    breaks: 'chat-channel.md: "Producers MUST keep the chat\'s ChatSummary in the session catalog consistent with these inlined summary fields"; the default chat\'s row takes the session\'s new title with no session/chatUpdated',
-    row: 'E4',
-    by: 'R1, state through the reducers',
-  },
-  queueUntold: {
-    breaks: `${SOLE_MUTATION}; the chat is served an empty queuedMessages where its actions leave none`,
-    row: 'E4',
-    by: 'R1, state through the reducers',
-  },
-  modifiedUntold: {
-    breaks: `${SOLE_MUTATION}; the chat's modifiedAt moves with no action carrying it`,
-    row: 'E4',
-    by: 'R1, state through the reducers',
   },
   idleSteering: {
     breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
@@ -362,19 +341,8 @@ interface Differs {
   refused?: string[];
 }
 
-const turnStartRewritten: (Differs & Broken)[] = [
-  { reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten },
-  { served: ['title'], ...BROKEN.chatTitleUntold },
-];
-const queuedTurnRewritten: (Differs & Broken)[] = [
-  { reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten },
-  { served: ['title'], ...BROKEN.chatTitleUntold },
-];
-const queueConsumed: (Differs & Broken)[] = [
-  { served: ['queuedMessages'], ...BROKEN.queueUntold },
-  { served: ['title'], ...BROKEN.chatTitleUntold },
-];
-const modifiedUntold: (Differs & Broken)[] = [{ served: ['modifiedAt'], ...BROKEN.modifiedUntold }];
+const turnStartRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten }];
+const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten }];
 
 /**
  * Where this host answers a case otherwise than the protocol.
@@ -389,29 +357,15 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': queuedTurnRewritten,
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
-  '030-session-titlechanged-updates-title': [{ served: ['chats'], ...BROKEN.catalogueUntold }],
   '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '045-set-a-new-queued-message': queueConsumed,
-  '046-append-queued-message-when-id-is-new': queueConsumed,
-  '047-update-queued-message-in-place-when-id-already-exists': queueConsumed,
-  '052-steering-and-queued-messages-are-independent': [
-    ...queueConsumed,
-    { refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering },
-  ],
-  '053-reorders-queued-messages': modifiedUntold,
-  '054-keeps-messages-not-in-order-at-end-in-original-order': modifiedUntold,
-  '055-ignores-unknown-ids-in-reorder': modifiedUntold,
-  '056-empty-reorder-preserves-all-messages-in-original-order': modifiedUntold,
-  '057-reorder-is-no-op-when-no-queued-messages-exist': modifiedUntold,
+  '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '066-session-truncated-clears-all-when-turnid-omitted': modifiedUntold,
-  '068-session-truncated-drops-active-turn-even-when-clearing-all': modifiedUntold,
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
   '072-session-isreadchanged-marks-session-as-unread': [{ reduced: ['chats'], ...BROKEN.readCoupled }],
   '075-turnstarted-clears-isread': turnStartRewritten,
@@ -421,7 +375,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
   '226-session-customizationtoggled-is-no-op-for-unknown-child-id': [{ refused: ['does-not-exist has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': modifiedUntold,
   '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],

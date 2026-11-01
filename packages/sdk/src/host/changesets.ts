@@ -327,13 +327,14 @@ export function createChangesets(ctx: HostContext): Changesets {
         chat: held.defaultChat,
         turnId: String(newest.id ?? ''),
       });
+      // Read until something is said in it, written before its state opens.
+      startsRead(ctx, uri, chatUri);
       const chat = ctx.spawn(
         held.agent, uri, chatUri, idOf(chatUri), ctx.backendsOwn(held.config),
         { context: typeof message.text === 'string' ? message.text : '' },
         held.workingDirectory, undefined, held.additional,
       );
       ctx.log(`opened ${chatUri} in ${uri} to write the words`);
-      startsRead(ctx, uri, chatUri);
       ctx.dispatch(uri, { type: 'session/chatAdded', summary: ctx.chatSummary(uri, chatUri, chat) });
       watching = watchTurn(chat, uri, turnId);
       const refused = ctx.beginOrRun(chat, held.agent.provider, turnId, prompt, undefined, { origin: { kind: 'systemNotification' } });
@@ -604,10 +605,25 @@ export function createChangesets(ctx: HostContext): Changesets {
             settled = true;
           }
         }
+        catch (error) {
+          /*
+           * A read that threw is a computation that failed, and the protocol
+           * names the status for it, with the cause beside it: the files are
+           * kept as they were, and nobody is left holding a spin that ended.
+           * The failure goes on to the caller.
+           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-changeset/state.ts#L119-L141
+           */
+          if (was && marked) {
+            const message = error instanceof Error ? error.message : String(error);
+            dispatch(channel, { type: 'changeset/statusChanged', status: 'error', error: { errorType: 'computeFailed', message } });
+            shown.set(channel, { files: was.files, status: 'error' });
+            settled = true;
+          }
+          throw error;
+        }
         finally {
-          // A read that gave nothing or threw leaves the status it found, so
-          // nobody is left holding a spin that ended. The failure goes on to
-          // the caller either way.
+          // A read that gave nothing leaves the status it found, so nobody is
+          // left holding a spin that ended.
           if (was && marked && !settled) {
             dispatch(channel, { type: 'changeset/statusChanged', status: was.status });
             shown.set(channel, was);

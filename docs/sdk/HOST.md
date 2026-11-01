@@ -22,11 +22,13 @@ Terms, one line each:
 | Field | What it says |
 | --- | --- |
 | `agents` | Every backend, as `providers` - see below |
-| `activeSessions` | A number: how many sessions this host is running, not a list |
+| `activeSessions` | A number: how many sessions this host holds open, running or asleep, not a list |
 | `terminals` | Every open terminal's `TerminalInfo`, absent when none is open |
 | `config` | The schema and the values of root config - see [Root config](#root-config) |
 
-`_meta` carries three things beside them: `ahpd.resourceProviders`, the schemes this host serves; `ahpd.grants`, every subject a grant may name; and `ahpd.restartNeeded`, present only when a configuration change is waiting for a restart. `ahpd.principal` is there for a connection that has already signed in, saying who it is - the same statement the handshake makes, so a client that subscribes later reads what a client that connected earlier was told.
+`_meta` carries two things beside them: `ahpd.resourceProviders`, the schemes this host serves; and `ahpd.grants`, every subject a grant may name. `ahpd.principal` is there for a connection that has already signed in, saying who it is - the same statement the handshake makes, so a client that subscribes later reads what a client that connected earlier was told.
+
+The state of the root, of every session and of every chat is what the protocol's reducers make of the actions this host sends on that channel, from a seed read once when the channel opens. A client that subscribes is served that state, so it holds what a client that watched every action holds.
 
 `ahpd.resourceProviders` is advertised in the handshake as well as in every root state, because a client needs it before it can ask for anything.
 
@@ -147,7 +149,7 @@ The daemon's half is added to the same schema, and `config:read` is what a conne
 Pushing a key acts in one of two ways, and the answer says which.
 
 - `advancedTools`, `sessionTools`, `sessionToolsProviders`, `closedChats`, `archiveDirtyWorktree`, `pullRequestLookup`, `wire` and `mcpServers` apply to this daemon as written. `advancedTools` changes the tools every running session's model is offered at once; the two session tool keys are rebuilt per session, since a provider list is not the same answer for all of them, and each running session is told its own set; the wire capture starts, moves or stops; `mcpServers` is read again for the next session opened, while a running session keeps the servers it started with. `closedChats` is read when the next chat is closed, so no session is rebuilt and none is told. `archiveDirtyWorktree` is read when the next archived session gives its tree back. `pullRequestLookup` is read by the next pass over merged sessions.
-- Every other key is written to `config.json` and the answer puts `ahpd.restartNeeded` in the `_meta` of the root state, which every reader of root is shown whether or not it may see the keys the notice is about. The mark is also sent to every connection watching the root as `x-ahpd/restartNeeded` with `{ channel: "ahp-root://" }`, once, when it is set: it is an `x-ahpd` extension, since no protocol action carries `_meta`, and a client that does not know it reads the state as before. `ahpd restart` applies it.
+- Every other key is written to `config.json` and the answer marks a restart as needed, which every reader of root is told whether or not it may see the keys the notice is about. A connection watching the root is sent `x-ahpd/restartNeeded` with `{ channel: "ahp-root://" }` once, when the mark is set; one that subscribes to the root afterwards is sent it as it subscribes; and the handshake of a connection that arrives afterwards carries `ahpd.restartNeeded: true` in its `_meta`. The root state moves by root actions alone, and the mark is said beside it as an `x-ahpd` extension, which a client that does not know it ignores. `ahpd restart` applies it.
 
 That split, and the reason it is per key rather than all-or-nothing, is decision A configuration change applies live where the key can, and otherwise on `ahpd restart`.
 

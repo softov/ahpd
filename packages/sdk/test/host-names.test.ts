@@ -268,15 +268,15 @@ describe('a session asked for by the name a client computed', () => {
   it('names its chat after the name it was asked under', async () => {
     const client = await browsing();
     const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
-      snapshot: { resource: string; state: { resource: string; defaultChat: string; chats: { resource: string }[] } };
+      snapshot: { resource: string; state: { defaultChat: string; chats: { resource: string }[] } };
     };
 
     // Everything that names this session, spelled the one way the client can
     // pair up: the chat it computes from `claude:/row` is the chat the session
     // says it has. Told otherwise, it subscribes to one string, is handed
-    // another, and renders nothing at all.
+    // another, and renders nothing at all. The snapshot names the session,
+    // and the session's state names its chats.
     expect(opened.snapshot.resource).toBe('claude:/row');
-    expect(opened.snapshot.state.resource).toBe('claude:/row');
     expect(opened.snapshot.state.defaultChat).toBe(derived('claude:/row'));
     expect(opened.snapshot.state.chats[0]?.resource).toBe(derived('claude:/row'));
   });

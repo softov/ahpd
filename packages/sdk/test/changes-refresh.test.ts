@@ -301,22 +301,52 @@ it('says recomputing before a re-read that finds a file, and the old files stay 
   expect(during?.files.map((one) => one.id)).not.toContain('b.txt');
 });
 
+/** A changeset source whose subscribe read answers, and whose every re-read after it answers `next`. */
+const reReadAnswering = (source: ChangesetSource, next: () => Promise<undefined>): { changes: ChangesetSource; reads: () => number } => {
+  const base = gitChanges();
+  let reads = 0;
+  return {
+    changes: {
+      ...source,
+      // The subscribe's own read answers, so the changeset is on screen; the
+      // re-reads that follow answer `next`.
+      state: async (at, session, scope) => {
+        reads += 1;
+        return reads > 1 ? await next() : await base.state(at, session, scope);
+      },
+    },
+    reads: () => reads,
+  };
+};
+
+it('says a re-read that fails as the error the protocol names, with its cause', async () => {
+  const dir = repository();
+  writeFileSync(join(dir, 'a.txt'), 'a\n');
+  const { calls, source } = reReads();
+  const { changes, reads } = reReadAnswering(source, async () => { throw new Error('the read failed'); });
+  const { client, peer: p } = await open(dir, changes);
+  await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
+  await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
+  const before = channelActions(p, CHANGESET).length;
+
+  calls.watched?.();
+  await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:error'));
+
+  // `error` is the status of a computation that failed, its cause beside it,
+  // and the files stay the last completed result.
+  // https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-changeset/state.ts#L119-L141
+  const after = channelActions(p, CHANGESET).slice(before);
+  expect(reads()).toBeGreaterThan(1);
+  expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:error']);
+  expect(after.find((one) => one.status === 'error')?.error).toEqual({ errorType: 'computeFailed', message: 'the read failed' });
+  expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
+});
+
 it('puts the status back when a re-read gives nothing', async () => {
   const dir = repository();
   writeFileSync(join(dir, 'a.txt'), 'a\n');
   const { calls, source } = reReads();
-  const base = gitChanges();
-  let reads = 0;
-  const changes: ChangesetSource = {
-    ...source,
-    // The subscribe's own read answers, so the changeset is on screen; the
-    // re-read that follows is the one that fails.
-    state: async (at, session, scope) => {
-      reads += 1;
-      if (reads > 1) throw new Error('the read failed');
-      return await base.state(at, session, scope);
-    },
-  };
+  const { changes, reads } = reReadAnswering(source, async () => undefined);
   const { client, peer: p } = await open(dir, changes);
   await client.handle({ method: 'subscribe', params: { channel: CHANGESET } });
   await waitFor(() => calls.watches === 1 && calls.finished === calls.refresh);
@@ -326,7 +356,7 @@ it('puts the status back when a re-read gives nothing', async () => {
   await waitFor(() => kindsOf(channelActions(p, CHANGESET).slice(before)).includes('status:ready'));
 
   const after = channelActions(p, CHANGESET).slice(before);
-  expect(reads).toBeGreaterThan(1);
+  expect(reads()).toBeGreaterThan(1);
   expect(kindsOf(after).slice(0, 2)).toEqual(['status:recomputing', 'status:ready']);
   expect(after.filter((one) => FILE_ACTIONS.includes(String(one.type)))).toEqual([]);
 });
@@ -1078,8 +1108,10 @@ const openInTree = async (repository_: string, changes: ChangesetSource, agent: 
 };
 
 /** What the last row a session was sent says its counts are. */
+/** The counts the last change since `from` that carried any said: a change carries the fields that moved. */
 const countsMoved = (p: ReturnType<typeof peer>, from: number): { files?: number; additions?: number; deletions?: number } | undefined =>
-  (rowsMoved(p, SESSION).slice(from).at(-1)?.changes as { files?: number; additions?: number; deletions?: number } | undefined);
+  (rowsMoved(p, SESSION).slice(from).filter((one) => one.changes !== undefined).at(-1)?.changes as
+    { files?: number; additions?: number; deletions?: number } | undefined);
 
 it('moves a session row at a tool call, from its baseline, before the turn ends', async () => {
   const dir = repository();

@@ -829,11 +829,16 @@ it('tells a client watching the root that a restart is needed', async () => {
   host.markRestartNeeded();
   expect(toldOfRestart(heard)).toEqual([{ method: 'x-ahpd/restartNeeded', params: { channel: ROOT } }]);
 
-  // And the root state says the same thing to a client that reads it after.
-  const { snapshot } = await client.handle({ method: 'subscribe', params: { channel: ROOT } }) as {
-    snapshot: { state: { _meta: Record<string, unknown> } };
+  // And the same notification to a client that reads the root after, since no
+  // root action carries `_meta` and the root's state carries no mark.
+  const later = listening();
+  const reader = host.accept(later);
+  await reader.handle({ method: 'initialize', params: { clientId: 'later', protocolVersions: ['0.9.0'] } });
+  const { snapshot } = await reader.handle({ method: 'subscribe', params: { channel: ROOT } }) as {
+    snapshot: { state: { _meta?: Record<string, unknown> } };
   };
-  expect(snapshot.state._meta['ahpd.restartNeeded']).toBe(true);
+  expect(snapshot.state._meta?.['ahpd.restartNeeded']).toBeUndefined();
+  expect(toldOfRestart(later)).toEqual([{ method: 'x-ahpd/restartNeeded', params: { channel: ROOT } }]);
 });
 
 it('sends the same notification for a root configuration write that needs a restart', async () => {

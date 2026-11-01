@@ -295,6 +295,13 @@ describe('the fields a client reads by name', () => {
     .filter((n) => n.method.startsWith('root/session'))
     .map((n) => ({ method: n.method, params: n.params as Record<string, unknown> }));
 
+  it('adds a session before any change to its row, which a client holds only once it is added', async () => {
+    const { peer: p, uri } = await running();
+    const about = catalogue(p).filter((n) => n.params.session === uri
+      || (n.params.summary as { resource?: string } | undefined)?.resource === uri);
+    expect(about[0]?.method).toBe('root/sessionAdded');
+  });
+
   it('names the session in root/sessionRemoved', async () => {
     const { client, peer: p, uri } = await running();
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -314,18 +321,22 @@ describe('the fields a client reads by name', () => {
     });
     await settle();
 
-    const moved = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    expect(moved?.params.session).toBe('ahp-session:/live');
-    const changes = moved?.params.changes as Record<string, unknown>;
-    expect(changes).toBeDefined();
-    // What moved is in there under its own name.
-    expect(changes.status).toBe(Status.InProgress);
-    expect(changes.title).toEqual(expect.any(String));
-    // And the three the protocol says never change are left out, because a
-    // *change* carrying them is a change claiming they did.
-    expect(changes).not.toHaveProperty('resource');
-    expect(changes).not.toHaveProperty('provider');
-    expect(changes).not.toHaveProperty('createdAt');
+    const moves = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged');
+    expect(moves).not.toHaveLength(0);
+    for (const moved of moves) {
+      expect(moved.params.session).toBe('ahp-session:/live');
+      const changes = moved.params.changes as Record<string, unknown>;
+      // And the three the protocol says never change are left out, because a
+      // *change* carrying them is a change claiming they did.
+      expect(changes).not.toHaveProperty('resource');
+      expect(changes).not.toHaveProperty('provider');
+      expect(changes).not.toHaveProperty('createdAt');
+    }
+    // What moved is in there under its own name: the row a client holds, each
+    // change spread over the one before, says the session is running.
+    const row = moves.reduce<Record<string, unknown>>((held, moved) => ({ ...held, ...(moved.params.changes as Record<string, unknown>) }), {});
+    expect(Number(row.status) & (Status.IsRead - 1)).toBe(Status.InProgress);
+    expect(row.title).toEqual(expect.any(String));
   });
 
   it('still says what moved on a session no agent is running for', async () => {
@@ -674,9 +685,13 @@ describe('the fields a client reads by name', () => {
   const statusOf = (p: ReturnType<typeof peer>, session: string, chat: string) =>
     chatsOf(p, session).find((one) => one.resource === chat)?.status;
 
+  /**
+   * A session's status as the client holds it: the row it was added with,
+   * with every change folded over it. A change carries the fields that moved,
+   * so the last change alone says nothing of a status it did not move.
+   */
   const sessionStatus = (p: ReturnType<typeof peer>, session: string) =>
-    (catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1)?.params.changes as
-      { status?: number } | undefined)?.status;
+    rowOf(p, session)?.status as number | undefined;
 
   it("marks one chat read without moving its other chats", async () => {
     const { client, peer: p, uri } = await running();
@@ -783,7 +798,6 @@ describe('the fields a client reads by name', () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    p.notes.length = 0;
     const archive = (on: boolean) => client.handle({
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/isArchivedChanged', isArchived: on } },

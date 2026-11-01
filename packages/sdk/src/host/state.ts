@@ -57,14 +57,26 @@ export interface Held {
 }
 
 /**
+ * One channel's state as this host holds it, and the kind of channel it is.
+ *
+ * The kind is read when the state is seeded, because a session's name may be
+ * spelled in a provider's scheme and its URI alone does not say what it is.
+ * An action is reduced into the state only when its type is of that kind:
+ * actions travel on the channel their prefix names.
+ */
+export interface HeldState {
+  kind: 'root' | 'session' | 'chat';
+  state: Bag;
+}
+
+/**
  * The worker chats this host opened, by URI.
  *
  * Not in `held.chats`, because a worker has no `Session` of its own: it is a
  * conversation inside one call of another chat, and everything it says
- * arrives through the emitter the backend was handed. What is kept here is the
- * row a catalogue lists and the state a subscriber reads, reduced from the
- * actions the backend emitted - the same reducer a client runs, so the
- * two cannot disagree.
+ * arrives through the emitter the backend was handed. What is kept here is
+ * what the catalogue row is built from; the chat's state is held with every
+ * other chat's, reduced from the actions the backend emitted.
  */
 export interface LiveSubagent {
   /** The session holding it. */
@@ -80,8 +92,6 @@ export interface LiveSubagent {
   turnId: string;
   /** When it opened, which is the duration of a turn ended without one. */
   openedAt: number;
-  /** Its `ChatState`, as the reducer leaves it. */
-  state: Bag;
 }
 
 /**

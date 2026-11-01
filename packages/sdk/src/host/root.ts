@@ -5,6 +5,7 @@ import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
 import { sdkVersion } from '../version.js';
 import { vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
+import { ROOT } from './channels.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -123,7 +124,27 @@ export interface Root {
   advertisedChannels(): { scheme: string; title: string; description?: string; grant: string }[] | undefined;
   advertisedMethods(): { method: string; title: string; description?: string; grant: string }[] | undefined;
   advertisedGrants(): Record<string, unknown>;
-  rootState(mine?: Record<string, unknown>, connection?: Connection): Promise<Bag>;
+  /** The daemon's own config values, as its port answers them now, or none on a host with no daemon keys. */
+  daemonValues(): Promise<Record<string, unknown>>;
+  /**
+   * The state the root channel opens with: every agent, the sessions and
+   * terminals this host holds, and the whole config - the host's keys, the
+   * daemon's `daemon` values and every backend's account. Read once; every
+   * change after it is a root action.
+   */
+  rootSeed(daemon: Record<string, unknown>): Bag;
+  /**
+   * The root's held state as one connection reads it: the agents it may use,
+   * the config keys it may read with its own preferences in theirs, and the
+   * `_meta` the handshake gave it.
+   */
+  rootFor(held: Bag, mine?: Record<string, unknown>, connection?: Connection): Bag;
+  /**
+   * What a root config `replace` keeps that the push names none of: the
+   * daemon's values and every backend's account, as the root's state holds
+   * them. Neither is a client's to clear.
+   */
+  keptOnReplace(pushed: Record<string, unknown>): Record<string, unknown>;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -560,33 +581,90 @@ export function createRoot(ctx: HostContext): Root {
     ...schemeGrants(),
   ]);
 
-  const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection): Promise<Bag> => {
-    /*
-     * The daemon's own half, for a connection that may read it and nobody else.
-     *
-     * Its keys are not held here the way `rootConfig` holds the host's: the
-     * daemon's file is what they are, and a client that read them before a
-     * change and reads them after must see two different answers. So both are
-     * asked of the port per root state, and asked for nobody who does not hold
-     * `config:read`.
-     */
-    const theirs = seesConfig(connection) ? daemonProperties() : {};
-    const daemonValues = Object.keys(theirs).length === 0 || options.rootConfig === undefined
+  /*
+   * The daemon's own half of the config.
+   *
+   * Its keys are not held here the way `rootConfig` holds the host's: the
+   * daemon's file is what they are, so the root's state opens with what the
+   * port answers, and a write a client pushes moves the state through its own
+   * `root/configChanged`.
+   */
+  const daemonValues = async (): Promise<Record<string, unknown>> =>
+    (Object.keys(daemonProperties()).length === 0 || options.rootConfig === undefined
       ? {}
-      : await options.rootConfig.values();
+      : await options.rootConfig.values());
+
+  const rootSeed = (daemon: Record<string, unknown>): Bag => ({
+    agents: descriptors(),
+    // What this host is running, not what is on disk beside it.
+    activeSessions: ctx.activeCount(),
+    ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
     /*
-     * The account each backend bills to, for a connection that may read it.
+     * Always present, and present even when empty.
      *
-     * The operator's own, so it is `account:read`'s and the host's - decision
-     * `an-agent-account-is-shown-to-account-readers`. A connection without the
-     * grant is handed no account value at all rather than an empty one, which
-     * is the same absence a backend nothing has reported an account for has.
+     * The root reducer returns the state *unchanged* when there is no `config`
+     * on it, so a root without one would make every `root/configChanged` a
+     * no-op on every client - including the one that had just pushed it.
      */
-    const accounts = seesAccount(connection) ? accountValues() : {};
+    config: {
+      schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
+      values: { ...rootConfig, ...daemon, ...accountValues() },
+    },
+  });
+
+  /** Whether a root config key is one a backend's account is published under. */
+  const isAccountKey = (key: string): boolean =>
+    [...agents.values()].some((agent) => accountKey(agent.provider) === key);
+
+  const keptOnReplace = (pushed: Record<string, unknown>): Record<string, unknown> => {
+    const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+    return Object.fromEntries(Object.entries(held)
+      .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key))));
+  };
+
+  const rootFor = (held: Bag, mine: Record<string, unknown> = {}, connection?: Connection): Bag => {
+    const config = (held.config ?? { schema: ROOT_CONFIG_SCHEMA, values: {} }) as { schema: Bag; values: Bag };
+    /*
+     * The daemon's own keys for a connection that may read them and nobody
+     * else, and the account each backend bills to likewise: the operator's
+     * own, so it is `account:read`'s and the host's - decision
+     * `an-agent-account-is-shown-to-account-readers`. A connection without the
+     * grant is handed neither, which is the same absence a backend nothing has
+     * reported an account for has.
+     *
+     * A `PER_CONNECTION` key is the pushing client's, so another connection
+     * reads its own in its place: the state holds whatever was pushed last,
+     * and that copy belongs to nobody.
+     */
+    const reads = seesConfig(connection);
+    const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
+      !PER_CONNECTION.has(key) && (reads || !daemonKey(key)) && (seesAccount(connection) || !isAccountKey(key))));
+    const properties = (config.schema.properties ?? {}) as Bag;
+    const meta = metaFor(connection);
+    return {
+      ...held,
+      // The host's list, rewritten for the one connection asking when it is
+      // already somebody: the sign-in resource is the one field that differs.
+      agents: connection === undefined ? held.agents : ctx.agentsFor(connection, held.agents),
+      config: {
+        schema: reads
+          ? config.schema
+          : { ...config.schema, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !daemonKey(key))) },
+        values: { ...values, ...mine },
+      },
+      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
+    };
+  };
+
+  /**
+   * The root's `_meta`, as one connection reads it: what this host and its
+   * plugins offer, in that connection's words, and who the connection is.
+   */
+  const metaFor = (connection?: Connection): Bag => {
     const schemes = advertisedSchemes();
     const channels = advertisedChannels();
     const methods = advertisedMethods();
-    const meta = {
+    return {
       /*
        * The machine, for a window choosing which host to delegate to.
        *
@@ -624,66 +702,21 @@ export function createRoot(ctx: HostContext): Root {
       ...(channels === undefined ? {} : { 'ahpd.channels': channels }),
       ...(methods === undefined ? {} : { 'ahpd.methods': methods }),
       'ahpd.grants': advertisedGrants(),
-      ...(ctx.restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
       /*
-       * Who this snapshot is for, in the block the handshake already uses.
+       * Who this connection is, in the block the handshake already uses.
        *
-       * The root snapshot is built per connection, which is the whole of why
-       * this key can live here: a client that signs in after connecting learns
-       * its id by taking the root snapshot again, and this is the same statement
-       * as the handshake's, so a client that subscribes later reads what a
-       * client that connected earlier was told. Nobody else's - a snapshot is
-       * never cached and never replayed to another connection.
+       * A client that signs in after connecting learns its id by taking the
+       * root snapshot again, and this is the same statement as the handshake's,
+       * so a client that subscribes later reads what a client that connected
+       * earlier was told. Nobody else's.
        */
       ...(connection === undefined || ctx.ownerFor(connection) === undefined ? {} : { 'ahpd.principal': ctx.ownerFor(connection) }),
-    };
-    return {
-      // The host's list, rewritten for the one connection asking when it is
-      // already somebody: the sign-in resource is the one field that differs.
-      agents: connection === undefined ? descriptors() : ctx.agentsFor(connection, descriptors()),
-      // What this host is running, not what is on disk beside it.
-      activeSessions: sessions.size,
-      ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
-      /*
-       * Always present, and present even when empty.
-       *
-       * A client's root reducer returns the state *unchanged* when there is no
-       * `config` on it, so a host that left this out made every
-       * `root/configChanged` a no-op on every client - including the one that
-       * had just pushed it.
-       */
-      /*
-       * The host's keys, the daemon's beside them, then this connection's own
-       * preferences.
-       *
-       * A `PER_CONNECTION` key is dropped from the host's half rather than
-       * merged under: `rootConfig` still holds whatever was pushed last, because
-       * the echo and the replay buffer are one per host, but that copy belongs to
-       * nobody and showing it would tell a client that somebody else's shell was
-       * its own. So what a connection reads back here is what it pushed, or
-       * nothing.
-       */
-      config: {
-        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...theirs } },
-        values: {
-          ...Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !PER_CONNECTION.has(key))),
-          ...mine,
-          ...daemonValues,
-          ...accounts,
-        },
-      },
-      /*
-       * The same statement as the handshake's, so a client that subscribes later
-       * reads what a client that connected earlier was told. `restartNeeded` is
-       * for everybody: it names no key and no value, and a client that cannot
-       * read the settings is still owed to know that one of them is not in force.
-       */
-      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
     };
   };
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants, rootState,
+    daemonKey, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
+    daemonValues, rootSeed, rootFor, keptOnReplace,
   };
 }

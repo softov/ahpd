@@ -1148,17 +1148,16 @@ it('keeps a turn\'s sender under the id the backend wrote it down as, so a histo
   await new Promise((tick) => { setTimeout(tick, 100); });
 
   /*
-   * The turn read back under the id this backend wrote it as, which is what a
-   * Claude turn is named by once the daemon has restarted. Kept there as well
-   * as under `t1`, so the sender is still there to be found.
+   * The turn as every client holds it, under the id the client chose: the
+   * chat's state is what the actions said while the daemon ran it.
    */
   const turns = await turnsOn(client, chat);
-  expect(turns.map((turn) => String(turn.id))).toEqual(['x1']);
+  expect(turns.map((turn) => String(turn.id))).toEqual(['t1']);
   expect(senderOn(turns[0])).toBe('user:ana');
-  expect(store.sender('one', 'x1')).toBe('user:ana');
-  // And the id the client chose still finds it, for a turn read while the
-  // daemon is the one that ran it.
   expect(store.sender('one', 't1')).toBe('user:ana');
+  // And under the id this backend wrote it as, which is what a Claude turn is
+  // named by once the daemon has restarted and the history is read back.
+  expect(store.sender('one', 'x1')).toBe('user:ana');
 });
 
 it('says neither who sent a turn nor whose a session is when the host has no directory', async () => {

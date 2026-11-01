@@ -117,12 +117,16 @@ export function chatFlag(
   ctx.dispatch(chat, action ?? (bit === Status.IsRead
     ? { type: 'chat/isReadChanged', isRead: on }
     : { type: 'chat/isArchivedChanged', isArchived: on }));
-  const lead = ctx.byChat.get(chat)?.chat;
-  const base = lead !== undefined
-    ? lead.status()
-    : Number(((ctx.subagents.get(chat)?.state ?? {}) as Bag).status ?? Status.Idle);
-  ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status: base | after } });
-  ctx.summaryMoved(session);
+  /*
+   * A running chat's row follows its state as every action on it moves it. A
+   * chat of a session nothing is running has no backend to follow, so its row
+   * is said here: idle, with its bits, or what its held state says.
+   */
+  if (ctx.sessionHolding(chat) === undefined) {
+    const status = Number(ctx.stateOf(chat)?.status ?? (Status.Idle | after));
+    ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
+    ctx.summaryMoved(session);
+  }
   return true;
 }
 
