@@ -623,6 +623,36 @@ it('asks a backend that can stop one worker to stop that worker, and leaves the 
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled')).toBe(false);
 });
 
+/*
+ * A worker chat runs a turn of its own, the worker's, and once the worker has
+ * ended a stop there has no turn to stop: "`chat/turnCancelled` | No active
+ * turn | Server MUST reject the action".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+ */
+it('stops a worker that runs on after its lead turn, and refuses a stop once it has ended', async () => {
+  const { ask, uri, lead } = await busyHost(true);
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('subscribe', { channel: worker });
+  await settle();
+  const refusals = (): string[] => wire
+    .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+    .map((one) => String(one.params.rejectionReason));
+
+  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await settle();
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'stop', id: 'toolu_bg' }]);
+
+  finishWorker();
+  await settle();
+  told.length = 0;
+  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await settle();
+  expect(refusals()).toEqual([`Nothing is running on ${worker} to stop`]);
+  expect(told).toEqual([]);
+});
+
 it('refuses anything else on a worker chat as read-only', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });
@@ -639,9 +669,10 @@ let finishWorker = (): void => {};
  *
  * `spawn` opens a worker that says what it is doing and goes on after the lead
  * turn completes, until `finishWorker`; `ask` opens a worker that waits on a
- * person while the lead turn runs; anything else runs and does not end.
+ * person while the lead turn runs; anything else runs and does not end. With
+ * `stoppable`, the backend stops one worker, and says so in `told`.
  */
-function busy(): Agent {
+function busy(stoppable = false): Agent {
   return {
     provider: 'fake',
     displayName: 'Fake',
@@ -710,6 +741,7 @@ function busy(): Agent {
         reorder: () => {},
         confirm: () => false,
         answer: () => false,
+        ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
         stopMcpServer: async () => false,
@@ -720,9 +752,10 @@ function busy(): Agent {
 }
 
 /** A host running the busy fake, with one session subscribed from the root. */
-async function busyHost() {
+async function busyHost(stoppable = false) {
   wire.length = 0;
-  const host = createHost({ path: '/tmp', agents: [busy()] });
+  told.length = 0;
+  const host = createHost({ path: '/tmp', agents: [busy(stoppable)] });
   const client = host.accept(peer());
   const ask = asking(client);
   await ask('initialize', {

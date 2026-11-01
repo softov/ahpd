@@ -626,7 +626,14 @@ export interface Session {
    */
   resume?(turnId: string): boolean;
 
-  /** Stop the running turn, and answer anything it was blocked on. */
+  /**
+   * Stop the running turn, named by its id, and answer anything it was
+   * blocked on.
+   *
+   * The host calls this while the chat runs a turn, with that turn's id: it
+   * refuses a stop on a chat with no turn running, as the protocol has a
+   * server do, and answers a stop naming another turn itself.
+   */
   cancel(turnId: string): void;
 
   /**

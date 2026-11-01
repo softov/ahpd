@@ -273,7 +273,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/toolCallAuthRequired` | host | ✅ | The SDK surfaces no per-call auth moment, so the join is made here: a server that starts asking blocks whatever was running against it. Only when the resource was discovered - the action carries a whole `McpAuthRequirement`, and a client told to sign in with nowhere to do it is worse than one told the server errored. |
 | `chat/toolCallAuthResolved` | host | ✅ | When the server is ready again, paired with the `session/inputNeededRemoved` that lifts the session-level block. |
 | `chat/turnComplete` | host | ✅ | Carries a required `duration`. A turn that ended badly ends with `chat/error` instead; both are endings, and which one says how it went. |
-| `chat/turnCancelled` | both | ✅ | Also carries a required `duration` - a missing number here is `NaN`, which throws inside the reducer rather than drawing anything. |
+| `chat/turnCancelled` | both | ✅ | Also carries a required `duration` - a missing number here is `NaN`, which throws inside the reducer rather than drawing anything. A stop on a chat that runs no turn is refused, as the protocol's validation table has a server refuse it; a session asleep in the catalogue runs none, and stays asleep. A stop that names no turn stops the running one, and the backend is handed that turn's id. |
 | `chat/error` | host | ✅ | The ending, not a message beside one: it carries the `turnId` and the duration the completion would have. |
 | `chat/turnResume` | client | ✅ | The protocol's conditions - latest, errored, message and parts intact - are the backend's to check, because only it knows what its last turn was. A backend that cannot re-run one says so rather than being asked to. pi continues from the model call that failed, so the tools the turn already ran are not run again, and it marks a failed model call `resumable` on the turn's error part, also on the last turn read back from its file. Claude cuts the conversation back to the end of the turn before, with `resumeSessionAt`, and sends the prompt again; a conversation whose first turn failed is deleted and started over under its id. The calls the failed turn ran are run again, because the cut drops them with the prompt. It marks a failed model call `resumable` only when there is a turn to cut back to, so a turn refused before the CLI, a CLI that is gone and a refused login carry none. Cofold cuts its store through the last message of the turn before, with `sessions.truncate`, and runs the prompt again under the turn's own message id; a conversation whose first turn failed has its session deleted, and `run()` makes it again on the same workspace. The calls the failed turn ran are run again. It marks a failed run `resumable` unless the run never started (`start_failed`) and when the turn before has a point this process watched run, or there is no turn before. |
 | `chat/activityChanged` | host | ✅ | What this chat is doing, in the tool's own words while one runs. Sent with no `activity` to clear it. |
@@ -757,10 +757,13 @@ channel. A request the protocol has a host decline by restoring the state, as
 `session/mcpServerBackgroundRequested` is, goes to every client the same way,
 and the restored state follows it.
 
-A cancel is the same case. `chat/turnCancelled` naming a turn that chat is not
-running stops nothing, so it changes nothing, and its sender is answered as an
-unchanged set is. A cancel that does name the running turn stops it, which is a
-change, and goes out to every client as one.
+A cancel is the same case while the chat runs a turn. `chat/turnCancelled`
+naming another turn than the running one stops nothing, so it changes nothing,
+and its sender is answered as an unchanged set is. A cancel that names the
+running turn, or no turn, stops it, which is a change, and goes out to every
+client as one. A cancel on a chat that runs no turn is refused: the protocol's
+validation table has the server reject it
+([chat channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md)).
 
 A flag is the same case too. `session/isReadChanged`,
 `session/isArchivedChanged`, `chat/isReadChanged` and `chat/isArchivedChanged`

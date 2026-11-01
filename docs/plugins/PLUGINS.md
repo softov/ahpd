@@ -347,6 +347,7 @@ A worker's chat is read-only, but a client may still answer what the worker aske
 A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
 A backend without `stopWorker` gets `cancel` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
 The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it cancel the lead turn instead.
+A stop once the worker has ended is refused, as on any chat with no turn running.
 
 ### The MCP servers a session is offered
 

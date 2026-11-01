@@ -1018,13 +1018,11 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * There is nothing here to stop - the work is the bot's session, and
        * whether that hears the stop is the plugin's business - so the turn is
        * ended as a cancelled one, and a client watching the chat is told
-       * exactly that. A stop that names neither the open turn nor nothing at
-       * all is a stop for a turn this chat is not running, which is not one.
+       * exactly that. The host names the open turn by its id.
        */
       cancel: (turnId) => {
         const held = open;
-        if (held === undefined) return;
-        if (turnId !== '' && turnId !== held.id) return;
+        if (held === undefined || held.id !== turnId) return;
         finish(held, 'cancelled', []);
       },
 

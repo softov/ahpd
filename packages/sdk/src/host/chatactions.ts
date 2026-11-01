@@ -491,6 +491,19 @@ export function chatAction(
     const carried = Object.keys(action).filter((key) => key !== 'type');
     no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
   };
+  const asleep = !session && !worker && !sessions.has(sessionFor(channel)) && owners.has(sessionFor(channel));
+  /*
+   * A stop on a session asleep in the catalogue.
+   *
+   * A session with no backend runs no turn, so the stop has nothing to stop
+   * and is refused, as the protocol has a server refuse a stop with no turn
+   * running, before anything is woken to find that out.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+   */
+  if (asleep && type === 'chat/turnCancelled') {
+    no(`Nothing is running on ${channel} to stop`);
+    return;
+  }
   /*
    * Any other action on a session asleep in the catalogue.
    *
@@ -499,7 +512,7 @@ export function chatAction(
    * change and a draft are kept above without a wake. The wait is returned, so
    * this connection's later dispatches go behind it.
    */
-  if (!session && !worker && !sessions.has(sessionFor(channel)) && owners.has(sessionFor(channel))) {
+  if (asleep) {
     const uri = sessionFor(channel);
     const release = hold(uri);
     return conn.bounded(wake(uri, channel, connection), `${channel} waking`).then(
@@ -1175,53 +1188,66 @@ export function chatAction(
       break;
     }
     /*
-     * On a worker's chat, that worker, when the backend can stop one;
-     * otherwise the lead turn that runs the worker. The action names the
-     * worker's own turn, which the backend has no turn under, so the
-     * worker is named by the call its chat was opened for.
+     * A stop, checked against the turn the chat it names is running.
+     *
+     * A chat with no turn running has nothing to stop, and the protocol has
+     * the server refuse the action: "`chat/turnCancelled` | No active turn |
+     * Server MUST reject the action".
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+     *
+     * A worker's chat runs the worker's turn, which this host opened and
+     * reduces itself; every other chat runs the turn its backend reports.
      */
     case 'chat/turnCancelled': {
+      const running = (worker
+        ? (ctx.stateOf(channel) as { activeTurn?: { id?: unknown } } | undefined)
+        : (session.chatState() as { activeTurn?: { id?: unknown } }))?.activeTurn;
+      if (running === undefined) {
+        no(`Nothing is running on ${channel} to stop`);
+        break;
+      }
       if (!worker) {
         /*
-         * A stop that names a turn this chat is not running stops nothing.
+         * A stop that names a turn other than the running one stops nothing:
+         * the protocol's reducer ends a turn only when the id it names is the
+         * active turn's, so a client that names another, one it saw end,
+         * holds a stop that changed nothing, and it alone is answered.
+         * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
          *
-         * Read here rather than left to the backend, because the example
-         * backends cancel whatever they are running whatever id they were
-         * handed - `turnId || turn.id` in both - and a client stopping a turn
-         * it had already finished would end somebody else's.
+         * A stop that names no turn means the running one, the one turn a
+         * client with no id to give can mean.
          *
-         * A stop that names nothing is not one of those. A client with no id
-         * to give means the running turn, and there is nothing for a name to
-         * disagree with.
-         *
-         * Where nothing stops, the client applied the action all the same and
-         * is holding it, so it is answered rather than dropped: an echo to
-         * that client alone, since nothing here changed for anybody else.
+         * The backend is handed the running turn's id, and says the turn's
+         * end back under it, which answers the client.
          */
         const named = String(action.turnId ?? '');
-        const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-        if (current === undefined || (named !== '' && String(current.id ?? '') !== named)) {
+        const turn = String(running.id ?? '');
+        if (named !== '' && named !== turn) {
           echoTo(connection.peer, channel, action, origin);
           break;
         }
-        // Said back by the backend once the turn has let go, under the turn
-        // it stopped whether or not the client named it.
-        ctx.owe('chat/turnCancelled', String(current.id ?? ''));
-        session.cancel(named);
+        ctx.owe('chat/turnCancelled', turn);
+        session.cancel(turn);
         break;
       }
+      /*
+       * On a worker's chat, that worker, when the backend can stop one;
+       * otherwise the lead turn that runs the worker. The worker's turn is
+       * this host's, which the backend has no turn under, so the worker is
+       * named by the call its chat was opened for.
+       */
       const call = toolCallOfSubagentChat(channel);
       if (session.stopWorker !== undefined && call !== undefined) {
         session.stopWorker(call);
         break;
       }
-      const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-      if (current === undefined) {
+      const lead = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+      if (lead === undefined) {
         no(`Nothing is running on ${session.chatUri} to stop`);
         break;
       }
-      ctx.owe('chat/turnCancelled', String(current.id ?? ''));
-      session.cancel(String(current.id ?? ''));
+      ctx.owe('chat/turnCancelled', String(lead.id ?? ''));
+      session.cancel(String(lead.id ?? ''));
       break;
     }
     /**

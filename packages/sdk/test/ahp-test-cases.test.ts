@@ -381,7 +381,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'steeringMessage'], ...BROKEN.echoRewritten }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
-  '015-session-turncancelled-finalizes-turn': [{ reduced: ['activeTurn', 'modifiedAt', 'status', 'turns'], ...BROKEN.senderOnly }],
   '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
@@ -493,6 +492,10 @@ const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: 
   'chat/toolCallConfirmed': [{
     said: (action) => `${String(action.toolCallId)} is not a call this chat is waiting to have confirmed`,
     source: 'chat-channel.md: "chat/toolCallConfirmed | Tool call not in pending-confirmation state | Server MUST reject the action"',
+  }],
+  'chat/turnCancelled': [{
+    said: (_action, where) => `Nothing is running on ${where.channel} to stop`,
+    source: 'chat-channel.md: "chat/turnCancelled | No active turn | Server MUST reject the action"',
   }],
   'chat/turnResume': [{
     said: (action) => `${String(action.turnId)} is not the latest turn`,
