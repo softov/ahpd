@@ -94,6 +94,8 @@ interface Knobs {
   listed?: Listed[];
   /** The conversations the backend deleted, for a backend that can delete. */
   deleted?: string[];
+  /** What the backend keeps of a `!` turn in its own record, in place of what it said. */
+  recorded?: (turn: Bag) => Bag;
 }
 
 const knobs = (): Knobs => ({ starts: [], ending: 'complete' });
@@ -129,10 +131,18 @@ const backend = (k: Knobs): Agent => {
         ran: (turnId: string, command: string, run: (toolCallId: string) => Promise<Ran>) => {
           const startedAt = new Date().toISOString();
           const message = { text: `!${command}`, origin: { kind: 'user' } };
+          const toolCallId = `${turnId}:command`;
           start.emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
-          void run(`${turnId}:command`).then((done) => {
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, toolName: 'terminal', displayName: 'Terminal' });
+          start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId, invocationMessage: command, confirmed: 'not-needed' });
+          void run(toolCallId).then((done) => {
             const state = k.ending === 'complete' ? 'complete' : k.ending === 'cancelled' ? 'cancelled' : 'error';
-            all().push({
+            const content = [{ type: 'text', text: done.output }];
+            start.emit('chat', {
+              type: 'chat/toolCallComplete', turnId, toolCallId,
+              result: { success: done.success, pastTenseMessage: done.said, content },
+            });
+            const kept: Bag = {
               id: turnId,
               startedAt,
               message,
@@ -140,16 +150,17 @@ const backend = (k: Knobs): Agent => {
               responseParts: [{
                 kind: 'toolCall',
                 toolCall: {
-                  toolCallId: `${turnId}:command`,
+                  toolCallId,
                   toolName: 'terminal',
                   displayName: 'Terminal',
                   status: 'completed',
                   success: done.success,
                   pastTenseMessage: done.said,
-                  content: [{ type: 'text', text: done.output }],
+                  content,
                 },
               }],
-            });
+            };
+            all().push(k.recorded?.(kept) ?? kept);
             if (k.ending === 'complete') start.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
             else if (k.ending === 'cancelled') start.emit('chat', { type: 'chat/turnCancelled', turnId, duration: 1 });
             else start.emit('chat', { type: 'chat/error', turnId, duration: 1, part: { kind: 'error', error: { errorType: 'turnFailed', message: 'no' } } });
@@ -228,6 +239,24 @@ describe('a command\'s turn', () => {
     // The turn as the chat holds it.
     expect((kept[0]?.turn as Bag).message).toEqual({ text: '!echo one', origin: { kind: 'user' } });
     expect(kept[0]?.version).toBe(1);
+  });
+
+  it('is kept as its clients hold it, whatever the backend kept of it', async () => {
+    /*
+     * The reference records a local turn from the state its clients were
+     * served, so the turn a restart reads back is the turn they reduced.
+     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L235-L245
+     */
+    const k = knobs();
+    k.recorded = (turn) => ({ ...turn, state: 'error' });
+    const store = fileSessions({ dir: join(temp(), 'sessions') });
+    const { client, p, chat } = await opened(k, store);
+    say(client, chat, 't1', '!echo one');
+    await ended(p, chat, 't1');
+    const held = ((await stateOf(client, chat)).turns as Bag[]).find((turn) => turn.id === 't1');
+    const kept = keptIn(store, 'live');
+    expect((kept[0]?.turn as Bag).state).toBe('complete');
+    expect(kept[0]?.turn).toEqual(held);
   });
 
   it('is kept when a stop cancels it, and when it fails', async () => {
