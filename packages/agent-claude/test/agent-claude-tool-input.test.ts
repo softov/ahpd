@@ -220,7 +220,11 @@ it('draws each live call\'s row line as its subject or its display name', async 
 });
 
 it('draws a restored call\'s row line as the live one does', async () => {
-  const back = await restored();
+  // Each call finished, so each reads back with the line it ended on.
+  const back = await restored(calls, [{
+    type: 'user', parent_tool_use_id: null, uuid: 'u2', timestamp: '2020-01-01T00:00:00.000Z',
+    message: { role: 'user', content: calls.map((block) => ({ type: 'tool_result', tool_use_id: block.id, content: 'ok' })) },
+  }]);
   for (const [id, line, past] of rows) {
     const call = back.get(id);
     expect(call?.invocationMessage, id).toEqual(line);

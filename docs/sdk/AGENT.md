@@ -132,7 +132,12 @@ to find one.
 
 **`transcript(id)` is what makes a catalogue row openable.** It is a read with
 nothing started; `create` is called with `resume` only when somebody actually
-says something to that row.
+says something to that row. A call your record holds no result for never
+finished: answer it `cancelled` with `reason: 'skipped'`, which is how the
+protocol's reducer holds a call still open when its turn ends, and the turn
+holding it `cancelled`, as the reference reads a Claude transcript back
+([claudeReplayMapper.ts](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514)).
+What a turn used is what its live turn said it used.
 
 **`at` says where the session ran.** It is `{ workingDirectory }`, a path,
 when the host recorded the session's folder, and absent when it did not.
