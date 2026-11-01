@@ -1,6 +1,6 @@
 ---
 title: Each condition reads the held state
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -24,6 +24,10 @@ An accepted action that no backend says back or takes is said back by the host.
 - `UPDATE: packages/sdk/src/host/chatactions.ts:1491-1593` - a draft, a removal, a confirmation and an answer read it.
 - `UPDATE: packages/sdk/src/host/chatactions.ts:1685` - a truncation names a completed turn of the held state.
 - `UPDATE: packages/sdk/src/host/chatactions.ts:1765-1780` - a draft answer reads it.
+- `UPDATE: packages/sdk/src/types/session.ts` - `confirm`, `answer` and `setAnswer` say they are handed over once the held state allows them, and who says the echo.
+- `UPDATE: docs/sdk/AGENT.md` - *Being asked* says the same for a backend author.
+- `UPDATE: packages/sdk/test/subagent-chat.test.ts` - the fixture says its worker's question on the worker's chat and its lead's calls on the lead chat, and a second confirmation of one call is refused.
+- `UPDATE: packages/sdk/test/host-tools.test.ts` - an input answer naming a call a person is asked to confirm approves nothing.
 
 ## Steps
 
@@ -44,4 +48,5 @@ An accepted action that no backend says back or takes is said back by the host.
 
 ## Resume
 
-<Empty until started.>
+Done. Each condition reads the chat's held state, and the host says an accepted action no backend says or takes.
+The oracle passes 647 of 647 with the entries for 015 and 224 removed.

@@ -1,6 +1,6 @@
 ---
 title: The oracle holds a refusal to its condition
-status: todo
+status: done
 depends: [01]
 layer: "sdk tests"
 refs:
@@ -36,4 +36,6 @@ A refusal whose condition that state contradicts fails its case.
 
 ## Resume
 
-<Empty until started.>
+Done. Against the chat actions before task 01 the file fails 15 cases.
+They are 015, 042, 048, 049, 063, 064, 065, 067, 108, 110, 224, 235, 263, 267 and 269.
+After task 01 it passes 647 of 647.

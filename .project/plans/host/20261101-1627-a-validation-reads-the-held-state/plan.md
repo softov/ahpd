@@ -1,7 +1,7 @@
 ---
 title: A validation reads the held state
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -89,9 +89,9 @@ dispatchAction -> applyDispatch -> the condition over the held chat state -> ref
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - each condition reads the held state](task-01-each-condition-reads-the-held-state.md) | todo | - |
-| [02 - the oracle holds a refusal to its condition](task-02-a-refusal-is-held-to-its-condition.md) | todo | 01 |
-| [03 - a client's result is checked against its call](task-03-a-clients-result-meets-its-call.md) | todo | 01 |
+| [01 - each condition reads the held state](task-01-each-condition-reads-the-held-state.md) | done | - |
+| [02 - the oracle holds a refusal to its condition](task-02-a-refusal-is-held-to-its-condition.md) | done | 01 |
+| [03 - a client's result is checked against its call](task-03-a-clients-result-meets-its-call.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -100,13 +100,13 @@ dispatchAction -> applyDispatch -> the condition over the held chat state -> ref
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-each-condition-reads-the-held-state.md](task-01-each-condition-reads-the-held-state.md).
+- **Done so far:** tasks 01 to 03.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a backend that answers later takes the dispatch through `Start.handed`; the host says nothing for it.
 
 ## Final verification checklist
 
-- [ ] Each oracle entry this plan removes failed before the change and passes after it.
+- [x] Each oracle entry this plan removes failed before the change and passes after it.
 - [ ] `pnpm run test:unit --maxWorkers=2` passes, with each failure under load passing alone.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.
+- [x] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.

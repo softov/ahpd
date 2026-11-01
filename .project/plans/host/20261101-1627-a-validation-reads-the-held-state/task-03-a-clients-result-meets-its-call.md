@@ -1,6 +1,6 @@
 ---
 title: A client's result is checked against its call
-status: todo
+status: done
 depends: [01]
 layer: "sdk host, agent-claude"
 refs:
@@ -22,7 +22,11 @@ A Claude call a client runs names that client from its start, and a worker's cal
 - `UPDATE: packages/agent-claude/src/session/asking.ts:403-411` - a start a question opens names the same contributor.
 - `UPDATE: packages/sdk/src/tools/clientcalls.ts:40-55` - `ClientCall.chat`, the chat a call's entry names when it is not the holder's.
 - `UPDATE: packages/agent-claude/src/session/clienttools.ts:370-410` - a worker's call is opened under the worker's chat.
-- `UPDATE: packages/sdk/src/host/chatactions.ts:1808-1866` - the contributor is read off the held call, and a result the backend holds no call for is said by the host.
+- `UPDATE: packages/sdk/src/host/chatactions.ts:1808-1866` - the contributor is read off the held call before the backend is handed the result.
+- `UPDATE: packages/sdk/test/host-tools.test.ts` - a streamed start and a question's start name the client.
+- The same file - a backend's held call is started on its chat under its client before a client answers it.
+- `UPDATE: packages/agent-claude/test/agent-claude-subagent.test.ts` - a worker's client call is raised under the worker's chat.
+- `UPDATE: packages/agent-claude/test/agent-claude-client-gone.test.ts` - the test's session context finds no worker for a call.
 
 ## Steps
 
@@ -30,8 +34,9 @@ A Claude call a client runs names that client from its start, and a worker's cal
 2. Add an optional `chat` to `ClientCall`, read in place of the holder's for that call's entry.
 3. Open a worker's client call with the worker's chat.
 4. Read the running call and its contributor off the held state in `chat/toolCallComplete` and `chat/toolCallContentChanged`.
-5. Say a result the backend holds no call for, and send streamed content on the chat the call is in.
-6. Run the client tool suites and the subagent suites.
+5. Send streamed content on the chat the call is in.
+6. Refuse a result the backend holds no call for, a second result among them, as R1 refuses one.
+7. Run the client tool suites and the subagent suites.
 
 ## Validation
 
@@ -40,4 +45,5 @@ A Claude call a client runs names that client from its start, and a worker's cal
 
 ## Resume
 
-<Empty until started.>
+Done. Before the change a streamed start named `mcp:ahp`, a question's start named nobody, and a worker's call was raised under the lead chat.
+The four suites pass.
