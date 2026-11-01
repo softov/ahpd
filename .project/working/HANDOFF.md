@@ -41,7 +41,7 @@ Current progress and pending items only, as of 2026-11-01.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
-- `/github/ahpd` is at #180's merge (`33bab1d9`). Another session's uncommitted edits sit there: the plain-text brief, an Answers row in plugin/20261031-1200, and the new brief `a-claude-agent-signs-in-without-a-connector.md`. Leave them.
+- `/github/ahpd` is on main at `205c5ed6`, clean. Its briefs, the plain-text brief's *Plugin text* and the plugin/20261031-1200 Answers row are committed.
 - Fetch, and check the base before you cut a build worktree.
 - Softov's dev daemon runs from source on port 37537. He restarted it after #180, on 2026-11-01, so it runs #176 to #180.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
@@ -100,7 +100,7 @@ Current progress and pending items only, as of 2026-11-01.
 
 - The VM plan `20261030-1141-a-vm-is-made-on-a-server` has its code merged. It waits on the checks by hand above.
 - container/05 p10 (task 03 next).
-- [plugin/20261101-1803-a-plugin-that-fails-says-so](../plans/plugin/20261101-1803-a-plugin-that-fails-says-so/plan.md), planned: the Dev Tunnel `-p` flag, `listening` and `stopping` for a plugin loaded or unloaded late, and alerts for a failing plugin. Not started. The brief is still untracked in `/github/ahpd`, where another session works; remove it there before that checkout pulls main.
+- [plugin/20261101-1803-a-plugin-that-fails-says-so](../plans/plugin/20261101-1803-a-plugin-that-fails-says-so/plan.md), planned: the Dev Tunnel `-p` flag, `listening` and `stopping` for a plugin loaded or unloaded late, and alerts for a failing plugin. Not started.
 - The ahpw Connect button for plugin/71 is ahpw plan plugins/09, planned.
 
 ## Outside this repository
