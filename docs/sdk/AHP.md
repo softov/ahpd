@@ -807,7 +807,7 @@ catalogue's row.
 | --- | --- |
 | past sessions | every catalogue row opens from its transcript - a file read, no CLI - and is resumed only when somebody starts a turn on it |
 | capabilities | models, skills, slash commands, subagents and MCP servers are read from the CLI's *control* protocol at startup, so they are known before any turn. A composer that waited for the first session could only offer them once the conversation had started |
-| skills | told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash. A skill's argument hint is `_meta['ahpd.argumentHint']`, because `SkillCustomization` declares none, and reaches the slash menu as the completion item's `argumentHint` |
+| skills | told apart from built-in prompts, and a skill the CLI keeps for the agent is not offered after a slash. A skill's or a prompt's argument hint is `_meta['ahpd.argumentHint']`, because neither `SkillCustomization` nor `PromptCustomization` declares one, and reaches the slash menu as the completion item's `argumentHint` |
 | toggling a skill or prompt | refused out loud: the CLI has no runtime switch, and the list goes back out so the control returns to where it was |
 | toggling a plugin | through the CLI's `enabledPlugins`, then read back. A session switch stays where the client put it, which the host keeps by id, because `reloadPlugins` answers only the plugins the CLI is loading and a switched-off one is not among them |
 | toggling an MCP server | through the CLI, then read back. Switching on one that is not ready reconnects it, which is how signing in happens |

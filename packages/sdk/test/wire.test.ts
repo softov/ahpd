@@ -79,7 +79,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       toggleMcpServer: async () => {},
       reconnectMcpServer: async () => {},
       initializationResult: async () => ({
-        commands: [{ name: 'review', description: 'Review the diff' }],
+        commands: [{ name: 'review', description: 'Review the diff', argumentHint: 'The branch to review' }],
         outputStyles: ['default', 'concise'],
       }),
       mcpServerStatus: async () => [{ name: 'notes', status: 'connected' }],
@@ -252,6 +252,8 @@ const REFERENCE: { key: string; at: string; from: string }[] = [
   // drops it without a word, and `description` is the menu's second column.
   { key: 'command', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
   { key: 'description', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
+  // The ghost text a menu shows after an accepted command.
+  { key: 'argumentHint', at: 'attachment/_meta', from: 'docs/sdk/AHP.md' },
   // The version the reference client writes in its Output channel, and the key
   // it reads to decide this host is a native one - its own name, un-prefixed,
   // and not the protocol's - decision `ahpd-says-it-is-a-native-host`.

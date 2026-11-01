@@ -635,6 +635,33 @@ describe('a Claude chat', () => {
     await after.host.close();
   });
 
+  /*
+   * A command that failed is a call that failed, in a turn that completed: the
+   * action says so, and the record a restart reads says what the action said.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L213
+   */
+  it('keeps a failed command\'s turn complete, as its clients held it, and has it back so after a restart', async () => {
+    const dir = join(temp(), 'sessions');
+    const before = await shelled(dir);
+    const uri = 'claude:/failing';
+    await before.client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude', workingDirectories: [uriOf(DIR)] } });
+    const chat = String((await stateOf(before.client, uri)).defaultChat);
+    await stateOf(before.client, chat);
+    say(before.client, chat, 't1', '!exit 3');
+    await ended(before.p, chat, 't1');
+    const held = ((await stateOf(before.client, chat)).turns as Bag[]).find((turn) => turn.id === 't1');
+    expect(held?.state).toBe('complete');
+    expect((keptIn(before.store, 'failing')[0]?.turn as Bag | undefined)?.state).toBe('complete');
+    await before.host.close();
+
+    sdk.sessions.push({ sessionId: 'failing', summary: '!exit 3', lastModified: 1, cwd: DIR });
+    const after = await shelled(dir);
+    await stateOf(after.client, uri);
+    const read = ((await stateOf(after.client, chat)).turns as Bag[]).find((turn) => turn.id === 't1');
+    expect(read?.state).toBe('complete');
+    await after.host.close();
+  });
+
   it('has a steering message the CLI answered after the turn\'s last answer back inside that turn after a restart', async () => {
     const dir = join(temp(), 'sessions');
     const before = await shelled(dir);

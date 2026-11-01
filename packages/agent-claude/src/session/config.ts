@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { HookCallback, PermissionMode } from '@anthropic-ai/claude-agent-sdk';
 import { isShellName } from '@ahpd/sdk';
-import type { Session, ShellEnv } from '@ahpd/sdk';
+import type { ConfigTaken, Session, ShellEnv } from '@ahpd/sdk';
 import { bag, str } from './common.js';
 import type { SessionContext } from './context.js';
 
@@ -94,15 +94,15 @@ const shellEnvLines = (shellEnv?: ShellEnv): string => {
  * What arrives is another matter. A client draws controls from the schema and
  * *also* dispatches two conventional keys of its own: `autoApprove` (how much
  * may run unasked) and `mode` (how the agent works). VS Code sends both at
- * session creation whatever a host advertises, and this host used to answer
- * `autoApprove is not a config key this backend takes` and leave the session
- * where it was.
+ * session creation whatever a host advertises.
  *
- * So they are accepted and mapped here, on the way in, and nothing about what
- * is advertised changes. Planning wins over any approval level - a plan that
+ * So they are accepted and mapped here, on the way in, onto the one axis the
+ * reference host's Claude advertises, and nothing about what is advertised
+ * changes. Planning wins over any approval level - a plan that
  * ran a command would not be a plan - and `autopilot` is the mode axis saying
  * what `autoApprove` says at its top, which is why VS Code's own migration
  * moved `autoApprove: 'autopilot'` onto that axis.
+ * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/claudeSessionConfigKeys.ts#L6-L25
  *
  * `assisted` is the inexact one: VS Code means "assess the risk first" and
  * this harness has no risk model, so it gets `acceptEdits`, which is the rung
@@ -158,7 +158,7 @@ export interface Config {
    */
   unprefixed: Map<string, string>;
   methods: {
-    setConfig: (key: string, value: unknown) => true | string | Promise<true | string>;
+    setConfig: (key: string, value: unknown) => ConfigTaken | Promise<ConfigTaken>;
     settings: () => Record<string, unknown>;
   };
 }
@@ -237,11 +237,12 @@ export function createConfig(ctx: SessionContext): Config {
      *
      * `autoApprove` and `mode` are conventional names a client sends whatever
      * a host advertises, and both mean something this harness can do. Mapped
-     * onto the mode the CLI takes and recorded there, so the control this
-     * backend *does* advertise shows what actually happened.
+     * onto the mode the CLI takes, recorded there, and answered as that mode,
+     * which the host says to every client and keeps: the control this backend
+     * *does* advertise shows what actually happened.
      *
-     * False for anything else, and false is a real answer: a setter that
-     * reported success and changed nothing would leave a client showing a
+     * A refusal for anything else, and a refusal is a real answer: a setter
+     * that reported success and changed nothing would leave a client showing a
      * session in a state it is not in.
      */
     setConfig: async (key, value) => {
@@ -298,7 +299,9 @@ export function createConfig(ctx: SessionContext): Config {
       }
       ctx.settings.permissionMode = found;
       void ctx.handle.setPermissionMode(found).catch(() => {});
-      return true;
+      // A conventional name is answered with the mode it moved, which is the
+      // key this backend's state holds and what every client is told.
+      return key === 'permissionMode' ? true : { permissionMode: found };
     },
 
     settings: () => ({ ...ctx.settings, ...(ctx.chosen ? { model: ctx.chosen } : {}) }),

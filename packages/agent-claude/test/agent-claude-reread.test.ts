@@ -174,6 +174,24 @@ it('starts no watch for a session in a machine', async () => {
   expect(watched.changes).toHaveLength(0);
 });
 
+/*
+ * A list that empties is a list that moved.
+ *
+ * A session in a machine lists no folder rows of its own, so the CLI answering
+ * nothing leaves it nothing beside the list it started with. The action
+ * replaces the list every client holds, so the empty one is said as any other.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
+ */
+it('says its list when the first answer empties it', async () => {
+  const seeded = { type: 'skill', id: 'skill:handed', name: 'handed', uri: 'file:///handed/SKILL.md', enabled: true };
+  const { session, said } = await open({
+    spawn: () => { throw new Error('not started in this test'); },
+    seedCustomizations: [seeded],
+  });
+  expect(session.customizations()).toEqual([]);
+  expect(said.filter((one) => one.type === 'session/customizationsChanged').map((one) => one.customizations)).toEqual([[]]);
+});
+
 it('reads nothing again once the session is closed, and stops its watch', async () => {
   const { session } = await open();
   expect(watched.changes).toHaveLength(1);

@@ -247,7 +247,6 @@ export function createSession(options: ClaudeSessionOptions): Session {
       // Set only while something is wanted. A key that is always present and
       // sometimes empty is a client that has to guess which it is.
       ...(needed().length > 0 ? { inputNeeded: needed() } : {}),
-      ...(ctx.failed ? { error: ctx.failed } : {}),
     }),
 
     chatState: () => ({
@@ -280,7 +279,37 @@ export function createSession(options: ClaudeSessionOptions): Session {
      * host's job is to make it true rather than to decide whether it may.
      */
 
-    close: () => {
+    close: (reason) => {
+      /*
+       * Stopped to be started again, the session ends what its clients hold of
+       * it: each entry it raised comes down, its workers' turns and its own
+       * turn end cancelled. The session that starts behind it runs none of
+       * them, and its clients go on holding this chat's state. The reference
+       * host says a chat's running turn cancelled when it stops that chat's
+       * work. A session being disposed tells nobody anything.
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L118
+       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSideEffects.ts#L1467-L1482
+       */
+      if (reason === 'stopping') {
+        for (const one of [...ctx.pending.values()]) {
+          ctx.pending.delete(one.id);
+          one.settle({ behavior: 'deny', message: 'The session was stopped' });
+          ctx.inputNeededRemoved(one.id);
+        }
+        for (const [callId, running] of ctx.onServer) if (running.blocked) ctx.inputNeededRemoved(`auth:${callId}`);
+        for (const scope of [...ctx.scopes.values()]) {
+          if (scope.parent !== '' && scope.chat !== undefined) ctx.endWorker(scope.parent, 'cancelled');
+        }
+        const turn = ctx.active;
+        if (turn !== undefined) {
+          turn.state = 'cancelled';
+          turn.duration = Date.now() - ctx.startedAt;
+          ctx.settleOpen(turn);
+          ctx.turns.push(turn);
+          ctx.active = undefined;
+          ctx.emit('chat', { type: 'chat/turnCancelled', turnId: turn.id, duration: turn.duration });
+        }
+      }
       ctx.closed = true;
       servers.unwatch();
       ctx.ended.clear();

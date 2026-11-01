@@ -99,14 +99,14 @@ const calling = {
   },
 };
 
-/** A session with the client's tool on offer and a turn running. */
-async function started(): Promise<{ session: ReturnType<typeof createSession> }> {
+/** A session with the client's tool on offer and a turn running, saying what it says to `emit`. */
+async function started(emit: (channel: string, action: Bag) => void = () => {}): Promise<{ session: ReturnType<typeof createSession> }> {
   sdk.reset();
   const session = createSession({
     uri: 'ahp-session:/stopped-call',
     chatUri: 'ahp-chat:/stopped-call',
     cwd: mkdtempSync(join(tmpdir(), 'ahpd-stopped-call-')),
-    emit: () => {},
+    emit: (channel, action) => { emit(channel, action as Bag); },
   });
   await settle();
   await session.setTools?.([offered]);
@@ -175,6 +175,33 @@ it('tells a call a client is running that the turn was stopped, before anything 
   expect(first).not.toBe('interrupt');
   expect(said(first)).toContain('The turn was stopped');
   expect(after).toContain('interrupt');
+});
+
+/*
+ * A session stopped to be started again, as a restart or a move stops one.
+ *
+ * Its clients go on holding this chat's state, and the session that starts
+ * behind it runs none of what this one held. So the question's entry comes
+ * down and the turn ends cancelled, said where its clients hear it.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L118
+ */
+it('says the questions and the turn it held ended, when it is stopped to start again', async () => {
+  const sent: { channel: string; action: Bag }[] = [];
+  const { session } = await started((channel, action) => { sent.push({ channel, action }); });
+  void sdk.canUseTool!(CALLED, { text: 'hello' }, { toolUseID: 'toolu_post', signal: new AbortController().signal, suggestions: [] });
+  await settle();
+  /** The entries a client watching the session holds up, from every set and removal said so far. */
+  const up = (): string[] => [...sent.reduce((held, { action }) => {
+    if (action.type === 'session/inputNeededSet') held.add(String((action.request as Bag).id));
+    if (action.type === 'session/inputNeededRemoved') held.delete(String(action.id));
+    return held;
+  }, new Set<string>())];
+  expect(up()).toEqual(['toolu_post']);
+
+  await session.close('stopping');
+
+  expect(up()).toEqual([]);
+  expect(sent.filter((one) => one.action.type === 'chat/turnCancelled').map((one) => one.action.turnId)).toEqual(['t1']);
 });
 
 it('interrupts at once a turn whose open call the CLI runs itself', async () => {

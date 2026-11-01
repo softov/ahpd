@@ -98,7 +98,10 @@ export function createServers(ctx: SessionContext): Servers {
    * The plugins are the half a switch moves, so every rebuild starts here -
    * the handshake's and a switch's alike. Said as the whole list because a
    * switch can take a row out of it as well as move one, and a client reading
-   * one action has nothing to reconcile.
+   * one action has nothing to reconcile. Said whenever it moved, an emptied
+   * list included: the action replaces the list a client holds, and a list
+   * that moved with no action is one every client still holds as it was.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
    */
   const laid = (plugins: unknown[]): void => {
     const handed = new Set((ctx.options.plugins ?? []).map((one) => one.path));
@@ -112,8 +115,9 @@ export function createServers(ctx: SessionContext): Servers {
       managedDir: managedDirOf(),
       ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
     });
+    const was = JSON.stringify(ctx.customizations);
     ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, disk, stopRequested);
-    if (ctx.customizations.length > 0) {
+    if (JSON.stringify(ctx.customizations) !== was) {
       ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
     }
   };
