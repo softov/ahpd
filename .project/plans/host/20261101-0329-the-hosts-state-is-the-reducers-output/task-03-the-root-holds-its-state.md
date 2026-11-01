@@ -1,6 +1,6 @@
 ---
 title: The root holds its state
-status: todo
+status: done
 depends: [01]
 layer: "sdk host"
 refs:
@@ -42,4 +42,4 @@ A subscribe reads them through the connection's own view, and nothing in them mo
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

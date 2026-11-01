@@ -1,6 +1,6 @@
 ---
 title: Rows and summaries follow the held state
-status: todo
+status: done
 depends: [01]
 layer: "sdk host"
 refs:
@@ -41,4 +41,4 @@ Each moves by an action that carries what changed.
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

@@ -1,6 +1,6 @@
 ---
 title: The oracle lists no R1 divergence
-status: todo
+status: done
 depends: [01, 02]
 layer: "sdk tests"
 refs:
@@ -28,4 +28,4 @@ The oracle's third check lists no divergence, and each entry it held failed for 
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

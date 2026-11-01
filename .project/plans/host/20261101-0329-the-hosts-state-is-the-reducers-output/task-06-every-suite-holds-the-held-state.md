@@ -1,6 +1,6 @@
 ---
 title: Every suite holds the held state
-status: todo
+status: done
 depends: [01, 02, 03, 04]
 layer: "sdk tests, docs"
 refs:
@@ -35,4 +35,4 @@ A test that read a field no action moves now reads the action that moves it, or 
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

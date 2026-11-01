@@ -1,6 +1,6 @@
 ---
 title: Every channel holds its reduced state
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -44,4 +44,4 @@ Each channel opens once from its seed, and a subscribe is answered with the held
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.

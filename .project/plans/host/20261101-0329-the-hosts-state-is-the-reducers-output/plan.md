@@ -1,7 +1,7 @@
 ---
 title: The host's state is the reducers' output
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -85,6 +85,7 @@ subscribe -> the channel's held state, opened from its seed if nothing holds it 
 | A seed is what the backend restores and what the host keeps beside it; a backend's `chatState()` and `sessionState()` are read for the seed only | [agentService.ts#L14758-L14765](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L14758-L14765) | 01 |
 | Nothing writes the held state down; a restart opens each channel again from the backend's record and the host's store | [agentHostSessionStateDatabase.ts#L19-L65](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostSessionStateDatabase.ts#L19-L65); [copilotAgent.ts#L4877-L4886](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L4877-L4886) | 01 |
 | A session not running lets its state go when no connection watches it or its chats; a running one holds it while it runs | [agentSessionResidency.ts#L346-L361](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361) | 01 |
+| A held chat that opened with no conversation takes its record's turns by `chat/turnsLoaded`, and a held session whose workers could not be read takes each one found later by `session/chatAdded` | [agentHostStateManager.ts#L759-L767](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767); [#L1698-L1767](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1698-L1767) | 01 |
 | A session's `status` moves only by its reducer: the read and archived bits and the input-needed list; its chats' activity is on their rows | [actions.md#L3](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3); the session reducer's `withInputNeededStatus` | 01 |
 | Each chat action moves the chat's row by `session/chatUpdated` carrying the changed fields, and the session's activity by `session/activityChanged` | [chat-channel.md#L24](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L24); [agentHostStateManager.ts#L3237-L3299](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3237-L3299) | 02 |
 | The catalogue row's status, activity and time follow the protocol's aggregation, over every chat, workers included | [session-channel.md#L89-L101](https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L89-L101) | 02 |
@@ -112,28 +113,39 @@ subscribe -> the channel's held state, opened from its seed if nothing holds it 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - every channel holds its reduced state](task-01-every-channel-holds-its-reduced-state.md) | todo | - |
-| [02 - rows and summaries follow the held state](task-02-rows-and-summaries-follow-the-state.md) | todo | 01 |
-| [03 - the root holds its state](task-03-the-root-holds-its-state.md) | todo | 01 |
-| [04 - canvases and changesets say each change](task-04-canvases-and-changesets-say-each-change.md) | todo | - |
-| [05 - the oracle lists no R1 divergence](task-05-the-oracle-lists-no-r1-divergence.md) | todo | 01, 02 |
-| [06 - every suite holds the held state](task-06-every-suite-holds-the-held-state.md) | todo | 01, 02, 03, 04 |
+| [01 - every channel holds its reduced state](task-01-every-channel-holds-its-reduced-state.md) | done | - |
+| [02 - rows and summaries follow the held state](task-02-rows-and-summaries-follow-the-state.md) | done | 01 |
+| [03 - the root holds its state](task-03-the-root-holds-its-state.md) | done | 01 |
+| [04 - canvases and changesets say each change](task-04-canvases-and-changesets-say-each-change.md) | done | - |
+| [05 - the oracle lists no R1 divergence](task-05-the-oracle-lists-no-r1-divergence.md) | done | 01, 02 |
+| [06 - every suite holds the held state](task-06-every-suite-holds-the-held-state.md) | done | 01, 02, 03, 04 |
 
 ## Risks and tradeoffs
 
 - A field a backend changes with no action stays at its seed for every client - the backends' plan says each one by its action.
 - The held state of every open session is kept in memory - a session not running lets it go once nobody watches it.
-- A session channel's `status` no longer shows a running chat - its rows and the catalogue row do, as the protocol's reducer and aggregation have it.
+- A session channel's `status` keeps the activity bits its reducer makes, and a running chat leaves them as they were.
+- A drained question leaves `InProgress` there until the session's state opens again.
+- The chat rows and the catalogue row say what runs, by the protocol's aggregation.
+- No v1.0.0 action moves a session's activity bits, and the reference host writes its aggregate into the state outside its reducer at [agentHostStateManager.ts#L3305-L3320](https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3305-L3320).
+
+## Where this meets corrections 3 and 4
+
+- The echo of a client's `chat/turnStarted` or `chat/queuedMessagesReordered` goes out as the host rewrites it.
+- The held state reduces that echo, and correction 3 says what the echo carries.
+- An action the host's own records say moves nothing is echoed to its sender alone; correction 4 sends it to every subscriber.
+- The records and the held state agree for every channel this host opens, because each seed reads them.
+- A case of the oracle seeded with its own state shows the two apart.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-every-channel-holds-its-reduced-state.md](task-01-every-channel-holds-its-reduced-state.md).
+- **Done so far:** tasks 01 to 06.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a seed read after the delta window holds a word writes that word twice; empty the window first.
 
 ## Final verification checklist
 
-- [ ] The oracle's third check lists no divergence of this plan, and each removed entry failed before the change.
-- [ ] `pnpm run test:unit --maxWorkers=2` passes, with each failure under load passing alone.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.
+- [x] The oracle's third check lists no divergence of this plan, and each removed entry failed before the change.
+- [x] `pnpm run test:unit --maxWorkers=2` passes, with each failure under load passing alone.
+- [x] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.

@@ -1,6 +1,6 @@
 ---
 title: Canvases and changesets say each change
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -32,4 +32,4 @@ A changeset whose recomputation fails says `error` with the cause, instead of th
 
 ## Resume
 
-Not started.
+Done; [implemented.md](implemented.md) says what was built.
