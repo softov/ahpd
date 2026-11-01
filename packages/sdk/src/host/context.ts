@@ -303,10 +303,10 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /**
    * Say that a change is not in force until this process starts again.
    *
-   * Sets the flag and sends `x-ahpd/restartNeeded` to every connection
-   * watching the root, because the root's state carries no mark and a client
-   * holding it has no other way to learn of it. The second call changes
-   * nothing and sends nothing: the mark is the same fact said once.
+   * Sets the flag, says it in the root's config under `RESTART_KEY` with the
+   * host's own `root/configChanged`, and sends `x-ahpd/restartNeeded` to every
+   * connection watching the root. The second call changes nothing and sends
+   * nothing: the mark is the same fact said once.
    */
   markRestart: () => void;
   /** What this host has learned about a backend, made on first asking. */

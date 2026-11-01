@@ -8,11 +8,10 @@ export const ROOT = 'ahp-root://';
 /**
  * The notification that says a configuration change waits for a restart.
  *
- * An `x-ahpd` extension: no root action carries `_meta`, so the mark is no
- * part of the root's state. It goes to every connection watching the root as
- * it is set, and to one that subscribes to the root or comes back to it after;
- * the handshake says it as `ahpd.restartNeeded` in its own `_meta`. A client
- * that does not know the name ignores it.
+ * An `x-ahpd` extension, sent to every connection watching the root as the
+ * mark is set. The mark itself is the root config value `ahpd.restartNeeded`,
+ * which every root snapshot carries from then on. A client that does not know
+ * the name ignores it.
  */
 export const RESTART_NEEDED = 'x-ahpd/restartNeeded';
 /**

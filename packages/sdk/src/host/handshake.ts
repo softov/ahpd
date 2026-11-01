@@ -4,7 +4,6 @@ import { INVALID_PARAMS, RpcError } from '../rpc.js';
 import { uriOf } from '../resources/fileuri.js';
 import { bag, str } from '../utils/values.js';
 import { BANG } from './common.js';
-import { RESTART_NEEDED, ROOT } from './channels.js';
 import type { Bag } from '../types/common.js';
 import type { ConnectionContext, HostContext } from './context.js';
 
@@ -462,10 +461,6 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // somebody to confirm. Always here: it says what a role could hold,
           // not what anybody holds.
           'ahpd.grants': advertisedGrants(),
-          // A configuration change that waits for a restart, said to every
-          // connection that arrives after it was made: no root action carries
-          // `_meta`, so the mark is the handshake's and `x-ahpd/restartNeeded`'s.
-          ...(ctx.restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
           // Who this connection is, so a client can read that person's own
           // `user://<id>` and needs no grant to do it. Absent where the
           // connection is nobody, which is every host with no users
@@ -589,9 +584,6 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       for (const channel of before) {
         if (!connection.watching.has(channel)) leaves(channel, clientId);
       }
-      // A restart marked while it was away, said as it would have heard it.
-      const root = resumed.get(ROOT);
-      if (root !== undefined && ctx.restartNeeded) connection.peer.notify(RESTART_NEEDED, { channel: root });
 
       const oldest = replayable[0]?.serverSeq;
       // Nothing buffered means nothing has happened since, which is a

@@ -112,6 +112,17 @@ const capacity = (measure: () => number | undefined): number | undefined => {
 export const accountKey = (provider: string): string =>
   provider === 'codex' ? 'vscode.codexAccount' : `ahpd.${provider}Account`;
 
+/**
+ * The root config key that says the daemon has to start again for a write it
+ * took to apply.
+ *
+ * The host's own value, which it sets with its own `root/configChanged` and
+ * which ends with the process that set it. Declared `readOnly`, so a client
+ * draws it and does not edit it. A client's push that names it never moves
+ * it: the echo says the host's value.
+ */
+export const RESTART_KEY = 'ahpd.restartNeeded';
+
 /** What the root channel advertises, and the config a client pushes to it. */
 export interface Root {
   rootConfig: Record<string, unknown>;
@@ -119,6 +130,8 @@ export interface Root {
   daemonSchema(): Record<string, unknown>;
   daemonProperties(): Record<string, unknown>;
   daemonKey(key: string): boolean;
+  /** Whether a key the root's config holds is the daemon's to show, a plugin removed while the daemon runs among them. */
+  daemonHeld(key: string): boolean;
   declaresConfigKey(key: string): boolean;
   advertisedSchemes(): Record<string, unknown> | undefined;
   advertisedChannels(): { scheme: string; title: string; description?: string; grant: string }[] | undefined;
@@ -141,10 +154,18 @@ export interface Root {
   rootFor(held: Bag, mine?: Record<string, unknown>, connection?: Connection): Bag;
   /**
    * What a root config `replace` keeps that the push names none of: the
-   * daemon's values and every backend's account, as the root's state holds
-   * them. Neither is a client's to clear.
+   * daemon's values, every backend's account and the restart mark, as the
+   * root's state holds them. None of them is a client's to clear.
    */
   keptOnReplace(pushed: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * Say each daemon value that moved since the root's state last said it.
+   *
+   * For a write to the daemon's file that no client's `root/configChanged`
+   * made, which is what a plugin command and a served paths command do.
+   * Nothing when the root is not held yet: its first snapshot reads the port.
+   */
+  daemonValuesMoved(): Promise<void>;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -338,6 +359,17 @@ export function createRoot(ctx: HostContext): Root {
         readOnly: true,
       },
       /*
+       * Whether the daemon has to start again for a write it took to apply.
+       * The host's own fact and not a setting, so `readOnly`: a client shows
+       * it and its push never moves it (`RESTART_KEY`).
+       */
+      [RESTART_KEY]: {
+        type: 'boolean',
+        title: 'Restart Needed',
+        description: 'The daemon has to start again for a change it took to apply.',
+        readOnly: true,
+      },
+      /*
        * Where a commit message and a pull request's words come from.
        *
        * This host's own key and not VS Code's: the reference client pushes
@@ -447,6 +479,21 @@ export function createRoot(ctx: HostContext): Root {
   };
   /** Whether a key is the daemon's rather than this host's. */
   const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
+  /**
+   * Every key the daemon's port has declared or answered since the root
+   * opened, filled by `rootSeed` and `daemonValuesMoved`.
+   *
+   * A plugin removed while the daemon runs keeps its property in the root's
+   * schema and its `null` in the values, and they are the daemon's still,
+   * though the port no longer declares them.
+   */
+  const daemonSeen = new Set<string>();
+  /**
+   * Whether a key the root's config holds is the daemon's, shown only to a
+   * connection that may read the daemon's settings: one its port declares
+   * now, or one it declared or answered since the root opened.
+   */
+  const daemonHeld = (key: string): boolean => daemonKey(key) || daemonSeen.has(key);
   /**
    * Whether a pushed key is one this host can describe.
    *
@@ -586,31 +633,35 @@ export function createRoot(ctx: HostContext): Root {
    *
    * Its keys are not held here the way `rootConfig` holds the host's: the
    * daemon's file is what they are, so the root's state opens with what the
-   * port answers, and a write a client pushes moves the state through its own
-   * `root/configChanged`.
+   * port answers. A write a client pushes moves the state through its own
+   * `root/configChanged`, and a write no client pushed through
+   * `daemonValuesMoved`.
    */
   const daemonValues = async (): Promise<Record<string, unknown>> =>
     (Object.keys(daemonProperties()).length === 0 || options.rootConfig === undefined
       ? {}
       : await options.rootConfig.values());
 
-  const rootSeed = (daemon: Record<string, unknown>): Bag => ({
-    agents: descriptors(),
-    // What this host is running, not what is on disk beside it.
-    activeSessions: ctx.activeCount(),
-    ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
-    /*
-     * Always present, and present even when empty.
-     *
-     * The root reducer returns the state *unchanged* when there is no `config`
-     * on it, so a root without one would make every `root/configChanged` a
-     * no-op on every client - including the one that had just pushed it.
-     */
-    config: {
-      schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
-      values: { ...rootConfig, ...daemon, ...accountValues() },
-    },
-  });
+  const rootSeed = (daemon: Record<string, unknown>): Bag => {
+    for (const key of [...Object.keys(daemonProperties()), ...Object.keys(daemon)]) daemonSeen.add(key);
+    return {
+      agents: descriptors(),
+      // What this host is running, not what is on disk beside it.
+      activeSessions: ctx.activeCount(),
+      ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
+      /*
+       * Always present, and present even when empty.
+       *
+       * The root reducer returns the state *unchanged* when there is no `config`
+       * on it, so a root without one would make every `root/configChanged` a
+       * no-op on every client - including the one that had just pushed it.
+       */
+      config: {
+        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
+        values: { ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
+      },
+    };
+  };
 
   /** Whether a root config key is one a backend's account is published under. */
   const isAccountKey = (key: string): boolean =>
@@ -619,7 +670,20 @@ export function createRoot(ctx: HostContext): Root {
   const keptOnReplace = (pushed: Record<string, unknown>): Record<string, unknown> => {
     const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
     return Object.fromEntries(Object.entries(held)
-      .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key))));
+      .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key) || key === RESTART_KEY)));
+  };
+
+  const daemonValuesMoved = async (): Promise<void> => {
+    if (ctx.stateOf(ROOT) === undefined) return;
+    const now = await daemonValues();
+    for (const key of [...Object.keys(daemonProperties()), ...Object.keys(now)]) daemonSeen.add(key);
+    const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+    // A key the file no longer holds is said as `null`, the way a client takes
+    // a key back, so a reader that merged the old value is told it is gone.
+    const moved = Object.fromEntries([...new Set([...Object.keys(now), ...Object.keys(held).filter(daemonHeld)])]
+      .filter((key) => Object.hasOwn(now, key) ? JSON.stringify(held[key]) !== JSON.stringify(now[key]) : held[key] !== null)
+      .map((key) => [key, Object.hasOwn(now, key) ? now[key] : null]));
+    if (Object.keys(moved).length > 0) ctx.dispatch(ROOT, { type: 'root/configChanged', config: moved });
   };
 
   const rootFor = (held: Bag, mine: Record<string, unknown> = {}, connection?: Connection): Bag => {
@@ -638,7 +702,7 @@ export function createRoot(ctx: HostContext): Root {
      */
     const reads = seesConfig(connection);
     const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
-      !PER_CONNECTION.has(key) && (reads || !daemonKey(key)) && (seesAccount(connection) || !isAccountKey(key))));
+      !PER_CONNECTION.has(key) && (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
     const properties = (config.schema.properties ?? {}) as Bag;
     const meta = metaFor(connection);
     return {
@@ -649,7 +713,7 @@ export function createRoot(ctx: HostContext): Root {
       config: {
         schema: reads
           ? config.schema
-          : { ...config.schema, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !daemonKey(key))) },
+          : { ...config.schema, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !daemonHeld(key))) },
         values: { ...values, ...mine },
       },
       ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
@@ -716,7 +780,7 @@ export function createRoot(ctx: HostContext): Root {
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
-    daemonValues, rootSeed, rootFor, keptOnReplace,
+    daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
+    daemonValues, rootSeed, rootFor, keptOnReplace, daemonValuesMoved,
   };
 }

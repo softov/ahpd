@@ -8,7 +8,7 @@ import { bag, ownerFilter } from '../utils/values.js';
 import { configOf } from '../sessions/remotesession.js';
 import { CLOSING, NO_AGENT } from './common.js';
 import { mayUseAgent, ownershipOf } from '../agents/usable.js';
-import { chatIdFor, named, RESTART_NEEDED, ROOT, schemeOf } from './channels.js';
+import { chatIdFor, named, ROOT, schemeOf } from './channels.js';
 import { preambleOf, withPreamble } from './preamble.js';
 import { startsRead } from './chatactions.js';
 import { SEEDS } from './sessionconfig.js';
@@ -454,9 +454,6 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
             : { ...envelope, channel });
         }
       }
-      // A restart already waiting, for a connection that was not watching the
-      // root when it was marked.
-      if (meant === ROOT && ctx.restartNeeded) connection.peer.notify(RESTART_NEEDED, { channel });
       return { snapshot };
     },
     /**

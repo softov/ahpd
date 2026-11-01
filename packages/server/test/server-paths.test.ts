@@ -494,6 +494,8 @@ describe('ahpd paths, served', () => {
   /** A daemon serving `paths`, and the API handler it answers with. */
   const daemon = (paths: string[], people?: Users, startFolder?: string) => {
     const own = { paths, ...(startFolder === undefined ? {} : { startFolder }) } as Options;
+    /** The file's `paths` each time the root was told the daemon's values moved. */
+    const told: unknown[] = [];
     const facts: ServedFacts = {
       options: own,
       configFile: config,
@@ -508,6 +510,7 @@ describe('ahpd paths, served', () => {
       }),
       turning: () => [],
       restart: () => {},
+      valuesMoved: async () => { told.push(read().paths); },
     };
     const handler = apiHandler({
       registry: servedRegistry(facts),
@@ -518,6 +521,7 @@ describe('ahpd paths, served', () => {
     });
     return {
       own,
+      told,
       running: facts.running,
       ask: (method: string, path: string, body?: unknown, token = 'root-secret'): Promise<Response> =>
         handler(new Request(`http://${AUTHORITY}/api${path}`, {
@@ -539,6 +543,19 @@ describe('ahpd paths, served', () => {
     expect(await added.json()).toEqual({ paths: [one, two] });
     expect(read().paths).toEqual([one, two]);
     expect(served.own.paths).toEqual([one, two]);
+  });
+
+  it('tells the root the file it wrote, after each add and remove, and nothing for an add it did not write', async () => {
+    const one = folder('one');
+    const two = folder('two');
+    put({ paths: [one] });
+    const served = daemon([one]);
+
+    await served.ask('POST', '/paths/add', { folder: two });
+    // Already served, so the file is left as it is and nothing moved.
+    await served.ask('POST', '/paths/add', { folder: two });
+    await served.ask('POST', '/paths/remove', { folder: two });
+    expect(served.told).toEqual([[one, two], [one]]);
   });
 
   it('answers the folders the daemon serves now, not the file', async () => {

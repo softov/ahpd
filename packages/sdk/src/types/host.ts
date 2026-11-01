@@ -1459,16 +1459,24 @@ export interface Host {
   /**
    * Say that a restart is what puts the configuration in force.
    *
-   * A connection watching the root is sent `x-ahpd/restartNeeded` with
-   * `{ channel: "ahp-root://" }` as it is set, and so is one that subscribes to
-   * the root or comes back to it afterwards. A connection that arrives
-   * afterwards reads `_meta["ahpd.restartNeeded"]` on its `initialize`
-   * answer. No root action carries `_meta`, so the mark is no part of the
-   * root's state. It lives only in memory, so a restarted daemon starts
-   * without it, and a second call sends nothing: the mark is the same fact
-   * said once.
+   * The root's config carries the read-only value `ahpd.restartNeeded: true`
+   * from here on, set with the host's own `root/configChanged`. A connection
+   * watching the root is also sent `x-ahpd/restartNeeded` with
+   * `{ channel: "ahp-root://" }` as it is set. The mark lives only in memory,
+   * so a restarted daemon starts without it, and a second call sends nothing:
+   * the mark is the same fact said once.
    */
   markRestartNeeded(): void;
+  /**
+   * Say each daemon config value that moved under the root.
+   *
+   * For a write to the daemon's file that no client's `root/configChanged`
+   * made: a plugin command over the plugins channel or at the terminal, which
+   * asks the daemon to apply what it wrote, or a paths command the daemon
+   * serves. Each moved value goes to the root as the host's own
+   * `root/configChanged`, and a key the file no longer holds as `null`.
+   */
+  daemonValuesMoved(): Promise<void>;
   /**
    * Stop what this host runs, once, while the process stays up.
    *

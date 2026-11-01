@@ -68,7 +68,7 @@ import { createFacts } from './host/facts.js';
 import { createOwners } from './host/owners.js';
 import { createMachines } from './host/machines.js';
 import { createSessionConfig } from './host/sessionconfig.js';
-import { accountKey, createRoot } from './host/root.js';
+import { accountKey, createRoot, RESTART_KEY } from './host/root.js';
 import { createCatalogue } from './host/catalogue.js';
 import { createSpawn } from './host/spawn.js';
 import { createBackground } from './host/background.js';
@@ -712,7 +712,7 @@ export function createHost(options: HostOptions): Host {
      */
     const mine = seesConfig(connection)
       ? config
-      : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key)));
+      : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonHeld(key)));
     /*
      * And the accounts go to a connection holding `account:read` and to no
      * other, the sender among them. A client pushing a config it may not read
@@ -1331,6 +1331,7 @@ export function createHost(options: HostOptions): Host {
     markRestart: () => {
       if (ctx.restartNeeded) return;
       ctx.restartNeeded = true;
+      dispatch(ROOT, { type: 'root/configChanged', config: { [RESTART_KEY]: true } });
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
@@ -1431,7 +1432,7 @@ export function createHost(options: HostOptions): Host {
     sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,
     isolating, mergedConfig, propertyOf, sessionSchema, runningSchema, seeded,
     contributedDefaults, storedConfig,
-    rootConfig, descriptors, daemonSchema, daemonProperties, daemonKey,
+    rootConfig, descriptors, daemonSchema, daemonProperties, daemonHeld,
     advertisedSchemes, advertisedChannels, advertisedMethods,
     statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
     activityOf, sessionAdded, summaryMoved, activeSessionsMoved, learnModels, learnAccount,
@@ -1868,11 +1869,12 @@ export function createHost(options: HostOptions): Host {
      */
     refuseTurns: (why) => { ctx.refusing = why; },
     /*
-     * The root state reads this flag when a connection takes it, so every
-     * connection sees the mark from here on, and one already watching it is
-     * told by `x-ahpd/restartNeeded` rather than left to ask again.
+     * The root's config says the mark from here on, through the host's own
+     * `root/configChanged`, and a connection watching the root is also told
+     * by `x-ahpd/restartNeeded`.
      */
     markRestartNeeded: () => { ctx.markRestart(); },
+    daemonValuesMoved: () => ctx.daemonValuesMoved(),
     accept(peer: Peer, principal?: Principal, root?: boolean) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),

@@ -9,6 +9,7 @@ import { chatUriFor, isRootChannel, MARKS, ROOT, spaceOf, toolCallOfSubagentChat
 import { chatAction, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
+import { RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
@@ -321,6 +322,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * the daemon holds.
        */
       const said: Record<string, unknown> = {};
+      /*
+       * The restart mark is the host's, so a push that names it moves nothing
+       * and its echo says the host's value. VS Code's settings editor writes
+       * every root config property back on a save, this one included.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
+       */
+      if (Object.hasOwn(config, RESTART_KEY)) said[RESTART_KEY] = ctx.restartNeeded;
       /**
        * The host's own half, applied and echoed.
        *
@@ -348,7 +356,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * `rootState` shows this map to every connection, which would hand a
          * member a credential it has no schema for.
          */
-        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key)));
+        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key) && key !== RESTART_KEY));
         const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
           for (const [key, value] of Object.entries(from)) {
             // `undefined` is how a key is taken back, and JSON has no such
