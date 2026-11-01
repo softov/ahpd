@@ -44,8 +44,13 @@ it('rebuilds a session it never watched from pi file, with the parts a live turn
     },
     { id: `${disk.first}:2:0`, kind: 'markdown', content: ' It is empty.' },
   ]);
+  // Both answers of the turn, summed and priced as the live turn sums them.
   expect(turns?.[0]?.usage).toEqual({
-    inputTokens: 10, outputTokens: 5, cacheReadTokens: 0, model: 'anthropic/claude-opus-5', _meta: { 'ahpd.cacheWriteTokens': 0 },
+    inputTokens: 20,
+    outputTokens: 10,
+    cacheReadTokens: 0,
+    model: 'anthropic/claude-opus-5',
+    _meta: { 'ahpd.cacheWriteTokens': 0, 'ahpd.cost': { amount: 0, currency: 'USD', input: 0, output: 0 } },
   });
   expect(turns?.[1]?.responseParts).toEqual([
     { kind: 'error', error: { errorType: 'turnFailed', message: '429 rate limited' }, resumable: true },
@@ -158,6 +163,39 @@ it('reads a turn whose last answer was aborted as cancelled, as a stopped live t
   ] as never);
   expect(turns.map((one) => one.state)).toEqual(['cancelled']);
   expect(turns[0]?.parts).toEqual([{ id: 'u1:1:0', kind: 'markdown', content: 'Start' }]);
+});
+
+it('reads back what a turn used as the sum of its answers, as the turn said it live', async () => {
+  const { replayEntries } = await import('../src/replay.js');
+  const at = new Date().toISOString();
+  const { turns } = replayEntries([
+    { type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } },
+    { type: 'message', id: 'a1', parentId: 'u1', timestamp: at, message: answer([{ type: 'text', text: 'One' }], 'toolUse') },
+    { type: 'message', id: 'a2', parentId: 'a1', timestamp: at, message: answer([{ type: 'text', text: 'Two' }], 'stop') },
+  ] as never);
+  expect(turns[0]?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10, model: 'anthropic/claude-opus-5' });
+});
+
+it('reads a call with no result back as one its turn ended around, and that turn as stopped', async () => {
+  /*
+   * A call pi's file holds no result for never finished. The protocol's
+   * reducer holds a call still open when its turn ends as cancelled and
+   * skipped, and the reference reads a transcript's call with no result back
+   * that way, with the turn that held it cancelled.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+   */
+  const { replayEntries } = await import('../src/replay.js');
+  const at = new Date().toISOString();
+  const { turns } = replayEntries([
+    { type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } },
+    {
+      type: 'message', id: 'a1', parentId: 'u1', timestamp: at,
+      message: answer([{ type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }], 'toolUse'),
+    },
+  ] as never);
+  expect(turns.map((one) => one.state)).toEqual(['cancelled']);
+  const call = (turns[0]?.parts.find((part) => part.kind === 'toolCall') as Bag | undefined)?.toolCall as Bag | undefined;
+  expect(call).toMatchObject({ toolCallId: 'call-1', status: 'cancelled', reason: 'skipped' });
 });
 
 it('marks only the last turn read back resumable, when it failed on a model call', async () => {
