@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { sessionReducer } from '@microsoft/agent-host-protocol';
+import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open, peer, sdk,
   serving, settle, running,
@@ -818,6 +820,74 @@ describe('turning a customization on and off', () => {
     // host is not the thing that decides, and asking twice would run whatever
     // the backend does twice.
     expect(asked).toEqual(['mcp:desk']);
+  });
+
+  it.each([
+    ['has no call for it', undefined],
+    ['declines it', async (): Promise<boolean> => false],
+  ])('says a background request on a blocking server a backend %s to every client, then the blocking it keeps', async (_, call) => {
+    // A server still starting and holding the session's turns back on it.
+    const server = {
+      type: 'mcpServer', id: 'mcp:desk', uri: 'desk', name: 'desk',
+      enablement: [{ kind: 'session', enabled: true }],
+      state: { kind: 'starting', blocking: true },
+    };
+    const backend = claude({ paths: ['/home/softov'] });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...backend,
+        create: (start: Parameters<typeof backend.create>[0]) => {
+          const inner = backend.create(start);
+          return {
+            ...inner,
+            customizations: () => [server],
+            sessionState: () => ({ ...inner.sessionState(), customizations: [server] }),
+            ...(call === undefined ? {} : { backgroundMcpServerStartup: call }),
+          };
+        },
+      }],
+    });
+    const uri = 'ahp-session:/live';
+    type Opened = { snapshot: { state: SessionState; fromSeq: number } };
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    // Subscribed once the backend has said what it loaded, so both clients
+    // start from the session listing the server.
+    await settle(8);
+    const mine = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    const q = peer();
+    const other = host.accept(q);
+    await other.handle(hello(['0.9.0'], { clientId: 'other' }));
+    const theirs = await other.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 5, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+
+    // The request is said to every client of the session, the sender's copy
+    // answering the sender, and the state this host keeps follows it: the
+    // server is still blocking (the host "MAY restore `blocking: true` via
+    // `session/mcpServerStateChanged` to reject the request",
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+    expect(actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 5)
+      .map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/mcpServerBackgroundRequested', undefined]]);
+    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerBackgroundRequested')).toHaveLength(1);
+    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerStateChanged')
+      .map((e) => [e.action.id, e.action.state])).toEqual([['mcp:desk', { kind: 'starting', blocking: true }]]);
+    // So each client, reducing what it was told with the protocol's reducer,
+    // holds the server as this host does.
+    for (const [r, opened] of [[p, mine], [q, theirs]] as const) {
+      const held = actions(r, uri)
+        .filter((e) => e.serverSeq > opened.snapshot.fromSeq && e.rejectionReason === undefined)
+        .reduce((state, e) => sessionReducer(state, e.action as never), opened.snapshot.state);
+      expect(held.customizations?.find((one) => one.id === 'mcp:desk'))
+        .toHaveProperty('state', { kind: 'starting', blocking: true });
+    }
   });
 });
 

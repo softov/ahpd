@@ -248,9 +248,9 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/mcpServerStateChanged` | host | ✅ | The protocol's words, not the SDK's: `ready`, `stopped`, `error`, `authRequired`, `starting`. Each kind carries different required fields, and only the last two carry any. |
 | `session/mcpServerStartRequested` | both | ✅ | Also how a server nobody has signed into is signed into, because lifting the disabled flag alone brings it straight back needing one. |
 | `session/mcpServerStopRequested` | both | ✅ | Straight through to the CLI's own toggle. |
-| `session/mcpServerBackgroundRequested` | client | ✅ | A server that is starting and blocking is one a turn waits on, and this asks for the wait to end without stopping the server: a backend that takes the request emits it and then the `session/mcpServerStateChanged` carrying `blocking: false`. It is a no-op on every backend that ships here, and the Claude backend is why - nothing in it holds a message back on a starting server, so it has no seam for this and never reports `blocking` either; a request against it is answered to its sender alone, with nothing moved. A nested host carries it inside, because whether that server was blocking is the inner session's own state, and the answer from inside reaches the client that sent it. |
+| `session/mcpServerBackgroundRequested` | client | ✅ | A server starting with `blocking: true` holds a turn back until it is ready, and this asks for the turn to go on while the server keeps starting. A backend that takes the request says it, then the server's `session/mcpServerStateChanged` with `blocking: false`. No backend that ships here holds a turn on a starting server: the Claude CLI has no seam for it and reports no `blocking`. So the host answers the request from the state the server has. A server starting with `blocking: true` keeps it, and the host declines the request in the protocol's words, "MAY restore `blocking: true` via `session/mcpServerStateChanged` to reject the request": the request goes to every client of the session with its sender's origin, and the server's state follows it. On any other server the request changes nothing, and its sender alone is answered. A nested host carries it inside, where whether the server blocks is the inner session's own state, and the answer from inside reaches the client that sent it. |
 | `session/isReadChanged` | client | ✅ | This host's own bit, kept per session and never seen by a backend. |
-| `session/isArchivedChanged` | client | ✅ | The same, and the reason a row with no agent running still has a status to report. |
+| `session/isArchivedChanged` | client | ✅ | The same, and the reason a row with no agent running still has a status to report. The session's default chat carries the bit as well, since the protocol makes archiving that chat the same act: a session archived or restored, by a client or by this host, says `chat/isArchivedChanged` on its default chat to every client of the chat, and the bit is projected into the chat's `ChatSummary.status` and `SessionChatSummary.status`. |
 | `session/activityChanged` | host | ✅ | What the session is doing in one line, taken from whichever chat is driving it. Absent means idle, which is a field left off rather than an empty string. |
 | `session/changesetsChanged` | host | ✅ | The catalogue of changesets a client may subscribe to. A template with no variables is the whole scope; the `{turnId}` ones are not served. |
 | `session/configChanged` | both | ✅ | A key whose property says `scope: chat` reaches this chat only; anything else reaches every chat in the session, because a voice set on one of them is a session where two conversations answer differently. Refused in the backend's own words when it will not take the key. |
@@ -278,7 +278,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `chat/turnResume` | client | ✅ | The protocol's conditions - latest, errored, message and parts intact - are the backend's to check, because only it knows what its last turn was. A backend that cannot re-run one says so rather than being asked to. pi continues from the model call that failed, so the tools the turn already ran are not run again, and it marks a failed model call `resumable` on the turn's error part, also on the last turn read back from its file. Claude cuts the conversation back to the end of the turn before, with `resumeSessionAt`, and sends the prompt again; a conversation whose first turn failed is deleted and started over under its id. The calls the failed turn ran are run again, because the cut drops them with the prompt. It marks a failed model call `resumable` only when there is a turn to cut back to, so a turn refused before the CLI, a CLI that is gone and a refused login carry none. Cofold cuts its store through the last message of the turn before, with `sessions.truncate`, and runs the prompt again under the turn's own message id; a conversation whose first turn failed has its session deleted, and `run()` makes it again on the same workspace. The calls the failed turn ran are run again. It marks a failed run `resumable` unless the run never started (`start_failed`) and when the turn before has a point this process watched run, or there is no turn before. |
 | `chat/activityChanged` | host | ✅ | What this chat is doing, in the tool's own words while one runs. Sent with no `activity` to clear it. |
 | `chat/isReadChanged` | client | ✅ | Marks one chat read or unread, and only that chat: the session's own read state is `session/isReadChanged`, and a sibling chat's is its own. The bit is kept per chat, so a chat comes back read when a client opens it again, and it survives a restart. It is projected into the chat's `ChatSummary.status` and into its `SessionChatSummary.status`, which is what the protocol asks a host to synchronize. Setting what is already set is answered to its sender only. |
-| `chat/isArchivedChanged` | client | ✅ | Archives one chat, or restores it. On the session's default chat this is the session being archived, which the protocol says to send as `session/isArchivedChanged` - so that is what goes out to everyone, on the session channel. On the chat channel the action goes back to the client that sent it, alone, as its answer; every other client hears the session archived and its chat as it was. On any other chat it is that chat's bit, kept beside its title. |
+| `chat/isArchivedChanged` | client | ✅ | Archives one chat, or restores it. The bit is kept per chat and goes out to every client of the chat, the sender's copy carrying its origin, and it is projected into the chat's `ChatSummary.status` and its `SessionChatSummary.status`, as the read bit is. On the session's default chat it archives or restores the session as well, since the protocol makes the two "equivalent": `session/isArchivedChanged` follows on the session channel as this host's action. A chat archived on its own is marked read too, since nobody comes back to a chat filed away for what is new in it. Setting what is already set is answered to its sender only. |
 | `chat/workingDirectorySet` | client | ✅ | A chat may hold any subset of its session's directories and never more, so a folder outside that set is refused. The change starts that one chat again, resumed. A folder the chat holds already is answered to its sender alone. |
 | `chat/workingDirectoryRemoved` | client | ✅ | The primary cannot be removed, for the reason the session's cannot: it is where the process is rooted. A folder the chat does not hold is answered to its sender alone. |
 | `chat/usage` | host | ✅ | Tokens and the model that spent them, at the end of the turn. What the protocol names no field for rides `_meta` where a backend reports it: `ahpd.cacheWriteTokens`, `ahpd.reasoningTokens`, `ahpd.context` (`{ used, size }`) and `ahpd.cost` (`{ amount, currency }`, never the reference host's bare number). |
@@ -746,6 +746,17 @@ host is already at, and is not buffered for replay, so it is not state moving,
 not a reason for any other client to reconcile, and not the start of another
 loop.
 
+Whether an action changes anything is the protocol's reducer's to say, on the
+sender's own state. The sender applies this host's answer to its confirmed
+state, as it applies every echo of its own action ("the server's echo is the
+source of truth",
+[reconciliation](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md)),
+so an action is answered to its sender alone only where the reducer leaves that
+state as it was. An action the reducer would apply goes to every client of the
+channel. A request the protocol has a host decline by restoring the state, as
+`session/mcpServerBackgroundRequested` is, goes to every client the same way,
+and the restored state follows it.
+
 A cancel is the same case. `chat/turnCancelled` naming a turn that chat is not
 running stops nothing, so it changes nothing, and its sender is answered as an
 unchanged set is. A cancel that does name the running turn stops it, which is a
@@ -768,6 +779,10 @@ nothing, and the sender alone is answered.
 A draft is the same case. `chat/draftChanged` naming the draft the chat
 already holds moves nothing, and the sender alone is answered, for a running
 chat and for one this host holds a draft for while nothing runs it.
+
+A background request is the same case. `session/mcpServerBackgroundRequested`
+moves nothing unless its server is starting with `blocking: true`, and on any
+other server the sender alone is answered.
 
 ### The snapshot and the actions have to agree
 

@@ -1,7 +1,7 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatIdFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -25,6 +25,12 @@ import type { ConnectionContext, HostContext } from './context.js';
  * conversation can be. With several, which one is new is not the session's
  * to say, and each chat keeps its own bit.
  *
+ * An archived bit that moved moves the default chat's with it. The protocol
+ * makes archiving the default chat the same act as archiving the session, and
+ * the chat and the session each carry the bit, so a client of either channel
+ * holds it as the other does. A session that is not running names its default
+ * chat as its catalogue row does.
+ *
  * Answers whether anything moved. A bit handed the value it already had is not
  * a change, and a client told about one is a client woken for a message that
  * moved nothing.
@@ -45,6 +51,14 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
+  if (bit === Status.IsArchived) {
+    const id = idOf(uri);
+    const recorded = ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = ctx.sessions.get(uri)?.defaultChat
+      ?? recorded.find((one) => one.default === true)?.uri
+      ?? chatUriFor(ctx.nameOf(id));
+    chatFlag(ctx, uri, lead, Status.IsArchived, on);
+  }
   if (bit === Status.IsRead) {
     const counted = countedChats(ctx, uri);
     if (on) for (const chat of counted) chatFlag(ctx, uri, chat, Status.IsRead, true);
@@ -235,18 +249,20 @@ export function chatAction(
      * Archiving the chat that is the session's row archives the session.
      *
      * A session is a row in a list and its first chat is what that row is, so
-     * the protocol makes the two the same act. It goes out as the session's
-     * own action on the session channel, and nothing is said on the chat
-     * channel: a chat reducer applying this there would set the chat's own bit
-     * as well, and the chat and its session would then disagree about whether
-     * the session is archived.
+     * the protocol makes the two the same act: "Archiving the session's default
+     * chat is equivalent to archiving the session"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts).
+     * The chat's archived bit is kept
+     * and said as any chat's is, the client's own action going out to every
+     * client of the chat, and the session's follows on the session channel as
+     * this host's action; a session archived by its own action moves the two
+     * bits alike, in `sessionFlag`.
      */
     if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
+      const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
       sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
-      // The client that sent it holds it until it is answered, and what the
-      // session says carries no word of this chat: so it hears its own action
-      // back, to it alone, whether or not the session's bit moved.
-      echoTo(connection.peer, channel, action, origin);
+      // A chat already archived or not as asked is answered to its sender.
+      if (!moved) echoTo(connection.peer, channel, action, origin);
       return;
     }
     // Said again, a bit that did not move is not a change: it would move the
@@ -1443,24 +1459,40 @@ export function chatAction(
     /*
      * A startup a client asked to stop waiting on.
      *
-     * Handed to the backend, which is the only thing that knows whether this
-     * server was blocking and how to stop holding a turn on it. A backend that
-     * takes it answers by emitting: the action, and the state that follows.
+     * Handed to the backend, which is the only thing that knows how to stop
+     * holding a turn on a server. A backend that takes it answers by emitting:
+     * the action, and the state that follows.
      *
-     * A backend without the call, or one that did not take it, leaves the
-     * state alone, as the protocol's own reducer does for a server that was
-     * not blocking. The client is holding its request all the same, so it
-     * hears it back, to it alone. A refusal would tell it its request was
-     * wrong when nothing was waiting on the server to begin with.
+     * Where no backend takes it, the server keeps the state it has. On a
+     * server starting with `blocking: true` the protocol's reducer clears the
+     * flag, so the request goes out to every client of the session and the
+     * server's state follows it, which is how the protocol has a host decline
+     * one: the host "MAY restore `blocking: true` via
+     * `session/mcpServerStateChanged` to reject the request"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+     * On any other server the reducer changes nothing, and the request is
+     * answered to its sender.
      */
-    case 'session/mcpServerBackgroundRequested':
-      if (session.backgroundMcpServerStartup === undefined) echoTo(connection.peer, channel, action, origin);
+    case 'session/mcpServerBackgroundRequested': {
+      const id = String(action.id ?? '');
+      const declined = (): void => {
+        const state = session.customizations()
+          .find((one) => (one as Bag).type === 'mcpServer' && (one as Bag).id === id)?.state as Bag | undefined;
+        if (state?.kind !== 'starting' || state.blocking !== true) {
+          echoTo(connection.peer, channel, action, origin);
+          return;
+        }
+        dispatch(channel, action, origin);
+        dispatch(channel, { type: 'session/mcpServerStateChanged', id, state });
+      };
+      if (session.backgroundMcpServerStartup === undefined) declined();
       else {
-        void session.backgroundMcpServerStartup(String(action.id ?? '')).then((took) => {
-          if (!took) echoTo(connection.peer, channel, action, origin);
+        void session.backgroundMcpServerStartup(id).then((took) => {
+          if (!took) declined();
         });
       }
       break;
+    }
     case 'chat/draftChanged': {
       // A `Message`, not a string: `ChatState.draft` is the message
       // somebody is part-way through writing, model and all. Absent

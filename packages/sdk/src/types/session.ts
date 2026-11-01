@@ -805,9 +805,12 @@ export interface Session {
    * restoring `blocking: true` when it could not stop waiting. False when
    * nothing here was waiting on that server.
    *
-   * Optional, and absent is not a refusal. No backend here holds a message back
-   * on a starting server, so where this is absent or answers false the host
-   * answers the client itself, with the request back and nothing moved.
+   * Optional: no backend here holds a message back on a starting server. Where
+   * this is absent or answers false the host answers the request from the
+   * state the server has. A server starting with `blocking: true` keeps it, so
+   * the request goes to every client and that state follows it, which is how
+   * the protocol has a host decline one; on any other server the request moves
+   * nothing, and its sender alone hears it back.
    */
   backgroundMcpServerStartup?(id: string): Promise<boolean>;
 
