@@ -617,11 +617,12 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   /*
-   * A turn's end marks its chat unread, as the reference host does, and the
-   * session's bit stays the session's own.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L39
+   * A turn's end marks its chat unread, and a read session unread, each with
+   * this host's own action on its own channel, as the reference host does at
+   * a turn's end.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
    */
-  it('keeps a chat marked read while its turn runs, and marks the chat alone unread when the turn completes', async () => {
+  it('keeps a chat marked read while its turn runs, and marks the chat and its session unread when the turn completes', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
     await send(client, chatUri, chatRead(true));
@@ -630,29 +631,42 @@ describe('a chat\'s read bit and its session\'s', () => {
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
-    // After the ending, so a client applies the turn's end before the bit.
-    const types = actions(p, chatUri).map((e) => e.action.type);
-    expect(types.indexOf('chat/turnComplete')).toBeLessThan(types.lastIndexOf('chat/isReadChanged'));
+    expect(await isRead(client, uri)).toBe(false);
+    // After the ending, so a client applies the turn's end before the bits:
+    // the chat's first, then the session's.
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/turnComplete ${chatUri}`)).toBeLessThan(said.lastIndexOf(`chat/isReadChanged ${chatUri}`));
+    expect(said.lastIndexOf(`chat/isReadChanged ${chatUri}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
-  it('marks a chat alone unread when a turn fails', async () => {
+  it('marks a chat and its session unread when a turn fails', async () => {
     const { client, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
     await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['no'], duration_ms: 4 });
 
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
   });
 
-  it('marks a chat alone unread when a turn is cancelled', async () => {
+  it('marks a chat and its session unread when a turn is cancelled', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
     await send(client, chatUri, { type: 'chat/turnCancelled', turnId: 't1' });
 
     expect(actions(p, chatUri).some((e) => e.action.type === 'chat/turnCancelled')).toBe(true);
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
+  });
+
+  it('says nothing more of a session that is unread when a turn ends', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await send(client, uri, sessionRead(false));
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+
+    expect(await isRead(client, uri)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged').map((e) => e.action.isRead))
+      .toEqual([false]);
   });
 
   /** A second client of the same session, subscribed to both its channels. */
