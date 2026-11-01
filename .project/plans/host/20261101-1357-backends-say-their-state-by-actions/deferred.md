@@ -3,17 +3,17 @@ title: Backends say their state by actions - deferred
 date: 2026-11-01
 ---
 
-## What waits
+## What waited
 
-The audit of 2026-11-01 names these backend sites, each a change a backend keeps or says outside an action.
-Each stays at its seed for every client until its backend says it by its action, or the field goes.
+The audit of 2026-11-01 names these backend sites, each a change a backend kept or said outside an action.
+Each is built, or shown to need nothing, by the plans in *Where it went*.
 
-| Site | What the backend does | Audit row |
+| Site | What the backend did | Audit row |
 | --- | --- | --- |
 | claude `session/turns.ts`, a `!` command that fails | records the turn `error` and the session failed, while it says `chat/turnComplete` | E4 |
 | claude `session/config.ts`, `mode` and `autoApprove` | maps them onto `permissionMode`, which moves with no action | E14, E4 |
 | claude `session/session.ts`, `close('stopping')` | leaves each open question's `inputNeeded` entry in place | CT12, C5 |
-| claude `session/servers.ts`, a rebuilt customization list | says the list only when it holds something, so a list that empties is never said; a session in a machine lists no folder rows, so its list can empty | E4 |
+| claude `session/servers.ts`, a rebuilt customization list | says the list only when it holds something, so a list that empties is never said | E4 |
 | claude `session/session.ts`, `error` on `SessionState` | a field the type does not declare | CT10 |
 | claude `session/customizations.ts`, a prompt's `argumentHint` | a top-level field the type does not declare | E40 |
 | claude `session/parts.ts` and `stream.ts`, a worker's usage | summed into the lead turn | CS6 |
@@ -26,8 +26,7 @@ Each stays at its seed for every client until its backend says it by its action,
 | nested proxy, inner URIs | terminal, changeset and canvas URIs keep their inner names | X17, X18, X20 |
 | every backend's record | turns read back after a restart differ from the turns clients reduced live | CS20, Q24, B10, P8 |
 
-## Where it goes
+## Where it went
 
-Each site goes to a plan of its backend, which says the change by its action or removes the field.
-The record rows stay with each backend's record.
-Nothing writes the held state down, so a backend's record is what a restart reads.
+- Every site but the record's: [every backend says its state by actions](../20261101-1641-every-backend-says-its-state-by-actions/plan.md), whose record lists each.
+- The record's: [a state read back reaches its clients whole](../20261101-1748-a-state-read-back-reaches-clients/plan.md).
