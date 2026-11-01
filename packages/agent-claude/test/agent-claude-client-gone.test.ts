@@ -50,6 +50,8 @@ const session = (owned = [toolOf('openFile')], others: BoundTool[] = []) => {
     offering: [] as BoundTool[],
     doing: () => {},
     handle: { setMcpServers: async () => {} },
+    // The session's own chat holds every call here: no worker opened one.
+    scopeOfCall: () => undefined,
   };
   const tools = createClientTools(ctx as never);
   // The model reaches a client's tool through this handler, the one the SDK

@@ -37,7 +37,12 @@ export interface Stream {
   rounds: Map<string, { answered: boolean; stopped?: string }>;
   /** The line each call's row draws once it has ended, by its call id, made from its input. */
   pastLines: Map<string, StringOrMarkdown>;
+  /** Whose tool a call runs, as its start says it: a client's, an MCP server's, or nobody's. */
+  contributorOf: (toolName: string) => Contributor | undefined;
 }
+
+/** A call's contributor, in the protocol's two kinds. */
+export type Contributor = { kind: 'client'; clientId: string } | { kind: 'mcp'; customizationId: string };
 
 export function createStream(ctx: SessionContext): Stream {
   const tasks = createTasks(ctx);
@@ -50,6 +55,24 @@ export function createStream(ctx: SessionContext): Stream {
    * blocked on a sign-in tellable from one blocked on its own work.
    */
   const serverOf = (toolName: string): string | undefined => /^mcp__(.+?)__/.exec(toolName)?.[1];
+
+  /**
+   * Whose tool a call runs, as the call's start says it: the client whose own
+   * tool it is, or else the MCP server whose it is.
+   *
+   * A client's own beats the server it is offered through: the tools a client
+   * provides reach the model on this host's in-process server, so by name they
+   * all look like `mcp__ahp__*`. And it is said at the start, because the start
+   * is where the protocol establishes who runs a call; a later contributor may
+   * refine an MCP server's but never make a call a client's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+   */
+  const contributorOf = (toolName: string): Contributor | undefined => {
+    const own = ctx.clientToolOf(toolName);
+    if (own !== undefined) return { kind: 'client', clientId: own.owner };
+    const from = serverOf(toolName);
+    return from === undefined ? undefined : { kind: 'mcp', customizationId: `mcp:${from}` };
+  };
 
   /**
    * What each model round being streamed has said so far, by scope.
@@ -199,13 +222,10 @@ export function createStream(ctx: SessionContext): Stream {
         if (ctx.options.plan === true && name === 'TodoWrite') return;
         scope.calling.set(key, id);
         if (scope.parts.has(id)) return;
-        // Whose tool it is, when it is an MCP server's. The reducer refuses
-        // `chat/toolCallAuthRequired` on a call with no MCP contributor, so
-        // this is also what makes a sign-in mid-call sayable at all.
-        const from = serverOf(name);
-        const contributor = from === undefined
-          ? undefined
-          : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        // Whose tool it is. The reducer refuses `chat/toolCallAuthRequired` on
+        // a call with no MCP contributor, so an MCP server's is also what makes
+        // a sign-in mid-call sayable at all.
+        const contributor = contributorOf(name);
         // What kind of row to draw, from the name and from the first frame:
         // a client that waited for the arguments to know it was a shell
         // command would draw a generic box and then redraw it.
@@ -349,21 +369,9 @@ export function createStream(ctx: SessionContext): Stream {
          * callback, which is handed the whole input and can be first.
          */
         if (name === 'Task' || name === 'Agent') ctx.recordSpawn(id, bag(block.input), scope, str(turn.id));
-        /*
-         * Whose tool this is, which decides who has to run it.
-         *
-         * A client's own beats the server it is offered through: the tools a
-         * client provides are carried to the model on this host's in-process
-         * server, so by name they all look like `mcp__ahp__*` - and reporting
-         * one as this host's contribution would tell every client that the
-         * call is nobody's to answer, including the one whose call it is.
-         */
-        const own = ctx.clientToolOf(name);
-        const contributor = own !== undefined
-          ? { kind: 'client' as const, clientId: own.owner }
-          : from === undefined
-            ? undefined
-            : { kind: 'mcp' as const, customizationId: `mcp:${from}` };
+        // Whose tool this is, which decides who has to run it, as its start
+        // said it.
+        const contributor = contributorOf(name);
         // Running against somebody else's server, and so a call that can end
         // up waiting on a sign-in rather than on its own work.
         if (from !== undefined) ctx.onServer.set(id, { server: from, turnId: str(turn.id) ?? '', blocked: false });
@@ -666,5 +674,5 @@ export function createStream(ctx: SessionContext): Stream {
     }
   };
 
-  return { streamed, assistant, results, rounds, pastLines };
+  return { streamed, assistant, results, rounds, pastLines, contributorOf };
 }

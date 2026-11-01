@@ -1276,6 +1276,34 @@ describe('tools a client contributes', () => {
     expect(uri).toBeTruthy();
   });
 
+  it('names the client at the start of a call whose arguments are still streaming', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    /*
+     * The call opens as soon as its name is known, and its start is where the
+     * protocol establishes who runs it: a later `chat/toolCallReady` may not
+     * change that.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+     */
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: {} },
+        },
+      },
+    );
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
+  });
+
   it('says a failed call failed, in the words the client used', async () => {
     const { client, chatUri } = await providing();
     client.handle({
@@ -1757,7 +1785,7 @@ describe('tools a client contributes', () => {
     ((await watched(client, uri)).inputNeeded ?? []).filter((one) => one.kind === 'toolClientExecution');
 
   it('opens a call the person allowed, and not before the question is answered', async () => {
-    const { client, uri, chatUri } = await providing();
+    const { client, peer: p, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
     /*
      * The callback first, which is the order `asking.ts` documents: the CLI
@@ -1768,6 +1796,9 @@ describe('tools a client contributes', () => {
     const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     expect(await askedToRun(client, uri)).toEqual([]);
+    // The question opens the call, and its start names the client that runs it.
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
 
     sdk.toolUseIds.push('call-1');
     const run = tool();

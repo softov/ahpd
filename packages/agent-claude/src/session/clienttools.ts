@@ -201,12 +201,11 @@ export function createClientTools(ctx: SessionContext): ClientTools {
   };
 
   /*
-   * The calls this chat has out with its clients, held in one place.
+   * The calls this session has out with its clients, held in one place.
    *
-   * The holder raises the entry on the session, keeps the answer that arrives
-   * before the harness asks for it, times a call out and fails the calls of a
-   * client that goes - all of which this session used to keep a private map
-   * for, without the timeout and without the entry.
+   * The holder raises each call's entry on the session under the chat the
+   * call is in, keeps the answer that arrives before the harness asks for it,
+   * times a call out and fails the calls of a client that goes.
    */
   const calls = createClientCalls({
     chat: ctx.options.chatUri,
@@ -389,9 +388,12 @@ export function createClientTools(ctx: SessionContext): ClientTools {
      */
     opened(id);
     opening(toolName, id, input ?? '{}');
+    // A worker's call is in the worker's chat, which its entry names.
+    const chat = ctx.scopeOfCall(id)?.chat?.uri;
     calls.open({
       turnId,
       owner: tool.owner,
+      ...(chat === undefined ? {} : { chat }),
       toolCall: {
         toolCallId: id,
         // The name the client announced, not the `<clientId>__<name>` the
