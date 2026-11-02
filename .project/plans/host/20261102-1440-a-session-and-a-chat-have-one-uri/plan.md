@@ -1,7 +1,7 @@
 ---
 title: A session and a chat have one URI
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -128,7 +128,7 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 ## Resume state
 
 - **Done so far:** tasks 01, 02 and 03, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `sessionOfChat` also says whether a URI is a chat, so each caller is read again for an opaque chat.
 
