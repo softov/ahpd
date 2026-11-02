@@ -99,7 +99,7 @@ devtunnel open -> refresh now and every 7 hours -> x-ahpd/connectors/secret { id
 | --- | --- | --- |
 | [01 - A sign-in shows a code and waits](task-01-a-sign-in-shows-a-code-and-waits.md) | implemented | - |
 | [02 - A plugin stores a refreshed secret](task-02-a-plugin-stores-a-refreshed-secret.md) | implemented | - |
-| [03 - A devtunnel connector signs in](task-03-a-devtunnel-connector-signs-in.md) | todo | 01, 02 |
+| [03 - A devtunnel connector signs in](task-03-a-devtunnel-connector-signs-in.md) | implemented | 01, 02 |
 
 ## Risks and tradeoffs
 
@@ -111,12 +111,12 @@ devtunnel open -> refresh now and every 7 hours -> x-ahpd/connectors/secret { id
 
 ## Resume state
 
-- **Done so far:** task 01 is built and its gates pass. It adds the `SignIn` union with the device flow, the host's start, poll and finish, and the adapter row's `flow`. The registration check is in place, with seven device cases in `connectors-signin.test.ts`, two registration cases in `plugin-validate.test.ts`, and `PLUGINS.md`. Task 02 is built and its gates pass: `x-ahpd/connectors/secret` writes a plugin's refreshed secret to the vault, with four cases in `connectors-channel.test.ts`.
-- **Next action:** [task-03-a-devtunnel-connector-signs-in.md](task-03-a-devtunnel-connector-signs-in.md).
-- **Departures:** the union makes `adapter.signIn` a `CodeSignIn | DeviceSignIn`, so two unlisted test files narrow it through a `signInOf` helper (`packages/agent-claude/test/agent-claude-login-adapter.test.ts`, `packages/server/test/openrouter-signin.test.ts`). A device finish's wait has its own timer at the code's expiry, and an expiry does not cut off a put that is already writing.
+- **Done so far:** all three tasks are built and their gates pass. Task 01 adds the `SignIn` union with the device flow, the host's start, poll and finish, and the adapter row's `flow`. Its cases are seven in `connectors-signin.test.ts`, two registration cases in `plugin-validate.test.ts`, and `PLUGINS.md`. Task 02 adds `x-ahpd/connectors/secret`, with four cases in `connectors-channel.test.ts`. Task 03 adds the `devtunnel` adapter: the device sign-in, the tunnels check, and the seven-hour refresh written back through `secret`. `OpenTunnels` keeps a token for the next plan's tunnel kind, and nine cases in `tunnel-devtunnel-adapter.test.ts` cover it.
+- **Next action:** review the three tasks, then the real sign-in. The by-hand checks are pending in task 03's Resume, along with the management URL and `scope` no test confirms.
+- **Departures:** the union makes `adapter.signIn` a `CodeSignIn | DeviceSignIn`, so two unlisted test files narrow it through a `signInOf` helper (`packages/agent-claude/test/agent-claude-login-adapter.test.ts`, `packages/server/test/openrouter-signin.test.ts`). A device finish's wait has its own timer at the code's expiry, and an expiry does not cut off a put that is already writing. Task 03's doc landed in `packages/tunnel-devtunnel/README.md`, because `docs/plugins/tunnel-devtunnel.md` only includes that file. `src/index.ts` exports the adapter and `OpenTunnels` though the task's Files did not name it. `packages/server/test/plugin-load.test.ts` also lists the manifest's option keys, so its tunnel-devtunnel row gained `allowAccountChange`.
 - **Open questions:**
-  1. Which call answers the account's GitHub login for a token of this app - proposed: `GET https://api.github.com/user`, checked with a real sign-in in task 03.
-- **Watch out for:** the finish must run the owner checks again with the starter's reader, as the pasted-code finish does. The device handle is a secret like the verifier.
+  1. Which call answers the account's GitHub login for a token of this app - proposed: `GET https://api.github.com/user`. The adapter uses it, and a real sign-in still confirms it.
+- **Watch out for:** the finish must run the owner checks again with the starter's reader, as the pasted-code finish does. The device handle is a secret like the verifier. The plugin's own connection waits for `listening` before it connects, so a stored connector opening during startup does not lose the refreshed pair.
 
 ## Final verification checklist
 

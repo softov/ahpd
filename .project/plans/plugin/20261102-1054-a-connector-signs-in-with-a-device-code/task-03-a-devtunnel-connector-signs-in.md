@@ -1,6 +1,6 @@
 ---
 title: A devtunnel connector signs in
-status: todo
+status: implemented
 depends:
   - task-01-a-sign-in-shows-a-code-and-waits.md
   - task-02-a-plugin-stores-a-refreshed-secret.md
@@ -59,3 +59,21 @@ The plugin keeps each open connector's token in memory by id, for the tunnel kin
 - By hand: confirm which call answers the GitHub login for this app's token, and record it in *Resume*.
 
 ## Resume
+
+Built: `devtunnelAdapter` in `packages/tunnel-devtunnel/src/adapter.ts`, registered by `apply`. A device sign-in posts the app's client id to GitHub, shows the code, and polls with pending, slow-down and refusal mapped. On approval it reads the login from `GET https://api.github.com/user` and answers `{ token, refresh, account }`. `check` lists the account's tunnels at the Dev Tunnels management API with `Authorization: github <token>`. An open connector refreshes at once and every seven hours, and keeps its token in `OpenTunnels` by id. Both new values go through `x-ahpd/connectors/secret` before the token is used, and a failure logs one line and asks for a check. The plugin's own connection opens lazily and waits for `listening`, because a stored connector may open while the host is still being built. The manifest declares `contracts.adapters: ["devtunnel"]` and `allowAccountChange`, and the README has the options row and a sign-in section.
+
+Departures:
+- The doc edit is in `packages/tunnel-devtunnel/README.md`, not `docs/plugins/tunnel-devtunnel.md`: that file only includes the package README, so an edit there would be overwritten.
+- `packages/tunnel-devtunnel/src/index.ts` exports the adapter, `OpenTunnels` and the URLs, so the next plan's tunnel kind can read the tokens. The task's Files did not list it.
+- `OpenTunnels` is a small class rather than a bare map: `held(id)` is the reader, and `hold`/`release` belong to the adapter.
+- `packages/server/test/plugin-load.test.ts` also lists the manifest's option keys, so its tunnel-devtunnel row gained `allowAccountChange`. The task's Files did not name it.
+- The start request sends `scope=tunnels`, as the service's `gitHubAppScopes` names it. The management URL is `https://global.rel.tunnels.api.visualstudio.com/api/v1/tunnels`. No test can confirm either; they are in the pending checks below.
+
+Pending by hand:
+- A person signs in from a client, and the row is `ready`.
+- After a restart 8 hours later, the row is still `ready`.
+- The management URL and the `scope` the start sends, which only a real sign-in confirms.
+
+Open question: which call answers the GitHub login. The plan proposed `GET https://api.github.com/user`, and the adapter uses it; it stays for the real sign-in to confirm.
+
+Gates: `pnpm -s build` pass, `pnpm exec tsc -p tsconfig.json --noEmit` pass, `pnpm -s boundary` pass. `pnpm --filter @ahpd/tunnel-devtunnel test` 51 pass, of which 9 are the adapter's. The full run found the one option-key list above and nothing else; `plugin-load.test.ts` then passed all 59 of its cases.
