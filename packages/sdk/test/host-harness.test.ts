@@ -820,15 +820,21 @@ describe('turning a customization on and off', () => {
   });
 
   it.each([
-    ['has no call for it', undefined],
-    ['declines it', async (): Promise<boolean> => false],
-  ])('says a background request on a blocking server a backend %s to every client, then the blocking it keeps', async (_, call) => {
-    // A server still starting and holding the session's turns back on it.
-    const server = {
+    ['has no call for it', undefined, false],
+    ['declines it', async (): Promise<boolean> => false, false],
+    ['declines it, inside a plugin', async (): Promise<boolean> => false, true],
+  ])('says a background request on a blocking server a backend %s to every client, then the blocking it keeps', async (_, call, inPlugin) => {
+    // A server still starting and holding the session's turns back on it,
+    // listed on its own or as a plugin's, where the protocol's reducer finds
+    // it in the plugin's `children`.
+    const starting = {
       type: 'mcpServer', id: 'mcp:desk', uri: 'desk', name: 'desk',
       enablement: [{ kind: 'session', enabled: true }],
       state: { kind: 'starting', blocking: true },
     };
+    const server = inPlugin
+      ? { type: 'plugin', id: 'plugin:tools', uri: 'tools', name: 'tools', enablement: [{ kind: 'session', enabled: true }], children: [starting] }
+      : starting;
     const backend = claude({ paths: ['/home/softov'] });
     const host = createHost({
       path: '/home/softov',
@@ -882,8 +888,8 @@ describe('turning a customization on and off', () => {
       const held = actions(r, uri)
         .filter((e) => e.serverSeq > opened.snapshot.fromSeq && e.rejectionReason === undefined)
         .reduce((state, e) => sessionReducer(state, e.action as never), opened.snapshot.state);
-      expect(held.customizations?.find((one) => one.id === 'mcp:desk'))
-        .toHaveProperty('state', { kind: 'starting', blocking: true });
+      const listed = held.customizations?.find((one) => one.id === server.id) as { children?: unknown[] } | undefined;
+      expect(inPlugin ? listed?.children?.[0] : listed).toHaveProperty('state', { kind: 'starting', blocking: true });
     }
   });
 });

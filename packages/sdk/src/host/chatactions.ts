@@ -1471,13 +1471,18 @@ export function chatAction(
      * `session/mcpServerStateChanged` to reject the request"
      * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
      * On any other server the reducer changes nothing, and the request is
-     * answered to its sender.
+     * answered to its sender. The server is found where the reducer's
+     * `updateMcpServerCustomization` finds it: at the top of the list, or in
+     * the `children` of an entry that is not a server, a plugin's.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts
      */
     case 'session/mcpServerBackgroundRequested': {
       const id = String(action.id ?? '');
       const declined = (): void => {
-        const state = session.customizations()
-          .find((one) => (one as Bag).type === 'mcpServer' && (one as Bag).id === id)?.state as Bag | undefined;
+        const listed = session.customizations() as Bag[];
+        const found = listed.find((one) => one.id === id)
+          ?? listed.flatMap((one) => one.type === 'mcpServer' ? [] : (one.children as Bag[] | undefined) ?? []).find((one) => one.id === id);
+        const state = found?.type === 'mcpServer' ? found.state as Bag | undefined : undefined;
         if (state?.kind !== 'starting' || state.blocking !== true) {
           echoTo(connection.peer, channel, action, origin);
           return;
