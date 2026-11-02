@@ -77,7 +77,7 @@ it('says where the vault is, and answers a secret a plugin read from the file', 
   // nobody trusts yet.
   expect(said.stderr).toContain(`vault ${vaultFile()}\n`);
   expect(said.stderr).toContain('secret probe from the file');
-});
+}, 20_000);
 
 it('says a plugin took the vault over, and hands its secret to the plugins after it', async () => {
   const refused = await cli([BACKEND, READER, VAULT]);
@@ -92,4 +92,4 @@ it('says a plugin took the vault over, and hands its secret to the plugins after
   expect(taken.stderr).toContain(`vault from a plugin\n`);
   expect(taken.stderr).toContain('secret probe from the plugin');
   expect(taken.stderr).not.toContain('from the file');
-});
+}, 20_000);

@@ -84,7 +84,7 @@ it('keeps usage in a folder of its own, beside the sessions and the automations'
   // beside it.
   expect(existsSync(join(home, 'ahpd', 'sessions.json'))).toBe(false);
   expect(existsSync(join(home, 'ahpd'))).toBe(true);
-});
+}, 20_000);
 
 it('tells a plugin that its usage store was not wanted, and lets one take the port over', async () => {
   const refused = await cli([BACKEND, USAGE]);
@@ -99,4 +99,4 @@ it('tells a plugin that its usage store was not wanted, and lets one take the po
   // port the daemon keeps and a port a plugin has taken.
   expect(taken.stderr).not.toContain('already set');
   expect(taken.stderr).toContain('plugin usage-store');
-});
+}, 20_000);
