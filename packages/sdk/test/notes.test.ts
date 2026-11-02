@@ -290,7 +290,8 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
   expect(opened.snapshot.state.inputNeeded).toBeUndefined();
   // The session's status is what its reducer made of the actions it was
   // sent, so a client subscribing now reads the bits a watching client holds,
-  // and the input-needed bit left with the question.
+  // and the input-needed bit left with the question. Its activity is read
+  // without the read bit, which is the person's and not the turn's.
   const activity = (status: number): number => status & (Status.IsRead - 1);
   expect(activity(opened.snapshot.state.status)).toBe(activity(session.status));
   expect(opened.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);

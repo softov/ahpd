@@ -9,7 +9,7 @@ import {
   sessionQueries, settle, running, wrote,
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
-import { idOf } from '../src/sessions/catalog.js';
+import { idOf, Status } from '../src/sessions/catalog.js';
 import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
 import { undeclaredIn } from './support/wire.js';
 import type { Agent, Bag, HostOptions, Session, Start } from '@ahpd/sdk';
@@ -608,8 +608,9 @@ describe('more than one chat in a session', () => {
       items: { status: number }[];
     };
     // A catalogue that only looked at the default chat would show this idle
-    // while another chat in it is blocked on a person.
-    expect(listed.items[0]?.status).toBe(24);
+    // while another chat in it is blocked on a person. Without the read bit,
+    // which is the person's and not the turn's.
+    expect((listed.items[0]?.status ?? 0) & ~Status.IsRead).toBe(24);
   });
 
   it('will not dispose the only one, and says what to do instead', async () => {

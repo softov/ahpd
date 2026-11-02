@@ -333,7 +333,8 @@ describe('the fields a client reads by name', () => {
       expect(changes).not.toHaveProperty('createdAt');
     }
     // What moved is in there under its own name: the row a client holds, each
-    // change spread over the one before, says the session is running.
+    // change spread over the one before, says the session is running, the read
+    // bit beside it the person's and not the turn's.
     const row = moves.reduce<Record<string, unknown>>((held, moved) => ({ ...held, ...(moved.params.changes as Record<string, unknown>) }), {});
     expect(Number(row.status) & (Status.IsRead - 1)).toBe(Status.InProgress);
     expect(row.title).toEqual(expect.any(String));
@@ -706,7 +707,6 @@ describe('the fields a client reads by name', () => {
       params: { channel: second, action: { type: 'chat/isReadChanged', isRead: false } },
     });
     await settle();
-    p.notes.length = 0;
 
     client.handle({
       method: 'dispatchAction',
@@ -716,7 +716,7 @@ describe('the fields a client reads by name', () => {
 
     // On the chat's own channel, which is where the client watching that one
     // chat reduces it.
-    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged')).toBe(true);
+    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged' && e.action.isRead === true)).toBe(true);
     // And on the session channel, which is where a client watching the session
     // reads what each of its chats is doing. `changes` carries the status the
     // protocol says to project, not a chat summary it has no field for.
@@ -727,7 +727,7 @@ describe('the fields a client reads by name', () => {
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
     const others = chatsOf(p, 'ahp-session:/live').filter((one) => one.resource !== second);
     expect(others.map((one) => one.status)).toEqual(others.map(() => Status.Idle | Status.IsRead));
-    // Every chat is read again, so the session is read with them.
+    // The session's bit is the session's own, read from its start.
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
     // A client opening the chat afterwards gets the bit in its state, so a
     // restart of the client is not a chat that forgot it was read.

@@ -734,11 +734,12 @@ async function busyHost() {
   const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
   await ask('subscribe', { channel: lead });
   await settle();
-  /** The session's catalogue row as the root has announced it so far, one change at a time. */
+  /** The session's catalogue row as the root has announced it so far: the row it was added with, then each change. */
   const row = (): Bag[] => wire
     // Published under the name it was created with.
-    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy')
-    .map((one) => one.params.changes as Bag);
+    .filter((one) => (one.method === 'root/sessionAdded' && (one.params.summary as Bag | undefined)?.resource === 'ahp-session:/busy')
+      || (one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy'))
+    .map((one) => (one.method === 'root/sessionAdded' ? one.params.summary : one.params.changes) as Bag);
   /** The activity bits of a status, without the read and archived flags. */
   const activity = (status: unknown): number => Number(status) & 31;
   return { ask, uri, lead, row, activity };
@@ -802,7 +803,7 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
-  // The lead turn has ended, which made the session unread; read it again.
+  // The lead turn has ended, which marked the session unread; read it again.
   await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
   await settle();
   expect(await readOn(ask, uri)).toBe(true);
@@ -814,7 +815,12 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   finishWorker();
   await settle();
   expect(await readOn(ask, worker)).toBe(false);
-  // A worker is the harness's work inside the lead's call, and does not count.
+  /*
+   * A worker's chat is a tool's, and its end leaves the session as it is, as
+   * the reference host leaves it: "Tool/subagent/hidden chats retain exact
+   * per-chat state without making the session unread".
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
+   */
   expect(await readOn(ask, uri)).toBe(true);
 });
 
