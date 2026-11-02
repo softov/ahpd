@@ -1,6 +1,6 @@
 ---
 title: The docs say how the bits move
-status: todo
+status: done
 depends: [task-01-a-session-and-its-chats-move-each-other.md]
 layer: docs
 refs:
@@ -28,4 +28,9 @@ refs:
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `4edb4bec`.
+
+- The `session/isReadChanged` row says which chats the session's bit is made of, when a read is said unread, and when a sole chat moves.
+- The same row quotes the protocol's text that keeps the bits apart, and says VS Code's host couples them.
+- The `chat/isReadChanged` row says when the session moves with a chat, and the `chat/isArchivedChanged` row says an archive's mark-read moves it too.
+- The grep names the quote of the protocol's text in the `session/isReadChanged` row, and no wording of this host that keeps a read bit apart.

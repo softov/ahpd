@@ -1,7 +1,7 @@
 ---
 title: A session's read state follows its chats
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -95,8 +95,8 @@ backend turn end -> spawn.ts -> chatFlag unread -> sessionFlag unread
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session and its chats move each other](task-01-a-session-and-its-chats-move-each-other.md) | todo | - |
-| [02 - The docs say how the bits move](task-02-the-docs-say-how-the-bits-move.md) | todo | 01 |
+| [01 - A session and its chats move each other](task-01-a-session-and-its-chats-move-each-other.md) | done | - |
+| [02 - The docs say how the bits move](task-02-the-docs-say-how-the-bits-move.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -105,13 +105,13 @@ backend turn end -> spawn.ts -> chatFlag unread -> sessionFlag unread
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-a-session-and-its-chats-move-each-other.md](task-01-a-session-and-its-chats-move-each-other.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a turn's start clears a chat's bit through the chat reducer, so it moves no session bit.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
-- [ ] The touched suites pass, every protocol case among them.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
+- [x] The touched suites pass, every protocol case among them.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

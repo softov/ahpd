@@ -1,6 +1,6 @@
 ---
 title: A session and its chats move each other
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -40,4 +40,12 @@ A tool's chat and a hidden chat move nothing of the session's.
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `4edb4bec`.
+
+- `readAggregate` reads a running session's held chats through their rows, and a session nothing is running through its recorded chats, its default first.
+- A session the catalogue does not list has no chats there, so its read action moves no chat.
+- Seven cases of `host-catalogue.test.ts` change with the rules, and two new guard cases hold the redundant read and a session of two chats marked unread.
+- In the changed cases, a chat unread marks its session unread, and the last chat read marks it read.
+- A sole chat follows its session both ways.
+- A session read is said unread while one of two chats is, and an archive's mark-read moves the session.
+- `subagent-chat.test.ts` holds a worker's chat apart from its session already, and passes unchanged.
