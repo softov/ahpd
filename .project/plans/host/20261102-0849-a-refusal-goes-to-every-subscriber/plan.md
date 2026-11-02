@@ -1,7 +1,7 @@
 ---
 title: A refusal goes to every subscriber
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -64,7 +64,7 @@ client A reconnects -> the refusal is not in the replay
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a refusal goes to every subscriber](task-01-a-refusal-goes-to-every-subscriber.md) | todo | - |
+| [01 - a refusal goes to every subscriber](task-01-a-refusal-goes-to-every-subscriber.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -72,12 +72,12 @@ client A reconnects -> the refusal is not in the replay
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-refusal-goes-to-every-subscriber.md](task-01-a-refusal-goes-to-every-subscriber.md).
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none in this plan.
 - **Open questions:** none.
 - **Watch out for:** a refusal held for replay must not reach a channel's state.
 
 ## Final verification checklist
 
-- [ ] The new case fails on 839080c4 and passes after the change.
-- [ ] `pnpm run typecheck` reports no errors.
+- [x] The new case fails on 839080c4 and passes after the change.
+- [x] `pnpm run typecheck` reports no errors.

@@ -1,6 +1,6 @@
 ---
 title: A refusal goes to every subscriber
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
