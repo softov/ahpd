@@ -416,9 +416,9 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * Answer one client's dispatch with the reason it was not applied, at the
    * next `serverSeq`.
    *
-   * Sent to that client alone: nobody else applied it optimistically, so
-   * nobody else has anything to put back, and a client that reduced a
-   * rejected envelope would apply the very change this host refused.
+   * Sent to every client the accepted action would reach, and held for
+   * replay; `alone`, to that client only and not held. No client's state
+   * takes it.
    */
   refuse: (
     peer: Peer,
@@ -426,6 +426,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
+    alone?: boolean,
   ) => void;
   /**
    * Answer one client's terminal input, accepted, to that client alone, at

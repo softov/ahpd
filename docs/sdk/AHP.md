@@ -234,7 +234,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/chatsReordered` | host | ✅ | The whole order a session's chats end up in after a move inside that session, and never what a client sends - the host is the one that knows the order. Every chat the session holds is named exactly once, which the canonical reducer checks before it applies anything. Written to the stored chat list as well, so a restart rebuilds the chats where the move left them. |
 | `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. On a chat's channel the client's action goes out on that channel, then the chat's held title and its row in the session take the title together, with this host's `session/chatUpdated`, and a default chat renames its session after, with this host's `session/titleChanged`; no chat action carries a title, so a client already holding the chat reads the new one in its row and in its next snapshot. The protocol's text has no client rename of a chat. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames a chat with `rename_chat` the same way. |
 | `session/serverToolsChanged` | host | ✅ | Full replacement, which is what the action means: it carries the new set rather than a difference. Sent to every running session when `host.setTools()` is called. |
-| `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made. The entry is taken as sent, a `clientId` naming another client included, as the reference host takes it; a `clientId` or `tools` the entry leaves out is the sender's id and no tools. The entry leaves with the connection that announced it. The `customizations` it carries are read as well: each plugin is copied into this host's own directory and reported on the session. A run announces one of these too, as a client called `Automation`, carrying the copies its template named - which is how a plugin a template named reaches a session nobody is connected to. |
+| `session/activeClientSet` | both | ✅ | A client announcing itself, and this host putting the creating client into the session it just made. An entry naming another client's `clientId` is refused; a `clientId` or `tools` the entry leaves out is the sender's id and no tools. The entry leaves with the connection that announced it. The `customizations` it carries are read as well: each plugin is copied into this host's own directory and reported on the session. A run announces one of these too, as a client called `Automation`, carrying the copies its template named - which is how a plugin a template named reaches a session nobody is connected to. |
 | `session/activeClientRemoved` | both | ✅ | Host-managed on the way out: a client that unsubscribes, drops without reconnecting in time, or reconnects without resubscribing is removed by this host rather than left in the list. |
 | `session/workingDirectorySet` | client | ✅ | The SDK takes its directories when the CLI starts and offers no way to add one after, so a change starts the backend again *resumed*: the same conversation in a wider place. Refused while a turn is running. A folder the set holds already starts nothing and goes to every client of the session. |
 | `session/workingDirectoryRemoved` | client | ✅ | Index 0 is the process root and the protocol says a client MUST NOT remove it, so this host refuses a removal of it. A folder the set does not hold starts nothing and goes to every client of the session. |
@@ -414,6 +414,13 @@ sends an action and as the reference host records and broadcasts a rejection.
 The client that sent it is told even where it watches no such channel. No state
 takes a refusal: the client that sent the action drops it from what it holds
 pending, and the others hold nothing of it.
+
+A refusal reaches only who the accepted action would reach. A request on
+`ahp-automations://?owner=me` goes to its sender and its owner, as its echo
+does. Two refusals go to the sender alone and are not held for replay: one to a
+client the gate has not passed, since that client may not write to the
+channel, and refused terminal input, since keystrokes stay with the client
+that typed them.
 
 ## Behaviour worth knowing
 
@@ -763,8 +770,8 @@ entry the state holds and with what it sent last, as
 [VS Code's session handler](https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253)
 does, sends its set once.
 
-A refusal goes to every client of its channel and is held for replay, as
-[What a refusal is](#what-a-refusal-is) says. It takes the next `serverSeq`,
+A refusal goes to every client of its channel and is held for replay, except
+where [What a refusal is](#what-a-refusal-is) says otherwise. It takes the next `serverSeq`,
 because a client that has just subscribed holds a snapshot taken at the number
 this host was at, and "Subsequent actions will have `serverSeq > fromSeq`"
 ([state](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357)).

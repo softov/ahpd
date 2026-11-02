@@ -314,12 +314,10 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
 });
 
 /*
- * The entry as the client sent it: the protocol states no rule for an entry
- * naming another client, and the reference host applies the action as sent.
- * The entry leaves with the connection that announced it.
- * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625
+ * A client announces itself and no other: an entry naming another client would
+ * have that client's tools called, and its leaving would remove that client.
  */
-it('takes the client id the action names, and lets the entry go with the connection that sent it', async () => {
+it('refuses an entry that names another client, and holds nothing of it', async () => {
   const held = host();
   const a = await joins(held, 'honest');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
@@ -328,14 +326,15 @@ it('takes the client id the action names, and lets the entry go with the connect
     method: 'dispatchAction',
     params: {
       channel: URI,
-      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [{ name: 'openFile' }] } },
     },
   });
-  expect(await clientsIn(a.client, URI)).toEqual(['somebody-else']);
-  const b = await joins(held, 'watcher');
-  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
-  await a.client.handle({ method: 'unsubscribe', params: { channel: URI } });
-  expect(await clientsIn(b.client, URI)).toEqual([]);
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+  const refused = a.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: { type: string }; rejectionReason?: string })
+    .find((one) => one.action.type === 'session/activeClientSet');
+  expect(refused?.rejectionReason).toContain('somebody-else is another client');
 });
 
 it('replaces what a client contributes rather than merging it', async () => {

@@ -1187,6 +1187,13 @@ export function createHost(options: HostOptions): Host {
    * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L766
    * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4183-L4210
    *
+   * It reaches only who the accepted action would reach: a request on the
+   * automations channel goes through `requestAudience`, as its echo does.
+   * One said `alone` goes to its sender and nobody else, and is not held for
+   * replay, as `echoTo` answers accepted input: a refusal from a client the
+   * gate has not passed yet, and terminal input, whose keystrokes stay with
+   * the client that typed them.
+   *
    * The client that sent it is told in every case, under the name it watches
    * the channel by where it watches one, since an invalid action is echoed
    * back to the client that sent it with its reason, whichever channels and
@@ -1199,11 +1206,13 @@ export function createHost(options: HostOptions): Host {
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
+    alone = false,
   ): void => {
     log(`${channel}: ${reason}`);
     answeredBy(channel, origin, action);
     deltas.flush();
-    emit(channel, action, origin, undefined, { reason, by: peer });
+    if (alone) ctx.serverSeq += 1;
+    else emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**

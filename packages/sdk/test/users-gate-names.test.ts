@@ -48,9 +48,8 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
-  // Nothing taken: what the admin hears of these is their refusals.
+  // Nothing taken, and nothing heard: a refusal at the gate is the guest's alone.
   const acted = admin.seen.seen.filter((one) => one.method === 'action'
-    && (one.params as { rejectionReason?: string }).rejectionReason === undefined
     && ['session/titleChanged', 'chat/turnStarted'].includes(String(one.params.action?.type)));
   expect(acted).toEqual([]);
   expect(guest.refused()).toEqual([
@@ -60,9 +59,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
     'ahp-session:/one: g may not session:rename here',
   ]);
 
-  // The session and a watch under a name of its own both still work. The admin
-  // watches the session, so it heard the guest's refusal there.
-  admin.seen.seen.length = 0;
+  // The session and a watch under a name of its own both still work.
   await admin.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Mine' });
   expect(admin.refused()).toEqual([]);
   expect(admin.seen.seen.some((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')).toBe(true);

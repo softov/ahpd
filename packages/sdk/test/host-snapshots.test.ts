@@ -54,7 +54,7 @@ async function twoAutomationOwners() {
   await ben.handle(hello(['0.9.0'], { clientId: 'ben' }));
   await ana.handle({ method: 'subscribe', params: { channel: MINE } });
   await ben.handle({ method: 'subscribe', params: { channel: MINE } });
-  return { store, ana, ben, anaPeer, benPeer };
+  return { store, host, ana, ben, anaPeer, benPeer };
 }
 
 /** The catalogue as a snapshot answers it. */
@@ -561,6 +561,37 @@ describe('the fields a client reads by name', () => {
       .map((one) => one.origin?.clientSeq);
     expect(requests(anaPeer)).toEqual([1, 2]);
     expect(requests(benPeer)).toEqual([]);
+  });
+
+  it('says a refused request on the filtered catalogue to its sender alone, live and on a reconnect', async () => {
+    const { ana, ben, anaPeer, benPeer, host } = await twoAutomationOwners();
+    const before = (await ben.handle({ method: 'subscribe', params: { channel: MINE } }) as {
+      snapshot: { fromSeq: number };
+    }).snapshot.fromSeq;
+    anaPeer.notes.length = 0;
+    benPeer.notes.length = 0;
+    const send = (clientSeq: number, action: Record<string, unknown>) =>
+      ana.handle({ method: 'dispatchAction', params: { channel: MINE, clientSeq, action } });
+    await send(1, {
+      type: 'automation/createRequested',
+      resource: 'ahp-automation:/ana-secret',
+      definition: { ...AUTOMATION_DEFINITION, message: { text: 'Secret' }, disableConditions: [{ kind: 'afterRuns', max: 2 }, { kind: 'afterRuns', max: 5 }] },
+    });
+    await send(2, { type: 'automation/updateRequested', resource: 'ahp-automation:/nobody', changes: { title: 'Secret' } });
+    await settle();
+    const refused = (p: ReturnType<typeof peer>) => actions(p, MINE)
+      .filter((one) => (one as { rejectionReason?: string }).rejectionReason !== undefined)
+      .map((one) => one.origin?.clientSeq);
+    expect(refused(anaPeer)).toEqual([1, 2]);
+    expect(refused(benPeer)).toEqual([]);
+    // Nor is it replayed to another owner who comes back.
+    const back = host.accept(peer(), person('ben'));
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'ben', subscriptions: [MINE], lastSeenServerSeq: before },
+    }) as { type: string; actions?: { action: { type: string } }[] };
+    expect(answer.type).toBe('replay');
+    expect(JSON.stringify(answer.actions)).not.toContain('Secret');
   });
 
   it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {

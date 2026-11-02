@@ -78,8 +78,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       ? params.action
       : {}) as Record<string, unknown>;
     const type = String(action.type ?? '');
+    /** Whether the sender has passed the gate; until then a refusal is its alone. */
+    let gated = false;
     /** Refuse this dispatch, in the words of whatever would not have it. */
-    const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
+    const no = (reason: string, alone = !gated): void => refuse(connection.peer, channel, action, origin, reason, alone);
     /*
      * A plugin channel has one writer, its plugin, so a client's action on
      * one is refused before anything reads it - and on an `x-` scheme no
@@ -168,6 +170,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
     }
+    gated = true;
     /*
      * Whether a client is allowed to originate this at all, asked of the
      * protocol rather than answered here.
@@ -786,18 +789,24 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         ? action.activeClient
         : {}) as Bag;
       /*
-       * The entry as the client sent it, a `clientId` naming another client
-       * included: the protocol states no rule for one, and the reference host
-       * applies the action as sent. A `clientId` or `tools` the client left out
-       * is this host's to fill, as any field of an answer a client left out
-       * is: the sender's own id, and no tools. Held under the connection that
-       * announced it, which is what leaves.
-       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625
+       * A client announces itself, and no other client: an entry naming
+       * another `clientId` is refused, since its tools would be called on the
+       * client it names and its leaving would remove that client's entry.
+       */
+      if (typeof carried.clientId === 'string' && carried.clientId !== clientId) {
+        no(`${carried.clientId} is another client; this connection is ${clientId}`);
+        return;
+      }
+      /*
+       * The entry as the client sent it. A `clientId` or `tools` the client
+       * left out is this host's to fill, as any field of an answer a client
+       * left out is: the sender's own id, and no tools. Held under the
+       * connection that announced it, which is what leaves.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
        */
       const activeClient: Bag = {
         ...carried,
-        clientId: typeof carried.clientId === 'string' ? carried.clientId : clientId,
+        clientId,
         tools: Array.isArray(carried.tools) ? carried.tools : [],
       };
       const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
@@ -879,7 +888,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         case 'terminal/input': {
           const taken = terminal.write(String(action.data ?? ''));
           if (taken === true) echoTo(connection.peer, channel, action, origin);
-          else no(taken);
+          else no(taken, true);
           break;
         }
         case 'terminal/resized':

@@ -761,9 +761,9 @@ describe('a shell on this machine', () => {
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone', async () => {
+  it('refuses what it is sent once the shell has gone, to the client that typed it alone', async () => {
     const uri = 'ahp-terminal:/gone';
-    const { peer: p, send } = await watched(uri);
+    const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 50); });
@@ -774,6 +774,8 @@ describe('a shell on this machine', () => {
 
     const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
     expect(late?.rejectionReason).toBeDefined();
+    // Refused keystrokes stay with the client that typed them, as taken ones do.
+    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
   });
 
   it('says a new title and a title it already has to every client of the terminal', async () => {
