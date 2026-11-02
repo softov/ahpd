@@ -1868,8 +1868,9 @@ export function chatAction(
      * The protocol has the owning client dispatch this for a tool the
      * client itself provides - the call carries a `ToolCallContributor`
      * with that client's id, and a server should refuse anyone else.
-     * Relayed rather than reduced: what a tool is printing as it runs is
-     * the running client's to say, and this host holds none of it.
+     * What the tool prints as it runs is that client's to say: it goes to
+     * every client of the chat as the running client's own action, and
+     * the chat's held state folds it into the call as it folds any other.
      */
     case 'chat/toolCallContentChanged': {
       const toolCallId = String(action.toolCallId ?? '');
