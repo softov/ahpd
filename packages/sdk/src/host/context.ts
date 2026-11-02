@@ -428,16 +428,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     reason: string,
     alone?: boolean,
   ) => void;
-  /**
-   * Answer one client's terminal input, accepted, to that client alone, at
-   * the next `serverSeq` and not buffered.
-   */
-  echoTo: (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
-  ) => void;
   /** The host's own log. */
   log: (message: string) => void;
   /** What the window's "collect logs" gets, and reads back. */

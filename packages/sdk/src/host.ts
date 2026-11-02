@@ -860,8 +860,8 @@ export function createHost(options: HostOptions): Host {
   /**
    * One state action, to everyone watching that channel.
    *
-   * `serverSeq` moves here, once for each envelope, and in `echoTo` for the
-   * one answer said to its sender alone. A snapshot is taken *at* a sequence
+   * `serverSeq` moves here, once for each envelope, and in `refuse` for a
+   * refusal said to its sender alone. A snapshot is taken *at* a sequence
    * number and every action after it carries a greater one, which is how a
    * client knows it missed nothing.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
@@ -1176,9 +1176,8 @@ export function createHost(options: HostOptions): Host {
    * It reaches only who the accepted action would reach: a request on the
    * automations channel goes through `requestAudience`, as its echo does.
    * One said `alone` goes to its sender and nobody else, and is not held for
-   * replay, as `echoTo` answers accepted input: a refusal from a client the
-   * gate has not passed yet, and terminal input, whose keystrokes stay with
-   * the client that typed them.
+   * replay: a refusal from a client the gate has not passed yet, which may not
+   * write to the channel.
    *
    * The client that sent it is told in every case, under the name it watches
    * the channel by where it watches one, since an invalid action is echoed
@@ -1200,30 +1199,6 @@ export function createHost(options: HostOptions): Host {
     if (alone) ctx.serverSeq += 1;
     else emit(channel, action, origin, requestAudience(channel, action, origin), { reason, by: peer });
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
-  };
-  /**
-   * A client's terminal input, accepted, said back to that client alone.
-   *
-   * Input is side-effect only: the reducer changes nothing on it, and every
-   * client reads what it did in the `terminal/data` that follows. Keystrokes
-   * stay with the client that typed them, so another client of the terminal
-   * never holds a password typed at a prompt, and neither does the replay
-   * buffer. It takes the next `serverSeq`, as `refuse` does, and is not
-   * buffered.
-   *
-   * The protocol sends every terminal action to every client of the terminal;
-   * this host keeps input to its sender.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
-   */
-  const echoTo = (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
-  ): void => {
-    answeredBy(channel, origin, action);
-    ctx.serverSeq += 1;
-    peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin });
   };
   /**
    * Let a watch go once nobody is listening to it.
@@ -1420,7 +1395,7 @@ export function createHost(options: HostOptions): Host {
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
-    logs, detached, refuse, echoTo,
+    logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
     watches, marksOf, resumedSessions, activeClientsOf, drafts,

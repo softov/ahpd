@@ -320,7 +320,7 @@ A canvas is opened, updated and closed by a plugin, through its own three calls
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
 | `terminal/data` | host | ✅ | Every byte the shell wrote except its OSC 133 and OSC 7 marks, which the protocol keeps out of the output, and the same bytes are kept as scrollback so a client subscribing late sees what happened. Capped, because a terminal left running `tail -f` is a host holding a day of output for a client that may never come back. |
-| `terminal/input` | client | ✅ | Under pipes a `^C` is turned into a signal to the process group, the work a line discipline does under a pseudoterminal, where the byte is written through. Side-effect only, and answered to its sender alone, as [Every accepted action](#every-accepted-action-goes-to-every-client-of-its-channel) says; input to a shell that has exited, or to a command's output terminal, has no process to reach and is refused. |
+| `terminal/input` | client | ✅ | Under pipes a `^C` is turned into a signal to the process group, the work a line discipline does under a pseudoterminal, where the byte is written through. Side-effect only and still a terminal action, so it goes to every client of the terminal and is held for replay, as [Every accepted action](#every-accepted-action-goes-to-every-client-of-its-channel) says; input to a shell that has exited, or to a command's output terminal, has no process to reach and is refused to the same clients. |
 | `terminal/resized` | both | ✅ | A pseudoterminal is told and sends `SIGWINCH` itself. Without one, a command's output terminal included, the size is kept because the state reports it and a client draws to it. |
 | `terminal/claimed` | both | ✅ | Who the terminal belongs to: a client, or a session that opened it for a `!` command. A claim that names neither is refused. |
 | `terminal/titleChanged` | both | ✅ | Set by a client, or defaulted to the shell's own name. The title it already has moves nothing and goes to every client of the terminal. |
@@ -419,10 +419,8 @@ pending, and the others hold nothing of it.
 
 A refusal reaches only who the accepted action would reach. A request on
 `ahp-automations://?owner=me` goes to its sender and its owner, as its echo
-does. Two refusals go to the sender alone and are not held for replay: one to a
-client the gate has not passed, since that client may not write to the
-channel, and refused terminal input, since keystrokes stay with the client
-that typed them.
+does. A refusal to a client the gate has not passed goes to that client alone
+and is not held for replay, since that client may not write to the channel.
 
 ## Behaviour worth knowing
 
@@ -756,15 +754,16 @@ of files already ticked, a cancel naming a turn other than the running one, a
 background request for a server that is not holding a turn back, the title a
 terminal has, and an active client set as the session holds it, each go out
 as the client sent them, at the next `serverSeq`, and move nothing. Nothing is
-started again for them and no backend is told. So does
+started again for them and no backend is told. So does `terminal/input`, a
+side-effect-only action that is still a terminal action, and
 `automationRun/cancelRequested`, whose run's lifecycle follows it.
 
-`terminal/input` is the one accepted action that goes to its sender alone. The
-protocol sends it to every client of the terminal, and this host does not:
-keystrokes stay with the client that typed them, so another client never holds
-a password typed at a prompt, and neither does the replay buffer. The answer
-takes the next `serverSeq`, as a refusal does, and every client reads what the
-input did in the `terminal/data` that follows.
+Every client of a terminal is sent the input any client types into it, and a
+client that reconnects within the replay buffer is sent it again, as the
+[reference host](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4215-L4253)
+records and broadcasts it. That includes a password typed at a prompt that
+does not echo it. Every client reads what the input did in the `terminal/data`
+that follows.
 
 A client that announces itself whenever the session's state moves reads such
 an echo as the state moving. One that compares what it would send with the

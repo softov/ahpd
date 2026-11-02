@@ -726,9 +726,9 @@ describe('a shell on this machine', () => {
   /*
    * Every terminal action a client sends is answered, its echo or its refusal.
    * Input is side-effect only, so the protocol's reducer changes nothing on it,
-   * and a title set to the one it has changes nothing either. A title goes to
-   * every client of the terminal as the sender's own action; input is answered
-   * to the client that typed it, and to nobody else.
+   * and a title set to the one it has changes nothing either: each goes to
+   * every client of the terminal as the sender's own action, and so does the
+   * refusal of either.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
    */
   const watched = async (uri: string) => {
@@ -747,21 +747,24 @@ describe('a shell on this machine', () => {
     return { ...opened_, other, send };
   };
 
-  it('answers input to the client that typed it, and to nobody else', async () => {
+  it('says input to every client of the terminal, the sender\'s own action', async () => {
     const uri = 'ahp-terminal:/answered';
     const { peer: p, other, send } = await watched(uri);
     await send(3, { type: 'terminal/input', data: 'echo answered-input\n' });
     await spoken(p, uri, 'answered-input');
 
-    const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/input');
-    expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
-    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
-    // Every envelope takes its own number, the echo too.
+    for (const q of [p, other]) {
+      const said = actions(q, uri).filter((e) => e.action.type === 'terminal/input');
+      expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
+    }
+    // One envelope, one number, the same at both clients.
+    const seqOf = (q: typeof p) => actions(q, uri).find((e) => e.action.type === 'terminal/input')?.serverSeq;
+    expect(seqOf(other)).toBe(seqOf(p));
     const seqs = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as { serverSeq: number }).serverSeq);
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone, to the client that typed it alone', async () => {
+  it('refuses what it is sent once the shell has gone, to every client of the terminal', async () => {
     const uri = 'ahp-terminal:/gone';
     const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
@@ -774,8 +777,10 @@ describe('a shell on this machine', () => {
 
     const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
     expect(late?.rejectionReason).toBeDefined();
-    // Refused keystrokes stay with the client that typed them, as taken ones do.
-    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
+    // The refusal reaches who the taken input reaches, the same envelope.
+    const there = actions(other, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
+    expect(there?.rejectionReason).toBe(late?.rejectionReason);
+    expect(there?.serverSeq).toBe(late?.serverSeq);
   });
 
   it('says a new title and a title it already has to every client of the terminal', async () => {
