@@ -1,6 +1,6 @@
 ---
 title: Every accepted action goes to every subscriber
-status: planned
+status: done
 depends: []
 layer: "sdk host"
 refs:

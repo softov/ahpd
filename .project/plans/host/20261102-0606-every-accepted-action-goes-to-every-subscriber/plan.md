@@ -1,7 +1,7 @@
 ---
 title: Every accepted action goes to every subscriber
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -77,7 +77,7 @@ client dispatchAction refused right after a subscribe
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - every accepted action goes to every subscriber](task-01-every-accepted-action-goes-to-every-subscriber.md) | planned | - |
+| [01 - every accepted action goes to every subscriber](task-01-every-accepted-action-goes-to-every-subscriber.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -87,14 +87,14 @@ client dispatchAction refused right after a subscribe
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the oracle's `DIVERGES` rows for `senderOnly` go with the change; a row left behind fails the oracle.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on e4694965 and passes after the change.
-- [ ] A client that reconciles on every move as VS Code does sends its set once; one that sends on every move does not stop.
-- [ ] The oracle passes with the ten `senderOnly` rows gone.
-- [ ] `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` report no errors.
+- [x] Each new or changed case fails on e4694965 and passes after the change.
+- [x] A client that reconciles on every move as VS Code does sends its set once; one that sends on every move does not stop.
+- [x] The oracle passes with the ten `senderOnly` rows gone.
+- [x] `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` report no errors.
