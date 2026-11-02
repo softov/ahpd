@@ -1825,6 +1825,10 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
       keepProvider(uri, agent, lead);
     }
     catch (error) {
+      // The session never existed, so what was written for it before its
+      // backend started goes whole: its origin, and the flags and title kept.
+      origins.delete(uri);
+      kept.forget(idOf(uri));
       forgetSent(uri);
       // The backend's own words. It is the thing that knows which
       // directories it serves, and a refusal a client can read beats an

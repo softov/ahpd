@@ -88,3 +88,20 @@ it('keeps the record of a session a listing finds mid-restart', async () => {
   // `tone` was written when the session was made, and only there.
   expect(store.rowOf('restarting')?.config).toEqual({ mode: 'other', tone: 'calm' });
 });
+
+it('keeps nothing of a session its backend refused to start', async () => {
+  const base = echo({ path: folder, pace: 0 });
+  const agent: Agent = { ...base, create: () => { throw new Error(`${folder} is not served here`); } };
+  const store = memorySessions();
+  const host = createHost({ path: folder, agents: [agent], ...machine(), sessions: store });
+  const client = host.accept(peer());
+  await client.handle(hello(['0.9.0']));
+
+  await expect(client.handle({
+    method: 'createSession',
+    params: { channel: 'echo:/refused', provider: 'echo', workingDirectories: [uriOf(folder)] },
+  })).rejects.toMatchObject({ message: `${folder} is not served here` });
+  // The read marks and the title were written for the session before its
+  // backend started, and the session never existed.
+  expect(store.rowOf('refused')).toBeUndefined();
+});
