@@ -300,6 +300,21 @@ it('starts a back session on the first message, and says the second in it', asyn
   expect([...first.endings, ...second.endings]).toEqual([]);
 });
 
+/*
+ * The back session is handed the person's message whole: the model and agent
+ * they named, and what they attached, beside their words.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+ */
+it('hands the back session the model, the agent and the attachments the message carried', async () => {
+  const one = await sitting();
+  const attachments = [{ type: 'resource', uri: 'file:///tmp/notes.md', label: 'notes.md' }] as NonNullable<ChatMessage['attachments']>;
+  await one.wake.woken({ ...message('t1', 'read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments }, turn().handle);
+  expect(one.sent).toMatchObject([{
+    channel: 'ahp-chat:/1',
+    action: { type: 'chat/turnStarted', message: { text: carrying('read this'), model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments } },
+  }]);
+});
+
 it('steers a message into the back session that is already working', async () => {
   const one = await sitting();
   const said = turn();

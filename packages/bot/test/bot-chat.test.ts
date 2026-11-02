@@ -326,6 +326,35 @@ it('holds a turn open until the handle answers it', async () => {
   expect(read?.[0]?.state).toBe('complete');
 });
 
+/*
+ * The message whoever answers the chat is told is the whole of it: the model
+ * and the agent it named, and what it carried beside its words, which the
+ * agent doing the work is the one to take.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+ */
+it('tells whoever answers the chat the model, the agent and the attachments a message carried', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+  const attachments = [{ type: 'resource', uri: 'file:///tmp/notes.md', label: 'notes.md' }];
+  await client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: CHAT,
+      action: {
+        type: 'chat/turnStarted',
+        turnId: 't1',
+        message: { text: 'read this', model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments },
+      },
+    },
+  });
+  expect(heard).toEqual([{ session: HELD, turnId: 't1', text: 'read this', model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments }]);
+});
+
 it('ends a turn with a notice, and with a cancellation', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
