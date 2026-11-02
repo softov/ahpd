@@ -16,7 +16,7 @@ import { enablementKeyOf } from '../plugins/enablement.js';
 import { ROOT, chatIdFor, chatUriFor } from './channels.js';
 import { NO_AGENT, need } from './common.js';
 import { preambleOf } from './preamble.js';
-import { startsRead } from './chatactions.js';
+import { readAggregate, startsRead } from './chatactions.js';
 import { refusalReason } from './gate.js';
 import type { Bag } from '../types/common.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -288,7 +288,7 @@ export interface Tooling {
   moving: Map<string, Move>;
   /** Give a chat a title, its held state and its row together, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
-  /** Give a session a title from its own channel, and say so. */
+  /** Give a session a title from its own channel, and its sole chat with it, and say so. */
   renameSession(uri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
@@ -1316,17 +1316,26 @@ export function createTooling(ctx: HostContext): Tooling {
   const moving = new Map<string, { chat: string; directory: string; isolation: boolean }>();
 
   /**
+   * A chat's held state given a title, and its row in the session said with
+   * it, as the reference host's `updateChatTitle` does: no chat action carries
+   * a title, so the held state is set here, and every row read off it after
+   * says the same.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2316-L2331
+   */
+  const updateChatTitle = (uri: string, chatUri: string, title: string): void => {
+    const open = ctx.heldStates.get(chatUri);
+    if (open !== undefined) open.state = { ...open.state, title };
+    dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
+  };
+  /**
    * Give a chat a title, and say so.
    *
-   * The chat's held state takes the title and its row in the session says it
-   * with `session/chatUpdated`, together, as the reference host renames a
-   * chat: no chat action carries a title, so the held state is set here, and
-   * every row read off it after says the same. The default chat's title is its
-   * session's too, said as `session/titleChanged` after the row. A client
-   * renaming a chat on its own channel and an agent calling `rename_chat` come
-   * to the same place.
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2316-L2331
-   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L58-L71
+   * The chat's held state and its row take the title together, as the
+   * reference host renames a chat. The default chat's title is its session's
+   * too, said as `session/titleChanged` after the row. A client renaming a chat
+   * on its own channel and an agent calling `rename_chat` come to the same
+   * place.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L58-L71
    */
   const renameChat = (uri: string, chatUri: string, title: string): void => {
     const held = sessions.get(uri);
@@ -1336,9 +1345,7 @@ export function createTooling(ctx: HostContext): Tooling {
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
     keepTitle(uri, chatUri, title);
-    const open = ctx.heldStates.get(chatUri);
-    if (open !== undefined) open.state = { ...open.state, title };
-    dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
+    updateChatTitle(uri, chatUri, title);
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
     summaryMoved(uri);
     // The session's title is the subject a commit would use, so the question
@@ -1350,7 +1357,12 @@ export function createTooling(ctx: HostContext): Tooling {
    *
    * The session's title is its default chat's: the chat's backend is handed
    * it and the store keeps it under that chat, and it goes out as
-   * `session/titleChanged` on the session.
+   * `session/titleChanged` on the session. A session that counts one chat or
+   * none in its `readAggregate` has its default chat's held state and row
+   * take the title after, as the reference host carries a session's rename
+   * down onto a sole default chat; with peer chats, the default chat's held
+   * state and row keep the title they have.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
    */
   const renameSession = (uri: string, title: string): void => {
     const held = sessions.get(uri);
@@ -1359,6 +1371,7 @@ export function createTooling(ctx: HostContext): Tooling {
     found.setTitle?.(title);
     keepTitle(uri, held.defaultChat, title);
     dispatch(uri, { type: 'session/titleChanged', title });
+    if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
     summaryMoved(uri);
     operationsMoved(uri);
   };
