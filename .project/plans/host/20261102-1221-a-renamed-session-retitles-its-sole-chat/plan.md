@@ -1,7 +1,7 @@
 ---
 title: A renamed session retitles its sole chat
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -75,7 +75,7 @@ client session/titleChanged on a session channel -> chatactions.ts -> renameSess
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The sole chat takes the session's title](task-01-the-sole-chat-takes-the-sessions-title.md) | todo | - |
+| [01 - The sole chat takes the session's title](task-01-the-sole-chat-takes-the-sessions-title.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -86,13 +86,13 @@ client session/titleChanged on a session channel -> chatactions.ts -> renameSess
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-the-sole-chat-takes-the-sessions-title.md](task-01-the-sole-chat-takes-the-sessions-title.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `readAggregate` reads a sleeping session's recorded chats, and `renameSession` runs on a session that is running.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `b91d615e` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `b91d615e` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

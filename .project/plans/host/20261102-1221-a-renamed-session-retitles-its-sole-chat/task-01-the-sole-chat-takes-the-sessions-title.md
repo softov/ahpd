@@ -1,6 +1,6 @@
 ---
 title: The sole chat takes the session's title
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -34,4 +34,8 @@ A session with peer chats keeps its default chat's held title and row.
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `dac11100`.
+
+- `updateChatTitle` holds the held title and the `session/chatUpdated`, as the reference host's function of that name does.
+- `renameSession` calls it for the default chat after `session/titleChanged`, when `readAggregate` counts one chat or none.
+- The peer chat's case passed before the change too, and holds that the default chat's row stays.
