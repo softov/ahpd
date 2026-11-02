@@ -637,9 +637,11 @@ export interface Session {
    * Stop the running turn, named by its id, and answer anything it was
    * blocked on.
    *
-   * The host calls this while the chat runs a turn, with that turn's id: it
-   * refuses a stop on a chat with no turn running, as the protocol has a
-   * server do, and answers a stop naming another turn itself.
+   * The host calls this while the chat runs a turn, with that turn's id, once
+   * it has said the client's stop to every client of the chat: the turn has
+   * ended in their state, and what the backend says of it afterwards is not
+   * said again. The host refuses a stop on a chat with no turn running, as
+   * the protocol has a server do.
    */
   cancel(turnId: string): void;
 
@@ -689,7 +691,8 @@ export interface Session {
    *
    * Handed over once the chat's state has the call pending a confirmation,
    * which is the protocol's condition for taking one. The backend says the
-   * `chat/toolCallConfirmed` back. False when no call by that id waits on a
+   * `chat/toolCallConfirmed` back, and the host sends the client's own
+   * decision in its place. False when no call by that id waits on a
    * confirmation here, and the host then says the decision itself, since
    * every client holds the call the state says.
    */
@@ -729,7 +732,9 @@ export interface Session {
    *
    * Handed over once the host has found the call running under that client in
    * the chat's state. False when no call by that id waits on that client here,
-   * a second result for a call among them, and the host refuses it.
+   * a second result for a call among them, and the host refuses it. On true
+   * the host says the client's result to every client of the chat, and what
+   * the backend says of the call afterwards is not said again.
    */
   completeToolCall?(
     toolCallId: string,

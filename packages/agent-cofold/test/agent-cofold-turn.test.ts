@@ -162,14 +162,21 @@ it('carries the model a turn runs on, on the message', async () => {
   expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/x');
 });
 
-it('carries the configured model when the turn names none', async () => {
+/*
+ * The turn's start is said back as the client sent it: a turn that named no
+ * model is one whose message names none, whatever the session runs it on. The
+ * reference host emits the client's action itself.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('says a turn that names no model back with none, and runs it on the configured one', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/y' });
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
 
   const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
-  expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/y');
+  expect((started?.action.message as { model?: unknown }).model).toBeUndefined();
+  expect(model.requests).toHaveLength(1);
 });
 
 it('runs a turn on the model the turn names, with no model in the session config', async () => {

@@ -1768,12 +1768,12 @@ describe('tools a client contributes', () => {
   /** The person's answer, dispatched to the session the way a client dispatches it. */
   const decided = (
     client: { handle(message: unknown): Promise<unknown> },
-    uri: string,
+    chatUri: string,
     approved: boolean,
   ): void => {
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-1', approved } },
     });
   };
 
@@ -1811,7 +1811,7 @@ describe('tools a client contributes', () => {
     // waiting for ever.
     expect(done).toBe(false);
 
-    decided(client, uri, true);
+    decided(client, chatUri, true);
     await settle();
     expect(await gate).toMatchObject({ behavior: 'allow' });
     // The client is asked to run it now, and once.
@@ -1876,7 +1876,7 @@ describe('tools a client contributes', () => {
     // asked to run the tool.
     expect(await askedToRun(client, uri)).toEqual([]);
 
-    decided(client, uri, true);
+    decided(client, chatUri, true);
     await settle();
     // Allowed, so it is the client's to run once more - one entry, not two.
     expect(await gate).toMatchObject({ behavior: 'allow' });
@@ -1897,7 +1897,7 @@ describe('tools a client contributes', () => {
     void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
 
-    decided(client, uri, false);
+    decided(client, chatUri, false);
     await settle();
     /*
      * Settled, and with the refusal: a handler left waiting on a call nobody

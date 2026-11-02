@@ -232,8 +232,6 @@ interface Broken {
   by: string;
 }
 
-const ECHOED = '"the server echoes them back as an ActionEnvelope once accepted" (types/common/commands.ts, dispatchAction)';
-
 /** The rules the divergences in this file break. */
 const BROKEN = {
   baselines: {
@@ -245,21 +243,6 @@ const BROKEN = {
     breaks: 'versioning.md: "A missing result means the host must send UnsupportedProtocolVersion with its supported baselines and close the connection."',
     row: 'E18',
     by: '10',
-  },
-  echoRewritten: {
-    breaks: `${ECHOED}; the echo of chat/turnStarted carries the host's own startedAt and leaves queuedMessageId off`,
-    row: 'E8',
-    by: '3, the answer',
-  },
-  clientRewritten: {
-    breaks: `${ECHOED}; the echo of session/activeClientSet carries the connection's clientId in place of the one sent`,
-    row: 'C12',
-    by: '3, the answer',
-  },
-  reorderRewritten: {
-    breaks: `${ECHOED}; the echo of chat/queuedMessagesReordered carries the order the backend holds in place of the one sent`,
-    row: 'E8',
-    by: '3, the answer',
   },
   senderOnly: {
     breaks: 'subscriptions.md: "Session actions go to all clients subscribed to that session\'s URI." and "Chat actions go to all clients subscribed to that chat\'s URI."; an action the host\'s own records say moves nothing is echoed to its sender alone',
@@ -360,9 +343,6 @@ interface Differs {
   refused?: string[];
 }
 
-const turnStartRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten }];
-const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten }];
-const reorderRewritten: (Differs & Broken)[] = [{ reduced: ['queuedMessages'], ...BROKEN.reorderRewritten }];
 const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
 const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
 
@@ -376,34 +356,20 @@ const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROK
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '001-root-agentschanged': rootPerConnection,
   '002-root-activesessionschanged': rootPerConnection,
-  '005-session-turnstarted': turnStartRewritten,
-  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': queuedTurnRewritten,
-  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'steeringMessage'], ...BROKEN.echoRewritten }],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
-  '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
-  '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '053-reorders-queued-messages': reorderRewritten,
-  '054-keeps-messages-not-in-order-at-end-in-original-order': reorderRewritten,
-  '055-ignores-unknown-ids-in-reorder': reorderRewritten,
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
   '071-root-terminalschanged': rootPerConnection,
   '071-session-isreadchanged-marks-session-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
   '074-session-isarchivedchanged-unarchives-session': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '075-turnstarted-clears-isread': turnStartRewritten,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
-  '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
   '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '161-chat-turn-lifecycle-on-chat': turnStartRewritten,
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],

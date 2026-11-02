@@ -314,10 +314,10 @@ describe('the fields a client reads by name', () => {
   });
 
   it('sends root/sessionSummaryChanged as a partial, without the identity fields', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -547,11 +547,11 @@ describe('the fields a client reads by name', () => {
   });
 
   it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 41,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } },
       },
@@ -576,11 +576,11 @@ describe('the fields a client reads by name', () => {
   });
 
   it('echoes the clientSeq of a turn that switched the model before it began', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 42,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'sonnet' } } },
       },
@@ -604,21 +604,24 @@ describe('the fields a client reads by name', () => {
     await other.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/live';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await other.handle({ method: 'subscribe', params: { channel: uri } });
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await other.handle({ method: 'subscribe', params: { channel: chat } });
     // Where the state stands before the refusal. A snapshot is taken *at* a
     // sequence number, so this is the one every later action must be above.
-    const at = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const at = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { fromSeq: number };
     }).snapshot.fromSeq;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
 
-    const refused = actions(mine, uri)
+    const refused = actions(mine, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
@@ -634,12 +637,12 @@ describe('the fields a client reads by name', () => {
     // And the client watching alongside hears nothing: it never applied this,
     // so it has nothing to put back - and reducing a refused envelope would
     // apply the very change this host declined to make.
-    expect(actions(theirs, uri)
+    expect(actions(theirs, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined)).toHaveLength(0);
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
     const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
     expect(born).toEqual(expect.any(String));
@@ -648,7 +651,7 @@ describe('the fields a client reads by name', () => {
     await new Promise((r) => { setTimeout(r, 5); });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 

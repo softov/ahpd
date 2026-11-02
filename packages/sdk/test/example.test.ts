@@ -132,10 +132,10 @@ it('says it back in the voice the session was created with', async () => {
 });
 
 it('leaves a finished session in the catalogue, and opens it again from its transcript', async () => {
-  const { client, uri } = await talking();
+  const { client, uri, chatUri } = await talking();
   client.handle({
     method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'remember me' } } },
+    params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'remember me' } } },
   });
   await settle(12);
   await client.handle({ method: 'disposeSession', params: { channel: uri } });

@@ -522,24 +522,18 @@ export function chatAction(
   const chatHeld = (ctx.stateOf(worker ? channel : session.chatUri) ?? {}) as Bag;
   const activeHeld = chatHeld.activeTurn as Bag | undefined;
   /**
-   * A stop of `turn`, the held running turn of the chat the backend serves.
-   *
-   * The backend running that turn stops it and says the end once the turn
-   * has let go, under the turn it stopped. A backend running no such turn
-   * has nothing to stop and nothing to say, so the host says the end the
-   * client asked for, under that turn and with the time it ran: the reference
-   * takes a client's cancel into its state before the side effect.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2744-L2751
+   * A stop of `turn`, the held running turn of the chat it was sent on, said
+   * when it is taken: the client's own stop under the turn it ends and with
+   * the time that turn ran, so the turn ends in every client's state at once.
+   * The backend is told to stop after, and what it says of that turn then
+   * reduces to nothing. The reference host takes a client's cancel into its
+   * state and then runs the side effect.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13526-L13537
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
    */
-  const stopped = (turn: Bag, named: string, duration?: unknown): void => {
-    const id = String(turn.id ?? '');
-    if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === id) {
-      ctx.owe('chat/turnCancelled', id);
-      session.cancel(named);
-      return;
-    }
+  const stopped = (turn: Bag, duration?: unknown): void => {
     const ran = typeof duration === 'number' ? duration : Date.now() - Date.parse(String(turn.startedAt ?? ''));
-    dispatch(session.chatUri, { ...action, turnId: id, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
+    dispatch(channel, { ...action, turnId: String(turn.id ?? ''), duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
   };
   /**
    * Whether the held running turn has an input request by this id that has
@@ -636,6 +630,9 @@ export function chatAction(
         break;
       }
       renameChat(uri, byChat.has(channel) ? channel : owner.defaultChat, title);
+      // Answered on the chat's channel when it came on one: the rename itself
+      // is said on the session's.
+      if (ctx.unanswered()) dispatch(channel, action, origin);
       break;
     }
     /*
@@ -883,238 +880,254 @@ export function chatAction(
        * one action are one decision - and a restart is a backend start.
        */
       const moved = [...ours, ...fixed];
-      if ((moved.length > 0 || rescoped.length > 0) && owning !== undefined) {
-        /*
-         * A value of the wrong shape for its key, which is a different
-         * thing from a value that is fixed. The two pattern keys take a
-         * list; `isolation`, the branch and the three branch rows take a
-         * string, and a list sent for one of those is a mistake worth
-         * saying so about.
-         */
-        const listOf = (key: string): boolean => key === 'worktreeIncludeFiles' || key === 'worktreeSymlinkFolders';
-        const bad = [...ours, ...rescoped].find(([key, value]) => typeof value !== 'string'
-          && !(listOf(key) && Array.isArray(value) && value.every((one) => typeof one === 'string')));
-        const started = [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
-        if (bad !== undefined) {
-          for (const [key] of moved) undo(key);
-          for (const [key] of rescoped) undo(key);
-          no(`${bad[0]} takes ${listOf(bad[0]) ? 'a list of patterns' : 'a string'}`);
-        }
-        else if (started) {
-          for (const [key] of moved) undo(key);
-          for (const [key] of rescoped) undo(key);
-          no(`${moved[0]?.[0] ?? rescoped[0]?.[0]} is fixed once the session has started`);
-        }
+      /*
+       * One answer for the whole action: every key the client sent, as each
+       * was taken, in one echo, or the action refused and nothing of it kept.
+       * "The server validates and broadcasts the action", and its client holds
+       * it pending until that answer; the reference host checks every key it
+       * is given and then says the client's action once, or refuses it.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L603-L608
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13548-L13588
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625
+       */
+      const refused = (why: string): void => {
+        for (const key of Object.keys(config)) undo(key);
+        no(why);
+      };
+      /*
+       * A value of the wrong shape for its key, which is a different
+       * thing from a value that is fixed. The two pattern keys take a
+       * list; `isolation`, the branch and the three branch rows take a
+       * string, and a list sent for one of those is a mistake worth
+       * saying so about.
+       */
+      const listOf = (key: string): boolean => key === 'worktreeIncludeFiles' || key === 'worktreeSymlinkFolders';
+      const bad = owning === undefined ? undefined : [...ours, ...rescoped].find(([key, value]) => typeof value !== 'string'
+        && !(listOf(key) && Array.isArray(value) && value.every((one) => typeof one === 'string')));
+      if (bad !== undefined) {
+        refused(`${bad[0]} takes ${listOf(bad[0]) ? 'a list of patterns' : 'a string'}`);
+        break;
+      }
+      const started = owning !== undefined && [...owning.chats.values()].some((chat) => chat.allTurns().length > 0);
+      if (started && (moved.length > 0 || rescoped.length > 0)) {
+        refused(`${moved[0]?.[0] ?? rescoped[0]?.[0]} is fixed once the session has started`);
+        break;
+      }
+      /*
+       * The keys the session's backend is asked about: every key but this
+       * host's own and the ones the schema fixes, which a start takes.
+       *
+       * What the schema says about a key: `host.ts` imports no backend, and
+       * the two things this layer needs to know are declared there - whether
+       * the key can move on a running session, and whether it belongs to the
+       * session or to one chat in it.
+       *
+       * Absent is not a refusal. `autoApprove` and `mode` are conventional
+       * names a client sends whatever a host advertises, and this backend
+       * takes both without declaring either - so the schema decides how a key
+       * behaves and the backend decides whether it is taken at all.
+       */
+      const asked = Object.entries(config)
+        .filter(([key]) => !HOSTS_OWN.includes(key) && propertyOf(owning?.agent, key)?.sessionMutable !== false);
+      if (asked.length > 0 && session.setConfig === undefined) {
+        refused(`${asked[0]?.[0] ?? ''} is not a config key this backend takes`);
+        break;
+      }
+      const uri = session.uri;
+      /*
+       * Every key as the session holds it once the action is in force: the
+       * value the session actually has where a start changed it - a source is
+       * made into a machine on the way in, so a client told the source back
+       * would hold a value the session is not running with - and each key the
+       * backend took under keys of its own as those keys.
+       */
+      const said = (taken: Record<string, unknown>): void => {
+        for (const [key, value] of Object.entries(taken)) if (!HOSTS_OWN.includes(key)) remember(key, value);
+        // Said on the session's channel, and answered on the channel it came
+        // on, a chat's for a key the schema scopes to one chat.
+        if (channel === uri) dispatch(uri, { ...action, config: taken }, origin);
         else {
-          const mine = { ...settled };
-          for (const [key, value] of [...ours, ...rescoped]) mine[key] = value;
-          decided.set(session.uri, mine);
-          /*
-           * What the work is charged to is decided with the rest of the
-           * window, so a scope that moved is resolved again here or the
-           * turn would be charged to the session it was created as.
-           *
-           * Resolved against the session's owner and not against whoever
-           * sent the change: the work belongs to the person who started
-           * it, and a colleague who can see the session is not thereby
-           * able to move its charge onto their own team. A root-owned
-           * session names no person, so it goes to nobody - and a session
-           * this host began before it recorded an owner is answered for
-           * exactly as it always was. An owner this process has not seen
-           * sign in cannot be checked, so the turn is refused until they do.
-           *
-           * What it was charged to is held, because a refusal below puts
-           * it back: the action is one decision, and a decision that was
-           * not taken leaves nothing of itself behind.
-           */
-          const wasCharged = charged.get(session.uri);
-          const wasScope = kept.scope(idOf(session.uri));
-          const owner = kept.owner(idOf(session.uri));
-          const person = owner === undefined ? connection.principal : principalFor(owner);
-          if (rescoped.length > 0) {
-            if (owner?.startsWith('user:') === true && person === undefined) {
-              charged.set(session.uri, { refusal: `${owner.slice('user:'.length)} has to sign in once before this session's scope can change` });
-            }
-            else charge(session.uri, person, typeof mine.scope === 'string' ? mine.scope : undefined);
+          dispatch(uri, { ...action, config: taken });
+          dispatch(channel, { ...action, config: taken }, origin);
+        }
+      };
+      /*
+       * The keys the backend is asked about, one at a time in the order they
+       * were sent, and the rest as the session holds them. A refusal puts back
+       * each key taken before it, in the backend and in the session's config,
+       * so the action leaves nothing of itself behind, in the backend's own
+       * words, because only it knows whether the key or the value was the
+       * problem. The connection's next dispatch is not held for the answer:
+       * a backend may answer a value only as it is closed, by the start a
+       * later dispatch of the same connection asks for.
+       *
+       * Taken under the backend's own keys: those are what the session runs
+       * on, so they are what is kept and what every client is told, as the
+       * server's echo wins.
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+       *
+       * Every chat, or only this one, as the property says. A permission
+       * mode and an output style are the session's: the chats are peers on
+       * one config, and a voice set on one of them is a session where two
+       * conversations answer differently. A model is the chat's. A chat of
+       * another backend is not one of the peers here: a key this session's
+       * backend takes is a key another may not, so it is left to the chat's
+       * own config.
+       */
+      const taking = async (): Promise<Record<string, unknown> | string> => {
+        const taken: Record<string, unknown> = {};
+        const done: string[] = [];
+        const wrote: [string, unknown][] = [];
+        for (const [key, value] of Object.entries(config)) {
+          if (!asked.some(([one]) => one === key)) {
+            taken[key] = owning?.config[key] ?? value;
+            continue;
           }
-          const uri = session.uri;
-          /** What the clients are told, once the decision is in force. */
-          const tell = (): void => {
-            for (const [key, value] of [...moved, ...rescoped]) {
-              /*
-               * The value the session actually has, when the restart
-               * changed it. A source is made into a machine on the way
-               * in, so a client told the source back would hold a value
-               * the session is not running with. This host's own keys
-               * are not in the backend's config, so they stay as they
-               * were sent.
-               */
-              const answered = owning.config[key] ?? value;
-              if (!HOSTS_OWN.includes(key)) remember(key, answered);
-              dispatch(uri, { type: 'session/configChanged', config: { [key]: answered } }, origin);
+          const answer = await Promise.resolve(session.setConfig?.(key, value));
+          if (typeof answer !== 'object' && answer !== true) {
+            for (const back of done) void Promise.resolve(session.setConfig?.(back, before.get(back)));
+            for (const [own, was] of wrote) {
+              if (owning === undefined) continue;
+              if (was === undefined) delete owning.config[own];
+              else owning.config[own] = was;
             }
-          };
-          if (moved.length === 0) tell();
+            return answer ?? `${key} is not a config key this backend takes`;
+          }
+          done.push(key);
+          if (answer === true) taken[key] = value;
           else {
-            /*
-             * The restart, held while it runs.
-             *
-             * A turn can arrive in the window between the whole config
-             * being pushed and the backend being ready - VS Code sends
-             * both back to back - so `applyDispatch` waits on this
-             * promise before it touches the session. It is cleared before
-             * the promise settles to its consumers, so an action that
-             * waited re-runs against the backend that is actually there.
-             *
-             * Whether this session may move to the machine it is being
-             * moved to is asked here, where the keys are still theirs and
-             * the backend is still the one it was - not inside `restart`,
-             * which is past the point of undoing anything. It is the same
-             * `admitted` a client's `createSession` asks, against the
-             * person who owns the work and the scope it is being charged
-             * to.
-             *
-             * A refusal undoes the whole action rather than half of it: the
-             * keys, the row this host decides from, and the charge the
-             * scope moved onto. Nothing is announced either - the change
-             * never happened, so a `configChanged` would tell every other
-             * subscriber about a setting the session does not have, and a
-             * key written to the store would be what a resume starts the
-             * lead chat with. The session stays exactly where it was.
-             */
-            const work = (async () => {
-              const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
-              if (wrong !== undefined) {
-                for (const [key] of moved) undo(key);
-                for (const [key] of rescoped) undo(key);
-                decided.set(session.uri, settled);
-                if (rescoped.length > 0) {
-                  if (wasCharged === undefined) charged.delete(uri);
-                  else charged.set(uri, wasCharged);
-                  kept.setScope(idOf(uri), wasScope);
-                }
-                no(wrong);
-                return false;
+            undo(key);
+            for (const [own, held] of Object.entries(answer)) {
+              if (owning !== undefined) {
+                wrote.push([own, owning.config[own]]);
+                owning.config[own] = held;
               }
-              await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection, undefined, conn.tokensFor);
-              return true;
-            })();
-            // The promise a close waits on, which is not the work's own: a refusal is
-            // answered to the client below, and a promise nobody reads must
-            // not carry the rejection a second time.
-            restarting.set(uri, work.then(() => undefined, () => undefined));
-            const held = restarting.get(uri);
-            const clear = (): void => {
-              if (restarting.get(uri) === held) restarting.delete(uri);
-            };
-            void work.then(
-              (restarted) => {
-                clear();
-                // Announced only where the restart happened. A refusal is
-                // the action refused and nothing more.
-                if (restarted) tell();
-              },
-              (error: unknown) => {
-                clear();
-                lives.delete(uri);
-                no(error instanceof Error ? error.message : String(error));
-              },
-            );
-          }
-        }
-      }
-      for (const [key, value] of Object.entries(config)) {
-        // Answered above, and not the backend's to hear about.
-        if (HOSTS_OWN.includes(key)) continue;
-        /*
-         * What the schema says about this key, rather than what this
-         * file used to know about four of them.
-         *
-         * `host.ts` imports no backend and is meant not to know one
-         * exists, and it held the names `permissionMode`, `model`,
-         * `effortLevel` and `outputStyle` and refused `thinking` by
-         * name. Every one of those is a property of whatever schema the
-         * backend published, and the two things this layer actually
-         * needs to know are declared there: whether the key can move on
-         * a running session, and whether it belongs to the session or
-         * to one chat in it.
-         */
-        const property = propertyOf(owning?.agent, key);
-        /*
-         * Absent is not a refusal.
-         *
-         * `autoApprove` and `mode` are conventional names a client
-         * sends whatever a host advertises, and this backend takes both
-         * without declaring either - so the schema decides how a key
-         * behaves and the backend decides whether it is taken at all.
-         */
-        /*
-         * Immutable, and said so rather than accepted and dropped: a
-         * control that reports success and changes nothing is worse
-         * than one that refuses.
-         *
-         * Taken above when it moved before the first turn - the session
-         * was started again with it - and a value that did not move is
-         * not a change at all: a client re-sending the value it was
-         * given is agreeing with this host rather than asking for
-         * anything.
-         */
-        if (property?.sessionMutable === false) {
-          if (fixed.some(([held]) => held === key)) continue;
-          if (value === before.get(key)) continue;
-          undo(key);
-          no(`${key} is fixed once the session has started`);
-          continue;
-        }
-        if (session.setConfig === undefined) {
-          undo(key);
-          no(`${key} is not a config key this backend takes`);
-          continue;
-        }
-        /*
-         * Every chat, or only this one, as the property says.
-         *
-         * A permission mode and an output style are the session's: the
-         * chats are peers on one config, and a voice set on one of them
-         * is a session where two conversations answer differently. A
-         * model is the chat's. Neither is a fact about this host.
-         *
-         * A chat of another backend is not one of the peers here: a key
-         * this session's backend takes is a key another may not, so it is
-         * left to the chat's own config rather than pushed at it.
-         */
-        const everywhere = property?.scope === 'chat'
-          ? []
-          : (owning ? [...owning.chats].filter(([uri]) => !owning.backends.has(uri)).map(([, chat]) => chat) : [])
-            .filter((chat) => chat !== session);
-        for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
-        void Promise.resolve(session.setConfig(key, value)).then((answer) => {
-          if (answer === true) {
-            remember(key, value);
-            dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
-          }
-          /*
-           * Taken under the backend's own keys: those are what the session
-           * runs on, so they are what is kept and what every client is told,
-           * the sender's own key with them, as the server's echo wins.
-           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
-           */
-          else if (typeof answer === 'object') {
-            undo(key);
-            for (const [taken, held] of Object.entries(answer)) {
-              if (owning !== undefined) owning.config[taken] = held;
-              remember(taken, held);
+              taken[own] = held;
             }
-            dispatch(session.uri, { type: 'session/configChanged', config: answer }, origin);
           }
-          // The backend's own words when it refused, because only it
-          // knows whether the key or the value was the problem.
-          else {
-            undo(key);
-            no(answer);
-          }
+          const everywhere = propertyOf(owning?.agent, key)?.scope === 'chat'
+            ? []
+            : (owning ? [...owning.chats].filter(([chat]) => !owning.backends.has(chat)).map(([, chat]) => chat) : [])
+              .filter((chat) => chat !== session);
+          for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
+        }
+        return taken;
+      };
+      /*
+       * A fixed key that did not move is not a change at all: a client
+       * re-sending the value it was given is agreeing with this host rather
+       * than asking for anything, and it is answered with the rest.
+       */
+      if ((moved.length === 0 && rescoped.length === 0) || owning === undefined) {
+        void taking().then((taken) => {
+          if (typeof taken === 'string') refused(taken);
+          else said(taken);
         });
+        break;
       }
+      const mine = { ...settled };
+      for (const [key, value] of [...ours, ...rescoped]) mine[key] = value;
+      decided.set(session.uri, mine);
+      /*
+       * What the work is charged to is decided with the rest of the
+       * window, so a scope that moved is resolved again here or the
+       * turn would be charged to the session it was created as.
+       *
+       * Resolved against the session's owner and not against whoever
+       * sent the change: the work belongs to the person who started
+       * it, and a colleague who can see the session is not thereby
+       * able to move its charge onto their own team. A root-owned
+       * session names no person, so it goes to nobody - and a session
+       * this host began before it recorded an owner is answered for
+       * exactly as it always was. An owner this process has not seen
+       * sign in cannot be checked, so the turn is refused until they do.
+       *
+       * What it was charged to is held, because a refusal puts it back:
+       * the action is one decision, and a decision that was not taken
+       * leaves nothing of itself behind.
+       */
+      const wasCharged = charged.get(session.uri);
+      const wasScope = kept.scope(idOf(session.uri));
+      const owner = kept.owner(idOf(session.uri));
+      const person = owner === undefined ? connection.principal : principalFor(owner);
+      if (rescoped.length > 0) {
+        if (owner?.startsWith('user:') === true && person === undefined) {
+          charged.set(session.uri, { refusal: `${owner.slice('user:'.length)} has to sign in once before this session's scope can change` });
+        }
+        else charge(session.uri, person, typeof mine.scope === 'string' ? mine.scope : undefined);
+      }
+      /** The whole action refused, with the row this host decides from and the charge the scope moved onto put back. */
+      const withdrawn = (why: string): void => {
+        decided.set(session.uri, settled);
+        if (rescoped.length > 0) {
+          if (wasCharged === undefined) charged.delete(uri);
+          else charged.set(uri, wasCharged);
+          kept.setScope(idOf(uri), wasScope);
+        }
+        refused(why);
+      };
+      if (moved.length === 0) {
+        void taking().then((taken) => {
+          if (typeof taken === 'string') withdrawn(taken);
+          else said(taken);
+        });
+        break;
+      }
+      /*
+       * The restart, held while it runs.
+       *
+       * A turn can arrive in the window between the whole config
+       * being pushed and the backend being ready - VS Code sends
+       * both back to back - so `applyDispatch` waits on this
+       * promise before it touches the session. It is cleared before
+       * the promise settles to its consumers, so an action that
+       * waited re-runs against the backend that is actually there.
+       *
+       * Whether this session may move to the machine it is being
+       * moved to is asked here, where the keys are still theirs and
+       * the backend is still the one it was - not inside `restart`,
+       * which is past the point of undoing anything. It is the same
+       * `admitted` a client's `createSession` asks, against the
+       * person who owns the work and the scope it is being charged
+       * to.
+       *
+       * A refusal undoes the whole action: the keys, the row this host
+       * decides from, and the charge the scope moved onto. Nothing is announced either - the change
+       * never happened, so a `configChanged` would tell every other
+       * subscriber about a setting the session does not have, and a
+       * key written to the store would be what a resume starts the
+       * lead chat with. The session stays exactly where it was.
+       *
+       * The backend started again is started on the session's config,
+       * which holds every key of the action, so each is answered as the
+       * session then holds it.
+       */
+      const work = (async (): Promise<string | undefined> => {
+        const wrong = await admitted(person, charged.get(uri)?.scope, owning.config, owning.agent.provider, session.uri, owner);
+        if (wrong !== undefined) return wrong;
+        await restart(uri, conn.tokensFor(owning.agent.provider), undefined, connection, undefined, conn.tokensFor);
+        return undefined;
+      })();
+      // The promise a close waits on, which is not the work's own: a refusal is
+      // answered to the client below, and a promise nobody reads must
+      // not carry the rejection a second time.
+      restarting.set(uri, work.then(() => undefined, () => undefined));
+      const held = restarting.get(uri);
+      const clear = (): void => {
+        if (restarting.get(uri) === held) restarting.delete(uri);
+      };
+      void work.then(
+        (wrong) => {
+          clear();
+          if (wrong !== undefined) withdrawn(wrong);
+          else said(Object.fromEntries(Object.entries(config).map(([key, value]) => [key, owning.config[key] ?? value])));
+        },
+        (error: unknown) => {
+          clear();
+          lives.delete(uri);
+          refused(error instanceof Error ? error.message : String(error));
+        },
+      );
       break;
     }
     /*
@@ -1256,10 +1269,7 @@ export function chatAction(
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
          *
          * A stop that names no turn means the running one, the one turn a
-         * client with no id to give can mean.
-         *
-         * The stop goes on under the running turn's id, and the end said back
-         * under it answers the client.
+         * client with no id to give can mean, and is said under its id.
          */
         const named = String(action.turnId ?? '');
         const turn = String(activeHeld.id ?? '');
@@ -1267,26 +1277,25 @@ export function chatAction(
           echoTo(connection.peer, channel, action, origin);
           break;
         }
-        stopped(activeHeld, turn, action.duration);
+        stopped(activeHeld, action.duration);
+        if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
         break;
       }
       /*
-       * On a worker's chat, that worker, when the backend can stop one;
-       * otherwise the lead turn that runs the worker. The worker's turn is
-       * this host's, which the backend has no turn under, so the worker is
-       * named by the call its chat was opened for.
+       * On a worker's chat, the worker's turn, which this host opened and
+       * holds, is the one the stop ends. The backend is then told to stop that
+       * worker when it can stop one, named by the call its chat was opened
+       * for, and otherwise to stop the lead turn that runs it.
        */
       const call = toolCallOfSubagentChat(channel);
-      if (session.stopWorker !== undefined && call !== undefined) {
-        session.stopWorker(call);
-        break;
-      }
-      const lead = ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined;
-      if (lead === undefined) {
+      const lead = String((ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined)?.id ?? '');
+      if ((session.stopWorker === undefined || call === undefined) && lead === '') {
         no(`Nothing is running on ${session.chatUri} to stop`);
         break;
       }
-      stopped(lead, String(lead.id ?? ''));
+      stopped(activeHeld, action.duration);
+      if (session.stopWorker !== undefined && call !== undefined) session.stopWorker(call);
+      else if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === lead) session.cancel(lead);
       break;
     }
     /**
@@ -1972,9 +1981,18 @@ export function chatAction(
         no(`${toolCallId} is not a call ${clientId} is running here`);
         break;
       }
-      // Owed once the harness holds the result: a second result for the call
-      // is refused, and the completion still answers the result it took.
-      ctx.owe('chat/toolCallComplete', toolCallId);
+      /*
+       * Said once the backend has taken it, as the client sent it: the call is
+       * complete in every client's state with the result its client gave, and
+       * what the harness says of the call after reduces to nothing. The
+       * reference host says a client's action when it takes it and runs the
+       * side effect after. A turn the client left out is the running turn the
+       * call is in.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
+       */
+      if (ctx.unanswered()) {
+        dispatch(channel, { ...action, turnId: typeof action.turnId === 'string' ? action.turnId : String(activeHeld?.id ?? '') }, origin);
+      }
       break;
     }
     /*

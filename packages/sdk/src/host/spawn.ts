@@ -23,7 +23,7 @@ import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
 import type { Handed, Session, SubagentChat, SubagentRequest } from '../types/session.js';
-import type { Origin } from './state.js';
+import type { Dispatched } from './state.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
@@ -195,8 +195,8 @@ export function createSpawn(ctx: HostContext): Spawn {
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
     learnAccount, movableMoved,
   } = ctx;
-  /** The client each action a backend holds through `Start.handed` came from. */
-  const handedFrom = new WeakMap<Handed, Origin>();
+  /** The client's dispatch each action a backend holds through `Start.handed` came from. */
+  const handedFrom = new WeakMap<Handed, Dispatched>();
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
@@ -1170,12 +1170,12 @@ export function createSpawn(ctx: HostContext): Spawn {
       ...(options.plan === undefined ? {} : { plan: true }),
       /*
        * The client's action `action` answers, held for the backend that
-       * answers it later. The origin stays with this host, in `handedFrom`, and
-       * the refusal goes to the client that sent it. The dispatch is marked
+       * answers it later. The dispatch stays with this host, in `handedFrom`,
+       * and the refusal goes to the client that sent it. The dispatch is marked
        * taken, so the host leaves its answer to the backend.
        */
       handed: (action) => {
-        const at = ctx.answering(chatUri, action);
+        const at = ctx.answering(String(action.type ?? '').startsWith('session/') ? uri : chatUri, action);
         if (at === undefined) return undefined;
         at.taken = true;
         const handed: Handed = {
@@ -1192,7 +1192,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             }
           },
         };
-        handedFrom.set(handed, at.origin);
+        handedFrom.set(handed, at);
         return handed;
       },
       emit: (channel, action, handed) => {
@@ -1269,19 +1269,44 @@ export function createSpawn(ctx: HostContext): Spawn {
          * nothing is sent where there is nobody to name, so a host with no
          * users directory sends exactly what it sent before.
          */
-        const origin = handed === undefined ? undefined : handedFrom.get(handed);
-        if (sender !== undefined && action.type === 'chat/turnStarted') {
+        const answers = handed === undefined ? ctx.answering(where, action) : handedFrom.get(handed);
+        const origin = handed === undefined ? undefined : answers?.origin;
+        /*
+         * What goes out where this answers a client's dispatch is that
+         * client's own action, as it sent it: the backend says when the action
+         * is taken, and the client's echo carries what the client sent, as the
+         * reference host emits the client's action itself. A backend's own
+         * rebuilding of it - its start time, a model it filled in, the fields of
+         * a decision it did not pass on - stays the backend's.
+         * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+         *
+         * A field the client left out, and a message's origin, are the
+         * backend's: every reducer reads a turn's start time and a message's
+         * origin, and the server's echo is the one that wins where the two
+         * differ.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+         */
+        const own = answers?.action;
+        const word = (action.message ?? {}) as Bag;
+        const said = own === undefined ? action : {
+          ...action,
+          ...own,
+          ...(typeof own.message === 'object' && own.message !== null
+            ? { message: { ...(word.origin === undefined ? {} : { origin: word.origin }), ...(own.message as Bag) } }
+            : {}),
+        };
+        if (sender !== undefined && said.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
           // On the message as well as the action: the message is what a
           // chat's state keeps, and a turn read back says its sender there.
-          const message = (action.message ?? {}) as Bag;
+          const message = (said.message ?? {}) as Bag;
           dispatch(where, asSent({
-            ...action,
-            _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender },
+            ...said,
+            _meta: { ...(said._meta as Bag | undefined), 'ahpd.sender': sender },
             message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
           }), origin);
         }
-        else dispatch(where, asSent(action), origin);
+        else dispatch(where, asSent(said), origin);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.
         // The row's counts move with it: the turn has no checkpoint yet, so

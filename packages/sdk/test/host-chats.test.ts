@@ -834,9 +834,14 @@ describe('more than one chat in a session', () => {
     turnId: string,
     text: string,
   ): Promise<void> => {
+    // A message for a session as a whole goes to its default chat, which a
+    // client reads off the session: a chat's action travels on a chat's channel.
+    const chat = channel.startsWith('ahp-session:')
+      ? String((await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { defaultChat?: string } } }).snapshot.state.defaultChat)
+      : channel;
     void client.handle({
       method: 'dispatchAction',
-      params: { channel, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
     });
     await settle(8);
   };
@@ -1967,9 +1972,14 @@ describe('a chat of another backend', () => {
     turnId: string,
     text: string,
   ): Promise<void> => {
+    // A message for a session as a whole goes to its default chat, which a
+    // client reads off the session: a chat's action travels on a chat's channel.
+    const chat = channel.startsWith('ahp-session:')
+      ? String((await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: { defaultChat?: string } } }).snapshot.state.defaultChat)
+      : channel;
     void client.handle({
       method: 'dispatchAction',
-      params: { channel, action: { type: 'chat/turnStarted', turnId, message: { text } } },
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId, message: { text } } },
     });
     await settle(8);
   };
