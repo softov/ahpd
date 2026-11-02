@@ -463,6 +463,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   /** The close in flight, so a second caller waits on the same one. */
   let closing: Promise<void> | undefined;
   let turn: string | undefined;
+  /** When the outer turn began, so a turn this proxy ends says how long it ran. */
+  let turnBegan = Date.now();
   /**
    * The folder this host named, and where it is inside the machine, as URIs.
    * Inside is the folder's machine path until the port says otherwise.
@@ -573,10 +575,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     unanswered(message);
     start.emit('session', { type: 'session/creationFailed', error: { errorType: 'sessionStartFailed', message } });
     if (turn !== undefined) {
+      // How long the turn ran, which a client draws as the turn's elapsed time.
       start.emit('chat', {
         type: 'chat/error',
         turnId: turn,
-        duration: 0,
+        duration: Date.now() - turnBegan,
         part: { kind: 'error', error: { errorType: 'turnFailed', message } },
       });
       turn = undefined;
@@ -605,7 +608,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       start.emit('chat', {
         type: 'chat/error',
         turnId: turn,
-        duration: 0,
+        duration: Date.now() - turnBegan,
         part: { kind: 'error', error: { errorType: 'turnFailed', message } },
       });
       turn = undefined;
@@ -1387,6 +1390,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
 
     begin: (turnId: string, text: string, model?: Chosen, from?: MessageFrom): void => {
       turn = turnId;
+      turnBegan = Date.now();
       /*
        * A turn after the session stopped is the turn that resumes it: the
        * session inside is opened again at its own id, and the action waits

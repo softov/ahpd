@@ -76,18 +76,22 @@ interface Recorded {
   notices: string[];
   /** One entry per ending, which is the only way a handle says it was used. */
   endings: string[];
+  /** What the turn failed with. */
+  failures: string[];
 }
 
 const turn = (): Recorded => {
   const replies: string[] = [];
   const notices: string[] = [];
   const endings: string[] = [];
+  const failures: string[] = [];
   const handle: TurnHandle = {
     reply: (text) => { replies.push(text); },
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },
+    fail: (message) => { failures.push(message); },
   };
-  return { handle, replies, notices, endings };
+  return { handle, replies, notices, endings, failures };
 };
 
 /**
@@ -275,6 +279,23 @@ it('posts the last words on postNotice, and the notice when there are none', asy
   expect(silent.said.replies).toEqual([]);
   expect(silent.said.notices).toEqual(['Backer finished without a reply']);
   expect(silent.said.endings).toEqual([]);
+});
+
+/*
+ * A back session's turn that failed fails the main turn, in its words, as the
+ * reference host ends a failed send with `chat/error` (agentSideEffects.ts
+ * L1854-L1860 at a4e689ae).
+ */
+it('fails the main turn with the words the back session\'s failed turn ended with', async () => {
+  const one = await sitting();
+  const said = await woken(one);
+
+  one.wake.finished('ahp-session:/1', 'half an answer', 'the model call failed');
+
+  expect(said.failures).toEqual(['the model call failed']);
+  expect(said.replies).toEqual([]);
+  expect(said.notices).toEqual([]);
+  expect(said.endings).toEqual([]);
 });
 
 it('ends the main turn once, whichever road got there first', async () => {

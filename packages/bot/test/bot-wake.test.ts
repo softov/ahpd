@@ -79,18 +79,22 @@ interface Recorded {
   notices: string[];
   /** One entry per ending, which is the only way a handle says it was used. */
   endings: string[];
+  /** What the turn failed with. */
+  failures: string[];
 }
 
 const turn = (): Recorded => {
   const replies: string[] = [];
   const notices: string[] = [];
   const endings: string[] = [];
+  const failures: string[] = [];
   const handle: TurnHandle = {
     reply: (text) => { replies.push(text); },
     notice: (text) => { notices.push(text); },
     end: () => { endings.push('ended'); },
+    fail: (message) => { failures.push(message); },
   };
-  return { handle, replies, notices, endings };
+  return { handle, replies, notices, endings, failures };
 };
 
 /**
