@@ -129,9 +129,9 @@ export function createTerminals(ctx: HostContext): Terminals {
         name: 'Terminal',
         // No shell named, so `shellOf` takes the daemon's own: `$SHELL`, then
         // `/bin/sh`, or the first PowerShell found on Windows. `defaultShell`
-        // is a connection's preference and this runs through a session, which
-        // has no connection - and a person's shell must not be what a turn
-        // runs, because that is the escalation the review found.
+        // is what a client's own terminal opens, and this runs through a
+        // session - and a pushed shell must not be what a turn runs, because
+        // that is the escalation the review found.
         emit: (_channel, action) => {
           dispatch(uri, action);
           if ((action as Bag).type !== 'terminal/exited') return;
@@ -228,13 +228,13 @@ export function createTerminals(ctx: HostContext): Terminals {
         /*
          * No shell named, so the daemon's own is used.
          *
-         * A backend opening a terminal has a session and no connection, and an
-         * automation fires with nobody connected at all - so there is no person
-         * here whose preference this could be. Answered deliberately (the user,
-         * 2026-09-23): the host's default only, never somebody's. It costs an
-         * agent's terminal the shell you chose in your client, and it closes by
-         * construction the path where writing a file and naming it in
-         * `defaultShell` made the next tool call run it.
+         * A backend opening a terminal runs a turn's command, and an automation
+         * fires with nobody connected at all, so the pushed `defaultShell` is not
+         * what it opens. Answered deliberately (the user, 2026-09-23): the
+         * daemon's default only. It costs an agent's terminal the shell you
+         * chose in your client, and it closes by construction the path where
+         * writing a file and naming it in `defaultShell` made the next tool call
+         * run it.
          */
         emit: (_channel, action) => {
           dispatch(uri, action);
@@ -462,11 +462,12 @@ export function createTerminalMethods(ctx: HostContext, conn: ConnectionContext)
         uri,
         cwd: asked,
         claim,
-        // This connection's own shell, if it pushed one. Per connection
-        // rather than per host: two people on one daemon each get theirs,
-        // and neither can name the binary the other's terminal opens.
-        ...(typeof connection.config?.defaultShell === 'string'
-          ? { shell: connection.config.defaultShell }
+        // The host's `defaultShell`, if a client pushed one: the one value
+        // every client's terminal opens, as the reference host's terminal
+        // manager reads it.
+        // https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
+        ...(typeof ctx.rootConfig.defaultShell === 'string'
+          ? { shell: ctx.rootConfig.defaultShell }
           : {}),
         ...(typeof params.name === 'string' ? { name: params.name } : {}),
         ...(typeof params.cols === 'number' ? { cols: params.cols } : {}),

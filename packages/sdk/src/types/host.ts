@@ -1246,19 +1246,6 @@ export interface Connection {
    */
   principalUntil?: number;
   /**
-   * The preferences this client pushed that are its own, not the host's.
-   *
-   * `root/configChanged` carries two kinds of key. Some describe the host and
-   * are one setting for everybody, like `globalAutoApproveEnabled`.
-   * `defaultShell` is not one of those: the host's own note calls these "the
-   * preferences a *client* holds about how the host should behave for it", and
-   * VS Code pushes the shell out of a per-person setting the moment it
-   * connects. Kept in one shared record, the last client to connect decided
-   * everybody's shell - so the person's half is kept here instead, and each
-   * connection reads its own back in root state.
-   */
-  config?: Record<string, unknown>;
-  /**
    * The folders this window said yes to when the host asked it about one.
    *
    * A move into a folder the window never pushed asks it then and there, and
@@ -1269,8 +1256,7 @@ export interface Connection {
    * window pushes a `workspaceTrust` value, which answers for every folder at
    * once and so puts the folder-by-folder answers behind it.
    *
-   * Per connection for the same reason `config` is: it is what one window
-   * said, and it dies with the socket.
+   * Per connection: it is what one window said, and it dies with the socket.
    */
   trustedFolders?: string[];
   /**
