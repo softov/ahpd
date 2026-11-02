@@ -1,6 +1,6 @@
 ---
 title: A cut pi refuses is logged
-status: todo
+status: done
 depends: []
 layer: agent-pi
 refs:
@@ -16,6 +16,7 @@ A cut pi refuses is written to the log, and the turn runs on pi's current leaf.
 
 - `UPDATE: packages/agent-pi/src/session.ts:956-966` - a refused rewind is logged.
 - `UPDATE: packages/agent-pi/test/agent-pi-truncate.test.ts:130-157` - the turn after a refused cut runs.
+- `UPDATE: packages/agent-pi/test/agent-pi.test.ts:601-610` - the session-level case of a refused cut.
 
 ## Steps
 
@@ -29,3 +30,9 @@ A cut pi refuses is written to the log, and the turn runs on pi's current leaf.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- Two cases moved with the behavior: `agent-pi.test.ts` held the failed turn too.
+- Each now reads no `chat/error`, the prompt reaching pi, and the log line.
+- On `89ebe4d5`'s sources both fail: the turn failed with the refusal.

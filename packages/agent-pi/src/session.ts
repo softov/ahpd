@@ -957,12 +957,13 @@ export function piSession(
       if (start.rewindAt !== undefined) {
         /*
          * pi can refuse the move - an extension's `session_before_tree`
-         * handler cancels it - and the session would then run on the leaf it
-         * was resumed at. Failing the turn says that rather than answering
-         * from a conversation the person asked to be rid of.
+         * handler cancels it - and the session then runs on the leaf it was
+         * resumed at. Said in the log, as the reference host logs an agent's
+         * cut that failed and goes on: the clients already hold the cut.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1982-L1986
          */
         const moved = await backend.rewind(start.rewindAt);
-        if (!moved) throw new Error('pi refused to move the leaf back to the truncation point');
+        if (!moved) console.warn(`@ahpd/agent-pi: pi refused to move the leaf back to ${start.rewindAt}`);
       }
       // The host learns this agent's models from here; a rebuild lists the
       // same ones, so only the first open says so.
@@ -982,8 +983,7 @@ export function piSession(
     catch (error: unknown) {
       /*
        * A first open that failed leaves nothing live, so the next turn opens
-       * pi again rather than reusing the rejection. A refused rewind is this
-       * case: the truncation the client asked for is tried again.
+       * pi again rather than reusing the rejection.
        */
       if (opening === started) opening = undefined;
       const abandoned: unknown = live;
