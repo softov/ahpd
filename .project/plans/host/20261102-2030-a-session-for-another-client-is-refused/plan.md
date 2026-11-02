@@ -19,7 +19,7 @@ refs:
 
 A `createSession` whose `activeClient` names a `clientId` other than the connection's is refused, as VS Code's host refuses it.
 Nothing is claimed or made for it.
-A creator naming its own id is held in the session as it is today.
+A creator naming its own id, or none, is held in the session as it is today.
 
 ## Reconnaissance
 
@@ -49,7 +49,7 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 | What | Source | Task |
 | --- | --- | --- |
 | A creator's `clientId` other than the connection's is refused with `-32602`, "createSession.activeClient.clientId must match the connection's clientId" | [protocolServerHandler.ts#L2209-L2213](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213); [commands.ts#L77-L85](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85) | 01 |
-| A creator's entry with no `clientId` is refused the same way, as the reference host's comparison refuses it | [protocolServerHandler.ts#L2211](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2211); [state.ts#L267-L273](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L267-L273) | 01 |
+| A creator's entry with no `clientId` takes the connection's, as a `session/activeClientSet` entry does here; the reference host's comparison refuses it, and this plan leaves it as it is | [code://packages/sdk/src/host/actions.ts#L787-L810](../../../../packages/sdk/src/host/actions.ts#L787-L810); [protocolServerHandler.ts#L2211](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2211) | - |
 | The check comes after the provider and the caller's use of it are checked, and before anything is claimed or made | [protocolServerHandler.ts#L2205-L2213](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2205-L2213) | 01 |
 
 ## Proposed architecture
@@ -62,18 +62,18 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A creator naming another client is refused](task-01-a-creator-naming-another-client-is-refused.md) | todo | - |
+| [01 - A creator naming another client is refused](task-01-a-creator-naming-another-client-is-refused.md) | done | - |
 
 ## Risks and tradeoffs
 
-- A client that sends its entry with no `clientId` is refused, and sends it again with its own id.
+- A client naming another client's id is refused where it was held as itself, and sends its own id.
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-02.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** the implemented record.
 - **Open questions:** none.
-- **Watch out for:** the cases that create a session with a creator's entry and name no `clientId`.
+- **Watch out for:** a creator's entry with no `clientId`, which the cases send and which takes the connection's.
 
 ## Final verification checklist
 

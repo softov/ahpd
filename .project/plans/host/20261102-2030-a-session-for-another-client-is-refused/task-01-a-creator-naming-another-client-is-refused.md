@@ -1,6 +1,6 @@
 ---
 title: A creator naming another client is refused
-status: todo
+status: done
 depends: []
 layer: sdk
 refs:
@@ -10,20 +10,21 @@ refs:
 
 ## Objective
 
-A `createSession` whose `activeClient.clientId` is not the connection's is refused with `-32602`, before anything is claimed or made.
+A `createSession` whose `activeClient` names a `clientId` other than the connection's is refused with `-32602`, before anything is claimed or made.
 
 ## Files
 
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts:947-962` - the creator's id is checked.
 - `UPDATE: packages/sdk/src/host/sessionmethods.ts:1037-1072` - the creator's entry is the one it sent.
 - `UPDATE: packages/sdk/test/presence.test.ts` - a creator naming another client is refused, and nothing is made.
+- `UPDATE: docs/sdk/AHP.md` - the `createSession` row.
 
 ## Steps
 
-1. Read the creator's entry and the connection's id at the top of `createSession`, and refuse a mismatch.
-2. Hold the entry the creator sent, with its `tools` filled as today.
+1. Read the creator's entry and the connection's id at the top of `createSession`, and refuse an entry naming another id.
+2. Hold the entry the creator sent, with a `clientId` and `tools` it left out filled as today.
 3. Change the case that holds a creator naming another client to the refusal.
-4. Give a creator's entry its id in each case that left the id out.
+4. Change the `createSession` row of AHP.md.
 
 ## Validation
 
@@ -33,4 +34,8 @@ A `createSession` whose `activeClient.clientId` is not the connection's is refus
 
 ## Resume
 
-Not started.
+Built 2026-11-02.
+
+- On `89ebe4d5`'s source the changed case fails: the request resolves, and the creator is held as this connection.
+- An entry with no `clientId` takes the connection's, as a set's does, so the cases that leave it out stand.
+- The eleven files that create a session with a creator's entry pass, the nested proxy's timing case alone.
