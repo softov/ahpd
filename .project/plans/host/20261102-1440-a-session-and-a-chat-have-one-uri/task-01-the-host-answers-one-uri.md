@@ -1,6 +1,6 @@
 ---
 title: The host answers one URI, and an older window what it can address
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -62,4 +62,14 @@ A default chat URI is its session's only while the session's record agrees.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `e4db65aa`.
+
+- The older window's cases, the one-URI cases and the dispatch case of `host-names.test.ts` fail on `89ebe4d5` and pass.
+- The test files whose assertions moved with the behavior, by what a session or a chat is named:
+  - A default chat is named by `chatUriFor`, in `host-catalogue`, `sessions`, `wire`, `host-sessionconfig`, `host-snapshots`, `host-trust` and `host-local-turns`.
+  - The same holds in `session-provider` and `claude-saved-output`.
+  - It holds in the other packages' `agent-acp-ports`, `agent-cofold-*`, `agent-pi-*`, `bot-chat` and `computer-session`.
+  - It holds in `plugin-connect`, `plugin-end-to-end` and the `plugin-connect` fixture.
+  - A session is named by the URI it is held by, in `users-gate-sessions`, `users-gate-names`, `host-past-open`, `plugin-session-owner` and `host-catalogue-held`.
+  - The same holds in the rest of the `sdk/test` files of the commit.
+- `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` are clean, and the unit test set passes, 7481 tests.

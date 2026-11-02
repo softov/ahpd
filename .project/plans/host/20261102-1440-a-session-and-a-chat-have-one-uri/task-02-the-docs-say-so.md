@@ -1,6 +1,6 @@
 ---
 title: The docs say so
-status: todo
+status: done
 depends:
   - task-01-the-host-answers-one-uri.md
 layer: docs
@@ -37,4 +37,4 @@ The docs say a session and a chat have one URI, and what an older VS Code window
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `67cb6532`, with the plugin example in `docs/plugins/PLUGINS.md` reading the session's default chat off its snapshot.

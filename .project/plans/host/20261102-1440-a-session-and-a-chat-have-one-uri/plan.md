@@ -1,7 +1,7 @@
 ---
 title: A session and a chat have one URI
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -111,8 +111,8 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host answers one URI, and an older window what it can address](task-01-the-host-answers-one-uri.md) | todo | - |
-| [02 - The docs say so](task-02-the-docs-say-so.md) | todo | 01 |
+| [01 - The host answers one URI, and an older window what it can address](task-01-the-host-answers-one-uri.md) | done | - |
+| [02 - The docs say so](task-02-the-docs-say-so.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -124,13 +124,13 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `sessionOfChat` also says whether a URI is a chat, so each caller is read again for an opaque chat.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `89ebe4d5` for the behavior it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `89ebe4d5` for the behavior it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
