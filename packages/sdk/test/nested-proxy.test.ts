@@ -8,6 +8,7 @@ import { posixUriOf, uriOf } from '../src/resources/fileuri.js';
 import { createPeer, receive } from '../src/rpc.js';
 import { machinePathOf } from '../src/machines/machine.js';
 import { nestedAgent } from '../src/sessions/nested.js';
+import { Status } from '../src/sessions/catalog.js';
 import { fileSessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -47,6 +48,11 @@ const until = async (check: () => boolean, times = 600): Promise<void> => {
     await new Promise((resolve) => { setTimeout(resolve, 5); });
   }
   throw new Error(`still waiting after ${times} tries`);
+};
+
+/** Let what the inner host says after the case's last action reach the proxy. */
+const settleInner = async (): Promise<void> => {
+  for (let i = 0; i < 20; i++) await new Promise((resolve) => { setTimeout(resolve, 0); });
 };
 
 /** A peer that keeps what the host told it, for the host-level case. */
@@ -351,6 +357,108 @@ it('a tool call that asks for confirmation is confirmed from outside', async () 
   session.confirm('call-1', true, 'always');
   await until(() => told.confirmed.length > 0);
   expect(told.confirmed).toEqual([{ id: 'call-1', approved: true, option: 'always' }]);
+  session.close();
+});
+
+/*
+ * A nested chat's status is the one the inner host's reducer gave the chat,
+ * which is what every client of the inner chat holds: waiting on somebody
+ * while a call waits on a confirmation.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
+ */
+it('a chat waiting on a confirmation inside says it waits on somebody', async () => {
+  const { agent } = scriptedAgent((session, turnId) => {
+    session.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'call-1', toolName: 'shell', displayName: 'Shell' });
+    session.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'call-1', invocationMessage: 'Run hostname', toolInput: 'hostname' });
+  });
+  const inner = innerHost(agent);
+  const { seen, emit } = recorder();
+  const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
+
+  session.begin('t1', 'do it');
+  await until(() => seen.some(({ action }) => action.type === 'chat/toolCallReady'));
+  await until(() => session.status() !== Status.InProgress);
+  expect(session.status()).toBe(Status.InputNeeded);
+  session.close();
+});
+
+/*
+ * What the outer host says of a nested session itself, said by it alone: the
+ * lead chat's row, from the chat it holds, and the canvases it serves. The
+ * inner host's own are about channels no client out here reaches.
+ */
+it('keeps back the inner host\'s row for the lead chat and its canvases', async () => {
+  const { agent } = scriptedAgent((session, turnId) => {
+    session.emit('chat', { type: 'chat/canvasesChanged', canvases: [{ resource: 'ahp-canvas:/inside', title: 'Inside' }] });
+    session.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
+  });
+  const inner = innerHost(agent);
+  const { seen, emit } = recorder();
+  const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 }).create(start(emit));
+
+  session.begin('t1', 'do it');
+  await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
+  await settleInner();
+  expect(seen.filter(({ action }) => action.type === 'session/chatUpdated' || action.type === 'chat/canvasesChanged')).toEqual([]);
+  // Nor in the state the host seeds a chat with.
+  expect(session.chatState().canvases).toBeUndefined();
+  session.close();
+});
+
+/*
+ * A terminal a call names, under the outer host's copy of it.
+ *
+ * The inner host's terminal is a channel no client out here can subscribe to,
+ * so its output is copied into an output terminal the outer host serves, and
+ * the call names that one in what the proxy relays and in what it answers.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/state.ts#L1703
+ */
+it('names a terminal of the host inside by the outer host\'s copy, which carries its output', async () => {
+  let inside = '';
+  const { agent } = scriptedAgent((session, turnId) => {
+    const shell = session.outputTerminals?.create({ title: 'Shell', chat: session.chatUri });
+    inside = shell?.uri ?? '';
+    shell?.append('built\n');
+    shell?.finalize(0);
+    session.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'call-1', toolName: 'shell', displayName: 'Shell' });
+    session.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'call-1', invocationMessage: 'Build', toolInput: 'make', confirmed: 'not-needed' });
+    session.emit('chat', {
+      type: 'chat/toolCallComplete', turnId, toolCallId: 'call-1',
+      result: { success: true, pastTenseMessage: 'Built', content: [{ type: 'terminal', resource: inside, title: 'Shell' }] },
+    });
+    session.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
+  });
+  const inner = innerHost(agent);
+  const { seen, emit } = recorder();
+  const copies: { uri: string; title: string; text: string; exit?: number }[] = [];
+  const outputTerminals = {
+    create: ({ title }: { title: string }) => {
+      const copy: { uri: string; title: string; text: string; exit?: number } = { uri: `ahp-terminal:/copy-${copies.length + 1}`, title, text: '' };
+      copies.push(copy);
+      return {
+        uri: copy.uri,
+        append: (text: string) => { copy.text += text; },
+        reset: () => { copy.text = ''; },
+        replace: (text: string) => { copy.text = text; },
+        finalize: (code?: number) => { copy.exit = code ?? -1; },
+        dispose: () => {},
+      };
+    },
+  };
+  const session = nestedAgent(agent, { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })
+    .create({ ...start(emit), outputTerminals } as unknown as Start);
+
+  session.begin('t1', 'build it');
+  await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
+  await until(() => copies[0]?.exit !== undefined);
+  expect(inside).not.toBe('');
+  expect(copies).toEqual([{ uri: 'ahp-terminal:/copy-1', title: 'Shell', text: 'built\n', exit: 0 }]);
+  const said = JSON.stringify(seen.map(({ action }) => action));
+  expect(said).not.toContain(inside);
+  expect(said).toContain('ahp-terminal:/copy-1');
+  // What the proxy answers the host, which pages a chat's turns from it.
+  expect(JSON.stringify(session.allTurns())).not.toContain(inside);
+  expect(JSON.stringify(session.allTurns())).toContain('ahp-terminal:/copy-1');
   session.close();
 });
 

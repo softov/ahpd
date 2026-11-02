@@ -19,7 +19,7 @@ A stop naming another turn than a lead chat's running turn stays an echo to its 
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host/chatactions.ts:1164-1213` - read the running turn of the chat the stop names, the worker chat's from its held state, and refuse when there is none.
+- `UPDATE: packages/sdk/src/host/chatactions.ts:1164-1213` - read the running turn of the chat the stop names from its held state, and refuse when there is none.
 - `UPDATE: packages/sdk/src/host/chatactions.ts:481-505` - refuse a stop on a session asleep in the catalogue before the wake.
 - `UPDATE: packages/sdk/test/host-catalogue.test.ts:656-685` - the stop with no turn running is refused to its sender alone, whatever turn it names.
 - `UPDATE: packages/sdk/test/subagent-chat.test.ts` - a stop on a worker chat whose worker has ended is refused and stops nothing; one while the worker runs still stops it.
@@ -29,10 +29,10 @@ A stop naming another turn than a lead chat's running turn stays an echo to its 
 ## Steps
 
 1. Write the tests, and run them on `c7899eff` to see each fail for the reason it names.
-2. Read the running turn of the chat that the stop names, from its held state for a worker chat.
+2. Read the running turn of the chat that the stop names, from its held state.
 3. Refuse the stop when that chat runs no turn.
 4. Refuse a stop on a session asleep in the catalogue before the wake.
-5. Add the `chat/turnCancelled` row to the case driver's `REFUSALS`, and remove case 015 from `DIVERGES`.
+5. Add the `chat/turnCancelled` row to the case driver's `REFUSALS`, held to a state with no turn running.
 6. Run the tests again, and the protocol cases.
 
 ## Validation
@@ -42,14 +42,14 @@ A stop naming another turn than a lead chat's running turn stays an echo to its 
 - `subagent-chat.test.ts`: the host refuses a stop on the chat of an ended worker, and calls no `stopWorker`.
 - `subagent-chat.test.ts`: a stop while the worker runs still reaches `stopWorker`.
 - `session-wake.test.ts`: the host refuses a stop on a sleeping session and starts no backend.
-- `ahp-test-cases.test.ts`: the host refuses case 015 with the reason the new row names.
+- `ahp-test-cases.test.ts`: the host answers case 015, a stop of the turn its chat holds as running.
 - `ahp-test-cases.test.ts`: every protocol case passes.
 
 ## Resume
 
 Built 2026-11-01 in `b945ba52`, on the held-state plan's branch.
 
-- The stop reads a worker chat's turn from its held state, and the backend's `chatState` for any other chat's.
+- The stop reads every chat's running turn from its held state, the state each client of the chat was served.
 - A refusal names the chat the stop was sent on, so a stop sent on a session channel names the session.
 - A worker chat's stop still takes the worker by its call, whatever turn the stop names, as the plan keeps it.
 - A worker that runs after its lead turn, on a backend with no `stopWorker`, is still refused with the lead chat's words.

@@ -20,7 +20,7 @@
  * answers `undefined` for it rather than inventing a conversation.
  */
 
-import type { Agent } from '@ahpd/sdk';
+import type { Agent, Bag } from '@ahpd/sdk';
 import type { SessionUpdate } from '@agentclientprotocol/sdk';
 import { closePlan, mapUpdate } from './mapping.js';
 import type { AcpTurn, WatchedSession, WatchedTurn } from './types.js';
@@ -60,6 +60,30 @@ export function turnsOf(session: WatchedSession): TranscriptTurn[] {
     // The plan is closed by the turn ending rather than by an update of its own,
     // so the replay ends it the way the live turn did.
     closePlan(replay);
+    /*
+     * A call still open when its turn ended is cancelled as skipped, which is
+     * how the protocol's reducer holds it once the turn's ending is reduced.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L172-L210
+     */
+    replay.parts = (replay.parts as Bag[]).map((part) => {
+      const call = part.kind === 'toolCall' ? part.toolCall as Bag : undefined;
+      if (call === undefined || call.status === 'completed' || call.status === 'cancelled') return part;
+      return {
+        kind: 'toolCall',
+        toolCall: {
+          status: 'cancelled',
+          toolCallId: call.toolCallId,
+          toolName: call.toolName,
+          displayName: call.displayName,
+          invocationMessage: call.invocationMessage ?? call.displayName,
+          ...(call.toolInput === undefined || call.status === 'streaming' ? {} : { toolInput: call.toolInput }),
+          reason: 'skipped',
+          ...(call.contributor === undefined ? {} : { contributor: call.contributor }),
+          ...(call.intention === undefined ? {} : { intention: call.intention }),
+          ...(call._meta === undefined ? {} : { _meta: call._meta }),
+        },
+      };
+    });
     return {
       id: watched.turnId,
       startedAt: watched.startedAt,
@@ -128,6 +152,20 @@ export function replayedTurns(updates: SessionUpdate[], at: string, hostPlan = f
     }
     open.updates.push({ update });
     answered = answered || !asked;
+  }
+  /*
+   * A turn with a call the replay never says finished was cut off around it,
+   * and reads back cancelled, as the reference reads a transcript's turn
+   * holding a call with no result back.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+   */
+  for (const turn of turns) {
+    const last = new Map<string, string>();
+    for (const { update } of turn.updates) {
+      if (update.sessionUpdate === 'tool_call') last.set(update.toolCallId, update.status ?? 'pending');
+      else if (update.sessionUpdate === 'tool_call_update' && typeof update.status === 'string') last.set(update.toolCallId, update.status);
+    }
+    if ([...last.values()].some((status) => status !== 'completed' && status !== 'failed')) turn.state = 'cancelled';
   }
   return turns;
 }

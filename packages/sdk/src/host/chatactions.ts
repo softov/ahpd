@@ -510,6 +510,57 @@ export function chatAction(
     refuse(connection.peer, channel, action, origin, over);
     return;
   }
+  /*
+   * The chat this action is about, as this host holds it: the state every
+   * client of the chat was served. The protocol states its checks of a client
+   * action over the chat's state, so they read this one, and a refusal names
+   * a condition a client can see. A worker's chat is its own channel; any
+   * other chat action is about the chat its backend serves.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L345-L359
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L13526-L13535
+   */
+  const chatHeld = (ctx.stateOf(worker ? channel : session.chatUri) ?? {}) as Bag;
+  const activeHeld = chatHeld.activeTurn as Bag | undefined;
+  /**
+   * A stop of `turn`, the held running turn of the chat the backend serves.
+   *
+   * The backend running that turn stops it and says the end once the turn
+   * has let go, under the turn it stopped. A backend running no such turn
+   * has nothing to stop and nothing to say, so the host says the end the
+   * client asked for, under that turn and with the time it ran: the reference
+   * takes a client's cancel into its state before the side effect.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2744-L2751
+   */
+  const stopped = (turn: Bag, named: string, duration?: unknown): void => {
+    const id = String(turn.id ?? '');
+    if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === id) {
+      ctx.owe('chat/turnCancelled', id);
+      session.cancel(named);
+      return;
+    }
+    const ran = typeof duration === 'number' ? duration : Date.now() - Date.parse(String(turn.startedAt ?? ''));
+    dispatch(session.chatUri, { ...action, turnId: id, duration: Number.isFinite(ran) ? Math.max(0, ran) : 0 }, origin);
+  };
+  /**
+   * Whether the held running turn has an input request by this id that has
+   * no response yet, which is what an input action answers.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L67-L76
+   */
+  const asking = (requestId: string): boolean => (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+    .some((part) => part.kind === 'inputRequest' && part.response === undefined
+      && (part.request as Bag | undefined)?.id === requestId);
+  /**
+   * The client a call of the held running turn names as its contributor, which
+   * is the one client the protocol lets say what the call did.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+   */
+  const clientRunning = (toolCallId: string): string | undefined => {
+    const call = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+      .map((part) => (part.kind === 'toolCall' ? part.toolCall as Bag | undefined : undefined))
+      .find((one) => one?.toolCallId === toolCallId);
+    const contributor = call?.contributor as Bag | undefined;
+    return contributor?.kind === 'client' && typeof contributor.clientId === 'string' ? contributor.clientId : undefined;
+  };
   switch (type) {
     case 'chat/turnStarted': {
       const message = (typeof action.message === 'object' && action.message !== null
@@ -1038,12 +1089,26 @@ export function chatAction(
             .filter((chat) => chat !== session);
         for (const chat of everywhere) void Promise.resolve(chat.setConfig?.(key, value));
         void Promise.resolve(session.setConfig(key, value)).then((answer) => {
-          // The backend's own words when it refused, because only it
-          // knows whether the key or the value was the problem.
           if (answer === true) {
             remember(key, value);
             dispatch(session.uri, { type: 'session/configChanged', config: { [key]: value } }, origin);
           }
+          /*
+           * Taken under the backend's own keys: those are what the session
+           * runs on, so they are what is kept and what every client is told,
+           * the sender's own key with them, as the server's echo wins.
+           * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+           */
+          else if (typeof answer === 'object') {
+            undo(key);
+            for (const [taken, held] of Object.entries(answer)) {
+              if (owning !== undefined) owning.config[taken] = held;
+              remember(taken, held);
+            }
+            dispatch(session.uri, { type: 'session/configChanged', config: answer }, origin);
+          }
+          // The backend's own words when it refused, because only it
+          // knows whether the key or the value was the problem.
           else {
             undo(key);
             no(answer);
@@ -1131,24 +1196,34 @@ export function chatAction(
         break;
       }
       /*
-       * The protocol's conditions, checked here rather than left to a backend
-       * that may not: the latest turn, in error, whose last part is a
-       * resumable error. Asking anyway turns a client's mistake into the
-       * backend's, and a backend that reopens a turn it should not takes a
-       * prompt out of the transcript for nothing.
+       * The protocol's conditions, read off the chat's held state as the
+       * reference reads them: no turn running, and the latest turn errored
+       * with a resumable error as its last part. Asking anyway turns a
+       * client's mistake into the backend's, and a backend that reopens a
+       * turn it should not takes a prompt out of the transcript for nothing.
+       * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L354
+       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L13463-L13489
        */
       const named = String(action.turnId ?? '');
-      const turns = (session.chatState() as { turns?: Bag[] }).turns ?? [];
-      const last = turns.at(-1);
+      if (activeHeld !== undefined) {
+        no('A turn is running in this chat');
+        break;
+      }
+      const last = (Array.isArray(chatHeld.turns) ? chatHeld.turns as Bag[] : []).at(-1);
       if (last === undefined || String(last.id ?? '') !== named) {
         no(`${named} is not the latest turn`);
         break;
       }
       const part = (last.responseParts as Bag[] | undefined)?.at(-1) ?? {};
-      if (part.kind !== 'error' || part.resumable !== true) {
+      if (last.state !== 'error' || part.kind !== 'error' || part.resumable !== true) {
         no(`${named} did not end with an error that can be resumed`);
         break;
       }
+      /*
+       * The backend runs the turn again, and says so; one that holds no such
+       * turn to run is refused, since the turn the action reopens would run
+       * nowhere.
+       */
       if (!session.resume(named)) {
         no(`${named} is not a turn that can be resumed`);
       }
@@ -1162,14 +1237,13 @@ export function chatAction(
      * Server MUST reject the action".
      * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
      *
-     * A worker's chat runs the worker's turn, which this host opened and
-     * reduces itself; every other chat runs the turn its backend reports.
+     * The running turn is the one the chat's held state has, the one every
+     * client of the chat was told of: a worker's chat holds the worker's turn,
+     * which this host opened and reduces itself, and every other chat the turn
+     * its backend said.
      */
     case 'chat/turnCancelled': {
-      const running = (worker
-        ? (ctx.stateOf(channel) as { activeTurn?: { id?: unknown } } | undefined)
-        : (session.chatState() as { activeTurn?: { id?: unknown } }))?.activeTurn;
-      if (running === undefined) {
+      if (activeHeld === undefined) {
         no(`Nothing is running on ${channel} to stop`);
         break;
       }
@@ -1184,17 +1258,16 @@ export function chatAction(
          * A stop that names no turn means the running one, the one turn a
          * client with no id to give can mean.
          *
-         * The backend is handed the running turn's id, and says the turn's
-         * end back under it, which answers the client.
+         * The stop goes on under the running turn's id, and the end said back
+         * under it answers the client.
          */
         const named = String(action.turnId ?? '');
-        const turn = String(running.id ?? '');
+        const turn = String(activeHeld.id ?? '');
         if (named !== '' && named !== turn) {
           echoTo(connection.peer, channel, action, origin);
           break;
         }
-        ctx.owe('chat/turnCancelled', turn);
-        session.cancel(turn);
+        stopped(activeHeld, turn, action.duration);
         break;
       }
       /*
@@ -1208,13 +1281,12 @@ export function chatAction(
         session.stopWorker(call);
         break;
       }
-      const lead = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+      const lead = ctx.stateOf(session.chatUri)?.activeTurn as Bag | undefined;
       if (lead === undefined) {
         no(`Nothing is running on ${session.chatUri} to stop`);
         break;
       }
-      ctx.owe('chat/turnCancelled', String(lead.id ?? ''));
-      session.cancel(String(lead.id ?? ''));
+      stopped(lead, String(lead.id ?? ''));
       break;
     }
     /**
@@ -1515,14 +1587,17 @@ export function chatAction(
       /*
        * The draft the chat holds already moves nothing, and is answered to
        * its sender alone, as a flag that did not move is. Read from the
-       * chat's own state, which is what every client was told it holds; a
+       * chat's held state, which is what every client was told it holds; a
        * client that never synced a draft clears it once its message is sent.
        */
-      if (JSON.stringify(next) === JSON.stringify((session.chatState() as Bag).draft)) {
+      if (JSON.stringify(next) === JSON.stringify(chatHeld.draft)) {
         echoTo(connection.peer, channel, action, origin);
         break;
       }
       session.setDraft(next);
+      // A backend holding this draft already says nothing, and the host says
+      // the change every client is to hold.
+      if (ctx.unanswered()) dispatch(session.chatUri, action, origin);
       break;
     }
     case 'chat/pendingMessageRemoved': {
@@ -1531,20 +1606,33 @@ export function chatAction(
       /*
        * A removal of a message this chat does not hold SHOULD be rejected (the
        * protocol's `chat/pendingMessageRemoved`), matched on its id and on its
-       * kind, an absent kind being `queued`. Read from the chat's own state,
+       * kind, an absent kind being `queued`. Read from the chat's held state,
        * which is what every client was told it holds.
        */
-      const state = session.chatState() as Bag;
       const held = kind === 'steering'
-        ? (state.steeringMessage as Bag | undefined)?.id === id
-        : Array.isArray(state.queuedMessages) && state.queuedMessages.some((one) => (one as Bag | undefined)?.id === id);
+        ? (chatHeld.steeringMessage as Bag | undefined)?.id === id
+        : Array.isArray(chatHeld.queuedMessages) && chatHeld.queuedMessages.some((one) => (one as Bag | undefined)?.id === id);
       if (!held) {
         no(`${id} is not a ${kind} message this chat holds`);
         break;
       }
       session.unqueue(id);
+      if (ctx.unanswered()) {
+        /*
+         * The backend took nothing back. A steering message a running turn
+         * was handed stays with the agent, and its removal is refused in the
+         * reference's words; any other is the held state's alone, and the
+         * host says it gone.
+         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentService.ts#L13493-L13508
+         */
+        if (kind === 'steering' && activeHeld !== undefined) {
+          no('Cannot change a steering message while it is being processed.');
+          break;
+        }
+        dispatch(session.chatUri, action, origin);
+      }
       // A queued message taken back never becomes a turn to let its sender go.
-      if (action.kind === 'queued') ctx.forgetSender(id);
+      if (kind === 'queued') ctx.forgetSender(id);
       break;
     }
     case 'chat/queuedMessagesReordered':
@@ -1554,27 +1642,33 @@ export function chatAction(
       break;
     case 'chat/toolCallConfirmed': {
       const toolCallId = String(action.toolCallId ?? '');
-      const confirmed = session.confirm(
+      // A confirmation of a call that is not in `pending-confirmation` in the
+      // chat's held state MUST be rejected (the protocol's chat-channel.md,
+      // "Server Validation of Client Actions"), so the client that sent it
+      // lets go of a change this host never made.
+      const pending = (Array.isArray(activeHeld?.responseParts) ? activeHeld.responseParts as Bag[] : [])
+        .some((part) => part.kind === 'toolCall' && (part.toolCall as Bag | undefined)?.toolCallId === toolCallId
+          && (part.toolCall as Bag).status === 'pending-confirmation');
+      if (!pending) {
+        no(`${toolCallId} is not a call this chat is waiting to have confirmed`);
+        break;
+      }
+      session.confirm(
         toolCallId,
         action.approved === true,
         typeof action.selectedOptionId === 'string' ? action.selectedOptionId : undefined,
       );
-      // A confirmation of a call that is not in `pending-confirmation` MUST be
-      // rejected (the protocol's chat-channel.md, "Server Validation of Client
-      // Actions"), so the client that sent it lets go of a change this host
-      // never made.
-      if (!confirmed) no(`${toolCallId} is not a call this chat is waiting to have confirmed`);
+      // A backend that is asking nothing about the call says nothing, and the
+      // host says the decision the held state takes.
+      if (ctx.unanswered()) dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }
     case 'chat/inputCompleted': {
       /*
        * `response`, which is the field the action has.
        *
-       * `ChatInputResponseKind` is `accept`, `decline` or `cancel`, and
-       * this read `accepted` - a key no client sends - so every answer
-       * arrived as an accept and a person declining a question was
-       * indistinguishable from one answering it. `accepted` is still
-       * honoured for anything that sent it before this, but `response`
+       * `ChatInputResponseKind` is `accept`, `decline` or `cancel`. An
+       * `accepted` flag is read when no `response` is sent, and `response`
        * decides when both are there.
        *
        * The kind goes on to the backend as well, because a decline and a
@@ -1587,23 +1681,25 @@ export function chatAction(
       const accepted = response !== undefined ? response === 'accept' : action.accepted !== false;
       const kind = response === 'accept' || response === 'decline' || response === 'cancel' ? response : undefined;
       const requestId = String(action.requestId ?? action.id ?? '');
-      const taken = session.answer(requestId, accepted, (typeof action.answers === 'object' && action.answers !== null
-        ? action.answers
-        : {}) as Record<string, unknown>, kind);
-      // An answer to a request this chat is not waiting on SHOULD be rejected
-      // (the protocol's chat-channel.md, "Server Validation of Client
-      // Actions"). Left unsaid, the client that sent it holds it as a change
-      // this host never made, and a client that sends its unechoed actions
-      // again after a reconnect sends this one every time.
-      if (!taken) {
+      // An answer to a request the chat's held state is not waiting on SHOULD
+      // be rejected (the protocol's chat-channel.md, "Server Validation of
+      // Client Actions"). Left unsaid, the client that sent it holds it as a
+      // change this host never made, and a client that sends its unechoed
+      // actions again after a reconnect sends this one every time.
+      if (!asking(requestId)) {
         no(`${requestId} is not a question this chat is waiting on`);
         break;
       }
+      session.answer(requestId, accepted, (typeof action.answers === 'object' && action.answers !== null
+        ? action.answers
+        : {}) as Record<string, unknown>, kind);
       /*
        * Said back to every client of the chat, the answering one included,
        * so each one's `inputRequest` part carries the response now rather
        * than when the agent next moves. On the chat the question is in: a
-       * worker's own chat, or the chat this session leads.
+       * worker's own chat, or the chat this session leads. Said whether or
+       * not the backend still waits on the question, since the held state
+       * is what every client reduces.
        */
       dispatch(worker ? channel : session.chatUri, action, origin);
       break;
@@ -1699,9 +1795,15 @@ export function chatAction(
         startOver([]);
         break;
       }
+      // A completed turn of the chat's held state, which is what every
+      // client holds; the backend is cut at its own record of that turn.
+      if (!(Array.isArray(chatHeld.turns) && chatHeld.turns.some((one) => String((one as Bag).id ?? '') === turnId))) {
+        no(`${turnId} is not a completed turn in ${session.chatUri}`);
+        break;
+      }
       const at = all.findIndex((one) => String((one as Bag).id ?? '') === turnId);
       if (at < 0) {
-        no(`${turnId} is not a completed turn in ${session.chatUri}`);
+        no(`${turnId} is not a turn this host can rewind to`);
         break;
       }
       /*
@@ -1791,8 +1893,16 @@ export function chatAction(
       const answer = typeof action.answer === 'object' && action.answer !== null
         ? action.answer as Bag
         : undefined;
-      if (!session.setAnswer(requestId, questionId, answer))
+      // Checked against the request the chat's held state has open, as an
+      // answer is.
+      if (!asking(requestId)) {
         no(`${requestId} is not a question this chat is waiting on`);
+        break;
+      }
+      session.setAnswer(requestId, questionId, answer);
+      // A backend holding no such question says nothing, and the host says
+      // the draft every client is to hold.
+      if (ctx.unanswered()) dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }
     /*
@@ -1832,6 +1942,12 @@ export function chatAction(
         no('This backend runs no tools on a client\'s behalf');
         break;
       }
+      // The client the call names in the chat's held state is the one that
+      // may say its result; the protocol has a server refuse anybody else.
+      if (clientRunning(toolCallId) !== clientId) {
+        no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
       // The blocks go through whole, because a client's tool can answer with
       // an image or a file as readily as a sentence and the backend's harness
       // is the thing that decides which it can take. The joined text is the
@@ -1867,14 +1983,14 @@ export function chatAction(
      *
      * The protocol has the owning client dispatch this for a tool the
      * client itself provides - the call carries a `ToolCallContributor`
-     * with that client's id, and a server should refuse anyone else.
-     * Relayed rather than reduced: what a tool is printing as it runs is
-     * the running client's to say, and this host holds none of it.
+     * with that client's id, and a server should refuse anyone else. Said on
+     * the chat the call is in, where the held state takes it as every client
+     * does; what a tool is printing as it runs is the running client's to say.
      */
     case 'chat/toolCallContentChanged': {
       const toolCallId = String(action.toolCallId ?? '');
       const clientId = connection.clientId || 'anonymous';
-      const owner = session.toolCallOwner?.(toolCallId);
+      const owner = clientRunning(toolCallId);
       if (owner === undefined) {
         no(`${toolCallId} is not a call a client is running here`);
         break;
@@ -1883,7 +1999,7 @@ export function chatAction(
         no(`${toolCallId} is ${owner}'s call, and its content is ${owner}'s to change`);
         break;
       }
-      dispatch(session.chatUri, action);
+      dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }
     default:

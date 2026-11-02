@@ -104,7 +104,9 @@ export function createHistory(ctx: HostContext): History {
         const callId = typeof call.toolCallId === 'string' ? call.toolCallId : undefined;
         if (callId === undefined) return part;
         const one = workers.find((held) => String(held.toolCallId ?? '') === callId);
-        if (one === undefined) return part;
+        // The link rides the call's content, which a call that never finished
+        // does not carry; its worker's chat names the call from its origin.
+        if (one === undefined || call.status === 'cancelled') return part;
         touched = true;
         const resource = subagentChatUri(session, callId);
         const held = (Array.isArray(call.content) ? call.content as Bag[] : [])

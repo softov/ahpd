@@ -933,6 +933,32 @@ it('takes one on a running session, and leaves the advertised control saying wha
 });
 
 /*
+ * A client's own name for the mode, answered as the mode it moved.
+ *
+ * The session runs on `permissionMode`, and the state every client holds says
+ * so: the sender is told the key the session holds, as the server's echo wins,
+ * and a client that subscribes afterwards reads the same.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+ */
+it('answers a client\'s mode with the permission mode it moved, which every client holds', async () => {
+  const { client, peer: p, uri, opened } = await running();
+
+  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'plan' } });
+  await settle();
+  const said = actions(p, uri).filter((one) => one.type === 'session/configChanged');
+  expect(said.map((one) => one.config)).toEqual([{ permissionMode: 'plan' }]);
+
+  const watched = said.reduce((state, action) => sessionReducer(state as never, action as never) as unknown, (opened as Record<string, unknown>)[uri]) as {
+    config: { values: Record<string, unknown> };
+  };
+  const later = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { config: { values: Record<string, unknown> } } };
+  };
+  expect(later.snapshot.state.config.values.permissionMode).toBe('plan');
+  expect(later.snapshot.state.config.values).toEqual(watched.config.values);
+});
+
+/*
  * A session's row and its state, told the same list of chats.
  *
  * The protocol package reduces the root *actions* and ships no reducer for

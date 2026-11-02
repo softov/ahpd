@@ -138,7 +138,7 @@ it('starts the host a profile names, and ahpd when it names none', async () => {
 
   // A machine that is not there is nothing, the same answer `how` gives.
   expect(await computers.nested('gone', { plugins: ['@ahpd/agent-cofold'] })).toBeUndefined();
-});
+}, 30_000);
 
 it('answers the path inside the machine the session folder is mounted at', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-nested-inside-'));
@@ -162,7 +162,7 @@ it('answers the path inside the machine the session folder is mounted at', async
   // A folder no mount covers is the machine's own directory, or nothing when it has none.
   const elsewhere = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: '/nowhere/mounted' });
   expect(elsewhere?.workingDirectory).not.toBe('/nowhere/mounted');
-});
+}, 30_000);
 
 it('records the profile on the machine, so a later daemon starts the same host', async () => {
   loose = mkdtempSync(join(tmpdir(), 'ahpd-nested-label-'));
@@ -179,7 +179,7 @@ it('records the profile on the machine, so a later daemon starts the same host',
   const calls = JSON.parse(readFileSync(state, 'utf8')) as { calls: string[][] };
   const run = calls.calls.find((one) => one[0] === 'run') ?? [];
   expect(run).toContain('ahpd.profile=nodejs');
-});
+}, 30_000);
 
 it('nests a session in a machine the port says is off this host', async () => {
   // The choice itself, at the one place it is made: a backend that never

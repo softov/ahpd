@@ -364,10 +364,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
       // the two comes first is the CLI's business; either order is one call.
       const held = scope.parts.get(id);
       const meta = toolMetaOf(toolName);
+      // Whose tool it is, said where the call starts as the stream says it.
+      const contributor = ctx.contributorOf(toolName);
       const call = held ? bag(held.toolCall) : {
         toolCallId: id,
         toolName,
         displayName,
+        ...(contributor ? { contributor } : {}),
         ...(input !== undefined ? { toolInput: input } : {}),
         ...(meta ? { _meta: meta } : {}),
       } as Bag;
@@ -406,6 +409,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         ctx.holdPart(turn, part);
         ctx.emitOn(scope, {
           type: 'chat/toolCallStart', turnId: turn.id, toolCallId: id, toolName, displayName,
+          ...(contributor ? { contributor } : {}),
           ...(meta ? { _meta: meta } : {}),
         });
       }

@@ -6,10 +6,11 @@
  * edit in one file. `session.ts` iterates the run's stream and sends what
  * this returns; it makes no choices of its own about an event.
  *
- * A pause is a pair of things: a `session/inputNeededSet` a client can draw
- * and answer, and a marker that the run is waiting. The set is what the
- * session tracks, the answer comes back through `RunHandle.submit`, and the
- * resolution events take the entry down again. Nothing here reports a pause
+ * A pause is a pair of things: what a client can draw and answer, which is a
+ * `session/inputNeededSet` and, for a question, the `chat/inputRequested` that
+ * puts it on the chat, and a marker that the run is waiting. The set is what
+ * the session tracks, the answer comes back through `RunHandle.submit`, and
+ * the resolution events take the entry down again. Nothing here reports a pause
  * as a finished turn, because a run nobody can continue is a conversation
  * that has stopped without saying so.
  */
@@ -627,9 +628,11 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
 
         /*
          * The ask tool's questions, which are not about a tool call a client
-         * confirms but about what somebody types. The entry carries the
-         * questions and their options, so a composer draws the form from the
-         * session channel alone.
+         * confirms but about what somebody types. The request goes on the
+         * chat, where the reducer inserts the part a client answers, and the
+         * entry carries the questions and their options, so a composer draws
+         * the form from the session channel alone.
+         * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
          */
         case 'input.requested': {
           const entryId = `input:${event.requestId}`;
@@ -647,7 +650,10 @@ export function mapTurn(options: TurnMappingOptions): TurnMapping {
             entry,
           };
           requests.set(event.requestId, opened);
-          return { actions: [{ type: 'session/inputNeededSet', request: entry }], opened };
+          return {
+            actions: [{ type: 'chat/inputRequested', request }, { type: 'session/inputNeededSet', request: entry }],
+            opened,
+          };
         }
 
         /*

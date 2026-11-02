@@ -331,7 +331,14 @@ it('sends calls as the protocol declares them, and a late client reads them the 
     .map((part) => String((part.toolCall as Bag).toolCallId));
   expect(calls).toEqual(expect.arrayContaining(['call-1', 'call-perm']));
   expect(calls.length).toBe(3);
-  expect(undeclaredIn([...p.notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
+  // The session too, which holds the server's commands as prompts and its
+  // options as controls.
+  const session = await client.handle({ method: 'subscribe', params: { channel: uri } });
+  expect(undeclaredIn([
+    ...p.notes,
+    { asked: 'subscribe', params: { channel: chatUri }, result: late },
+    { asked: 'subscribe', params: { channel: uri }, result: session },
+  ])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, p.notes, chatUri)));
 });
 

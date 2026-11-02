@@ -794,6 +794,33 @@ describe('the fields a client reads by name', () => {
     expect(statusOf(p, 'ahp-session:/restored', worker?.resource as string)).toBe(Status.Idle | Status.IsRead);
   });
 
+  it('reads back a worker\'s call that never finished as cancelled, with no link it cannot carry', async () => {
+    /*
+     * A cancelled call has no content in the protocol's types, which is where
+     * a link to a worker rides; the worker's chat names the call from its own
+     * origin. A client whose turn ended around the call holds it so too.
+     */
+    sdk.sessions.push({ sessionId: 'cut', summary: 'Cut off', lastModified: 1, cwd: '/home/softov' });
+    sdk.transcript.push(
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'go' } },
+      { type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_task', name: 'Task', input: { description: 'Explore', prompt: 'look' } }] } },
+    );
+    const host = serving('/home/softov', [], {
+      agents: [{
+        ...claude({ paths: ['/home/softov'] }),
+        subagents: async () => [{ toolCallId: 'toolu_task', title: 'Explore', turns: [] }],
+      }],
+    } as never);
+    const client = host.accept(peer());
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/cut' } });
+    const read = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/cut' } }) as { snapshot: { state: Record<string, unknown> } };
+    const parts = ((read.snapshot.state.turns as Record<string, unknown>[])[0]?.responseParts ?? []) as Record<string, unknown>[];
+    const call = parts.map((part) => part.toolCall as Record<string, unknown> | undefined).find((one) => one?.toolCallId === 'toolu_task');
+    expect(call).toMatchObject({ status: 'cancelled', reason: 'skipped' });
+    expect(call).not.toHaveProperty('content');
+  });
+
   it('archives one chat, and restores it, without archiving the session', async () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';

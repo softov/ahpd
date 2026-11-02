@@ -521,11 +521,18 @@ export function createTurns(ctx: SessionContext): Turns {
       ctx.emit('chat', {
         type: 'chat/toolCallComplete', turnId, toolCallId, result, _meta: ctx.stampEnd(call),
       });
-      turn.state = done.success ? 'complete' : 'error';
+      /*
+       * Complete however the command ended, as the action says: a command
+       * that failed is a call that failed, and the turn that ran it is over.
+       * The reference's `!` command reports its failure on the call and ends
+       * every local command's turn with `chat/turnComplete`.
+       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/bangLocalCommand.ts#L106-L117
+       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L213
+       */
+      turn.state = 'complete';
       turn.duration = Date.now() - ctx.startedAt;
       ctx.turns.push(turn);
       ctx.active = undefined;
-      if (!done.success) ctx.failed = done.said;
       ctx.emit('chat', { type: 'chat/turnComplete', turnId, duration: turn.duration });
       ctx.doing(undefined);
       ctx.touch();

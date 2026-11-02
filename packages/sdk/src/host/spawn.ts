@@ -1171,11 +1171,13 @@ export function createSpawn(ctx: HostContext): Spawn {
       /*
        * The client's action `action` answers, held for the backend that
        * answers it later. The origin stays with this host, in `handedFrom`, and
-       * the refusal goes to the client that sent it.
+       * the refusal goes to the client that sent it. The dispatch is marked
+       * taken, so the host leaves its answer to the backend.
        */
       handed: (action) => {
         const at = ctx.answering(chatUri, action);
         if (at === undefined) return undefined;
+        at.taken = true;
         const handed: Handed = {
           refuse: (reason) => {
             ctx.refuse(at.peer, at.channel, at.action, at.origin, reason);
@@ -1479,11 +1481,14 @@ export function createSpawn(ctx: HostContext): Spawn {
           const wasRead = ctx.commandTurns.get(commandKey) === true;
           /*
            * A `!` command's turn is the host's, so no transcript holds it: the
-           * host keeps it for its chat, as the reference keeps a local turn
-           * once the turn has completed.
-           * https://github.com/microsoft/vscode/blob/41c37d126aa93bece57534a18f0750e4dcb6b38c/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L201-L224
+           * host keeps it for its chat once it has ended, as the chat's state
+           * holds it, which is the turn its clients reduced. The reference
+           * records a local turn from its state the same way.
+           * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/localCommands/localChatCommand.ts#L229-L247
            */
-          if (moved !== undefined && command) ctx.keepLocalTurn(uri, chatUri, moved.allTurns(), turn);
+          if (moved !== undefined && command) {
+            ctx.keepLocalTurn(uri, chatUri, (ctx.stateOf(chatUri)?.turns ?? []) as Bag[], turn);
+          }
           ctx.commandTurns.delete(commandKey);
           if (moved !== undefined) {
             chatFlag(ctx, uri, chatUri, Status.IsRead, wasRead);

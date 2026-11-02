@@ -719,29 +719,23 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         const children = Array.isArray(entry.children) ? entry.children as Bag[] : [];
         return children.length > 0 ? children : [entry];
       });
-      /*
-       * A leaf's argument hint, wherever its kind keeps one.
-       *
-       * `PromptCustomization` declares `argumentHint` and `SkillCustomization`
-       * does not, so a skill's travels as `_meta['ahpd.argumentHint']`.
-       */
-      const hintOf = (entry: Bag): string | undefined => {
-        if (typeof entry.argumentHint === 'string') return entry.argumentHint;
-        const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
-        return typeof hint === 'string' ? hint : undefined;
-      };
       const own = leaves
         // Skills as well as prompts, and not the ones the CLI keeps for
         // the agent: offering one it will refuse is worse than not
         // offering it.
         .filter((entry) => (entry.type === 'prompt' || entry.type === 'skill')
           && entry.disableUserInvocation !== true)
-        .map((entry) => ({
-        name: String(entry.name),
-        description: typeof entry.description === 'string' ? entry.description : undefined,
-        argumentHint: hintOf(entry),
-        isSkill: entry.type === 'skill',
-      }));
+        .map((entry) => {
+          // Under `_meta`, which is where a leaf's argument hint travels:
+          // neither `PromptCustomization` nor `SkillCustomization` declares one.
+          const hint = (entry._meta as Bag | undefined)?.['ahpd.argumentHint'];
+          return {
+            name: String(entry.name),
+            description: typeof entry.description === 'string' ? entry.description : undefined,
+            argumentHint: typeof hint === 'string' ? hint : undefined,
+            isSkill: entry.type === 'skill',
+          };
+        });
       /*
        * Which of the backend-wide commands are skills.
        *

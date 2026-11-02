@@ -139,7 +139,6 @@ it('leaves a session idle when its turn was stopped and the interrupt result com
 
   expect(sent.filter((one) => one.type === 'chat/turnCancelled')).toHaveLength(1);
   expect(sent.some((one) => one.type === 'chat/error')).toBe(false);
-  expect(session.sessionState().error).toBeUndefined();
   expect(session.chatState().status).toBe(1);
 });
 
@@ -204,7 +203,10 @@ it('still marks a session failed when a turn that was not stopped fails', async 
   sdk.push(failed);
   await settle();
 
-  expect(sent.some((one) => one.type === 'chat/error')).toBe(true);
-  expect(session.sessionState().error).toBe('API Error: 500');
+  // The failure is the turn's, said in its error part; `SessionState`
+  // declares no field for it.
+  const failure = sent.find((one) => one.type === 'chat/error');
+  expect(((failure?.part as Bag | undefined)?.error as Bag | undefined)?.message).toBe('API Error: 500');
+  expect('error' in session.sessionState()).toBe(false);
   expect(session.chatState().status).toBe(2);
 });

@@ -168,7 +168,6 @@ export function createConfig(ctx: SessionContext): Config {
   const optionControl = (option: SessionConfigOption): Bag => {
     const choices = option.type === 'select' ? choicesOf(option) : [];
     return {
-      scope: 'session',
       type: option.type === 'boolean' ? 'boolean' : 'string',
       title: option.name,
       ...(option.description === null || option.description === undefined ? {} : { description: option.description }),

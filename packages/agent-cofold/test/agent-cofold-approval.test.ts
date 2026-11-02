@@ -558,6 +558,18 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   expect(entry.request.questions[0]?.options.map((one) => one.label)).toEqual(['monday', 'tuesday']);
   await settle();
   expect(ended(p, chatUri)).toBe(false);
+  /*
+   * The chat holds the request, which is the part a client answers: put there
+   * by `chat/inputRequested`, as the protocol's request lifecycle puts one.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L25-L33
+   */
+  const requested = (state: Record<string, unknown>, turn: 'activeTurn' | 'last'): Record<string, unknown>[] => {
+    const held = turn === 'activeTurn' ? state.activeTurn : (state.turns as Record<string, unknown>[] | undefined)?.at(-1);
+    return (((held as Record<string, unknown> | undefined)?.responseParts ?? []) as Record<string, unknown>[])
+      .filter((part) => part.kind === 'inputRequest');
+  };
+  const asked = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
+  expect(requested(asked.snapshot.state, 'activeTurn').map((part) => (part.request as { id?: unknown }).id)).toEqual([entry.request.id]);
 
   await client.handle({
     method: 'dispatchAction',
@@ -577,6 +589,9 @@ it('raises a chatInput entry for cofold\'s own ask tool and answers it back', as
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('monday');
   expect(actions(p, uri).some((e) => e.action.type === 'session/inputNeededRemoved' && e.action.id === entry.id)).toBe(true);
   expect(types(p, chatUri).at(-1)).toBe('chat/turnComplete');
+  // And the chat's request carries the answer it was completed with.
+  const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: Record<string, unknown> } };
+  expect(requested(after.snapshot.state, 'last').map((part) => part.response)).toEqual(['accept']);
 });
 
 it('declines cofold\'s own ask tool as a denial the model reads', async () => {

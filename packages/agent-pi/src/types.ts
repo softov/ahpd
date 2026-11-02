@@ -58,7 +58,6 @@ export const modeOf = (value: unknown): PermissionMode =>
 
 /** The `permissionMode` control a session publishes, as a client draws it. */
 export const permissionModeProperty = (): Bag => ({
-  scope: 'session',
   type: 'string',
   title: 'Approvals',
   description: 'How the agent handles tool approvals.',

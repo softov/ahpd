@@ -263,7 +263,7 @@ it('lets the owning client stream into its call and refuses anybody else', async
   expect(other.peer.notes.some((n) => n.method === 'action'
     && typeof (n.params as { rejectionReason?: unknown }).rejectionReason === 'string')).toBe(true);
 
-  // The owner's is relayed, which is the half `toolCallOwner` decides.
+  // The owner's is relayed: the call's contributor in the chat names it.
   await client.handle({
     method: 'dispatchAction',
     params: {

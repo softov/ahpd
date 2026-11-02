@@ -329,7 +329,7 @@ export function createTerminals(ctx: HostContext): Terminals {
           content: content === '' ? [] : [{ type: 'unclassified', value: content }],
           claim,
           supportsCommandDetection: false,
-          isPty: false,
+          isPty: asked.isPty === true,
           lifecycle: done
             ? { status: 'exited' as const, ...(exitCode === undefined ? {} : { exitCode }) }
             : { status: 'running' as const },

@@ -198,6 +198,28 @@ it('gives a restored call with no result only its start', async () => {
   expect(call._meta).not.toHaveProperty('ahpd.durationMs');
 });
 
+it('reads a call with no result back as one its turn ended around, and that turn as stopped', async () => {
+  /*
+   * A call the transcript holds no result for never finished. The reference
+   * reads it back cancelled as skipped, which is how the protocol's reducer
+   * holds a call still open when its turn ends, and reads the turn that held
+   * it back cancelled.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L389-L417
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+   */
+  const turns = await read([
+    prompt('u1', 'look around'),
+    said('a1', 'm1', [{ type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'ls' } }]),
+    prompt('u2', 'and then'),
+    said('a2', 'm2', [{ type: 'text', text: 'Done.' }]),
+  ]);
+  const call = (turns[0]?.responseParts as Bag[])[0]?.toolCall as Bag;
+  expect(call).toMatchObject({ toolCallId: 'toolu_1', status: 'cancelled', reason: 'skipped', invocationMessage: expect.anything() });
+  expect(call).not.toHaveProperty('success');
+  expect(call).not.toHaveProperty('pastTenseMessage');
+  expect(turns.map((turn) => turn.state)).toEqual(['cancelled', 'complete']);
+});
+
 it('gives a restored turn how long it took', async () => {
   const turns = await read([
     when('2020-01-01T00:00:00.000Z', prompt('u1', 'look around')),

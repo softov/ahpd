@@ -286,6 +286,8 @@ const INTERRUPTED = '[Request interrupted by user';
 function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<Turn>[] {
   const built: WireTurn<Turn>[] = [];
   const calls = new Map<string, Bag>();
+  /** The calls a result was written for, by id. */
+  const resulted = new Set<string>();
   /*
    * Each call's input as it was sent, which its `tool_input` on the call is the
    * string of. Kept as the object because a question's result says what it was
@@ -338,6 +340,7 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
         const callId = str(block.tool_use_id) ?? '';
         const call = calls.get(callId);
         if (!call) continue;
+        resulted.add(callId);
         /*
          * A tool that failed is `completed`, and says so in its result.
          *
@@ -495,8 +498,8 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
           toolCallId: id,
           toolName: name,
           displayName: name,
-          // Completed unless a result says otherwise: the session is over, so
-          // a call still reading `running` would be a spinner that never stops.
+          // Completed as its result says, once one is read; a call no result
+          // was written for is read back cancelled at the end.
           status: 'completed',
           ...(input !== undefined ? { toolInput: input } : {}),
           // The kind a live call carries, so a transcript read back off
@@ -504,16 +507,13 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
           // started, which its own `tool_use` frame says.
           ...(meta ? { _meta: meta } : {}),
           /*
-           * Required on a completed call, all four of them, and this builder
-           * sent one of them sometimes.
+           * Required on a completed call, all four of them.
            *
            * `invocationMessage` is the sentence the row draws; without it
            * there is nothing to draw. `confirmed` says nothing is being asked,
            * and without it a client reads every call in the transcript as a
            * question waiting on somebody. `success` and `pastTenseMessage`
-           * stand until a result says otherwise - a call with no result
-           * recorded is one that finished with nothing to report, not one
-           * that failed.
+           * stand until the call's result says otherwise.
            */
           invocationMessage: lineOf(name, given),
           confirmed: 'not-needed',
@@ -558,6 +558,39 @@ function buildTurns(messages: unknown[], ends?: Map<string, string>): WireTurn<T
       byMessage.set(str(message.id) ?? `frame:${byMessage.size}:${str(frame.uuid) ?? ''}`, spent);
       turn.usage = summed([...byMessage.values()]) as WireTurn<Turn>['usage'];
     }
+  }
+
+  /*
+   * A call the transcript holds no result for never finished: its turn ended
+   * around it. It reads back cancelled as skipped, which is how the protocol's
+   * reducer holds a call still open when its turn ends, and the turn that held
+   * it reads back cancelled. The reference reads a Claude transcript back so.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L389-L417
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
+   */
+  for (const turn of built) {
+    let unfinished = false;
+    turn.responseParts = (turn.responseParts as Bag[]).map((part) => {
+      const call = part.kind === 'toolCall' ? bag(part.toolCall) : undefined;
+      const id = str(call?.toolCallId);
+      if (call === undefined || id === undefined || resulted.has(id)) return part;
+      unfinished = true;
+      const { toolCallId, toolName, displayName, invocationMessage, toolInput, _meta } = call;
+      return {
+        kind: 'toolCall',
+        toolCall: {
+          status: 'cancelled',
+          toolCallId,
+          toolName,
+          displayName,
+          invocationMessage,
+          ...(toolInput === undefined ? {} : { toolInput }),
+          reason: 'skipped',
+          ...(_meta === undefined ? {} : { _meta }),
+        },
+      };
+    }) as WireTurn<Turn>['responseParts'];
+    if (unfinished) turn.state = 'cancelled';
   }
 
   /*

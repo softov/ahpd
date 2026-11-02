@@ -209,12 +209,11 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    * Why the *last* turn failed, or nothing.
    *
    * About one turn, not about the session for the rest of its life. It reads
-   * into `Status.Error` and into the summary's `error`, and it used to be set
-   * and never unset - so one failed tool call left every client showing a
-   * session in error through every turn that followed, and through a restart
-   * of the client, because the flag lives here rather than there. Starting a
-   * turn supersedes it: what went wrong last time is not what is happening
-   * now.
+   * into `Status.Error`, the status a chat's state opens with, as the turn's
+   * `chat/error` leaves it in every client's. Starting a turn supersedes it:
+   * what went wrong last time is not what is happening now. A `!` command
+   * that failed is a call that failed, in a turn that completed, and sets
+   * nothing here.
    */
   failed: string | undefined;
   /**

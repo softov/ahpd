@@ -99,7 +99,9 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * ACP commands are the slash surface, which is a prompt leaf rather than a
    * file: there is no path behind one, so the URI names the command itself
    * rather than pretending a file exists. The input hint is carried as an
-   * argument hint, which is what a composer puts beside the name.
+   * argument hint, which is what a composer puts beside the name, under
+   * `_meta['ahpd.argumentHint']`: `PromptCustomization` declares `description`
+   * and no argument hint.
    */
   const commandLeaf = (command: AvailableCommand): Bag => ({
     type: 'prompt',
@@ -108,7 +110,7 @@ export function createHandlers(ctx: SessionContext): Handlers {
     uri: `acp-command:${provider}/${command.name}`,
     enabled: true,
     ...(command.description === '' ? {} : { description: command.description }),
-    ...(command.input === null || command.input === undefined ? {} : { argumentHint: command.input.hint }),
+    ...(command.input === null || command.input === undefined ? {} : { _meta: { 'ahpd.argumentHint': command.input.hint } }),
   });
 
   /*

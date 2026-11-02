@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import type { Agent, Bag } from '../../sdk/src/types/index.js';
+import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
@@ -9,7 +9,7 @@ import { callsIn, openedFrom, replayed } from '../../sdk/test/support/replay.js'
 import { fakePty } from '../../sdk/test/support/pty.js';
 import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
-import { fakePi, root, streamed } from './fake-pi.js';
+import { fakePi, opened, root, settled as settledPi, streamed } from './fake-pi.js';
 
 /*
  * What a pi session sends, read by the protocol's own schema.
@@ -83,6 +83,29 @@ it('sends calls as the protocol declares them, and a late client reads them the 
   expect(undeclaredIn([...notes, { asked: 'subscribe', params: { channel: chatUri }, result: late }])).toEqual([]);
   expect(callsIn(openedFrom(late).state)).toEqual(callsIn(replayed(opened, notes, chatUri)));
   client.close();
+});
+
+/*
+ * What a host seeds a chat and a session with, read by the same schema.
+ *
+ * A session's own state is what a host opens a channel with, so a field no
+ * type declares there reaches every client the seed is served to: a running
+ * turn's `state`, and a property's `scope` in the schema a session states
+ * when its host handed it none. The session's `status`, its people and its
+ * chat rows are the host's, laid over this state when it seeds the channel,
+ * so the keys read here are the ones the session adds.
+ */
+it('builds a running chat and its session with no key the protocol does not declare', async () => {
+  // A start built with no schema, which is the one road to the session's own.
+  const { session, pi } = opened({ schema: undefined } as unknown as Partial<Start>);
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settledPi();
+  const served = (resource: string, state: Bag) => ({ asked: 'subscribe', params: { channel: resource }, result: { snapshot: { resource, state, fromSeq: 0 } } });
+  const { resource: _resource, ...sessionState } = session.sessionState();
+  const found = undeclaredIn([served('ahp-chat:/s1', session.chatState()), served('ahp-session:/s1', sessionState)]);
+  expect(found.filter((one) => one.includes('undeclared key'))).toEqual([]);
+  session.close();
 });
 
 /*

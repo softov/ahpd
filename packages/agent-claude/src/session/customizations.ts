@@ -284,7 +284,9 @@ export function customizationsOf(init: Bag, mcp: unknown[], skills: unknown[] = 
         : (file !== undefined ? uriOf(file.path) : internal('command', name)),
       enabled: true,
       ...(str(command.description) ? { description: str(command.description) as string } : {}),
-      ...(str(command.argumentHint) ? { argumentHint: str(command.argumentHint) as string } : {}),
+      // Under `_meta`, as a skill's is: `PromptCustomization` declares
+      // `description` and no argument hint.
+      ...(str(command.argumentHint) ? { _meta: { 'ahpd.argumentHint': str(command.argumentHint) as string } } : {}),
     };
     if (plugin === undefined) place(file?.scope ?? 'builtin', 'prompt', leaf);
     else under(plugin, leaf);

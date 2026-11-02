@@ -441,9 +441,16 @@ function askingInWorker(stoppable = false): Agent {
             id: 'toolu_ask', chat: worker.uri, kind: 'chatInput',
             request: { id: 'toolu_ask', message: 'Which one?', questions: [] },
           };
+          // The question on the worker's chat, where a client answers it.
+          worker.emit({ type: 'chat/inputRequested', request: question.request });
           needed.push(confirmation, question);
           start.emit('session', { type: 'session/inputNeededSet', request: confirmation });
           start.emit('session', { type: 'session/inputNeededSet', request: question });
+          // And two calls of the lead's own, each waiting to be allowed.
+          for (const id of ['c1', 'c2']) {
+            start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: id, toolName: 'Bash', displayName: 'Bash' });
+            start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: id, invocationMessage: 'Run it', toolInput: 'true' });
+          }
         },
         cancel: (turnId) => {
           told.push({ what: 'cancel', id: turnId });
@@ -521,12 +528,26 @@ it('takes the option picked on a worker chat to the session\'s backend', async (
 it('takes the option picked on the lead chat to its backend, and none when none was picked', async () => {
   const { lead, send, refusals } = await waiting();
   await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, selectedOptionId: 'always', confirmed: 'user-action' });
-  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  await send(lead, { type: 'chat/toolCallConfirmed', toolCallId: 'c2', approved: true, confirmed: 'user-action' });
   expect(refusals()).toEqual([]);
   expect(told.map(({ what, id, value, option }) => ({ what, id, value, option }))).toStrictEqual([
     { what: 'confirm', id: 'c1', value: true, option: 'always' },
-    { what: 'confirm', id: 'c1', value: true, option: undefined },
+    { what: 'confirm', id: 'c2', value: true, option: undefined },
   ]);
+});
+
+/*
+ * A confirmation is checked against the chat's state, which is what every
+ * client of the chat was served: a call there that is not waiting on one is
+ * refused, as the protocol has a host refuse it, and the backend is not asked.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L352
+ */
+it('refuses a second confirmation of a call the first one answered, without asking the backend', async () => {
+  const { lead, send, refusals } = await waiting();
+  await send(lead, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  await send(lead, { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'c1', approved: true, confirmed: 'user-action' });
+  expect(refusals()).toEqual(['c1 is not a call this chat is waiting to have confirmed']);
+  expect(told.map(({ id }) => id)).toEqual(['c1']);
 });
 
 it('takes an approval given on a worker chat spelt from a session alias', async () => {

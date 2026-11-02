@@ -347,10 +347,14 @@ export function createRouting(ctx: HostContext): Routing {
    * The channel the snapshot was taken of is the one this host dispatches
    * under; the one the client named is recorded as its alias on this
    * connection and the snapshot is respelled into it. What comes back is the
-   * held name, which is what a replay is keyed by.
+   * held name, which is what a replay is keyed by. The client now holds the
+   * state this host holds for the channel, which a replay to it later builds on.
    */
   const answeredAs = (connection: Connection, channel: string, snapshot: Record<string, unknown>): string => {
     const meant = meantBy(channel);
+    ctx.heldStates.get(meant)?.baselines.add(connection.clientId);
+    const owing = ctx.lapsed.get(connection.clientId);
+    if (owing?.delete(meant) === true && owing.size === 0) ctx.lapsed.delete(connection.clientId);
     if (meant !== channel) connection.aliases.set(meant, channel);
     if (sessionOfChat(channel) === undefined) {
       if (meant !== channel) spelledFor(channel, snapshot);

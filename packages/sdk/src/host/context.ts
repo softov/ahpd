@@ -351,6 +351,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
   /**
+   * Whether the dispatch being applied still has no answer: nothing has said
+   * it back or refused it, and no backend has taken it to answer later.
+   *
+   * What the host reads after handing a client's action to a backend, so an
+   * action the held state accepts and the backend has nothing to say for is
+   * said back by the host, and every client reduces it.
+   */
+  unanswered: () => boolean;
+  /**
    * Send every streamed delta still held in the window, oldest first.
    *
    * A held delta has no sequence number yet, so anything answering a client
@@ -386,6 +395,13 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * once no connection watches any of them.
    */
   statesUnwatched: (channel: string) => void;
+  /**
+   * The channels each client holds a state of that this host let go of since
+   * it served it, by client id. Such a client is owed the state the channel
+   * holds now before any action on it is replayed to it.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L690-L701
+   */
+  lapsed: Map<string, Set<string>>;
   /**
    * The sessions this host put to sleep and has not disposed, by their own
    * URI: open sessions with no agent running, counted with the running ones.

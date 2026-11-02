@@ -425,6 +425,13 @@ export interface TurnOptions {
   instructions?: () => string[];
 }
 
+/**
+ * A backend's answer to one config value: `true` for taken as asked, the
+ * values it was taken as under the backend's own keys, or the refusal in the
+ * backend's words.
+ */
+export type ConfigTaken = true | string | Record<string, unknown>;
+
 /** A live session. */
 export interface Session {
   /** The session channel URI. */
@@ -680,9 +687,11 @@ export interface Session {
    * this backend offered options on the call and the client sent one as
    * `selectedOptionId`; absent, the answer is a plain approve or deny.
    *
-   * False when no call by that id is waiting on a confirmation here: a client
-   * out of step, which the host refuses, since the protocol has a host reject
-   * a confirmation of a call that is not pending one.
+   * Handed over once the chat's state has the call pending a confirmation,
+   * which is the protocol's condition for taking one. The backend says the
+   * `chat/toolCallConfirmed` back. False when no call by that id waits on a
+   * confirmation here, and the host then says the decision itself, since
+   * every client holds the call the state says.
    */
   confirm(toolCallId: string, approved: boolean, optionId?: string): boolean;
 
@@ -702,12 +711,12 @@ export interface Session {
    */
   setTools?(tools: BoundTool[]): Promise<boolean>;
   /**
-   * The client running a tool call, for a call that is one client's to run.
+   * The client running a tool call, as this backend holds it, for a call that
+   * is one client's to run, and nothing for a call the agent runs itself.
    *
-   * Nothing for a call the agent is running itself, which is what makes this
-   * the check for whether a client may write into one: the protocol says a
-   * host should refuse `chat/toolCallContentChanged` from anybody but the
-   * call's own contributor.
+   * The backend's own record. Which client may write into a call, or say its
+   * result, the host reads off the call's contributor in the chat's state,
+   * which is what the call's start said.
    */
   toolCallOwner?(toolCallId: string): string | undefined;
   /**
@@ -718,9 +727,9 @@ export interface Session {
    * those is handed them. `text` is the blocks' words joined, which is what a
    * harness that takes only text reads.
    *
-   * False when no call by that id is waiting, or when it is waiting on a
-   * different client - both are a client out of step rather than a no-op, and
-   * the host refuses rather than dropping it.
+   * Handed over once the host has found the call running under that client in
+   * the chat's state. False when no call by that id waits on that client here,
+   * a second result for a call among them, and the host refuses it.
    */
   completeToolCall?(
     toolCallId: string,
@@ -738,10 +747,10 @@ export interface Session {
   /**
    * Answer a question the agent asked, keyed by question id.
    *
-   * False when the request is not one this session is waiting on, which the
-   * host refuses as a client out of step. True is what the host says the
-   * `chat/inputCompleted` back to every client of the chat on, so a backend
-   * does not emit that action itself.
+   * Handed over once the chat's state has the request open, and the host says
+   * the `chat/inputCompleted` back to every client of the chat, so a backend
+   * does not emit that action itself. False when the request is not one this
+   * session is waiting on.
    *
    * `response` is the kind the client sent, where it sent one, and it is here
    * because a decline and a cancel are two different things to tell a server:
@@ -760,8 +769,10 @@ export interface Session {
    * with. Held by the session for the same reason a draft message is: two
    * people on one chat are answering one form.
    *
-   * False when nothing here is waiting on that request, or when what is
-   * waiting is a tool confirmation rather than a question.
+   * Handed over once the chat's state has the request open. The backend says
+   * the `chat/inputAnswerChanged` back. False when nothing here is waiting on
+   * that request, or when what is waiting is a tool confirmation rather than a
+   * question, and the host then says the draft itself.
    *
    * Optional. A backend that keeps no drafts leaves it out, and the host
    * refuses the action with that as the reason.
@@ -776,14 +787,21 @@ export interface Session {
    * behaves - whether it can move on a running session, whether it belongs to
    * the session or to one chat - and knows nothing about what any key means.
    *
-   * `true` when it was taken. A string is the refusal, in the backend's own
-   * words, and it is a string rather than `false` because only the backend
-   * knows which of the two things went wrong: a key it does not serve, or a
-   * value it will not take for a key it does. A host that answered both with
-   * one sentence would be telling a client its control does not exist when
-   * the truth is that the value was wrong.
+   * `true` when it was taken as it was asked. A string is the refusal, in the
+   * backend's own words, and it is a string rather than `false` because only
+   * the backend knows which of the two things went wrong: a key it does not
+   * serve, or a value it will not take for a key it does. A host that answered
+   * both with one sentence would be telling a client its control does not
+   * exist when the truth is that the value was wrong.
+   *
+   * The values it was taken as, when the backend took it under keys of its
+   * own: a client's conventional name for a setting the backend's schema
+   * declares under another. Those are what the host says back to every client
+   * and keeps for a restart, so the state holds the setting the backend runs
+   * on, as the reference host takes a client's vocabulary into its own keys.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/protocolServerHandler.ts#L585-L597
    */
-  setConfig?(key: string, value: unknown): true | string | Promise<true | string>;
+  setConfig?(key: string, value: unknown): ConfigTaken | Promise<ConfigTaken>;
   /** The config in force, by key. */
   settings(): Record<string, unknown>;
 

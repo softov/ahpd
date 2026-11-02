@@ -1276,6 +1276,34 @@ describe('tools a client contributes', () => {
     expect(uri).toBeTruthy();
   });
 
+  it('names the client at the start of a call whose arguments are still streaming', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'open it' } } },
+    });
+    await settle();
+    /*
+     * The call opens as soon as its name is known, and its start is where the
+     * protocol establishes who runs it: a later `chat/toolCallReady` may not
+     * change that.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L306-L318
+     */
+    await emit(
+      { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'tool_use', id: 'call-1', name: 'mcp__ahp__probe__openFile', input: {} },
+        },
+      },
+    );
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
+  });
+
   it('says a failed call failed, in the words the client used', async () => {
     const { client, chatUri } = await providing();
     client.handle({
@@ -1757,7 +1785,7 @@ describe('tools a client contributes', () => {
     ((await watched(client, uri)).inputNeeded ?? []).filter((one) => one.kind === 'toolClientExecution');
 
   it('opens a call the person allowed, and not before the question is answered', async () => {
-    const { client, uri, chatUri } = await providing();
+    const { client, peer: p, uri, chatUri } = await providing();
     await intoTurn(client, chatUri);
     /*
      * The callback first, which is the order `asking.ts` documents: the CLI
@@ -1768,6 +1796,9 @@ describe('tools a client contributes', () => {
     const gate = sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' });
     await settle();
     expect(await askedToRun(client, uri)).toEqual([]);
+    // The question opens the call, and its start names the client that runs it.
+    const started = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallStart');
+    expect(started?.action.contributor).toEqual({ kind: 'client', clientId: 'probe' });
 
     sdk.toolUseIds.push('call-1');
     const run = tool();
@@ -1794,6 +1825,30 @@ describe('tools a client contributes', () => {
     answers(client, chatUri, { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] });
     expect((await answering)?.content[0]?.text).toBe('opened /a.txt');
     await settle();
+    expect(await askedToRun(client, uri)).toEqual([]);
+  });
+
+  it('approves nothing on an input answer naming a call a person is asked to confirm', async () => {
+    const { client, peer: p, uri, chatUri } = await providing();
+    await intoTurn(client, chatUri);
+    let decided: unknown;
+    void sdk.canUseTool?.('mcp__ahp__probe__openFile', { path: '/a.txt' }, { toolUseID: 'call-1' })
+      ?.then((one) => { decided = one; });
+    await settle();
+    /*
+     * An input answer is checked against the questions the chat holds open,
+     * and a call waiting on a person is answered by `chat/toolCallConfirmed`.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/elicitation.md#L75
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L113-L114
+     */
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, action: { type: 'chat/inputCompleted', requestId: 'call-1', response: 'accept' } },
+    });
+    await settle();
+    const refused = actions(p).filter((e) => e.rejectionReason !== undefined).at(-1);
+    expect(refused?.rejectionReason).toContain('is not a question this chat is waiting on');
+    expect(decided).toBeUndefined();
     expect(await askedToRun(client, uri)).toEqual([]);
   });
 
@@ -2037,6 +2092,22 @@ describe('a client\'s call, held by the backend', () => {
     return { host, heard, held, uri, chatUri, clients, peers };
   };
 
+  /**
+   * A client's call as a backend says it: on its chat, in a running turn,
+   * started under the client that runs it, and then handed to the holder.
+   * The chat's call is what the host checks a client's result against.
+   */
+  const called = (held: Held, toolCallId: string, owner: string): void => {
+    const { start, calls } = held;
+    start.emit('chat', { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'open it', origin: { kind: 'user' } } });
+    start.emit('chat', {
+      type: 'chat/toolCallStart', turnId: 't1', toolCallId, toolName: 'openFile', displayName: 'openFile',
+      contributor: { kind: 'client', clientId: owner },
+    });
+    start.emit('chat', { type: 'chat/toolCallReady', turnId: 't1', toolCallId, invocationMessage: 'Run openFile', confirmed: 'not-needed' });
+    calls.open({ turnId: 't1', toolCall: running(toolCallId), owner });
+  };
+
   // One case runs the holder's own clock forward, and a timer left faked is a
   // `settle` in the next one that never fires.
   afterEach(() => { vi.useRealTimers(); });
@@ -2126,7 +2197,7 @@ describe('a client\'s call, held by the backend', () => {
   it('settles the call for its own client, and refuses the other one', async () => {
     const { held, clients, chatUri } = await open(['a', 'b']);
     const { calls } = held();
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 
@@ -2149,7 +2220,7 @@ describe('a client\'s call, held by the backend', () => {
   it('hands the whole answer to the backend, content blocks and all', async () => {
     const { held, clients, chatUri } = await open(['a']);
     const { calls } = held();
-    calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
+    called(held(), 'call-1', 'a');
     const waiting = calls.wait('call-1');
     await settle();
 

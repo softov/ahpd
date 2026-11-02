@@ -704,7 +704,7 @@ const promptScript = async (id, params) => {
     commandsSent = true;
     notify({
       sessionUpdate: 'available_commands_update',
-      availableCommands: [{ name: 'plan', description: 'Draft a plan' }],
+      availableCommands: [{ name: 'plan', description: 'Draft a plan', input: { hint: 'What to plan' } }],
     });
   }
   const reaches = [
