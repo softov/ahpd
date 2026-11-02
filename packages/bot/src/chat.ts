@@ -667,12 +667,26 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
      * `next` says whether what was waiting starts now. A steer ends a turn
      * without it: the steered message is a turn in front of the queue, and the
      * message behind it starts when that turn ends.
+     *
+     * `answered` says the back session answered, which is the one ending its
+     * calls finish by. Any other ending leaves them unfinished, and the turn's
+     * end forces each to cancelled, `skipped`, in every reducer, this chat's
+     * own record included, as the reference host's chat draws a call its turn
+     * left behind.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
      */
-    const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true): void => {
+    const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true, answered = false): void => {
       open = undefined;
       const duration = Date.now() - Date.parse(held.startedAt);
       for (const call of held.calls) {
         const toolCall = call.part.toolCall as Bag;
+        if (!answered) {
+          // What the reducer keeps of a call it forces to cancelled.
+          const kept = ['toolCallId', 'toolName', 'displayName', 'intention', 'contributor', '_meta', 'invocationMessage', 'toolInput']
+            .filter((key) => toolCall[key] !== undefined);
+          call.part.toolCall = { ...Object.fromEntries(kept.map((key) => [key, toolCall[key]])), status: 'cancelled', reason: 'skipped' };
+          continue;
+        }
         const result = {
           success: true,
           pastTenseMessage: 'Worked',
@@ -732,7 +746,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
          * there are no `chat/delta`s after it - and the id is the turn's, which
          * is what a delta would have appended to.
          */
-        finish(held, 'complete', [{ id: `${held.id}:reply`, kind: 'markdown', content: text }]);
+        finish(held, 'complete', [{ id: `${held.id}:reply`, kind: 'markdown', content: text }], true, true);
       },
       notice: (text) => {
         const held = open;

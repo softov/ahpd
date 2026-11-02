@@ -734,6 +734,33 @@ it('holds a begin behind the open turn rather than taking its place', async () =
   ]);
 });
 
+/*
+ * A call its turn left unfinished reads as the reducer leaves it.
+ *
+ * The back session never answered a turn that ended with a notice, so its
+ * call is not a call that worked: the turn's end forces it to cancelled,
+ * `skipped`, which the reference host's chat draws as skipped
+ * (stateToProgressAdapter.ts L548 at a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+ */
+it('leaves the back session\'s call unfinished when its turn ends with a notice', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
+  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+
+  await said(client, 't1', 'hello');
+  chat.notice('The back session would not take it');
+
+  expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/toolCallComplete')).toBe(false);
+  const state = await stateOf(client);
+  const call = ((state['turns'] as Bag[])[0]?.['responseParts'] as Bag[])[0];
+  expect(call).toMatchObject({ kind: 'toolCall', toolCall: { status: 'cancelled', reason: 'skipped' } });
+});
+
 it('shows the back session as one subagent call in a turn a steer goes into', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
