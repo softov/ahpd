@@ -1,6 +1,6 @@
 ---
 title: The host lists tunnels and runs operations
-status: implemented
+status: done
 depends:
   - task-01-a-plugin-registers-a-tunnel-kind.md
 layer: sdk

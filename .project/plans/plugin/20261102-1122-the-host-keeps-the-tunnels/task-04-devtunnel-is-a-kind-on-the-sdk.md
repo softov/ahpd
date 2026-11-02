@@ -1,6 +1,6 @@
 ---
 title: devtunnel is a kind on the SDK
-status: implemented
+status: done
 depends:
   - task-01-a-plugin-registers-a-tunnel-kind.md
   - task-03-the-daemon-keeps-the-tunnels.md

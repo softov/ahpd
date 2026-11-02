@@ -1,6 +1,6 @@
 ---
 title: /mcp opens to a person's token
-status: implemented
+status: done
 depends:
   - task-01-a-host-tool-may-run-with-no-session.md
   - task-03-one-answer-serves-every-tools-server.md

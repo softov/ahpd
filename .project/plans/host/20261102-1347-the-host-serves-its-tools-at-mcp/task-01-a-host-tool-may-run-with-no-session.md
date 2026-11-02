@@ -1,6 +1,6 @@
 ---
 title: A host tool may run with no session
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

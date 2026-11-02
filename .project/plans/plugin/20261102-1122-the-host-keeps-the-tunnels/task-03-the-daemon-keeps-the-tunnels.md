@@ -1,6 +1,6 @@
 ---
 title: The daemon keeps the tunnels
-status: implemented
+status: done
 depends:
   - task-02-the-host-lists-tunnels-and-runs-ops.md
 layer: server

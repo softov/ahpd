@@ -1,7 +1,7 @@
 ---
 title: The host keeps the tunnels
 domain: plugin
-status: draft
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -121,10 +121,10 @@ routes and, with the setting, the API -> Host check reads the list's URLs
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A plugin registers a tunnel kind](task-01-a-plugin-registers-a-tunnel-kind.md) | implemented | - |
-| [02 - The host lists tunnels and runs operations](task-02-the-host-lists-tunnels-and-runs-ops.md) | implemented | 01 |
-| [03 - The daemon keeps the tunnels](task-03-the-daemon-keeps-the-tunnels.md) | implemented | 02 |
-| [04 - devtunnel is a kind on the SDK](task-04-devtunnel-is-a-kind-on-the-sdk.md) | implemented | 01, 03 |
+| [01 - A plugin registers a tunnel kind](task-01-a-plugin-registers-a-tunnel-kind.md) | done | - |
+| [02 - The host lists tunnels and runs operations](task-02-the-host-lists-tunnels-and-runs-ops.md) | done | 01 |
+| [03 - The daemon keeps the tunnels](task-03-the-daemon-keeps-the-tunnels.md) | done | 02 |
+| [04 - devtunnel is a kind on the SDK](task-04-devtunnel-is-a-kind-on-the-sdk.md) | done | 01, 03 |
 
 ## Risks and tradeoffs
 
@@ -136,10 +136,9 @@ routes and, with the setting, the API -> Host check reads the list's URLs
 
 ## Resume state
 
-- **Done so far:** [task 01](task-01-a-plugin-registers-a-tunnel-kind.md) is implemented: a plugin registers a tunnel kind, the fold keeps it by name, and `registerTunnelKind` is in the SDK. [Task 02](task-02-the-host-lists-tunnels-and-runs-ops.md) is implemented: `tunnelsChannel` serves `x-ahpd-tunnels://` with its operations, and `x-ahpd/invokeOperation` runs one. [Task 03](task-03-the-daemon-keeps-the-tunnels.md) is implemented: the daemon keeps the tunnels, starts them after `listening`, and answers the routes and the API to their URLs. [Task 04](task-04-devtunnel-is-a-kind-on-the-sdk.md) is implemented: devtunnel is a kind on the SDK, with the connector, the relay host and the ports, and no CLI.
-- **Next action:** the checks by hand in task 04's Resume, then the plan's final verification checklist. The checks need a real connector sign-in and a real Dev Tunnel, so they are for review.
-- **Open questions:**
-  1. Can a `devtunnel` connector take its token from the environment, as `{ "fromEnv": "<NAME>" }`? Softov asked on 2026-11-02. Which token that lasts longer than 8 hours does the Dev Tunnels service accept? Plan 20261102-1054's refresh must then skip a token with no refresh token.
+- **Done so far:** tasks 01 to 04 are done. ahpd #189 merged them as `01e7ca37`.
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. The checks by hand are in [plugin-1122-tunnel-checks.md](../../../pending/plugin-1122-tunnel-checks.md).
+- **Open questions:** none. The `fromEnv` question and the `operation:invoke` check are in *Left for later* of [implemented.md](implemented.md).
 - **Watch out for:** the system tunnel must keep the same Dev Tunnel id and the port `31546`, or every client that found it stops connecting.
 
 ## Final verification checklist

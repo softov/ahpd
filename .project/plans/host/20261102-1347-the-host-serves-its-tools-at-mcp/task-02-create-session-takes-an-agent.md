@@ -1,6 +1,6 @@
 ---
 title: create_session takes an agent and a config
-status: implemented
+status: done
 depends:
   - task-01-a-host-tool-may-run-with-no-session.md
 layer: sdk

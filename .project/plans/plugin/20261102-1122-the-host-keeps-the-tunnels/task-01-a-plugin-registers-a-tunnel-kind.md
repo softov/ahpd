@@ -1,6 +1,6 @@
 ---
 title: A plugin registers a tunnel kind
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

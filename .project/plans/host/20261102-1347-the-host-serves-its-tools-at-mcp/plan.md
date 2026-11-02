@@ -1,7 +1,7 @@
 ---
 title: The host serves its tools at /mcp
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -110,10 +110,10 @@ client POST /mcp, Authorization: Bearer <person token>
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A host tool may run with no session](task-01-a-host-tool-may-run-with-no-session.md) | implemented | - |
-| [02 - create_session takes an agent and a config](task-02-create-session-takes-an-agent.md) | implemented | 01 |
-| [03 - One answer serves every tools server](task-03-one-answer-serves-every-tools-server.md) | implemented | - |
-| [04 - /mcp opens to a person's token](task-04-mcp-opens-to-a-persons-token.md) | implemented | 01, 03 |
+| [01 - A host tool may run with no session](task-01-a-host-tool-may-run-with-no-session.md) | done | - |
+| [02 - create_session takes an agent and a config](task-02-create-session-takes-an-agent.md) | done | 01 |
+| [03 - One answer serves every tools server](task-03-one-answer-serves-every-tools-server.md) | done | - |
+| [04 - /mcp opens to a person's token](task-04-mcp-opens-to-a-persons-token.md) | done | 01, 03 |
 
 ## Risks and tradeoffs
 
@@ -124,9 +124,9 @@ client POST /mcp, Authorization: Bearer <person token>
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02, 03 and 04 are implemented and their gates pass. `HostTool` has the sessionless branch, `Host.sessionlessTools(caller)` builds a caller's list, the seven session tools run with no session, and `create_session` takes an `agent` and a `config` checked against that agent. `answerTools` now holds the transport that a session's `/ahp-mcp/<uuid>` and `/mcp` share, with the token check left in `request`. `/mcp` is served on the listener that carries `/api` while `httpApi` is on, and `mcpTools` says what it serves: `none`, the default, answers 404, and `all` serves the sessionless tools the caller's grants allow. The door asks for `mcp:call`, which `member` and `guest` hold and a team key cannot. `docs/sdk/TOOLS.md` says the first two and `docs/server/MCP.md` says how a person points a client at the door. Four commits on the branch.
-- **Next action:** review, then the Final verification checklist below; no task is left to build.
-- **Open questions:** none.
+- **Done so far:** tasks 01 to 04 are done. ahpd #190 merged them as `9a29a4a8`.
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it. The checks by hand are in [host-1347-mcp-checks.md](../../../pending/host-1347-mcp-checks.md).
+- **Open questions:** none. The guest's `mcp:call` and the 403 for a person in no team are in [implemented.md](implemented.md).
 - **Watch out for:** a session's `/ahp-mcp/<uuid>` must answer exactly as before. `toolserver.test.ts` and `toolauth.test.ts` pass unchanged.
 
 ## Final verification checklist
