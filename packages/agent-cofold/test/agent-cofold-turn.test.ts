@@ -553,6 +553,76 @@ it('runs a steering message the run never took in as a turn of its own, named by
   expect(fold(p, chatUri).steeringMessage).toBeUndefined();
 });
 
+/** A client taking back a steering message, under the number the client gave it. */
+const unsteer = (client: Awaited<ReturnType<typeof talking>>['client'], chatUri: string, clientSeq: number, id: string): void => {
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq, action: { type: 'chat/pendingMessageRemoved', kind: 'steering', id } },
+  });
+};
+
+it('takes back a steering message a stopped run handed back, and it never runs', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  steer(client, chatUri, 4, 's1', 'one more thing');
+  await until(() => answer(p, chatUri, 4) !== undefined);
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  // Handed back by the run, and waiting for the chat's next turn to end.
+  expect(fold(p, chatUri).steeringMessage).toMatchObject({ id: 's1' });
+
+  unsteer(client, chatUri, 5, 's1');
+  await until(() => answer(p, chatUri, 5) !== undefined);
+  expect(answer(p, chatUri, 5)?.action).toEqual({ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
+  expect(answer(p, chatUri, 5)?.rejectionReason).toBeUndefined();
+  expect(fold(p, chatUri).steeringMessage).toBeUndefined();
+
+  begin(client, chatUri, 't2', 'second');
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+  expect(started).toEqual(['t1', 't2']);
+  expect(asked.join('\n')).not.toContain('one more thing');
+});
+
+it('refuses to take back a steering message the run holds, and the run still reads it', async () => {
+  const waiting: (() => void)[] = [];
+  const tool: HostTool = {
+    definition: {
+      name: 'lookup',
+      title: 'Look something up',
+      description: 'Looks a word up.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    run: () => new Promise<string>((resolve) => { waiting.push(() => resolve('found x')); }),
+  };
+  const model = createFakeModel({
+    script: [{ toolCalls: [{ name: 'lookup', input: {} }] }, { text: 'done' }],
+    stream: true,
+  });
+  const { client, peer: p, chatUri } = await talking(model, [tool]);
+  begin(client, chatUri, 't1', 'find x');
+  await until(() => waiting.length === 1);
+  steer(client, chatUri, 9, 's1', 'look for y instead');
+  await until(() => answer(p, chatUri, 9) !== undefined);
+
+  unsteer(client, chatUri, 10, 's1');
+  await until(() => answer(p, chatUri, 10) !== undefined);
+  // cofold's run holds it, and the run has no command that gives it back.
+  expect(answer(p, chatUri, 10)?.rejectionReason).toBe('Cannot change a steering message while it is being processed.');
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: ChatState } };
+  expect(opened.snapshot.state.steeringMessage).toMatchObject({ id: 's1' });
+
+  waiting[0]?.();
+  await until(() => ended(p, chatUri));
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('look for y instead');
+});
+
 it('names the cofold session id from the AHP URI in one place', () => {
   expect(sessionIdOf('ahp-session:/one')).toBe('one');
   expect(sessionIdOf('ahp-session:/a/b')).toBe('a/b');

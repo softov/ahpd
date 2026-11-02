@@ -840,6 +840,49 @@ it('refuses to the client outside an action the host inside refused, and changes
 }, 30_000);
 
 /*
+ * A steering message a client outside takes back is carried inside as the
+ * steering message the inner chat holds, and the host inside's answer reaches
+ * the client outside under the clientSeq it sent. The backend inside holds the
+ * message until it is taken back.
+ */
+it('takes back a steering message on a nested session through the host inside', async () => {
+  const { agent } = scriptedAgent(() => {});
+  let held: Bag | undefined;
+  const holding = {
+    ...agent,
+    create: (session: Start) => {
+      const made = agent.create(session) as unknown as Bag & { chatState: () => Bag };
+      return {
+        ...made,
+        chatState: () => ({ ...made.chatState(), ...(held === undefined ? {} : { steeringMessage: held }) }),
+        steer: (id: string, text: string) => {
+          held = { id, message: { text } };
+          session.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } });
+          return true;
+        },
+        unqueue: (id: string) => {
+          if (held?.id !== id) return;
+          held = undefined;
+          session.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+        },
+      };
+    },
+  } as unknown as Agent;
+  const { host, dispatch, told } = await outside(innerHost(holding));
+  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on' } });
+  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'shorter' } });
+  await until(() => told('chat/pendingMessageSet').length > 0);
+  await dispatch(8, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
+  await until(() => told('chat/pendingMessageRemoved').length > 0);
+  expect(told('chat/pendingMessageRemoved').map((one) => [one.action, one.origin, one.rejectionReason]))
+    .toEqual([[{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }, { clientId: 'window', clientSeq: 8 }, undefined]]);
+  expect(held).toBeUndefined();
+  await host.close();
+}, 30_000);
+
+/*
  * A turn reaches the session in a machine once the host outside has set the
  * machine where its branch is, after the dispatch outside was applied, and the
  * host inside refusing it is still that client's refusal.
