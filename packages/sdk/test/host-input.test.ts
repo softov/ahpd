@@ -568,19 +568,32 @@ describe('a message typed while a turn is running', () => {
     expect(state.steeringMessage).toBeUndefined();
   });
 
-  it('refuses one sent at a chat with nothing running to steer', async () => {
+  /*
+   * Steering that came with no turn to steer runs as a turn of its own.
+   *
+   * The reference host runs steering that arrived too late to steer a turn
+   * next, ahead of queued messages, under its id, so the turn naming it takes
+   * it out of every client's state (queueDrainContribution.ts L260-L262,
+   * L283-L292 at a4e689ae).
+   */
+  it('runs one sent at a chat with nothing running as a turn of its own, under its id', async () => {
     const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'now' } } },
     });
     await settle();
-    // A real refusal now, rather than the blanket one: there is no turn to
-    // put it into, and turning it into an ordinary message would be sending
-    // something the person meant as a correction.
-    const refused = actions(p, chatUri).filter((one) => one.rejectionReason !== undefined).at(-1);
-    expect(refused?.rejectionReason).toContain('Nothing is running');
-    expect(sdk.said).toEqual([]);
+    expect(actions(p, chatUri).filter((one) => one.rejectionReason !== undefined)).toEqual([]);
+    const answer = actions(p, chatUri).find((one) => one.origin?.clientSeq === 1);
+    expect(answer?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'steering', id: 's1' });
+    const started = actions(p, chatUri).map((one) => one.action).find((one) => one.type === 'chat/turnStarted');
+    expect(started?.queuedMessageId).toBe('s1');
+    expect(sdk.said).toEqual(['now']);
+    const state = (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { steeringMessage?: unknown; activeTurn?: { message: { text: string } } } };
+    }).snapshot.state;
+    expect(state.steeringMessage).toBeUndefined();
+    expect(state.activeTurn?.message.text).toBe('now');
   });
 
   it('starts one straight away when nothing is running', async () => {

@@ -1,6 +1,6 @@
 ---
 title: A steering message runs as VS Code runs it
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -41,3 +41,11 @@ The same id with another message is refused in the reference host's words.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- The held message compares by value with `isDeepStrictEqual`: the reducer's copy writes its keys in another order.
+- `host-input.test.ts` moved with the behavior: its case read the refusal of an idle steering message.
+- The protocol cases 039, 040, 041 and 052 moved from that refusal to the keys the turn moves.
+- Their row in `BROKEN` names VS Code's host as the reason the case's `expected` is not met.
+- On `89ebe4d5`'s sources the three cases fail: the idle message was refused, and the held one went to the backend twice.
