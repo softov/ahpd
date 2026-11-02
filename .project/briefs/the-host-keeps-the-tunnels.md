@@ -55,6 +55,8 @@ refs:
   - "[code://packages/sdk/src/types/plugin.ts#L1474-L1483](../../packages/sdk/src/types/plugin.ts#L1474-L1483) - `contracts`: the names a plugin may register, by kind, as strings"
   - "[code://packages/sdk/src/host/channels.ts#L59-L61](../../packages/sdk/src/host/channels.ts#L59-L61) - `methodIn`, the served `x-` command a request names"
   - "[code://packages/sdk/src/host/admission.ts#L17-L18](../../packages/sdk/src/host/admission.ts#L17-L18) - the host finds the command before it checks its grant"
+  - https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/connections/tunnelRelayTunnelHost.ts#L693-L737 - the Dev Tunnels SDK host serves a port added after it started
+  - npm://@microsoft/dev-tunnels-connections@^1.3.61 - the Dev Tunnels SDK host, MIT, that the devtunnel kind runs in-process
   - https://github.com/microsoft/agent-host-protocol/issues/537 - Softov's proposal of resource kinds, each with a schema and operations
   - https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands - many ports on one tunnel, a URL and access for each port, read 2026-11-02
   - file:///github/ahpd/.project/briefs/a-computer-kind-comes-from-any-plugin.md - the same model for computers
@@ -518,6 +520,8 @@ The data and the store are two registrations in two places:
 | The API's `Host` check reads the list only when a setting turns it on. The setting is off by default | Softov, 2026-11-02: "A setting, off by default" |
 | Each tunnel records the plugin that opened it and why it was opened, such as system access or a canvas | Softov, 2026-11-02: "I was referring from why the tunnels was openned... like was a tunnel for the system access. a tunnels for the canvas.. that thing." |
 | A kind's plugin config limits its tunnels by purpose: the most tunnels, whether it opens tunnels for that purpose, and whether a tunnel closes when its last use ends | Softov, 2026-11-02: "so we can enforce like in plugin config limit qtd tunnel by purpose.. like system tunnel only one... and if it can open tunnel for canvas, etc.. also if close the tunnel if last user." |
+| The devtunnel kind hosts in-process with `@microsoft/dev-tunnels-connections` and calls `refreshPorts` for a new port, so the daemon's clients stay connected. The SDK's host serves a port added after it started ([tunnelRelayTunnelHost.ts](https://github.com/microsoft/dev-tunnels/blob/b73b0eb774b/ts/src/connections/tunnelRelayTunnelHost.ts#L693-L737)) | Softov, 2026-11-02: "Use the SDK in-process" |
+| The devtunnel plugin signs in itself, with a GitHub or Microsoft device code, and keeps the token in the vault. It no longer needs the `devtunnel` CLI | Softov, 2026-11-02: "The plugin logs in itself" |
 | A record of the shared core has an optional `owner`, with the `?owner=me` filter. Computers fill it with the person who made the machine. Tunnels leave it empty, so a tunnel belongs to the host | Softov, 2026-11-02: "Optional owner" |
 | `remove` needs `<thing>:delete` and every other operation `<thing>:put`. A kind can name another grant for an operation, such as `<thing>:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
 
@@ -532,4 +536,3 @@ The data and the store are two registrations in two places:
 7. When a canvas and a person ask for the same port, is it one tunnel or two?
 8. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
 9. Does `say` stay for `ahpd status`, beside the list?
-10. Not checked: whether a running `devtunnel host` serves a port added after it started.
