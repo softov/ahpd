@@ -1,6 +1,6 @@
 ---
 title: A session asks what its chats ask
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -35,3 +35,13 @@ A chat's entries go with its turn.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- A first build derived every entry from the chat's call, as the reference host does, and stopped a backend's own entries.
+- It failed client tools: the chat names a client's call by the model's name, `mcp__ahp__<client>__<tool>`.
+- VS Code's chat runs a client's call by the entry's `toolCall.toolName`, so the derived entry named no tool of the client's.
+- So the host takes entries down and leaves raising them to the backends; CT6 and X3 stay with that.
+- ACP raises a client's entry while the chat's call still streams, which is why a streaming call holds its entry.
+- `agent-acp-client-tool.test.ts` moved with the behavior: its case held two rows past the turn that ended.
+- On `89ebe4d5`'s sources the two removals and that case fail: each entry stayed.

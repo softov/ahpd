@@ -84,7 +84,7 @@ chat/inputAnswerChanged, chat/inputCompleted -> chatactions.ts -> held to the op
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A session asks what its chats ask](task-01-a-session-asks-what-its-chats-ask.md) | todo | - |
+| [01 - A session asks what its chats ask](task-01-a-session-asks-what-its-chats-ask.md) | done | - |
 | [02 - An answer is held to its request](task-02-an-answer-is-held-to-its-request.md) | todo | - |
 | [03 - A draft answer is taken on any chat](task-03-a-draft-answer-is-taken-on-any-chat.md) | todo | - |
 | [04 - A request ends by an answer or its turn](task-04-a-request-ends-by-answer-or-turn.md) | todo | 01 |
@@ -96,8 +96,8 @@ chat/inputAnswerChanged, chat/inputCompleted -> chatactions.ts -> held to the op
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-session-asks-what-its-chats-ask.md](task-01-a-session-asks-what-its-chats-ask.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** [task-02-an-answer-is-held-to-its-request.md](task-02-an-answer-is-held-to-its-request.md).
 - **Open questions:** none.
 - **Watch out for:** a worker's chat belongs to its lead session, so its entries are that session's.
 
