@@ -5,6 +5,7 @@ built: 2026-11-02
 commits:
   - git://dea0309f - the plan
   - git://1afe816d - the change, its docs and its tests
+  - the commit after this record - `host-chats.test.ts`'s held draft, found by the union's unit run, and two test comments
 ---
 
 ## What changed

@@ -773,8 +773,8 @@ describe('more than one directory', () => {
    * Each action as the protocol's reducers apply it: a set adds a folder the
    * set lacks, a removal takes out one it holds, and a replacement swaps the
    * entry `directory` names for the folder `replacement` carries. An action
-   * that would change nothing is answered to the client that sent it, and to
-   * nobody else.
+   * that would change nothing starts nothing, and goes to every client of
+   * the channel as the sender's own.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts
    */
