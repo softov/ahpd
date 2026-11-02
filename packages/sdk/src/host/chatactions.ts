@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
@@ -1435,51 +1436,67 @@ export function chatAction(
      */
     case 'chat/pendingMessageSet': {
       const kind = String(action.kind ?? 'queued');
+      const id = String(action.id ?? '');
       const message = (typeof action.message === 'object' && action.message !== null
         ? action.message
         : {}) as Record<string, unknown>;
-      /*
-       * Into the running turn, rather than behind it.
-       *
-       * Somebody correcting an agent halfway is the most ordinary thing
-       * there is, and queueing it delivered the correction after the
-       * thing it was trying to stop. The two refusals left are real: a
-       * backend that cannot take a message mid-turn, and a chat with
-       * nothing running to steer.
-       */
-      if (kind === 'steering') {
-        if (!session.steer) {
-          no('This backend cannot take a message mid-turn');
-          break;
-        }
-        const steered = messageAttachments(message, connection);
-        if (steered.refusal !== undefined) {
-          refuse(connection.peer, channel, action, origin, steered.refusal);
-          break;
-        }
-        if (!session.steer(String(action.id ?? ''), String(message.text ?? ''), steered.attachments, messageFrom(message))) {
-          no('Nothing is running in this chat to steer');
-        }
-        break;
-      }
-      if (kind !== 'queued') {
+      if (kind !== 'steering' && kind !== 'queued') {
         no(`${kind} is neither a steering message nor a queued one`);
         break;
       }
+      if (kind === 'steering' && !session.steer) {
+        no('This backend cannot take a message mid-turn');
+        break;
+      }
+      /*
+       * The steering message the running turn was handed, sent again.
+       *
+       * The backend holds it already, so the same message is answered and not
+       * handed over a second time, and a different one is refused, in the
+       * reference host's words: "Repeated identical upserts MUST NOT cause
+       * duplicate provider delivery", and "Hosts MUST reject edits ... that
+       * they can no longer honor after handoff".
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13516-L13523
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L190-L196
+       */
+      const holding = chatHeld.steeringMessage as Bag | undefined;
+      if (kind === 'steering' && activeHeld !== undefined && holding !== undefined && String(holding.id ?? '') === id) {
+        // By value: the held copy went through a reducer, which writes its keys in its own order.
+        if (isDeepStrictEqual(holding.message, action.message)) dispatch(session.chatUri, action, origin);
+        else no('Cannot change a steering message while it is being processed.');
+        break;
+      }
+      // Read now rather than when the turn comes round: a message waiting
+      // behind another is still a message this host has to be able to answer
+      // for, and the chat it points at may be gone by the time it runs.
+      const read = messageAttachments(message, connection);
+      if (read.refusal !== undefined) {
+        refuse(connection.peer, channel, action, origin, read.refusal);
+        break;
+      }
+      /*
+       * Into the running turn, rather than behind it.
+       *
+       * Somebody correcting an agent halfway is the most ordinary thing there
+       * is, and queueing it delivered the correction after the thing it was
+       * trying to stop.
+       */
+      if (kind === 'steering' && session.steer?.(id, String(message.text ?? ''), read.attachments, messageFrom(message))) break;
+      /*
+       * A queued message, or a steering message with no turn running to steer.
+       *
+       * The second runs as a turn of its own, under its id, as the reference
+       * host runs steering that came too late to steer a turn, and the turn
+       * naming it takes it out of every client's state.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L260-L262
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L375-L384
+       */
       const model = (typeof message.model === 'object' && message.model !== null
         ? message.model
         : {}) as Record<string, unknown>;
       const provider = sessions.get(session.uri)?.agent.provider ?? 'This provider';
-      // Read now rather than when the turn comes round: a message waiting
-      // behind another is still a message this host has to be able to answer
-      // for, and the chat it points at may be gone by the time it runs.
-      const queued = messageAttachments(message, connection);
-      if (queued.refusal !== undefined) {
-        refuse(connection.peer, channel, action, origin, queued.refusal);
-        break;
-      }
       // Said back by the backend, now or once the turn's check has answered.
-      ctx.owe('chat/pendingMessageSet', String(action.id ?? ''));
+      ctx.owe('chat/pendingMessageSet', id);
       beginTurn(
         beginOrRun(
           session,
@@ -1489,8 +1506,8 @@ export function chatAction(
           modelIn(model),
           messageFrom(message),
           connection,
-          String(action.id ?? ''),
-          queued.attachments,
+          id,
+          read.attachments,
         ),
         (why) => refuse(connection.peer, channel, action, origin, why),
       );

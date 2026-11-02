@@ -1157,18 +1157,26 @@ export function piSession(
     })();
   };
 
-  /** Whatever was waiting, once the turn in front of it is done. */
+  /**
+   * Whatever was waiting, once the turn in front of it is done.
+   *
+   * The turn names the message as its `queuedMessageId`, which takes it out of
+   * every client's queue, and nothing is said before it: the reference host
+   * starts a queued message that way, and its chat finds the message a turn
+   * consumed in the queue it held when the turn started.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L283-L292
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2992-L2999
+   */
   const startNext = (): void => {
     if (closed || active !== undefined) return;
     const next = queued.shift();
     if (next === undefined) return;
     const id = String(next.id);
-    emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id });
     const command = bag(next.command);
     if (typeof command.text === 'string') {
       // A `!command` that waited. What waited is the command, not its text, so
       // it is run rather than asked about.
-      runCommand(id, String(command.text), command.run as RunCommand);
+      runCommand(id, String(command.text), command.run as RunCommand, id);
       return;
     }
     begin(
@@ -1187,7 +1195,7 @@ export function piSession(
    * pi has a shell of its own, but this turn is not pi's: the person asked the
    * host to run something, and the host owns the terminal a client watches.
    */
-  const runCommand = (turnId: string, command: string, run: RunCommand): void => {
+  const runCommand = (turnId: string, command: string, run: RunCommand, queuedMessageId?: string): void => {
     const startedAt = new Date().toISOString();
     const toolCallId = `${turnId}:shell`;
     const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
@@ -1204,7 +1212,7 @@ export function piSession(
     };
     active = { id: turnId, startedAt, message, responseParts: [part] };
     mapping = undefined;
-    emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message });
+    emit('chat', { type: 'chat/turnStarted', turnId, startedAt, message, ...(queuedMessageId !== undefined ? { queuedMessageId } : {}) });
     emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId, ...started });
     const held = bag(part.toolCall);
     held._meta = withCallTimes(bag(held._meta), callTimes(Date.now()));
@@ -1353,7 +1361,7 @@ export function piSession(
     },
 
     ran: (turnId, command, run, queuedAs) => {
-      if (active !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+      if (active !== undefined || queuedAs !== undefined) {
         const id = queuedAs ?? turnId;
         const message: Bag = { text: `!${command}`, origin: { kind: 'user' } };
         const entry: Bag = { id, command: { text: command, run }, message };
@@ -1361,10 +1369,10 @@ export function piSession(
         if (at >= 0) queued[at] = entry; else queued.push(entry);
         emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
+        // At once when nothing runs, as a queued message is.
+        startNext();
         return;
       }
-      // Taken out of the client's queue the way `startNext` takes one out.
-      if (queuedAs !== undefined) emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: queuedAs });
       runCommand(turnId, command, run);
     },
 
@@ -1510,6 +1518,13 @@ export function piSession(
       if (at >= 0) queued[at] = entry; else queued.push(entry);
       emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
       touch();
+      /*
+       * At once when nothing runs: "the server SHOULD immediately consume it",
+       * and the reference host starts an accepted queued message while its chat
+       * is idle.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
+       */
+      startNext();
     },
 
     unqueue: (id) => {

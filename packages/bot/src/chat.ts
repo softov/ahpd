@@ -31,8 +31,8 @@ import type { BotStore } from './store.js';
  * What this backend is for is the *log*: one JSON line per moment under
  * `<configDir>/bots/<slug>/logs/`, in the folder of the bot the chat is with -
  * a line when a turn begins, and a line when it ends with its response. A
- * message steered into a running turn is a turn of its own, written down the
- * same two ways. Nothing about a chat is kept in memory past the process that
+ * message steered into a running turn is a line of its own against that turn.
+ * Nothing about a chat is kept in memory past the process that
  * made it, so `list`, `find` and `transcript` read the folders and there is no
  * index that could fall out of step with them.
  */
@@ -351,14 +351,12 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     if (typeof said !== 'object' || said === null || Array.isArray(said)) continue;
     const held = said as Bag;
     /*
-     * A message somebody said into a turn that was already running, in a log
-     * written before a steer became a turn of its own.
+     * A message somebody said into a turn that was already running.
      *
-     * It is read as what it now would be written as: a turn of its own,
-     * finished, with the steered message and no reply. The line's id is the id
-     * of the turn it went into, so a turn of its own takes one derived from it:
-     * folding the two together would lose the steer the person watched happen.
-     * A log written since has no such line - a steer writes a turn instead.
+     * It is read as a turn of its own, finished, with the steered message and
+     * no reply. The line's id is the id of the turn it went into, so a turn of
+     * its own takes one derived from it: folding the two together would lose
+     * the steer the person watched happen.
      */
     if (held['steering'] === true) {
       mark ??= markIn(held);
@@ -1006,38 +1004,41 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       },
 
       /**
-       * A message said while a turn is running.
+       * A message into the turn that is running.
        *
-       * Nothing here can take one: a correction halfway is read by a model, and
-       * this chat runs none. The message is a turn of its own instead - the open
-       * turn ends complete with what it holds so far, and the steered text
-       * begins the next one, which is what a person watching the chat sees.
-       *
-       * It wakes whoever answers the chat again, and the wake steers the back
-       * session rather than starting it, so the answer after the steer lands in
-       * the steered turn rather than under the turn it interrupted.
+       * The turn goes on: the message is handed to whoever answers the chat as
+       * a message into the open turn, and the wake steers the back session,
+       * whose answer lands in that turn. The reference host hands steering into
+       * a running turn through its provider, and the turn goes on.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
        *
        * The id the host names is the client's steering message. It is said
        * back first, as the chat's steering message, so the client that sent it
-       * is answered inside its dispatch, and the new turn names it as its
-       * `queuedMessageId`, which takes it out of every client's state; the turn
-       * takes an id of its own. A message that was already waiting stays
-       * waiting: a steer is in front of it, and it starts when the steered turn
-       * ends.
+       * is answered inside its dispatch, and taken out once it is handed on,
+       * since the back session holds it from then. The message carries who sent
+       * it, so a correction an agent sent shows as that agent's.
        *
-       * The new turn carries who sent the steered message, so a correction an
-       * agent sent shows as that agent's turn rather than as the person's.
+       * Kept, as everything said in a chat is, on a line of its own against the
+       * turn it went into, so a chat read back after a restart still shows it.
        *
-       * False where there is no open turn to steer, which is a message the host
-       * refuses rather than one it quietly turns into a turn of its own.
+       * False where there is no open turn to steer: the host runs such a
+       * message as a turn of its own.
        */
       steer: (pendingId, text, attachments, from) => {
         const held = open;
         if (held === undefined) return false;
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message: messageOf(text, from, undefined, attachments) });
-        // Ended without the queue: the steered turn is in front of it.
-        finish(held, 'complete', [], false);
-        beginTurn(crypto.randomUUID(), text, from, pendingId, undefined, attachments);
+        const message = messageOf(text, from, undefined, attachments);
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message });
+        append(dir, id, { id: held.id, steering: true, message, _meta: mark });
+        handle.onMessage?.({
+          session: start.uri,
+          turnId: held.id,
+          text,
+          ...(from?.agent === undefined ? {} : { agent: from.agent }),
+          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+        });
+        start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id: pendingId });
+        touch();
         return true;
       },
 

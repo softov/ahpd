@@ -549,15 +549,15 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       /*
        * Held before the message is sent, so a back session that answers and
        * ends inside the send still finds the turn that is waiting on it. A steer
-       * into a session already working overwrites this entry with the steered
-       * turn, which is the turn the answer after it belongs to.
+       * into a session already working names the open turn it went into, which
+       * is the turn the answer after it belongs to.
        */
       answering.set(session, { session: message.session, turnId: message.turnId, handle, bot: bot.name });
       /*
        * The open turn shows what it is waiting on: the back session's chat, as
        * a subagent call a client opens. The title is the bot's, which is who
-       * the person is talking to; a steered message is a turn of its own, so
-       * the call is that turn's own and not the interrupted turn's.
+       * the person is talking to; a steer into the open turn keeps the call it
+       * already shows.
        */
       handle.working?.(looked.chat, bot.name);
       let refused: string | undefined;
