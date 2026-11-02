@@ -99,11 +99,13 @@ An unknown key is logged and ignored:
 | `terminalAutoApproveDefaults` | `--terminal-auto-approve-defaults` | `vscode` | The rules for a session whose window pushed none; `none` approves no command. See [Terminal rules](#terminal-rules) |
 | `wire` | `--wire` | | Log every frame to this file, for debugging |
 
-Keys with no flag: `httpApi`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
+Keys with no flag: `httpApi`, `mcpTools`, `modelProxy`, `usage`, `policies`, `service`, `mcpServers`, `commandParser`, `tunnelHosts`. Flags with no key: `--no-plugins`, `--no-cwd`, `--plugin-option`, `--stdio`, `--config-file`.
 
 `service.name` names the service a daemon runs under beside another on the same machine. See [More than one daemon](RUN.md#more-than-one-daemon).
 
 `modelProxy` holds the model names only: a provider is a connector now, added as [The model proxy](PROXY.md#adding-a-provider) says. A file that still writes `modelProxy.providers` stops the start.
+
+`httpApi` serves the HTTP API under `/api`, on the daemon's own listener or on a listener of its own with a `port`. `mcpTools` says what `/mcp` serves on that same listener: `none`, the default, answers 404, and `all` serves the host's tools that need no session to a person's MCP client. See [MCP](MCP.md).
 
 `tunnelHosts` lets the HTTP API answer to the host name of each tunnel on the list. The plugin routes answer to those names either way, because a webhook usually arrives through a tunnel. Off, the API takes only the names the deployment configured. A tunnel's name is fresh on every start, so there is nothing to write but `true`.
 

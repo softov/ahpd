@@ -32,10 +32,12 @@ const BUILT_IN: Record<string, Grant[]> = {
   admin: ['*:*'],
   // Works on this machine: files, sessions, a shell, the models the proxy
   // serves, and the trust a window answers a folder with. No automations.
-  member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'proxy:read', 'proxy:write', 'trust:write'],
+  member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'proxy:read', 'proxy:write', 'mcp:call', 'trust:write'],
   // Looks and does not touch: what the sessions and the automations are, and
-  // neither a file nor a shell nor a session of their own.
-  guest: ['session:read', 'automation:read'],
+  // neither a file nor a shell nor a session of their own. `mcp:call` is the
+  // door only; the tools behind it answer by the grants above it, so a guest
+  // reads its sessions through an MCP client and nothing more.
+  guest: ['session:read', 'automation:read', 'mcp:call'],
 };
 
 /**
@@ -71,6 +73,9 @@ export const SUBJECTS = [
   // Calling a model through the proxy (write) and listing the names it serves
   // (read), which spends the host's provider keys.
   'proxy',
+  // Running the host's tools from a person's MCP client at `/mcp`, which the
+  // gate asks for as `mcp:call`; the write group covers it.
+  'mcp',
   // Pushing a window's answer about a folder to this host, which decides what
   // that window's sessions load from the project. The gate asks for
   // `trust:push`, and the write group covers it.
@@ -233,6 +238,12 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
     description: 'Calling a model through this host\'s proxy, and listing the names it serves.',
     operations: ['models', 'call'],
     groups: { read: ['models'], write: ['call'] },
+  },
+  mcp: {
+    title: 'MCP gateway',
+    description: 'Running the host\'s tools, which need no session, from a person\'s MCP client at /mcp.',
+    operations: ['call'],
+    groups: { read: [], write: ['call'] },
   },
   // The third of those, and the only one with nothing to write: what the
   // harness says about who it is signed in as, which only the harness can know.

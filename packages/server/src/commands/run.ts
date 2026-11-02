@@ -69,6 +69,7 @@ import { here } from '../ask.js';
 import { offerConfigure, askToServe } from './configure.js';
 import { agentPluginsDir, automationsDir, automationsPath, automationStatePath, configDir, configPath, customizationStatePath, daemonLog, hostId, isIdentifier, namedIssuer, policiesPath, sessionsDir, sessionsPath, signInIdentifier, urlHost, vaultPath } from '../config.js';
 import { API_PREFIX, apiHandler, json, listenApi, plainRequests, pluginRoutes, withoutApi, type ApiListener, type ApiOrigins } from '../http.js';
+import { mcpHandler } from '../mcp.js';
 import { servedRegistry, type ServedFacts } from './served.js';
 import { updateMethod } from './update.js';
 import { connectorModels, proxyHandler, type ProxyOptions } from '../proxy/listener.js';
@@ -651,7 +652,23 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     otherwise: api ?? (async () => new Response(null, { status: 404 })),
     onProblem: stamp,
   };
-  const served = api === undefined ? undefined : proxyHandler(proxied);
+  /*
+   * The daemon's HTTP doors: `/mcp` for a person's MCP client, then the proxy
+   * under `/v1` and the API under `/api`. `/mcp` sits in front because it is
+   * one path of its own and the proxy answers another; a path that is neither
+   * falls through to the API, which is where it ended before.
+   *
+   * The host is read through the closure rather than handed over here: this
+   * chain is built before `createHost` runs, and a sessionless list is built
+   * for one caller on each request anyway.
+   */
+  const served = api === undefined ? undefined : mcpHandler({
+    setting: options.mcpTools,
+    caller: { ...(token === undefined ? {} : { token }), ...(users === undefined ? {} : { users }) },
+    tools: (caller) => host.sessionlessTools(caller),
+    otherwise: proxyHandler(proxied),
+    version: version(),
+  });
   /*
    * Who may open a connection on the daemon's own port: the deployment's own
    * token, which is the host, and a person's token that the directory knows.

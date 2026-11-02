@@ -376,6 +376,15 @@ export interface Config {
    * asked for an API keeps.
    */
   httpApi?: boolean | HttpSetting;
+  /**
+   * What `/mcp` serves to a person's MCP client.
+   *
+   * `none`, the default, answers 404 there and leaves the path to nobody.
+   * `all` serves every tool the caller's grants allow that needs no session,
+   * which is the session tools first. The door needs `httpApi` on, because
+   * `/mcp` is served on the same listener as `/api`.
+   */
+  mcpTools?: 'none' | 'all';
   /** Where the plugins' routes are served. Absent is the daemon's own listener. */
   routes?: RoutesSetting;
   /**

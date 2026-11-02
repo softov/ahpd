@@ -95,7 +95,7 @@ beside them, every scheme this host serves - `user`, `team`, `project`, `role`,
 operations its provider implements and the groups those fall into. A client
 drawing a role editor reads that one key and has every subject there is.
 
-The subjects the host decides are these fifteen:
+The subjects the host decides are these sixteen:
 
 | Subject | Read group | Write group | What they cover |
 | --- | --- | --- | --- |
@@ -112,15 +112,17 @@ The subjects the host decides are these fifteen:
 | `container` | - | `connect`, `disconnect`, `relay`, `stop`, `remove` | Connecting to dev containers, and stopping or removing one |
 | `node` | `list` | `add`, `remove` | The hosts that joined this one. `node:read` lists them; `node:write` adds a node and mints its token, which is shown once, and takes one away, which refuses its token and drops its connection |
 | `proxy` | `models` | `call` | The model proxy under `/v1` ([PROXY.md](../server/PROXY.md)). `proxy:call` calls a model, which spends this host's provider keys; `proxy:models` lists the model names |
+| `mcp` | - | `call` | Running the host's tools from a person's MCP client at `/mcp` ([MCP.md](../server/MCP.md)). `mcp:call` is what the door asks; each tool checks its own grants again |
 | `trust` | - | `push` | Pushing a window's answer about a folder to this host, which decides what that window's sessions load from the project. A window answers for every folder at once ([Trusted folders](AUTHENTICATION.md#trusted-folders)) |
 | `account` | `status` | - | The account each agent's harness is signed in as, published on the root config under `vscode.codexAccount` for Codex and `ahpd.<provider>Account` for the rest. The email is the operator's own, so a connection that does not hold `account:read` is shown no account value at all ([Agent accounts](AUTHENTICATION.md#agent-accounts)) |
 
-`proxy` and `trust` have no scheme of their own: a client never reads a
-`proxy://` or a `trust://` URI, so nothing asks for a resource operation on
-either. The gate behind them is on two other surfaces - the root config, where
-a push asks for `trust:push`, and the proxy's `/v1`, where a call asks for
-`proxy:call` and a model list asks for `proxy:models`. The gate asks the
-operation, and each subject's group in the table above covers it.
+`proxy`, `mcp` and `trust` have no scheme of their own: a client never reads a
+`proxy://`, an `mcp://` or a `trust://` URI, so nothing asks for a resource
+operation on any of them. The gate behind them is on other surfaces - the root
+config, where a push asks for `trust:push`, the proxy's `/v1`, where a call
+asks for `proxy:call` and a model list asks for `proxy:models`, and `/mcp`,
+where a call asks for `mcp:call`. The gate asks the operation, and each
+subject's group in the table above covers it.
 
 The rest are the people schemes and any plugin's, which share the `file`
 operations under their own name:
@@ -155,8 +157,8 @@ member of. Every other pool is refused until a role names the grant.
 | Role | Has |
 | --- | --- |
 | `admin` | `*:*` |
-| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `trust:write` |
-| `guest` | `session:read`, `automation:read` |
+| `member` | `file:read`, `file:write`, `session:read`, `session:write`, `terminal:read`, `terminal:write`, `proxy:read`, `proxy:write`, `mcp:call`, `trust:write` |
+| `guest` | `session:read`, `automation:read`, `mcp:call` |
 
 `guest` is the default for `ahpd user add` with no `--role`, and it is the one
 worth looking at twice: it lists the sessions and the automations and can do
