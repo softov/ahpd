@@ -463,7 +463,8 @@ describe('driving a turn', () => {
   });
 
   /**
-   * A failure is about the turn that failed, not about the chat for ever.
+   * A failure is about the turn that failed, not about the chat or its
+   * session for ever.
    *
    * `Status.Error` was read off a flag that was set when a turn failed and
    * never unset, so one bad tool call left every client showing the session
@@ -471,8 +472,12 @@ describe('driving a turn', () => {
    * client, because the flag lives in the host rather than in the client that
    * draws it. The only way back was a new session. The chat's status is the
    * protocol's chat reducer's over its turns, and the failure is the turn's.
+   * A session shows it where the protocol puts a chat's status: the session's
+   * row for the chat, and its own row in the session list, whose status is
+   * the default chat's.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-session/state.ts#L465-L480
    */
-  it('stops calling a chat failed once it is working again', async () => {
+  it('stops calling a chat or its session failed once it is working again', async () => {
     const { client, uri, chatUri } = await running();
     type Part = { kind: string; error?: { message?: string } };
     const seen = async (): Promise<{ status: number; turns: { state?: string; responseParts: Part[] }[] }> =>
@@ -481,6 +486,20 @@ describe('driving a turn', () => {
       }).snapshot.state;
     // The activity bits, without the read and archived flags.
     const statusOf = async (): Promise<number> => (await seen()).status & (Status.IsRead - 1);
+    /** The session's own error, its row for the chat, and its row in the session list, by their activity bits. */
+    const sessionSide = async (): Promise<{ error: unknown; row: number; listed: number }> => {
+      const session = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
+        snapshot: { state: { error?: unknown; chats: { resource: string; status: number }[] } };
+      }).snapshot.state;
+      const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+        items: { resource: string; status: number }[];
+      };
+      return {
+        error: session.error,
+        row: (session.chats.find((one) => one.resource === chatUri)?.status ?? 0) & (Status.IsRead - 1),
+        listed: (listed.items.find((one) => one.resource === uri)?.status ?? 0) & (Status.IsRead - 1),
+      };
+    };
 
     client.handle({
       method: 'dispatchAction',
@@ -497,6 +516,7 @@ describe('driving a turn', () => {
     const failed = (await seen()).turns.at(-1);
     expect(failed?.state).toBe('error');
     expect(failed?.responseParts.at(-1)).toMatchObject({ kind: 'error', error: { message: 'the tool exploded' } });
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.Error, listed: Status.Error });
 
     // The next thing asked of it. Running, not still in error, from the
     // moment the turn starts - the chat does not wait for it to succeed to
@@ -507,9 +527,11 @@ describe('driving a turn', () => {
     });
     await settle();
     expect(await statusOf()).toBe(Status.InProgress);
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.InProgress, listed: Status.InProgress });
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
     expect(await statusOf()).toBe(Status.Idle);
+    expect(await sessionSide()).toEqual({ error: undefined, row: Status.Idle, listed: Status.Idle });
   });
 
   it('says a turn ended badly even when the harness gave no words', async () => {
