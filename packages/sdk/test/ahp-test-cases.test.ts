@@ -25,7 +25,6 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -33,6 +32,7 @@ import {
   IS_CLIENT_DISPATCHABLE, resourceWatchReducer, rootReducer, sessionReducer, SUPPORTED_PROTOCOL_VERSIONS,
   terminalReducer,
 } from '@microsoft/agent-host-protocol';
+import { localPath } from '../src/resources/fileuri.js';
 import type { Peer } from '../src/types/rpc.js';
 
 const sdk = vi.hoisted(() => ({ queries: [] as { frames: Record<string, unknown>[]; wake: (() => void) | undefined; closed: boolean }[] }));
@@ -522,7 +522,7 @@ const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: 
     source: `types/channels-chat/actions.ts, chat/toolCallContentChanged: ${CONTRIBUTOR}`,
   }],
   'chat/workingDirectorySet': [{
-    said: (action, where) => `${fileURLToPath(String(action.directory))} is not a working directory of ${where.session}`,
+    said: (action, where) => `${localPath(String(action.directory))} is not a working directory of ${where.session}`,
     source: 'types/channels-chat/actions.ts, chat/workingDirectorySet: "`directory` MUST be one of the owning session\'s SessionState.workingDirectories; a host MUST reject a directory that is not."',
   }],
   'session/configChanged': [{
@@ -540,7 +540,7 @@ const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: 
     source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
   }],
   'session/workingDirectorySet': [{
-    said: (action) => `Workspace trust was not granted for '${fileURLToPath(String(action.directory))}'`,
+    said: (action) => `Workspace trust was not granted for '${localPath(String(action.directory))}'`,
     source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
   }],
   'chat/truncated': [{
