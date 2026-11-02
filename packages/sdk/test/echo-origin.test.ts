@@ -412,10 +412,15 @@ it('echoes a denial with everything the client sent, over the backend\'s own wor
  * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
  */
 it('answers a draft sent after a turn start after that start', async () => {
-  const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 0 })));
+  const { agent, release } = gated(echo({ path: dir, pace: 0 }));
+  const { host, p, dispatch } = await serving(agent);
   p.heard.length = 0;
   await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
   await dispatch(2, { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' } } });
+  await settle();
+  // The start is the backend's to say, and it has not begun the turn yet.
+  expect(p.heard.some((one) => one.origin !== undefined)).toBe(false);
+  release();
   await until(() => p.heard.some((one) => one.origin?.clientSeq === 2), 'the draft');
   expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
   await host.close();
