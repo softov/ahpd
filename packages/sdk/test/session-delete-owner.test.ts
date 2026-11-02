@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { hostTools } from '../src/tools/index.js';
@@ -157,14 +158,14 @@ const open = (client: Client, name: string): Promise<unknown> =>
  * A session tool acts as the person of the turn it runs in, so a case that
  * wants a tool to act as somebody has to put that somebody in a turn. The turn
  * is left running: the backend is paced, and the call is made while its words
- * are still arriving. The channel is the session's rather than a chat's, which
- * is how a client says something to a session without having asked for a chat.
+ * are still arriving. The channel is the session's default chat, the chat a
+ * client says something to the session as a whole in.
  */
 const saying = (client: Client, name: string, text: string): Promise<unknown> =>
   client.handle({
     method: 'dispatchAction',
     params: {
-      channel: `ahp-session:/${name}`,
+      channel: chatUriFor(`ahp-session:/${name}`),
       action: { type: 'chat/turnStarted', turnId: crypto.randomUUID(), message: { text } },
     },
   });

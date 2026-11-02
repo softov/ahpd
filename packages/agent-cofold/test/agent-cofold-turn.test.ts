@@ -162,14 +162,21 @@ it('carries the model a turn runs on, on the message', async () => {
   expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/x');
 });
 
-it('carries the configured model when the turn names none', async () => {
+/*
+ * The turn's start is said back as the client sent it: a turn that named no
+ * model is one whose message names none, whatever the session runs it on. The
+ * reference host emits the client's action itself.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('says a turn that names no model back with none, and runs it on the configured one', async () => {
   const model = createFakeModel({ script: [{ text: 'ok' }], stream: true });
   const { client, peer: p, chatUri } = await talking(model, [], { model: 'open_router/y' });
   begin(client, chatUri, 't1', 'hi');
   await until(() => ended(p, chatUri));
 
   const started = actions(p, chatUri).find((e) => e.action.type === 'chat/turnStarted');
-  expect((started?.action.message as { model?: { id?: string } }).model?.id).toBe('open_router/y');
+  expect((started?.action.message as { model?: unknown }).model).toBeUndefined();
+  expect(model.requests).toHaveLength(1);
 });
 
 it('runs a turn on the model the turn names, with no model in the session config', async () => {
@@ -438,6 +445,59 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
   expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
   expect(said).not.toContain('chat/turnComplete');
   expect(said.at(-1)).toBe('chat/turnCancelled');
+});
+
+/*
+ * A stop is said when it is taken, and the run lets its turn go after. What a
+ * client sends between the two is sent to an idle chat, and is applied to one
+ * once the run has let the stopped turn go.
+ */
+it('begins a turn sent after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  // The run holds the stopped turn until its model is released.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 7)?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  expect(answer(p, chatUri, 7)?.rejectionReason).toBeUndefined();
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+  expect(started).toEqual(['t1', 't2']);
+  expect(asked.at(-1)).toContain('second');
+});
+
+it('runs a message queued after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 8)?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1' });
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started[1]).toMatchObject({ queuedMessageId: 'q1', message: { text: 'later' } });
+  expect(asked.at(-1)).toContain('later');
 });
 
 /** The envelope that answers the dispatch this client numbered `clientSeq`. */

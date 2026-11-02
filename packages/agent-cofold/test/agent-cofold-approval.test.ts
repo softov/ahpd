@@ -382,9 +382,9 @@ it('denies a tool, carries the reason and does not run it', async () => {
 
   expect(ran).toEqual([]);
   const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
-  // The reason the model is given, said back as well so the client can draw
-  // why the row was cancelled rather than only that it was.
-  expect(String(confirmed?.action.reason)).toContain('declined');
+  // Said back as the client sent it, its reason with it, and the model is
+  // given cofold's own words for a declined call.
+  expect(confirmed?.action.reason).toBe('denied');
   expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
 
   const { chat, session } = reduced(p, uri, chatUri);

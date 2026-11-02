@@ -154,6 +154,8 @@ export interface Dispatched {
    * its answer later.
    */
   taken?: true;
+  /** Set once the dispatch is owed to a backend that says it back when it is ready. */
+  owed?: true;
 }
 
 /** What a name this host holds is. */

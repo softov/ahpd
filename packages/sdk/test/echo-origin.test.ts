@@ -158,6 +158,11 @@ it('gives each chat its own turn\'s origin when two chats start a turn of the sa
     method: 'dispatchAction',
     params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'two' } } },
   });
+  // The second is applied once the first is answered: the client's answers
+  // go out in the order it sent its actions.
+  release();
+  await until(() => p.heard.some((one) => one.channel === CHAT && one.action.type === 'chat/turnStarted'), 'the first start');
+  await settle();
   release();
   await until(() => p.heard.filter((one) => one.action.type === 'chat/turnComplete').length === 2, 'both turns');
 
@@ -256,30 +261,36 @@ it('gives a resume its origin when the backend says it reopened the turn', async
 });
 
 /*
- * A stop the backend takes and never says, because the turn it stopped
- * finished first, is still the client's dispatch: it is answered by the
- * client's own action, after the end, where it reduces to nothing.
- * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+ * A stop is said when it is taken, so the turn ends in every client's state
+ * at once, and the backend is told after. A backend that finishes the turn
+ * anyway says an end of a turn that no longer runs, which is not said: a turn
+ * ends once. The reference host takes a client's cancel into its state and
+ * then aborts the agent.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13526-L13537
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
  */
-it('answers a stop its backend never says, once the turn it stopped has finished', async () => {
+it('says a stop when it is taken, and nothing of the turn its backend ends after', async () => {
   const base = echo({ path: dir, pace: 5 });
   const finishing: Agent = {
     ...base,
     create: (start: Start): Session => ({ ...(base.create(start) as Session), cancel: () => {} }),
   };
-  const { host, p, dispatch } = await serving(finishing);
+  const { host, p, client, dispatch } = await serving(finishing);
   p.heard.length = 0;
   await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the start');
-  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1' });
-  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
-  await settle();
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1', duration: 3 });
+  const stopped = p.heard.filter((one) => one.action.type === 'chat/turnCancelled');
+  expect(stopped.map((one) => [one.origin?.clientSeq, one.action.duration])).toEqual([[2, 3]]);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { activeTurn?: unknown; turns: { id: string; state: string }[] } };
+  }).snapshot.state;
+  expect(held.activeTurn).toBeUndefined();
+  expect(held.turns.map((one) => [one.id, one.state])).toEqual([['t1', 'cancelled']]);
 
-  const said = p.heard.map((one) => [one.action.type, one.origin?.clientSeq]);
-  const ended = said.findIndex(([type]) => type === 'chat/turnComplete');
-  const stopped = said.findIndex(([type, seq]) => type === 'chat/turnCancelled' && seq === 2);
-  expect(stopped).toBeGreaterThan(ended);
-  expect(said.filter(([, seq]) => seq === 2)).toHaveLength(1);
+  // The backend runs its words out and completes the turn it was never told to stop.
+  await new Promise((done) => { setTimeout(done, 120); });
+  expect(p.heard.some((one) => one.action.type === 'chat/turnComplete')).toBe(false);
   await host.close();
 });
 
@@ -305,5 +316,159 @@ it('answers a draft its backend says and then fails on once, with its echo', asy
 
   const answers = p.heard.filter((one) => one.origin?.clientSeq === 9) as (Heard & { rejectionReason?: string })[];
   expect(answers.map((one) => [one.action.type, one.rejectionReason])).toEqual([['chat/draftChanged', undefined]]);
+  await host.close();
+});
+
+/*
+ * A chat's action travels on a chat's channel, and its client holds it
+ * pending on the subscription it sent it on: one sent on a session's channel
+ * is refused there, and moves no chat.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L54
+ */
+it('refuses a chat\'s action sent on a session\'s channel', async () => {
+  const { host, p, client } = await serving(echo({ path: dir, pace: 0 }));
+  p.heard.length = 0;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: SESSION, clientSeq: 4, action: { type: 'chat/draftChanged', draft: { text: 'here?', origin: { kind: 'user' } } } },
+  });
+  await settle();
+  const answers = p.heard.filter((one) => one.origin?.clientSeq === 4) as (Heard & { rejectionReason?: string })[];
+  expect(answers.map((one) => [one.channel, one.rejectionReason])).toEqual([[SESSION, `chat/draftChanged is a chat's action, and ${SESSION} is not a chat`]]);
+  expect(p.heard.some((one) => one.channel === CHAT)).toBe(false);
+  await host.close();
+});
+
+/*
+ * A rename sent on a chat's channel renames that chat, as the reference client
+ * sends it, and is answered on that channel: the rename itself is said on the
+ * session's, under no origin.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L8015-L8025
+ */
+it('answers a rename sent on a chat\'s channel on that channel', async () => {
+  const { host, p, client } = await serving(echo({ path: dir, pace: 0 }));
+  p.heard.length = 0;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, clientSeq: 5, action: { type: 'session/titleChanged', title: 'Renamed' } },
+  });
+  await settle();
+  expect(p.heard.filter((one) => one.origin?.clientSeq === 5).map((one) => one.channel)).toEqual([CHAT]);
+  const renamed = p.heard.filter((one) => one.channel === SESSION && one.action.type === 'session/titleChanged');
+  expect(renamed.map((one) => [one.action.title, one.origin])).toEqual([['Renamed', undefined]]);
+  await host.close();
+});
+
+/*
+ * The answer a backend says is the client's own action: a denial carries the
+ * reason, the words and the suggestion the client gave, whatever the backend
+ * rebuilt it as. The reference host emits the client's action itself.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('echoes a denial with everything the client sent, over the backend\'s own word for it', async () => {
+  const base = echo({ path: dir, pace: 50 });
+  const asking: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return {
+        ...session,
+        begin: (...args: Parameters<Session['begin']>) => {
+          session.begin(...args);
+          const turnId = args[0];
+          start.emit('chat', { type: 'chat/toolCallStart', turnId, toolCallId: 'call-1', toolName: 'bash', displayName: 'Bash' });
+          start.emit('chat', { type: 'chat/toolCallReady', turnId, toolCallId: 'call-1', invocationMessage: 'Run ls', toolInput: 'ls' });
+        },
+        confirm: (toolCallId: string, approved: boolean) => {
+          start.emit('chat', { type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId, approved, reason: 'denied' });
+          return true;
+        },
+      };
+    },
+  };
+  const { host, p, client, dispatch } = await serving(asking);
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { text: 'a turn long enough to be asked about', origin: { kind: 'user' } } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/toolCallReady'), 'the question');
+  const denial = {
+    type: 'chat/toolCallConfirmed', turnId: 't1', toolCallId: 'call-1', approved: false,
+    reason: 'denied', reasonMessage: 'not on this tree', userSuggestion: 'list the parent instead',
+  };
+  await dispatch(2, denial);
+  await settle();
+  const answered = p.heard.filter((one) => one.origin?.clientSeq === 2);
+  expect(answered.map((one) => one.action)).toEqual([denial]);
+  const held = (await client.handle({ method: 'subscribe', params: { channel: CHAT } }) as {
+    snapshot: { state: { activeTurn: { responseParts: { toolCall?: Bag }[] } } };
+  }).snapshot.state;
+  expect(held.activeTurn.responseParts.find((one) => one.toolCall !== undefined)?.toolCall)
+    .toMatchObject({ status: 'cancelled', reasonMessage: 'not on this tree', userSuggestion: 'list the parent instead' });
+  await host.close();
+});
+
+/*
+ * A client holds its actions pending in the order it sent them and matches
+ * each answer at the head of that list, so an action sent after one a backend
+ * answers later is answered after it.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
+ */
+it('answers a draft sent after a turn start after that start', async () => {
+  const { agent, release } = gated(echo({ path: dir, pace: 0 }));
+  const { host, p, dispatch } = await serving(agent);
+  p.heard.length = 0;
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await dispatch(2, { type: 'chat/draftChanged', draft: { text: 'next', origin: { kind: 'user' } } });
+  await settle();
+  // The start is the backend's to say, and it has not begun the turn yet.
+  expect(p.heard.some((one) => one.origin !== undefined)).toBe(false);
+  release();
+  await until(() => p.heard.some((one) => one.origin?.clientSeq === 2), 'the draft');
+  expect(p.heard.filter((one) => one.origin !== undefined).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
+  await host.close();
+});
+
+/** The echo backend, taking two config keys and holding one more fixed from its start. */
+const configured = (): Agent => {
+  const base = echo({ path: dir, pace: 0 });
+  return {
+    ...base,
+    schema: () => ({
+      ...base.schema(),
+      properties: { ...(base.schema().properties as Bag), room: { type: 'string', title: 'Room', sessionMutable: false } },
+    }),
+    defaults: () => ({ ...base.defaults(), room: 'a' }),
+    create: (start: Start): Session => ({ ...(base.create(start) as Session), setConfig: () => true }),
+  };
+};
+
+/*
+ * A config change is one action, and the server validates and broadcasts it:
+ * its client is answered once, with every key it took, as the reference host
+ * checks every key and then says the client's action once.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L603-L608
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13548-L13588
+ */
+it('answers a config change naming two keys once, with both', async () => {
+  const { host, p, client } = await serving(configured());
+  p.heard.length = 0;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: SESSION, clientSeq: 6, action: { type: 'session/configChanged', config: { voice: 'shouty', style: 'brief' } } },
+  });
+  await settle();
+  const answered = p.heard.filter((one) => one.origin?.clientSeq === 6);
+  expect(answered.map((one) => one.action)).toEqual([{ type: 'session/configChanged', config: { voice: 'shouty', style: 'brief' } }]);
+  await host.close();
+});
+
+it('answers a config change naming only a fixed key that did not move', async () => {
+  const { host, p, client } = await serving(configured());
+  p.heard.length = 0;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: SESSION, clientSeq: 7, action: { type: 'session/configChanged', config: { room: 'a' } } },
+  });
+  await settle();
+  const answered = p.heard.filter((one) => one.origin?.clientSeq === 7) as (Heard & { rejectionReason?: string })[];
+  expect(answered.map((one) => [one.action, one.rejectionReason])).toEqual([[{ type: 'session/configChanged', config: { room: 'a' } }, undefined]]);
   await host.close();
 });

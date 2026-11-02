@@ -271,14 +271,14 @@ describe('what it will not pretend', () => {
   });
 
   it('refuses an action a client is not allowed to originate, and says which', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, chatUri } = await running();
     // `chat/delta` is this host telling clients what it did. One arriving
     // *from* a client is a client lying about what happened - and it is told
     // so, because a dispatch dropped in silence leaves the client's
     // optimistic state diverged with nothing to reconcile against.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/delta', turnId: 't1', partId: 'p', content: 'x' } },
+      params: { channel: chatUri, action: { type: 'chat/delta', turnId: 't1', partId: 'p', content: 'x' } },
     });
     expect(sdk.said).toEqual([]);
     const refused = p.notes.filter((note) => note.method === 'action').at(-1);
@@ -288,9 +288,10 @@ describe('what it will not pretend', () => {
   });
 
   it('tells a host-only action apart from one it has not got round to', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
+    // Each on the channel its prefix names.
     const why = (action: Record<string, unknown>) => {
-      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      client.handle({ method: 'dispatchAction', params: { channel: String(action.type).startsWith('chat/') ? chatUri : uri, action } });
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };
@@ -306,9 +307,9 @@ describe('what it will not pretend', () => {
   });
 
   it('says what is actually wrong with a dispatch, not only that it is unserved', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     const why = (action: Record<string, unknown>) => {
-      client.handle({ method: 'dispatchAction', params: { channel: uri, action } });
+      client.handle({ method: 'dispatchAction', params: { channel: chatUri, action } });
       const refused = p.notes.filter((note) => note.method === 'action').at(-1);
       return String((refused?.params as { rejectionReason?: string }).rejectionReason);
     };

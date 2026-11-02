@@ -253,11 +253,11 @@ describe('choosing a model', () => {
   });
 
   it('runs the turn on the model the turn named, and keeps it', async () => {
-    const { client, uri } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         // `ModelSelection`, which is an object. This test used to send a bare
         // string and the host used to read one, so the two agreed with each
         // other and with nothing a client sends.
@@ -276,11 +276,11 @@ describe('choosing a model', () => {
   });
 
   it('puts the session\'s current model under _meta, where an extension belongs', async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'haiku' } } },
       },
     });

@@ -745,13 +745,17 @@ export function createHost(options: HostOptions): Host {
    * back carrying that number. Without the echo a client cannot tell its own
    * write from somebody else's, and cannot do the optimistic half at all.
    *
-   * The echo is the one action that is the client's own: its type, and its
-   * turn when the client named one. Everything else the dispatch causes - the
-   * title a first turn gives a session, a chat's row, what the agent says - is
-   * this host's, and carries no origin: the protocol reads an origin as the
-   * client that produced the action, and a client that found its own on an
-   * action it never sent would take that action for its own.
+   * The echo is the one action that is the client's own: on the channel the
+   * client sent it on, of its type, naming the turn, call, request or message
+   * the client named. Everything else the dispatch causes - the title a first
+   * turn gives a session, a chat's row, what the agent says - is this host's,
+   * and carries no origin: the protocol reads an origin as the client that
+   * produced the action, and a client that found its own on an action it
+   * never sent would take that action for its own. Each client holds its
+   * pending actions per subscription, so an answer on another channel answers
+   * nothing it holds.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
    *
    * A variable rather than an argument threaded through everything, because
    * the echo is usually several layers down: a client's `chat/turnStarted`
@@ -769,66 +773,44 @@ export function createHost(options: HostOptions): Host {
    * (`Start.handed`), which is why the sender, the channel and the action are
    * held beside the origin, here and in `owed`.
    */
-  let applying: (Dispatched & { type: string; turnId: string; answered: boolean }) | undefined;
+  let applying: (Dispatched & { answered: boolean }) | undefined;
   /**
-   * The echoes a backend still owes, by the chat, the action and what it names.
+   * The echoes a backend still owes, by the channel each dispatch came on, the
+   * action and what it names.
    *
-   * A turn begun or stopped, a message queued, and a client's result for a
-   * tool call it runs are said back by the backend, and a backend says it when
-   * it is ready: once a policy check or a machine has answered, once Claude
-   * has switched models, once pi, cofold or ACP has let the cancelled prompt
-   * go, once the host inside a machine has answered the proxy, once the
-   * harness has written the tool's result. The turn id, the queued message's
-   * own id, or the tool call's, is the one thing that action carries that
-   * names the client's dispatch, the way `senders` follows a turn by its id.
-   * A client names its own turns and messages, so two chats can each hold one
-   * of the same id, and the chat is part of the key. Let go of once said, once
-   * refused, and once the turn has ended.
+   * A turn begun and a message queued are said back by the backend, and a
+   * backend says it when it is ready: once a policy check or a machine has
+   * answered, once Claude has switched models, once the host inside a machine
+   * has answered the proxy. The turn id, or the queued message's own id, is the
+   * one thing that action carries that names the client's dispatch, the way
+   * `senders` follows a turn by its id. A client names its own turns and
+   * messages, so two chats can each hold one of the same id, and the channel
+   * is part of the key. Let go of once said, once refused, and once the turn
+   * has ended.
    */
   const owed = new Map<string, Dispatched>();
-  const owedKey = (chat: string, type: string, name: string): string => `${chat}\n${type}\n${name}`;
+  const owedKey = (channel: string, type: string, name: string): string => `${channel}\n${type}\n${name}`;
   /**
-   * The chat a chat action on `channel` is about, as a dispatch reads it: a
-   * chat channel names that chat, and a session channel its default chat,
-   * which is the chat the backend says the answer on.
-   */
-  const chatAbout = (channel: string): string => {
-    if (byChat.has(channel)) return channel;
-    const holding = sessions.get(channel);
-    return (holding === undefined ? undefined : leadOf(holding)?.chatUri) ?? channel;
-  };
-  /**
-   * Where the dispatch an action says back is owed: under the chat it is about,
-   * the action's kind, and the queued message it is, the tool call it
-   * completes, or the turn it names.
-   *
-   * A queued message is also what a client's turn of the same id became. A
-   * command sent as a turn while another turn runs waits behind it as a queued
-   * message under the turn's id, and runs as any queued message runs once the
-   * turn in front of it ends, so the client is told of its turn by that
-   * message. An absent `kind` is `queued`, as the protocol reads one.
+   * Where the dispatch an action says back is owed: under its channel, the
+   * action's kind, and the queued message it is or the turn it names.
    */
   const owedUnder = (channel: string, action: Record<string, unknown>): string | undefined => {
-    const queued = action.type === 'chat/pendingMessageSet';
-    const named = queued ? action.id
-      : action.type === 'chat/toolCallComplete' ? action.toolCallId
-        : action.turnId;
+    const named = action.type === 'chat/pendingMessageSet' ? action.id : action.turnId;
     if (typeof named !== 'string' || named === '') return undefined;
-    const chat = chatAbout(channel);
-    const own = owedKey(chat, String(action.type ?? ''), named);
-    const turn = owedKey(chat, 'chat/turnStarted', named);
-    return queued && action.kind !== 'steering' && !owed.has(own) && owed.has(turn) ? turn : own;
+    return owedKey(channel, String(action.type ?? ''), named);
   };
+  /** The fields that name what a client's action is about: a turn, a tool call, an input request, a pending message. */
+  const NAMING = ['turnId', 'toolCallId', 'requestId', 'id'] as const;
   /**
    * The client's dispatch an action says back: the dispatch being applied,
-   * when the action is of its kind and about its turn, or one a backend owes
-   * in the action's chat under what the action names.
+   * when the action is on its channel, of its kind, and names each thing the
+   * client's names, or one a backend owes on the action's channel under what
+   * the action names.
    */
   const answering = (channel: string, action: Record<string, unknown>): Dispatched | undefined => {
-    const type = String(action.type ?? '');
-    const turnId = typeof action.turnId === 'string' ? action.turnId : '';
-    if (applying !== undefined && !applying.answered && applying.type === type
-      && (applying.turnId === '' || applying.turnId === turnId)) return applying;
+    const sent = applying?.action;
+    if (applying !== undefined && sent !== undefined && !applying.answered && applying.channel === channel && sent.type === action.type
+      && NAMING.every((key) => typeof sent[key] !== 'string' || sent[key] === '' || sent[key] === action[key])) return applying;
     const key = owedUnder(channel, action);
     return key === undefined ? undefined : owed.get(key);
   };
@@ -841,6 +823,27 @@ export function createHost(options: HostOptions): Host {
    */
   const said = new WeakSet<Origin>();
   /**
+   * The connections waiting on a dispatch's answer before they apply their
+   * next, by the dispatch's origin: what `applyNow` returns for a dispatch a
+   * backend answers later.
+   */
+  const awaited = new Map<Origin, () => void>();
+  /** A dispatch answered: held in `said`, and the connection waiting on it let go. */
+  const told = (origin: Origin): void => {
+    said.add(origin);
+    const next = awaited.get(origin);
+    if (next === undefined) return;
+    awaited.delete(origin);
+    next();
+  };
+  /**
+   * The dispatches waiting on a chat whose backend still runs a turn the chat
+   * has ended, by the chat's channel: a client's stop is said when it is
+   * taken, and the backend lets the turn go when it can. Each is let go by
+   * the backend's end of that turn.
+   */
+  const stopping = new Map<string, (() => void)[]>();
+  /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
    */
@@ -849,7 +852,7 @@ export function createHost(options: HostOptions): Host {
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
     owed.delete(owedUnder(channel, action) ?? '');
-    said.add(answered.origin);
+    told(answered.origin);
     return answered.origin;
   };
   /**
@@ -862,7 +865,7 @@ export function createHost(options: HostOptions): Host {
    */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
-    said.add(origin);
+    told(origin);
     if (applying?.origin === origin) applying.answered = true;
     const key = owedUnder(channel, action) ?? '';
     const held = owed.get(key)?.origin;
@@ -961,36 +964,50 @@ export function createHost(options: HostOptions): Host {
     answeredBy(channel, named, action);
     const origin = named ?? originOf(channel, action);
     /*
-     * A turn that ends owes its clients the answers its backend has not said:
-     * a stop it never said because the turn finished first, a client's result
-     * it had not taken, or a start it ended before saying. Each is the client's
-     * own action under its origin, "echoed back ... once accepted". The start
-     * goes out ahead of the end, so the reducer has the turn the end closes;
-     * the others go after it, where they reduce to nothing and answer their
-     * dispatches.
+     * A turn that ends before its backend said its start owes its client that
+     * start, the client's own action under its origin, "echoed back ... once
+     * accepted". It goes out ahead of the end, so the reducer has the turn the
+     * end closes.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
-     *
-     * An end is the backend's or this host's, or a client's stop of the turn
-     * the chat holds running: a client's stop of another turn ends nothing.
      */
-    const after: Dispatched[] = [];
-    const turnId = String(action.turnId ?? '');
-    const chat = chatAbout(channel);
-    const running = (states.get(chat)?.state.activeTurn as Record<string, unknown> | undefined)?.id;
-    if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
-      && (named === undefined || running === turnId)) {
-      const started = owed.get(owedKey(chat, 'chat/turnStarted', turnId));
-      owed.delete(owedKey(chat, 'chat/turnStarted', turnId));
+    if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
+      const key = owedKey(channel, 'chat/turnStarted', String(action.turnId ?? ''));
+      const started = owed.get(key);
+      owed.delete(key);
       if (started !== undefined) dispatch(started.channel, started.action, started.origin);
-      const stopped = owed.get(owedKey(chat, 'chat/turnCancelled', turnId));
-      owed.delete(owedKey(chat, 'chat/turnCancelled', turnId));
-      if (stopped !== undefined) after.push(stopped);
-      for (const [key, held] of owed) {
-        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) {
-          owed.delete(key);
-          after.push(held);
-        }
+      /*
+       * A backend's end of a turn the chat has ended is not said: the turn
+       * ended when a client's stop was taken, and a turn ends once. The
+       * reference host ends the turn on the client's cancel and then aborts
+       * the agent. The end is what the dispatches sent since wait on: a
+       * backend leaves a turn before it says its end, so each is applied to a
+       * backend that runs nothing.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1955
+       */
+      const held = states.get(channel);
+      if (origin === undefined && held?.kind === 'chat'
+        && (held.state.activeTurn as Record<string, unknown> | undefined)?.id !== action.turnId) {
+        const waiting = stopping.get(channel) ?? [];
+        stopping.delete(channel);
+        for (const go of waiting) go();
+        return;
       }
+    }
+    /*
+     * A backend's result for a call the chat holds completed is not said
+     * either: the call was completed by its client's own result, said when the
+     * host took it, and a call completes once.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L631-L635
+     */
+    if (action.type === 'chat/toolCallComplete' && origin === undefined) {
+      const held = states.get(channel);
+      const turn = held?.kind === 'chat' ? held.state.activeTurn as Record<string, unknown> | undefined : undefined;
+      const call = turn?.id === action.turnId
+        ? (Array.isArray(turn?.responseParts) ? turn.responseParts as Record<string, unknown>[] : [])
+          .map((part) => part.toolCall as Record<string, unknown> | undefined)
+          .find((one) => one?.toolCallId === action.toolCallId)
+        : undefined;
+      if (held?.kind === 'chat' && !['running', 'pending-confirmation', 'auth-required'].includes(String(call?.status))) return;
     }
     /*
      * A session's customizations are two halves, and one action carries both.
@@ -1028,12 +1045,12 @@ export function createHost(options: HostOptions): Host {
     if (deltas.push(channel, action, origin)) return;
     emit(channel, action, origin, requestAudience(channel, action, origin));
     // What the chat's state moved, said on its session: a streamed delta moves
-    // nothing a session reads, which is why only this road says it.
-    if (states.get(channel)?.kind === 'chat') {
+    // nothing a session reads, which is why only this road says it, and an
+    // action of another kind moves no chat state at all.
+    if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
       ctx.chatMoved(channel);
     }
-    for (const held of after) dispatch(held.channel, held.action, held.origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
      * so the list is said again when either moves it: the root's state holds
@@ -1273,9 +1290,11 @@ export function createHost(options: HostOptions): Host {
       if (connection.clientId !== clientId) continue;
       if ([...connection.watching].some((channel) => heldAs(channel) === uri)) return;
     }
+    // The entry it announced, under the client id that entry carries.
+    const named = held.get(clientId)?.clientId;
     held.delete(clientId);
     if (held.size === 0) presence.delete(idOf(uri));
-    dispatch(uri, { type: 'session/activeClientRemoved', clientId });
+    dispatch(uri, { type: 'session/activeClientRemoved', clientId: typeof named === 'string' ? named : clientId });
     /*
      * And the tools it was providing, which leave with it.
      *
@@ -1392,9 +1411,16 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
+    owe: (type: string, name: string) => {
+      if (applying === undefined || applying.answered) return;
+      applying.owed = true;
+      owed.set(owedKey(applying.channel, type, name), applying);
+    },
     answering,
     unanswered: () => applying !== undefined && !applying.answered && applying.taken !== true,
+    letGo: (chat: string) => new Promise<void>((resolve) => {
+      stopping.set(chat, [...(stopping.get(chat) ?? []), resolve]);
+    }),
     flushDeltas: deltas.flush,
     stateOf: (channel: string) => states.get(channel)?.state,
     openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
@@ -2013,8 +2039,9 @@ export function createHost(options: HostOptions): Host {
        * whether it is one. Each is applied once what it waits on answers, and
        * every dispatch this connection sends meanwhile goes behind it: a
        * client that changes the config and then starts a turn means that
-       * order. Undefined when nothing waits, which is when a dispatch is
-       * applied at once.
+       * order. A dispatch a backend answers later holds the next one the same
+       * way, until it is answered. Undefined when nothing waits, which is when
+       * a dispatch is applied at once.
        */
       let waiting: Promise<void> | undefined;
       /**
@@ -2028,20 +2055,44 @@ export function createHost(options: HostOptions): Host {
           (error: unknown) => { clearTimeout(timer); reject(error instanceof Error ? error : new Error(String(error))); },
         );
       });
-      /** A dispatch applied now, as the one this host is applying. */
+      /**
+       * A dispatch applied now, as the one this host is applying.
+       *
+       * One a backend answers later, owed or taken, holds this connection's
+       * next dispatch until it is answered: a client holds its actions pending
+       * in the order it sent them and matches each answer at the head of that
+       * list, so the answers go out in the same order.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L23-L24
+       *
+       * Held for `WAIT_LIMIT` at most, and then let go of with its answer still
+       * to come: the backend may still give it, and a dispatch is answered once.
+       */
       const applyNow = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
-        applying = {
+        const held: Dispatched & { answered: boolean } = {
           origin,
-          type: String(action.type ?? ''),
-          turnId: typeof action.turnId === 'string' ? action.turnId : '',
           answered: false,
           peer: connection.peer,
           channel: meantBy(String(params.channel ?? '')),
           action,
         };
-        try { return applyDispatch(params, origin); }
+        applying = held;
+        let later: Promise<void> | undefined;
+        try { later = applyDispatch(params, origin); }
         finally { applying = undefined; }
+        if (said.has(origin) || (held.owed !== true && held.taken !== true)) return later;
+        const answered = new Promise<void>((resolve) => {
+          const timer = setTimeout(() => {
+            awaited.delete(origin);
+            resolve();
+          }, WAIT_LIMIT);
+          timer.unref?.();
+          awaited.set(origin, () => {
+            clearTimeout(timer);
+            resolve();
+          });
+        });
+        return later === undefined ? answered : later.then(() => answered);
       };
       /**
        * A dispatch whose apply failed, logged and refused to the client that

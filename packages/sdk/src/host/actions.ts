@@ -5,7 +5,7 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn, PER_CONNECTION } from './gate.js';
-import { chatUriFor, isRootChannel, MARKS, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
@@ -119,6 +119,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(`${wrong} is not ${HOME_WORDS[family.home]} here`);
         return;
       }
+    }
+    /*
+     * A chat's action on a chat's channel: "Actions travel on the channel
+     * named by their prefix". A client holds what it sent pending on the
+     * subscription it sent it on, and is answered there, so a chat's action
+     * sent on a session's channel is one this host could only answer on a
+     * chat where that client is not waiting. Input addressed to a session as a
+     * whole is the client's to send to the session's default chat.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L54
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L82
+     */
+    if (type.startsWith('chat/') && schemeOf(asked) !== 'ahp-chat' && schemeOf(channel) !== 'ahp-chat') {
+      no(`${type} is a chat's action, and ${asked} is not a chat`);
+      return;
     }
     if (options.users !== undefined && connection.root !== true) {
       /*
@@ -770,9 +785,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
         ? action.activeClient
         : {}) as Bag;
+      /*
+       * The entry as the client sent it, a `clientId` naming another client
+       * included: the protocol states no rule for one, and the reference host
+       * applies the action as sent. A `clientId` or `tools` the client left out
+       * is this host's to fill, as any field of an answer a client left out
+       * is: the sender's own id, and no tools. Held under the connection that
+       * announced it, which is what leaves.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+       */
       const activeClient: Bag = {
         ...carried,
-        clientId,
+        clientId: typeof carried.clientId === 'string' ? carried.clientId : clientId,
         tools: Array.isArray(carried.tools) ? carried.tools : [],
       };
       const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
@@ -820,6 +845,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         action,
       );
       if (!moved) dispatch(channel, action, origin);
+      // Sent on another channel of the session, it is answered on that one:
+      // the bit moved on the session's own.
+      else if (ctx.unanswered()) dispatch(channel, action, origin);
       return;
     }
     const terminal = terminals.get(channel);
