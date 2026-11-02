@@ -621,21 +621,24 @@ describe('the fields a client reads by name', () => {
     await other.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/live';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await other.handle({ method: 'subscribe', params: { channel: uri } });
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await other.handle({ method: 'subscribe', params: { channel: chat } });
     // Where the state stands before the refusal. A snapshot is taken *at* a
     // sequence number, so this is the one every later action must be above.
-    const at = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const at = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { fromSeq: number };
     }).snapshot.fromSeq;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
 
-    const refused = actions(mine, uri)
+    const refused = actions(mine, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
@@ -653,7 +656,7 @@ describe('the fields a client reads by name', () => {
     // And the client watching alongside hears the same envelope: an action
     // goes to every client subscribed to its channel, a refused one among
     // them, and that client holds nothing of it to put back.
-    const heard = actions(theirs, uri)
+    const heard = actions(theirs, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
     expect(heard).toHaveLength(1);
     expect(heard[0]?.serverSeq).toBe(refused[0]?.serverSeq);
@@ -663,7 +666,7 @@ describe('the fields a client reads by name', () => {
     const back = host.accept(peer());
     const answer = await back.handle({
       method: 'reconnect',
-      params: { clientId: 'probe', subscriptions: [uri], lastSeenServerSeq: at },
+      params: { clientId: 'probe', subscriptions: [chat], lastSeenServerSeq: at },
     }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
     expect(answer.type).toBe('replay');
     expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
