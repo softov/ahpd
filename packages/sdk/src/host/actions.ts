@@ -824,17 +824,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
       /*
-       * The entry as the client sent it. A `clientId` or `tools` the client
-       * left out is this host's to fill, as any field of an answer a client
-       * left out is: the sender's own id, and no tools. Held under the
+       * The entry as the client sent it, `tools` included or left out, under
+       * the sender's own `clientId`: the reference host reduces a set as sent,
+       * and its window reads `tools` of every client in the session. A client
+       * that names no tools provides none (`clientTools`). Held under the
        * connection that announced it, which is what leaves.
-       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2750-L2752
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostCustomizationService.ts#L1083-L1101
        */
-      const activeClient: Bag = {
-        ...carried,
-        clientId,
-        tools: Array.isArray(carried.tools) ? carried.tools : [],
-      };
+      const activeClient: Bag = { ...carried, clientId };
       const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
       presence.set(idOf(channel), held);
       /*

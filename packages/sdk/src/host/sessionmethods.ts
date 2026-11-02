@@ -1056,15 +1056,16 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * The `clientId` is this connection's, not the one in the payload.
          * The protocol says the two MUST match, and forcing it is what the
          * dispatch path does for the same reason: a client naming somebody
-         * else is announcing a presence that is not theirs.
+         * else is announcing a presence that is not theirs. The rest is the
+         * entry as the client sent it, `tools` included or left out, as the
+         * reference host holds a creator's entry.
+         * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
         const claimed = typeof params.activeClient === 'object' && params.activeClient !== null
           ? params.activeClient as Bag
           : undefined;
         const clientId = connection.clientId || 'anonymous';
-        const activeClient: Bag | undefined = claimed === undefined
-          ? undefined
-          : { ...claimed, clientId, tools: Array.isArray(claimed.tools) ? claimed.tools : [] };
+        const activeClient: Bag | undefined = claimed === undefined ? undefined : { ...claimed, clientId };
         let here: Map<string, Bag> | undefined;
         if (activeClient !== undefined) {
           here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
