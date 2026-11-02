@@ -1,7 +1,7 @@
 ---
 title: Terminal input goes to every client of the terminal
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -80,7 +80,7 @@ dispatchAction terminal/input -> actions.ts -> terminal.write
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Input goes to every client of the terminal](task-01-input-goes-to-every-client-of-the-terminal.md) | todo | - |
+| [01 - Input goes to every client of the terminal](task-01-input-goes-to-every-client-of-the-terminal.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -90,13 +90,13 @@ dispatchAction terminal/input -> actions.ts -> terminal.write
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a gate refusal stays with its sender; only the refusal of input itself moves.
 
 ## Final verification checklist
 
-- [ ] The two host-terminals cases fail on `89ebe4d5` for the audience they name, and pass after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The two host-terminals cases fail on `89ebe4d5` for the audience they name, and pass after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

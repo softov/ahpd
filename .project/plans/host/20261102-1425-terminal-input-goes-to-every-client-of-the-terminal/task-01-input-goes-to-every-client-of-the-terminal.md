@@ -1,6 +1,6 @@
 ---
 title: Input goes to every client of the terminal
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -43,4 +43,8 @@ Input the terminal cannot take is refused to the same clients, and held for repl
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `56068e6f`.
+
+- `host-terminals.test.ts` moved with the behavior: input was answered to the client that typed it alone, and its refusal too.
+- Both cases now expect the input, and its refusal, at the other client of the terminal under the same `serverSeq`.
+- No other test file asserted the sender's audience for input.
