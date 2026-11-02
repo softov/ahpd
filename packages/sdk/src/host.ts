@@ -443,8 +443,8 @@ export function createHost(options: HostOptions): Host {
    * length of a daemon's life.
    */
   const REPLAY = 1000;
-  /** The last `REPLAY` action envelopes, oldest first. */
-  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions }[] = [];
+  /** The last `REPLAY` action envelopes, refusals among them, oldest first. */
+  const replayable: { channel: string; action: Record<string, unknown>; serverSeq: number; origin: Origin | undefined; audience?: PublishOptions; rejectionReason?: string }[] = [];
   /**
    * What each held envelope's text weighs in bytes, in step with `replayable`.
    *
@@ -874,14 +874,33 @@ export function createHost(options: HostOptions): Host {
   /**
    * One state action, to everyone watching that channel.
    *
-   * `serverSeq` moves here and in `refuse`, once for each envelope. A snapshot
-   * is taken *at* a sequence number and every action after it carries a
-   * greater one, which is how a client knows it missed nothing.
+   * `serverSeq` moves here, once for each envelope, and in `echoTo` for the
+   * one answer said to its sender alone. A snapshot is taken *at* a sequence
+   * number and every action after it carries a greater one, which is how a
+   * client knows it missed nothing.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
+   *
+   * An action refused carries `rejectionReason`, and is sequenced, held for
+   * replay and sent the same way to every other client of the channel; its
+   * sender is answered by `refuse`, and no state takes it.
    */
-  const emit = (channel: string, action: Record<string, unknown>, origin: Origin | undefined, audience?: PublishOptions): void => {
+  const emit = (
+    channel: string,
+    action: Record<string, unknown>,
+    origin: Origin | undefined,
+    audience?: PublishOptions,
+    refused?: { reason: string; by: Peer },
+  ): void => {
     ctx.serverSeq += 1;
-    const envelope = { channel, action, serverSeq: ctx.serverSeq, origin, ...(audience === undefined ? {} : { audience }) };
+    const rejectionReason = refused?.reason;
+    const envelope = {
+      channel,
+      action,
+      serverSeq: ctx.serverSeq,
+      origin,
+      ...(audience === undefined ? {} : { audience }),
+      ...(rejectionReason === undefined ? {} : { rejectionReason }),
+    };
     // Kept whether or not anyone was listening: a client that dropped is by
     // definition not listening, and it is the one that will ask for these.
     //
@@ -909,20 +928,22 @@ export function createHost(options: HostOptions): Host {
      * action sets, upserts or removes what it names, so on a seed that already
      * carries it the action leaves it as it was.
      */
-    if (!states.has(channel) && sessions.has(channel)) ctx.sessionStateOf(channel);
-    const open = states.get(channel);
-    if (open !== undefined) {
-      const type = String(action.type ?? '');
-      if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
-      else {
-        try { open.state = reduced(open, held.action); }
-        catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+    if (rejectionReason === undefined) {
+      if (!states.has(channel) && sessions.has(channel)) ctx.sessionStateOf(channel);
+      const open = states.get(channel);
+      if (open !== undefined) {
+        const type = String(action.type ?? '');
+        if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
+        else {
+          try { open.state = reduced(open, held.action); }
+          catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+        }
       }
+      ctx.telemetered(channel, action);
+      ctx.asking(channel, action);
+      ctx.links.observe(channel, action);
+      ctx.sessionEvents.observe(channel, action);
     }
-    ctx.telemetered(channel, action);
-    ctx.asking(channel, action);
-    ctx.links.observe(channel, action);
-    ctx.sessionEvents.observe(channel, action);
     replayable.push(held);
     // Measured once, here, as the text this envelope will go out as.
     const size = JSON.stringify(held).length;
@@ -940,7 +961,7 @@ export function createHost(options: HostOptions): Host {
       replayable.shift();
       weight -= weights.shift() ?? 0;
     }
-    broadcast(channel, 'action', envelope, (connection) => seenBy(connection, envelope));
+    broadcast(channel, 'action', envelope, (connection) => (connection.peer === refused?.by ? undefined : seenBy(connection, envelope)));
   };
   /**
    * The window a streamed delta waits in, which `dispatch` sends through.
@@ -1147,7 +1168,7 @@ export function createHost(options: HostOptions): Host {
   const watchedAs = (peer: Peer, channel: string): string =>
     [...connections].find((one) => one.peer === peer)?.aliases.get(channel) ?? channel;
   /**
-   * A client's action, refused in that client's hearing.
+   * A client's action, refused.
    *
    * The other half of the write-ahead loop. A client applies an action before
    * sending it, so a host that decides not to apply one has to *say so*: an
@@ -1155,18 +1176,22 @@ export function createHost(options: HostOptions): Host {
    * state back. The log line goes to the daemon's stdout, where no client is
    * looking.
    *
-   * It takes the next `serverSeq`, as every envelope does: a client that has
-   * just subscribed holds a snapshot taken at the number this host was at, and
-   * every action after it carries a greater one.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
+   * An action envelope like any other: it takes the next `serverSeq`, is held
+   * for replay, and goes to every client subscribed to its channel, as the
+   * specification sends an action and lists `rejectionReason` among its
+   * fields, and as the reference host records and broadcasts a rejection. No
+   * state takes it, here or in a client: a client holding the action pending
+   * drops it, and the others hold nothing of it.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/lifecycle.md#L109
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L766
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4183-L4210
    *
-   * It goes to the one connection that sent it, and is not buffered for
-   * replay. A refusal answers one client's dispatch: nobody else applied it
-   * optimistically, so nobody else has anything to put back, and a client that
-   * reduced a rejected envelope would apply the very change this host refused.
-   * A client that comes back clears what it held pending, so a refusal replayed
-   * to it would answer nothing.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md
+   * The client that sent it is told in every case, under the name it watches
+   * the channel by where it watches one, since an invalid action is echoed
+   * back to the client that sent it with its reason, whichever channels and
+   * versions it watches.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L162
    */
   const refuse = (
     peer: Peer,
@@ -1177,7 +1202,8 @@ export function createHost(options: HostOptions): Host {
   ): void => {
     log(`${channel}: ${reason}`);
     answeredBy(channel, origin, action);
-    ctx.serverSeq += 1;
+    deltas.flush();
+    emit(channel, action, origin, undefined, { reason, by: peer });
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**

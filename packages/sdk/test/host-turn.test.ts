@@ -636,12 +636,13 @@ describe('a turn asked for while one is running', () => {
       .find((one) => one.rejectionReason !== undefined);
     expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
     expect(rejected?.action?.turnId).toBe('t2');
-    // The refusal carries the action back rather than applying it, so what is
+    // The refusal carries the action back and applies nothing, so what is
     // counted here is everything else: nothing of `t2` reaches the chat, and
-    // the window that did not ask hears nothing of it at all.
+    // the window that did not ask hears only the same refusal.
     const applied = actions(p, chatUri).filter((e) => e.rejectionReason === undefined);
     expect(applied.some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2')).toBe(false);
-    expect(actions(other, chatUri).some((e) => e.action.turnId === 't2')).toBe(false);
+    expect(actions(other, chatUri).filter((e) => e.action.turnId === 't2').map((e) => e.rejectionReason))
+      .toEqual(['A turn is running in this chat']);
     expect(sdk.said).toEqual(['first']);
 
     const still = await activeTurn(client, chatUri);

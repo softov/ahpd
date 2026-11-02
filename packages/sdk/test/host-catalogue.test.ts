@@ -683,10 +683,10 @@ describe('a chat\'s read bit and its session\'s', () => {
    * A stop with no turn running is one the protocol has the server refuse:
    * "`chat/turnCancelled` | No active turn | Server MUST reject the action".
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
-   * A refusal goes to its sender, who drops the stop it holds; no other client
-   * applied it, so no other client hears of it.
+   * A refusal goes to every client of the chat, as any action does: its sender
+   * drops the stop it holds, and no client's state takes it.
    */
-  it('refuses a cancel with no turn running, whatever turn it names, to its sender alone', async () => {
+  it('refuses a cancel with no turn running, whatever turn it names, to every client of the chat', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
     started.peer.notes.length = 0;
@@ -706,7 +706,7 @@ describe('a chat\'s read bit and its session\'s', () => {
       `Nothing is running on ${started.chatUri} to stop`,
       `Nothing is running on ${started.chatUri} to stop`,
     ]);
-    expect(actions(two)).toEqual([]);
+    expect(actions(two, started.chatUri)).toEqual(said);
   });
 
   it('stops the running turn when the cancel names it, and tells every client', async () => {

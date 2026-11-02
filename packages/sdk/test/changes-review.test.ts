@@ -226,7 +226,8 @@ describe('what the host answers', () => {
     await review(1, [A]);
     await until(() => answer(1) !== undefined, 'the answer');
     expect(answer(1)?.rejectionReason).toEqual(expect.any(String));
-    expect(two.heard).toEqual([]);
+    // The other watcher hears the refusal, and no review taken.
+    expect(two.heard.map((heard) => (heard as { rejectionReason?: string }).rejectionReason)).toEqual([answer(1)?.rejectionReason]);
     await host.close();
   });
 
@@ -235,7 +236,7 @@ describe('what the host answers', () => {
     await review(1, [A]);
     await until(() => answer(1) !== undefined, 'the answer');
     expect(answer(1)?.rejectionReason).toBe('the working tree is whatever it is now');
-    expect(two.heard).toEqual([]);
+    expect(two.heard.map((heard) => (heard as { rejectionReason?: string }).rejectionReason)).toEqual(['the working tree is whatever it is now']);
     await host.close();
   });
 
