@@ -261,11 +261,6 @@ const BROKEN = {
     row: 'E8',
     by: '3, the answer',
   },
-  senderOnly: {
-    breaks: 'subscriptions.md: "Session actions go to all clients subscribed to that session\'s URI." and "Chat actions go to all clients subscribed to that chat\'s URI."; an action the host\'s own records say moves nothing is echoed to its sender alone',
-    row: 'E5',
-    by: '4, one audience',
-  },
   rootPerConnection: {
     breaks: 'authentication.md: "Root state is global and visible to all subscribed clients."; the root a connection is served carries a `_meta` and config values of its own',
     row: 'E46',
@@ -396,8 +391,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
   '071-root-terminalschanged': rootPerConnection,
-  '071-session-isreadchanged-marks-session-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '074-session-isarchivedchanged-unarchives-session': [{ reduced: ['status'], ...BROKEN.senderOnly }],
   '075-turnstarted-clears-isread': turnStartRewritten,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
   '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
@@ -412,15 +405,7 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '235-session-mcpserverstartrequested-starts-top-level-server': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '238-session-mcpserverstartrequested-no-op-absent-customizations': [{ refused: ['mcp-1 would not start'], ...BROKEN.startNoOp }],
   '239-session-mcpserverstartrequested-no-op-unknown-id': [{ refused: ['mcp-does-not-exist would not start'], ...BROKEN.startNoOp }],
-  '244-session-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '250-chat-workingdirectoryremoved-removes-existing': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
   '263-session-customizationtoggled-clears-enablement': [{ refused: ['server-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '267-session-workingdirectoryreplaced-replaces-and-deduplicates': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '268-session-workingdirectoryreplaced-replaces-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '269-session-workingdirectoryreplaced-replaces-non-primary': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '270-session-workingdirectoryreplaced-deduplicates-earlier-replacement': [{ reduced: ['workingDirectories'], ...BROKEN.senderOnly }],
-  '273-chat-isarchivedchanged-unarchives-chat': [{ reduced: ['status'], ...BROKEN.senderOnly }],
-  '286-chat-isreadchanged-marks-default-chat-as-read': [{ reduced: ['status'], ...BROKEN.senderOnly }],
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';

@@ -844,7 +844,7 @@ export interface Session {
    * state the server has. A server starting with `blocking: true` keeps it, so
    * the request goes to every client and that state follows it, which is how
    * the protocol has a host decline one; on any other server the request moves
-   * nothing, and its sender alone hears it back.
+   * nothing, and goes to every client alone.
    */
   backgroundMcpServerStartup?(id: string): Promise<boolean>;
 

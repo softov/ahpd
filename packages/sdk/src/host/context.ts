@@ -408,7 +408,8 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   asleep: Set<string>;
   /**
-   * Answer one client's dispatch with the reason it was not applied.
+   * Answer one client's dispatch with the reason it was not applied, at the
+   * next `serverSeq`.
    *
    * Sent to that client alone: nobody else applied it optimistically, so
    * nobody else has anything to put back, and a client that reduced a
@@ -420,20 +421,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
-  ) => void;
-  /**
-   * Answer one client's dispatch with the action it sent, accepted.
-   *
-   * For an action that leaves this host's state exactly as it was: the sender
-   * applied it optimistically and is holding it pending, and this is what tells
-   * it the action is done. To that client alone, and without moving
-   * `serverSeq`, for the reasons `refuse` gives.
-   */
-  echoTo: (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
   ) => void;
   /** The host's own log. */
   log: (message: string) => void;

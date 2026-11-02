@@ -123,17 +123,13 @@ const enter = async (client: Client, id: string, tools: unknown[] = []): Promise
 };
 
 /*
- * A client reconciles what it contributes whenever the session state moves,
- * and this host's echo *is* the state moving. So an echo of an announcement
- * that changed nothing was itself the change that prompted the next
- * announcement - a loop the two ran three hundred times in a few seconds,
- * burning a `serverSeq` apiece.
- *
- * The announcement is still answered, to the client that sent it and to that
- * one alone: it is holding the action until an echo carrying its `clientSeq`
- * comes back, and no other client applied anything that has to be put back.
+ * An announcement that changes nothing is still a session action this host
+ * accepted, so it goes to every client of the session, sequenced: "Host
+ * sequences it - assigns a `serverSeq`, applies it to the authoritative state,
+ * broadcasts the action envelope to all subscribed clients."
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/ahp-and-acp.md#how-they-compose
  */
-it('echoes an unchanged announcement to its sender, and to nobody else', async () => {
+it('says an unchanged announcement to every client, each time at the next sequence', async () => {
   const held = host();
   const { client, peer: one } = await joins(held, 'one');
   const { client: second, peer: two } = await joins(held, 'two');
@@ -147,30 +143,26 @@ it('echoes an unchanged announcement to its sender, and to nobody else', async (
   });
   await announce(1);
   await settle();
-  // The sequence the change left this host at, and the one an echo of a later
-  // announcement carries: saying again is not state moving.
-  const at = envelopes(one, URI).at(-1)?.serverSeq;
   await announce(2);
   await announce(3);
   await settle();
 
-  // Once for the one thing that changed, and once for each announcement that
-  // changed nothing. `serverSeq` advances with state and never with messages.
-  const said = envelopes(one, URI).filter((e) => e.action.type === 'session/activeClientSet');
-  expect(said).toHaveLength(3);
-  expect(said.slice(1).map((e) => e.origin?.clientSeq)).toEqual([2, 3]);
-  expect(said.slice(1).map((e) => e.serverSeq)).toEqual([at, at]);
-  // The other client heard the change and nothing else.
-  const heard = envelopes(two, URI).filter((e) => e.action.type === 'session/activeClientSet');
-  expect(heard).toHaveLength(1);
+  for (const p of [one, two]) {
+    const said = envelopes(p, URI).filter((e) => e.action.type === 'session/activeClientSet');
+    expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2, 3]);
+    const seqs = said.map((e) => e.serverSeq);
+    expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  }
+  // Said again, the entry is the one the session already held.
+  expect(await clientsIn(second, URI)).toEqual(['one']);
 });
 
 /*
- * A read or archived bit set to what it already is changes nothing, and is
- * answered as an unchanged announcement is: to its sender, at the sequence
- * this host is already at.
+ * A read or archived bit set to what it already is changes nothing in the
+ * catalogue, and goes to every client as an unchanged announcement does.
  */
-it('echoes a session flag set again to its sender, and to nobody else', async () => {
+it('says a session flag set again to every client, at the next sequence', async () => {
   const held = host();
   const { client, peer: one } = await joins(held, 'one');
   const { client: second, peer: two } = await joins(held, 'two');
@@ -186,15 +178,75 @@ it('echoes a session flag set again to its sender, and to nobody else', async ()
   // and the second says it again.
   await read(1);
   await settle();
-  const at = envelopes(one, URI).at(-1)?.serverSeq;
+  const at = envelopes(one, URI).at(-1)?.serverSeq ?? 0;
   await read(2);
   await settle();
 
-  const said = envelopes(one, URI).filter((e) => e.action.type === 'session/isReadChanged');
-  expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2]);
-  expect(said.at(-1)?.serverSeq).toBe(at);
-  const heard = envelopes(two, URI).filter((e) => e.action.type === 'session/isReadChanged');
-  expect(heard).toHaveLength(1);
+  for (const p of [one, two]) {
+    const said = envelopes(p, URI).filter((e) => e.action.type === 'session/isReadChanged');
+    expect(said.map((e) => e.origin?.clientSeq)).toEqual([1, 2]);
+    expect(said.at(-1)?.serverSeq).toBeGreaterThan(at);
+  }
+});
+
+/*
+ * A client reconciles what it contributes whenever the session's state moves,
+ * and an echo is the state moving. One that sent its set again on every move
+ * would run a loop with any host that echoes; VS Code's session handler
+ * compares what it would send with the entry the state holds and with what it
+ * sent last, so an echo of somebody's unchanged set moves it to nothing.
+ * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253
+ */
+it('leaves a client that reconciles on every move, as VS Code does, sending its set once', async () => {
+  const held = host();
+  const reconciling = peer();
+  const client = held.accept(reconciling);
+  await client.handle({ method: 'initialize', params: { clientId: 'one', protocolVersions: ['0.9.0'] } });
+  const { client: second } = await joins(held, 'two');
+  await client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  const opened = await client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  await second.handle({ method: 'subscribe', params: { channel: URI } });
+
+  // The client's half, as VS Code's handler keeps it: the entries the state
+  // holds, what it means to publish, and what it published last.
+  let entries = opened.snapshot.state.activeClients;
+  const wanted = { clientId: 'one', tools: [] };
+  let last: unknown;
+  let sent = 0;
+  let seq = 0;
+  const reconcile = (): void => {
+    const existing = entries.find((one) => one.clientId === 'one');
+    if (JSON.stringify(existing) === JSON.stringify(wanted)) { last = undefined; return; }
+    if (JSON.stringify(last) === JSON.stringify(wanted)) return;
+    sent += 1;
+    seq += 1;
+    void client.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq: seq, action: { type: 'session/activeClientSet', activeClient: wanted } } });
+    last = wanted;
+  };
+  const notify = reconciling.notify;
+  reconciling.notify = (method, params) => {
+    notify(method, params);
+    const envelope = params as { channel: string; action: Record<string, unknown> };
+    if (method !== 'action' || envelope.channel !== URI) return;
+    if (envelope.action.type === 'session/activeClientSet') {
+      const entry = envelope.action.activeClient as Record<string, unknown>;
+      entries = [...entries.filter((one) => one.clientId !== entry.clientId), entry];
+    }
+    reconcile();
+  };
+  reconcile();
+  await settle();
+
+  // The other client says its set, then says it again unchanged.
+  for (const clientSeq of [1, 2, 3]) {
+    await second.handle({ method: 'dispatchAction', params: { channel: URI, clientSeq, action: { type: 'session/activeClientSet', activeClient: { tools: [] } } } });
+    await settle();
+  }
+
+  expect(sent).toBe(1);
+  expect(actions(reconciling, URI).filter((a) => a.type === 'session/activeClientSet')).toHaveLength(4);
 });
 
 it('says so again when what a client contributes has changed', async () => {

@@ -896,7 +896,7 @@ describe('turning a customization on and off', () => {
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
-  it('answers a request to background a startup to its sender, since nothing here waits on one', async () => {
+  it('says a request to background a startup to every client, moving nothing, since nothing here waits on one', async () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
@@ -913,13 +913,14 @@ describe('turning a customization on and off', () => {
     /*
      * The Claude CLI's startup holds a turn back only on a server that says
      * `alwaysLoad`, and this backend reports none, so the server is not
-     * blocking and the protocol's reducer changes nothing for the request: its
-     * sender hears it back, alone, with nothing moved.
+     * blocking and the protocol's reducer changes nothing for the request. It
+     * goes out sequenced, as every accepted action does, and no state follows.
      */
     expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
     const answered = actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 6);
-    expect(answered.map((e) => [e.action.type, e.rejectionReason, e.serverSeq]))
-      .toEqual([['session/mcpServerBackgroundRequested', undefined, seq]]);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/mcpServerBackgroundRequested', undefined]]);
+    expect(answered[0]?.serverSeq).toBeGreaterThan(seq ?? 0);
+    expect(actions(p, uri).at(-1)?.action.type).toBe('session/mcpServerBackgroundRequested');
   });
 
   it('hands a background request to a backend that has the call, once, with the id', async () => {

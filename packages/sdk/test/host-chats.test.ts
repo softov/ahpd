@@ -56,7 +56,7 @@ describe('two people on one chat', () => {
     expect(opened.snapshot.state.draft?.text).toBe('half a th');
   });
 
-  it('answers a draft the chat already holds to the person who sent it, and to nobody else', async () => {
+  it('says a draft the chat already holds to everybody on the chat, as the sender\'s own action', async () => {
     const host = serving('/home/softov');
     const one = peer();
     const a = host.accept(one);
@@ -84,7 +84,8 @@ describe('two people on one chat', () => {
     const answer = drafts(one).find((e) => e.origin?.clientSeq === 2);
     expect(answer?.origin?.clientId).toBe('one');
     expect(answer?.rejectionReason).toBeUndefined();
-    expect(drafts(two)).toHaveLength(1);
+    // The other person on the chat hears it too, under the sender's origin.
+    expect(drafts(two).map((e) => e.origin?.clientSeq)).toEqual([1, 2]);
   });
 });
 
