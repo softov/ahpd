@@ -585,9 +585,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      *
      * Both are *requests* in the protocol's own spelling - the client
      * says what it wants and the host decides, then says what it
-     * actually holds with `automation/set`. So neither of these echoes:
-     * what goes out is the store's answer, which is not necessarily what
-     * was asked for.
+     * actually holds with `automation/set`, which is not necessarily what
+     * was asked for. The request itself is answered once the store took
+     * it, as any accepted action is "echoed back ... once accepted"; it
+     * leaves a catalogue's state as it was, and the `automation/set`
+     * ahead of it is what every client holds.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-automation/actions.ts#L61-L80
      *
      * A create is also where an automation learns whose work it is, from
      * this connection - and a patch never moves it, because a colleague
@@ -647,6 +650,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         // nothing would be one whose own timers were invisible, so
         // everything goes out the same way.
         if (!kept) no(`No automation at ${resource}`);
+        else dispatch(channel, action, origin);
         return;
       }
       /*
@@ -675,6 +679,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
             ? store.create(resource, withPinOf(resource, (action.definition ?? {}) as Bag), ownerFor(connection), undefined, held.copies)
             : store.update(resource, withPinOf(resource, (action.changes ?? {}) as Bag), held.copies);
           if (!made) { no(`No automation at ${resource}`); return; }
+          dispatch(channel, action, origin);
           pruneCopies();
         }
         finally {
@@ -697,8 +702,12 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const store = options.automations;
       const resource = String(action.resource ?? '');
       const found = store?.get(resource);
-      // "Removing an unknown resource is a no-op."
-      if (!store || !found) return;
+      // "Removing an unknown resource is a no-op", and the removal is
+      // accepted all the same, so it is answered by itself.
+      if (!store || !found) {
+        dispatch(channel, action, origin);
+        return;
+      }
       if (!found.operations.includes('remove')) {
         no(`${resource} does not offer remove`);
         return;

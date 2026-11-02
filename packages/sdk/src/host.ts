@@ -833,6 +833,14 @@ export function createHost(options: HostOptions): Host {
     return key === undefined ? undefined : owed.get(key);
   };
   /**
+   * The dispatches answered already, by the origin each carries: an echo, a
+   * refusal, or an answer a backend said later. A dispatch is answered once,
+   * and a host that applied one and then refused it would leave the client
+   * reverted and itself moved.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
+   */
+  const said = new WeakSet<Origin>();
+  /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
    */
@@ -841,6 +849,7 @@ export function createHost(options: HostOptions): Host {
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
     owed.delete(owedUnder(channel, action) ?? '');
+    said.add(answered.origin);
     return answered.origin;
   };
   /**
@@ -853,6 +862,7 @@ export function createHost(options: HostOptions): Host {
    */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
+    said.add(origin);
     if (applying?.origin === origin) applying.answered = true;
     const key = owedUnder(channel, action) ?? '';
     const held = owed.get(key)?.origin;
@@ -951,17 +961,35 @@ export function createHost(options: HostOptions): Host {
     answeredBy(channel, named, action);
     const origin = named ?? originOf(channel, action);
     /*
-     * A turn that has ended owes nothing more: a stop the backend never said
-     * because the turn finished first, or a start a backend refused in a turn
-     * of its own, would otherwise wait here for an action that is not coming.
+     * A turn that ends owes its clients the answers its backend has not said:
+     * a stop it never said because the turn finished first, a client's result
+     * it had not taken, or a start it ended before saying. Each is the client's
+     * own action under its origin, "echoed back ... once accepted". The start
+     * goes out ahead of the end, so the reducer has the turn the end closes;
+     * the others go after it, where they reduce to nothing and answer their
+     * dispatches.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+     *
+     * An end is the backend's or this host's, or a client's stop of the turn
+     * the chat holds running: a client's stop of another turn ends nothing.
      */
-    if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
-      const turnId = String(action.turnId ?? '');
-      const chat = chatAbout(channel);
+    const after: Dispatched[] = [];
+    const turnId = String(action.turnId ?? '');
+    const chat = chatAbout(channel);
+    const running = (states.get(chat)?.state.activeTurn as Record<string, unknown> | undefined)?.id;
+    if ((action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error')
+      && (named === undefined || running === turnId)) {
+      const started = owed.get(owedKey(chat, 'chat/turnStarted', turnId));
       owed.delete(owedKey(chat, 'chat/turnStarted', turnId));
+      if (started !== undefined) dispatch(started.channel, started.action, started.origin);
+      const stopped = owed.get(owedKey(chat, 'chat/turnCancelled', turnId));
       owed.delete(owedKey(chat, 'chat/turnCancelled', turnId));
+      if (stopped !== undefined) after.push(stopped);
       for (const [key, held] of owed) {
-        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) owed.delete(key);
+        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) {
+          owed.delete(key);
+          after.push(held);
+        }
       }
     }
     /*
@@ -1005,6 +1033,7 @@ export function createHost(options: HostOptions): Host {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
       ctx.chatMoved(channel);
     }
+    for (const held of after) dispatch(held.channel, held.action, held.origin);
     /*
      * A terminal's title and claim are on the root's list of terminals too,
      * so the list is said again when either moves it: the root's state holds
@@ -2003,12 +2032,14 @@ export function createHost(options: HostOptions): Host {
        *
        * One that failed at once and one that failed after waiting are told the
        * same way: the client holds its action until it hears an echo or a
-       * refusal, and the error's own words are the reason it is given.
+       * refusal, and the error's own words are the reason it is given. One
+       * already answered is answered once: what failed after its answer is
+       * this host's to log.
        */
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
         log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
-        if (!connections.has(connection)) return;
+        if (!connections.has(connection) || said.has(origin)) return;
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };
