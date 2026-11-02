@@ -1,7 +1,7 @@
 ---
 title: A config key moves as its schema says
 domain: host
-status: built
+status: active
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -28,6 +28,14 @@ refs:
   - "[code://packages/agent-claude/src/session/turns.ts#L286-L300](../../../../packages/agent-claude/src/session/turns.ts#L286-L300) - a turn's thinking level written into the session's config"
   - "[code://packages/agent-pi/src/session.ts#L956-L966](../../../../packages/agent-pi/src/session.ts#L956-L966) - a cut pi refuses fails the open"
   - "[code://packages/agent-cofold/src/session.ts#L451-L456](../../../../packages/agent-cofold/src/session.ts#L451-L456) - cofold takes any key its schema declares"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L7605-L7617 - the workbench's chat sends `sensitiveEditLocations` whatever the schema declares"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/providers/agentHost/browser/baseAgentHostSessionsProvider.ts#L6168-L6190 - the Sessions window sends it where the session's schema declares it"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSchema.ts#L347-L366 - the property: a list of `{ path, isDirectory }`, `readOnly` and `sessionMutable`"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgent.ts#L2307 - the reference Claude declares it from the host's schema"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L708-L717 - a redirect's destination is judged as a write"
+  - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815 - a write into a sensitive location is never approved without a question"
+  - "[code://packages/sdk/src/access/commandautoapprover.ts#L660-L680](../../../../packages/sdk/src/access/commandautoapprover.ts#L660-L680) - `writeAllowed`, the host's check of a redirect's destination"
+  - "[code://packages/sdk/src/host/spawn.ts#L948-L974](../../../../packages/sdk/src/host/spawn.ts#L948-L974) - `getAutoApproval`, where a session's commands are answered"
   - "[code://packages/sdk/src/sessions/nested.ts#L1489-L1495](../../../../packages/sdk/src/sessions/nested.ts#L1489-L1495) - the nested proxy refuses a key the inner schema marks `sessionMutable: false`"
   - "[code://packages/agent-pi/src/session.ts#L1629-L1643](../../../../packages/agent-pi/src/session.ts#L1629-L1643) - pi takes its two keys"
 ---
@@ -83,6 +91,10 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 | CT8: no change; a change is answered before the SDK takes it, as the reference host says a change and then hands it to the agent | [agentService.ts#L13642-L13668](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13642-L13668) | - |
 | P11: the cut is said before pi takes it, as the reference host holds it before the agent cuts | [agentSideEffects.ts#L1968-L2005](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1968-L2005) | - |
 | P11: a cut pi refuses is logged, and the turn runs on pi's current leaf, as the reference host logs a failed `truncateChat` | [agentSideEffects.ts#L1982-L1986](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1982-L1986); [chat actions.ts#L724-L743](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L724-L743) | 04 |
+| `sensitiveEditLocations` is the host's key: every session's schema declares it as the reference host's property, the host takes it on a running session, says it back and keeps it, and no backend is asked about it or handed it | [agentHostSchema.ts#L347-L366](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSchema.ts#L347-L366); [agentService.ts#L13563-L13606](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13563-L13606) | 05 |
+| The workbench's chat sends the key before each turn to any session, and every backend here refuses a key it does not declare, so a VS Code client sees a refusal the reference host never gives | [agentHostSessionHandler.ts#L2273-L2286](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2273-L2286); [agentHostSessionHandler.ts#L7605-L7617](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L7605-L7617) | 05 |
+| A redirect into a sensitive location is not approved without a question: the location is read against the working directory, links followed on both sides, a folder covering what is under it, case ignored off Linux | [sessionPermissions.ts#L708-L717](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L708-L717); [sessionPermissions.ts#L774-L815](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815) | 05 |
+| The value is held as it was sent, and only entries with a string `path` and a boolean `isDirectory` are read, since the reference host checks no shape on a config change | `(defaulted: the reference host validates only its approval key)` | 05 |
 
 ## Proposed architecture
 
@@ -98,6 +110,7 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 | [02 - Claude takes only the keys it declares](task-02-claude-takes-only-declared-keys.md) | done | - |
 | [03 - A turn's thinking level moves no session config](task-03-a-turns-level-moves-no-config.md) | done | - |
 | [04 - A cut pi refuses is logged](task-04-a-cut-pi-refuses-is-logged.md) | done | - |
+| [05 - The host takes the sensitive edit locations](task-05-the-host-takes-sensitive-locations.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -108,7 +121,7 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 ## Resume state
 
 - **Done so far:** tasks 01 to 04, 2026-11-02.
-- **Next action:** none; see [implemented.md](implemented.md).
+- **Next action:** task 05.
 - **Open questions:** none.
 - **Watch out for:** a key this host owns, such as `isolation`, keeps its own rule in `ours`.
 
