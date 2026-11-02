@@ -199,6 +199,16 @@ export interface Config {
    */
   origins?: string[];
   /**
+   * Whether the HTTP API answers to the host names of the tunnels on the list.
+   *
+   * Off, the API answers only to the names above and the ones derived from the
+   * bound address, while the plugin routes answer to a tunnel's URL either
+   * way, because that is the webhook a route is usually reached through. On,
+   * each tunnel's host is a `Host` the API accepts too. A tunnel's name is a
+   * fresh one on every start, which is why this is the list's, not a name.
+   */
+  tunnelHosts?: boolean;
+  /**
    * An authorization server whose tokens this host also accepts.
    *
    * `github`, or an issuer URL this host may reach. Absent, the host is its own

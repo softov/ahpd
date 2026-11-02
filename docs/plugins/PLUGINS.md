@@ -670,6 +670,102 @@ The schema can change between versions, and nothing migrates a stored
 connector: one whose config no longer fits shows as `invalid`, and one whose
 adapter no plugin registers shows as `unavailable`. Neither is opened.
 
+### A tunnel kind of your own
+
+A plugin may offer a kind of tunnel: the form a person fills in, the operations the list offers, and the handlers the host calls. The host owns the list and every grant it asks; a kind owns what a tunnel of it actually is. The records are at `x-ahpd-tunnels://`, and a client invokes an operation with `x-ahpd/invokeOperation`.
+
+```ts
+host.registerTunnelKind({
+  name: 'devtunnel',
+  title: 'Dev Tunnel',
+  description: 'A port on the Dev Tunnels service, reached by its public URL.',
+  schema: {
+    type: 'object',
+    properties: {
+      connector: {
+        type: 'string',
+        title: 'Connector',
+        description: 'The devtunnel connector that signs in to the service.',
+        'x-ahpd-connector': 'devtunnel',
+      },
+      port: { type: 'number', title: 'Port', description: 'The port this tunnel forwards.' },
+      anonymous: { type: 'boolean', title: 'Anonymous', description: 'Whether somebody not signed in may reach it.' },
+    },
+    required: ['connector', 'port'],
+  },
+  operations: [
+    { id: 'restart', label: 'Restart', description: 'Reconnects the relay without changing the tunnel.', icon: 'restart' },
+    {
+      id: 'anonymous',
+      label: 'Anonymous access',
+      input: { type: 'object', properties: { on: { type: 'boolean' } }, required: ['on'] },
+    },
+  ],
+  create(tunnel, report) {
+    // Start forwarding `tunnel.settings['port']`, and report what it answers.
+    report({ status: 'running', url: 'https://the-tunnel-31546.usw2.devtunnels.ms/' });
+  },
+  remove(tunnel) {
+    // Stop forwarding the port, and delete the service's tunnel when this was its last port.
+  },
+  invoke(name, tunnel, report, input) {
+    // Run the operation this kind listed, with the input the host checked.
+  },
+  update(tunnel, input, report) {
+    // Apply a change live, or restart the tunnel with the new settings.
+  },
+  system(context) {
+    // The host's own tunnel of this kind: the port a client is told to open.
+    return { connector: 'mine', port: 31546, anonymous: false };
+  },
+});
+```
+
+- `name` is a slug, and is the `kind` every tunnel of it records. Two plugins
+  cannot register one name: the later one is dropped with a problem line. The
+  manifest lists the name under `contracts.tunnelKinds`.
+- `schema` is the JSON Schema a client draws a tunnel's settings from, and what
+  the host checks a `create` input against. A field it marks `secret` goes to
+  the vault under `tunnel/<id>/<field>`, as a connector's does, and a blank
+  value on a change keeps the stored one.
+- `operations` are the verbs a kind offers beyond the host's own. `create` and
+  `update` are on the list; `remove`, `enable` and `disable` are on a tunnel,
+  and the kind's listed ones are on a tunnel too. An id the host serves -
+  `create`, `update`, `remove`, `enable`, `disable` - is refused at
+  registration, and so are two operations with one id. `input` is a JSON Schema
+  the host checks an invocation against. `grant` names the grant a caller
+  holds: `tunnel:delete` for `remove`, `tunnel:put` for everything else, and a
+  kind's own operation may name another, such as `tunnel:restart`.
+- `create(tunnel, report)` makes one. `tunnel` is the record with each secret
+  resolved, `settings` and all. A throw removes the record the host just saved,
+  so a tunnel that could not be made leaves nothing behind. `remove(tunnel)`
+  takes it down before the record and its secrets are deleted.
+  `invoke(name, tunnel, report, input?)` runs an operation the kind listed.
+- `update(tunnel, input, report)` applies a change to the settings. A kind that
+  leaves it out restarts the tunnel with the new settings; a kind that gives it
+  decides what may be applied live.
+- `system(context)` is optional. After `listening`, when the list holds no
+  tunnel of this kind with `purpose: system`, the host asks it once with
+  `{ port }` and creates what it answers, or nothing. A kind that needs no
+  tunnel of its own leaves it out.
+- `report({ status?, url?, error?, settings? })` says what changed: `status` is
+  `running`, `stopped` or `error`, `url` is the address a client opens, and
+  `error` is what a person reading the row is told. A report with no members
+  says nothing. `settings` is what the kind changed in the record while it
+  worked, such as an operation that turned anonymous access on: the host saves
+  those fields as an update does, moving a secret to the vault and keeping the
+  stored one when the field is blank, and the answer to the operation reads the
+  record after the save. A field the host owns, such as `id` or `kind`, is not
+  written from a report.
+- The status, the URL and the error are kept in the host's memory and merged
+  into the record a client reads. They are not written to the record: a daemon
+  that restarts reads the settings and starts the tunnels again. A report's
+  `settings` are the one part that is written, because a setting changed while
+  the kind worked has to survive that restart. A tunnel
+  record carries its `id`, `kind`, the `plugin` that opened it, its `purpose`
+  (`system` for the host's own, `person` for one somebody made), `enabled`, an
+  optional `owner`, and its settings.
+
 ### An engine of your own
 
 A plugin may register an engine: the form a person fills in, the fields only
@@ -1384,6 +1480,7 @@ that method may be called with:
 | --- | --- |
 | `agents` | `registerAgent(agent)`, by `provider` |
 | `engines` | `registerEngine(engine)`, by the engine's name |
+| `tunnelKinds` | `registerTunnelKind(kind)`, by the kind's name |
 | `tools` | `registerTool(tool)`, by the tool's `name` |
 | `sessionConfigs` | `registerSessionConfig(key, ...)`, by key |
 | `resourceProviders` | `registerResourceProvider(scheme, provider)`, by scheme |
@@ -1580,6 +1677,39 @@ holds, because a client is never shown one to send back. The vault names are
 The daemon keeps its own connectors in the JSON collection `connectors`, so one
 is `<configDir>/connectors/<id>.json`. The `@ahpd/webhook` plugin registers the
 first kind; [WEBHOOKS.md](WEBHOOKS.md) says what an endpoint is.
+
+### `x-ahpd-tunnels`
+
+One row for each tunnel, keyed by the host's id for it. A row is the record, with the kind's own settings as fields beside the host's. The record carries `id`, `kind`, the `plugin` that opened it, `purpose`, `enabled`, and `owner` when one names it. It also carries what the host knows of the tunnel now. That is `status` (`running`, `stopped` or `error`), `url` and `error` when there is one, and `operation` when one runs or was the last to run.
+
+`status`, `url`, `error` and `operation` are kept in the host's memory and merged into the row. They are not written to the record, because they change while the daemon runs and a stored copy would be stale after a restart. A record that was never started shows `status: stopped`.
+
+A setting the kind's schema marks `secret` is not on a row. A create or an update moves it to the vault under `host:tunnel/<id>/<field>`. The record keeps `{ "$secret": "<name>" }` in its place, so no snapshot, answer, problem line or log carries the value. A field sent empty keeps the stored one, because a client is never shown one to send back. A new tunnel is saved with its settings, `purpose: person` and `enabled: true`, and `owner` is empty: a tunnel belongs to the host.
+
+The state carries `operations` beside the records. Each operation has an `id` of `<kind>/<name>`, and names its `kind`. It carries a `label`, and a `description`, `icon` and `confirmation` when it has them. It also carries the `scopes` it takes (`list` or `tunnel`), the `grant` a caller needs, and the `input` JSON Schema it asks for. Its `status` and `error` are its state now. The host offers four for each kind. `create` is on the list, with the kind's schema as its input. `update` is on a tunnel when the kind gives an `update` handler, with the same schema. `remove` is on a tunnel, with `tunnel:delete` and a confirmation. `enable` and `disable` are on a tunnel. The kind's own operations are offered on a tunnel too, with the label, icon, input and grant it gave, and `tunnel:put` when it names none.
+
+`tunnel:read` opens the channel. A subscribe to `?owner=me` lists no tunnel, because a tunnel's `owner` is empty and the host owns it.
+
+After `listening` the host adds each kind's system tunnel, when the list holds none of that kind with `purpose: system`, and starts every enabled record. `disable` stops a tunnel and keeps it with `enabled: false`; `enable` starts it again; a daemon that restarts starts it too.
+
+### `x-ahpd/invokeOperation`
+
+One command runs an operation that a channel's state lists, and the same command serves every channel with operations. It takes `{ channel, operationId, target?, input? }`:
+
+| Parameter | What it is |
+| --- | --- |
+| `channel` | The channel URI whose state lists the operation, such as `x-ahpd-tunnels://` |
+| `operationId` | The operation's id, such as `devtunnel/create` |
+| `target` | `{ id }` for an operation on one tunnel, and absent for one on the list |
+| `input` | The operation's input, checked against the schema it declares |
+
+It needs `operation:invoke`. It also admits a caller who holds the grant the operation itself names, such as `tunnel:delete` for a remove. So a person who may change the tunnels needs no second grant to run one.
+
+It refuses a channel it does not have, with `-32001`. It refuses an operation the channel's state does not list now. It refuses a target on a list operation, and a tunnel operation with no `target.id`. It refuses an input the operation's schema refuses. It checks all of these before it calls the channel.
+
+The operation's `status` is `running` while it runs, and then `idle`, or `error` with the message it threw. A list operation's status stays on the operations of the channel's state, and every subscriber is sent `x-ahpd-tunnels/operations` with the list. An operation on one tunnel sets the record's `operation` to `{ id, status, error? }`, and every subscriber is sent the changed row.
+
+The answer goes to the caller alone: the record the operation left, or `{}` for an operation that removed it. When the work throws, the caller is told the message and the operation's status is `error`.
 
 ### `x-ahpd-engines`
 

@@ -13,13 +13,16 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, AutomationStore, AutomationsOptions, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, ServedTunnelKind, SessionStore, Tap, TunnelsChannel, Usage, Vault } from '@ahpd/sdk';
 import {
   adaptersChannel,
   enginesChannel,
   agentsChannel,
   clientPluginsIn,
   connectorsChannel,
+  invokeOperation,
+  OPERATION_COMMAND,
+  tunnelsChannel,
   createHost,
   createMinuteMeter,
   doorOf,
@@ -572,12 +575,37 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * after the handler is built.
    */
   let apiBoundPort = 0;
+  /*
+   * The tunnels the host keeps, read by the API and the routes when a request
+   * arrives: both listeners are built before the channel is, and a tunnel's
+   * URL is only known once its kind reports one.
+   */
+  let tunnelLists: TunnelsChannel | undefined;
   const api = options.httpApi === undefined ? undefined : apiHandler({
     registry: servedRegistry(facts),
     ...(token === undefined ? {} : { token }),
     ...(users === undefined ? {} : { users }),
     program: { name: 'ahpd', version: version(), description: 'An Agent Host Protocol server for Claude, pi, ACP agents and any agent a plugin adds' },
-    origins: () => apiOrigins(apiHost, options.resource, apiBoundPort, options.origins),
+    /*
+     * The names the API answers to, and the origins a browser there sends.
+     *
+     * A tunnel's URL is one of them only when `tunnelHosts` turns it on: the
+     * routes answer to every URL either way, because that is the webhook they
+     * carry, but the administration surface stays on the names the deployment
+     * chose unless it says otherwise.
+     */
+    origins: () => {
+      const base = apiOrigins(apiHost, options.resource, apiBoundPort, options.origins);
+      if (!options.tunnelHosts) return base;
+      const urls = tunnelLists?.urls() ?? [];
+      return {
+        authorities: [...base.authorities, ...announcedNames(urls)],
+        origins: [...base.origins, ...urls.flatMap((url) => {
+          try { return [new URL(url).origin]; }
+          catch { return []; }
+        })],
+      };
+    },
   });
   /*
    * The host's own tools as an MCP server, one endpoint per session.
@@ -804,6 +832,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const recordStore = fileRecords(configDir(), { onProblem: listProblem });
   const connectorRecords = await recordStore.collection('connectors', { format: 'json' });
   /*
+   * The tunnels, one record for each: the kind, the settings a kind asks for,
+   * the host's fields and nothing of the status, which lives in memory while
+   * this daemon runs.
+   */
+  const tunnelRecords = await recordStore.collection('tunnels', { format: 'json' });
+  /*
    * The agents, each one a record of an engine a plugin registers.
    *
    * The same store as the connectors: a plugin takes the store over as a whole,
@@ -817,6 +851,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * the first listing after it, as the plugin channel's manifest does.
    */
   let adapters: Record<string, ServedAdapter> = {};
+  /*
+   * The tunnel kinds the load folds in, read through the closure for the same
+   * reason: the tunnels channel is built before the plugins are loaded, and a
+   * kind a later fold brings reaches the next listing of the operations.
+   */
+  let tunnelKinds: Record<string, ServedTunnelKind> = {};
   /*
    * The automation store, read by the connectors channel before it exists and
    * by the store's own checks before the plugins are loaded.
@@ -858,6 +898,32 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       if (served !== undefined) return listed;
       return { ...listed, models: listed.models.map(({ callable: _callable, ...rest }) => rest) };
     },
+    onProblem: listProblem,
+  });
+  /*
+   * The tunnel list, beside the connectors.
+   *
+   * Built over the daemon's own collection, the kinds the fold holds, the vault
+   * a plugin may have replaced, and the checker every schema in this daemon is
+   * read with. The channel is the daemon's, not a plugin's: a plugin brings the
+   * kinds, and the host keeps the records, the grants and the operations.
+   */
+  const tunnels = tunnelsChannel({
+    collection: tunnelRecords,
+    kinds: () => tunnelKinds,
+    vault: () => held,
+    check: (value, schema, label) => { check(value, schema as JsonSchema, label); },
+    onProblem: listProblem,
+  });
+  tunnelLists = tunnels;
+  /*
+   * The one command over every channel that offers operations. The tunnels
+   * channel is its only one now; a computers channel joins it later without
+   * another command being served.
+   */
+  const tunnelOperations = invokeOperation({
+    channels: () => ({ [tunnels.operations.uri]: tunnels.operations }),
+    check: (value, schema, label) => { check(value, schema as JsonSchema, label); },
     onProblem: listProblem,
   });
   /*
@@ -959,8 +1025,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   };
   const lists = servedRecords(
     'ahpd',
-    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel],
-    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods },
+    [...(peopleLists?.channels ?? []), ...policyLists.channels, pluginLists.channel, adapterLists.channel, engineLists.channel, connectorLists.channel, agentLists.channel, tunnels.channel],
+    { ...peopleLists?.methods, ...policyLists.methods, ...pluginLists.methods, ...connectorLists.methods, ...agentLists.methods, [OPERATION_COMMAND]: tunnelOperations },
   );
 
   /*
@@ -1523,6 +1589,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     loaded = answer.loaded;
     alerts = answer.alerts;
     adapters = withHostAdapters(now.adapters);
+    tunnelKinds = now.tunnelKinds ?? {};
     pluginTypes = pluginTriggerTypes(now.pluginTriggers);
     // An engine a plugin brought or took away is what the stored records are read
     // against, so the list is replaced before they are opened again.
@@ -1555,6 +1622,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   // And the two channels start answering adapters, which is what a stored
   // connector is checked against when it opens below.
   adapters = withHostAdapters(folded.adapters);
+  // And the kinds a stored tunnel names, read by the list from here.
+  tunnelKinds = folded.tunnelKinds ?? {};
   // And the engines a stored agent record is read against when it is opened below.
   engines = folded.engines ?? {};
   // The trigger types a save is now checked against: the host's own two are the
@@ -1664,7 +1733,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // With a port of their own, the routes are not on this listener, and a
     // path under `/plugins/` here is told there is nothing there.
     routes: () => (routesPort === undefined ? liveRoutes : {}),
-    authorities: () => [...apiOrigins(apiHost, options.resource, boundPort, options.origins).authorities, ...announcedNames(said)],
+    // What a plugin announced, and each tunnel's URL the list holds now. The
+    // host of a tunnel is a fresh name on every start, so it is read here
+    // rather than configured.
+    authorities: () => [...apiOrigins(apiHost, options.resource, boundPort, options.origins).authorities, ...announcedNames(said), ...announcedNames(tunnels.urls())],
     onProblem: stamp,
     otherwise: below,
   });
@@ -1756,6 +1828,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     }
     const now = next.options;
     adapters = withHostAdapters(now.adapters);
+    tunnelKinds = now.tunnelKinds ?? {};
     pluginTypes = pluginTriggerTypes(now.pluginTriggers);
     engines = now.engines ?? {};
     const refused = host.replace({ ...now, connectors: { refs: () => connectorLists.refs(), run: connectorLists.run } });
@@ -1854,6 +1927,15 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       guarded: listener.guarded,
     };
     await raise(folded.events, listened, failed('listening'));
+    /*
+     * And the tunnels, once the socket every one of them forwards to is open.
+     *
+     * Each kind's system tunnel is added when the list holds none of that kind,
+     * and then every enabled record is started. Awaited before the
+     * announcement, so a URL a person reads there is one that works, and a
+     * failure is a line in the log rather than a daemon that starts anyway.
+     */
+    await tunnels.startAll(listener.port);
   }
 
   stamp('start: checks');
@@ -1986,6 +2068,12 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let controlListener: ControlServer | undefined;
   const way = lifecycle({
     down: async () => {
+      /*
+       * The tunnels first, so a kind has already let go when the plugin that
+       * registered it hears `stopping` and starts closing its own work. Each
+       * stop is the host's, whatever the kind's plugin does in its handler.
+       */
+      await tunnels.stopAll();
       await raise(liveEvents, { type: 'stopping' }, failed('stopping'));
       peopleLists?.close();
       // The hourly fetch of the provider lists stops with the daemon that reads them.

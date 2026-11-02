@@ -1,6 +1,6 @@
 ---
 title: devtunnel is a kind on the SDK
-status: todo
+status: implemented
 depends:
   - task-01-a-plugin-registers-a-tunnel-kind.md
   - task-03-the-daemon-keeps-the-tunnels.md
@@ -72,3 +72,27 @@ The system tunnel keeps its Dev Tunnel id, its labels and the port `31546`, so e
 - By hand: `x-ahpd/invokeOperation` with `devtunnel/create` on a local port forwards it, and its URL answers.
 
 ## Resume
+
+Built. The plugin registers the `devtunnel` connector and the `devtunnel` kind, and runs the Dev Tunnels SDK in the daemon. Nothing spawns a process.
+
+- `src/service.ts` is the seam under the SDK: `Service`, `Cloud` and `Host`, with `sdkService`. One management client and one relay host for each connector. A port goes on with `createOrUpdateTunnelPort` and the host is refreshed after every port. The Dev Tunnel is found by the `_ahpd` label and reused, so its id stays. The last stop closes the host, and deletes the Dev Tunnel only with `keep` false.
+- `src/kind.ts` is the kind: the schema with `connector` marked `x-ahpd-connector: devtunnel`, `port` and `anonymous`; the operations `start`, `stop`, `restart` and `anonymous`; `create`, `update`, `remove`, `invoke` and `system`; the hop from `31546`; the `say` lines; and the page's poll over `service.show`.
+- `src/plugin.ts` registers the adapter, the kind, and a closer that closes every relay host. `src/devtunnel.ts` is deleted, and `src/index.ts` exports the kind and the service types.
+- `package.json` carries the SDK dependencies, `contracts.adapters`, `contracts.tunnelKinds`, `contracts.closers`, and `connector` in `optionsSchema`.
+- Tests: `test/tunnel-devtunnel-kind.test.ts` covers the schema, the operations and `system` with and without `connector`. `test/tunnel-devtunnel.test.ts` covers the kind against a fake `Cloud` and `Host`: two ports on one host with `refreshPorts`, reuse by label, the last stop with and without `keep`, a connector that is not open, anonymous access live, and a moved port. `test/tunnel-devtunnel-view.test.ts` covers the page and its poll against a scripted `Service`: the drawn view, a redraw only on change, a failed read that keeps the page and warns once, and a stop that clears it.
+- The doc is the README, because `docs/plugins/tunnel-devtunnel.md` includes it: `connector` first, no CLI, the kind and its operations, and the new id that a deleted Dev Tunnel costs. `docs/plugins/PLUGINS.md` says a report may carry `settings`.
+
+Departures from the steps:
+
+1. Step 11's "save `anonymous` in the record" had no path in the SDK: `invoke` returns nothing and the plugin holds no grant. `TunnelReport` gained an optional `settings`, and `tunnelsChannel` saves those fields as a put does - a secret moves to the vault, the host's own fields are refused - and awaits the save before it answers the operation. The kind reports `{ settings: { anonymous: on } }`, and `packages/sdk/test/tunnels-channel.test.ts` covers the save.
+2. `src/view.ts` is unchanged. The state it draws now comes from `service.show` through the kind; `tunnelView` and `sameState` only shape a state that was already read, so there was nothing in the file itself to replace.
+3. `docs/plugins/tunnel-devtunnel.md` was not edited: it is an include of the README, so the doc text is there.
+4. The anonymous access entry needed `subjects: []`. The SDK's type requires it, and the service ignores it for the anonymous type.
+5. `contracts.closers` was added to the manifest, because the plugin now closes relay hosts. `packages/server/test/plugin-contracts.test.ts` and `packages/server/test/plugin-load.test.ts` list the plugin's contracts and options, so both were updated.
+
+The check `rg -n "spawn\(|'devtunnel'" packages/tunnel-devtunnel/src` answers only `adapter.ts` and `kind.ts` at their registration names. Neither is a CLI call.
+
+Checks by hand, still pending review:
+
+- After the upgrade, VS Code and ahpc reach the daemon with the token they had.
+- `x-ahpd/invokeOperation` with `devtunnel/create` on a local port forwards it, and its URL answers.

@@ -35,7 +35,7 @@ export const HELD = '<set>';
 export type OwnerVerb = 'put' | 'remove';
 
 /** The noun a secret's vault name starts with, and the grant subject it is asked under. */
-export type SecretSubject = 'connector' | 'agent';
+export type SecretSubject = 'connector' | 'agent' | 'tunnel';
 
 /** How one subject names itself in a message about a secret. */
 export interface SubjectWords {
@@ -50,6 +50,9 @@ export const CONNECTOR_WORDS: SubjectWords = { possessive: "A connector's", host
 
 /** How an agent is named in a message about one of its secrets. */
 export const AGENT_WORDS: SubjectWords = { possessive: "An agent's", host: 'host agent' };
+
+/** How a tunnel is named in a message about one of its secrets. */
+export const TUNNEL_WORDS: SubjectWords = { possessive: "A tunnel's", host: 'host tunnel' };
 
 /** How one channel reads and writes its secrets. */
 export interface SecretRules {
@@ -71,6 +74,9 @@ export const CONNECTOR_SECRETS: SecretRules = { subject: 'connector', words: CON
 
 /** An agent's secrets: a top-level field or one under `env`, and named as an agent. */
 export const AGENT_SECRETS: SecretRules = { subject: 'agent', words: AGENT_WORDS, nested: true };
+
+/** A tunnel's secrets: flat, and named as a tunnel. */
+export const TUNNEL_SECRETS: SecretRules = { subject: 'tunnel', words: TUNNEL_WORDS, nested: false };
 
 /** A value as a record's owner, or nothing when it names no scope. */
 export const asOwner = (value: unknown): ConnectorOwner | undefined =>

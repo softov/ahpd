@@ -1,6 +1,6 @@
 ---
 title: The host lists tunnels and runs operations
-status: todo
+status: implemented
 depends:
   - task-01-a-plugin-registers-a-tunnel-kind.md
 layer: sdk
@@ -83,3 +83,16 @@ The host checks the operation, the target, the input and the grant, and then cal
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built the shared operations core and the tunnels channel. `packages/sdk/src/kinds/operations.ts` holds `OperationChannel`, `InvokeOperationOptions` and `invokeOperation`, which serves `x-ahpd/invokeOperation` with the grant `operation:invoke`. Its `authorize` admits a caller who holds the operation's own grant. `packages/sdk/src/tunnels/channel.ts` holds `tunnelsChannel`. It serves the records channel at `x-ahpd-tunnels`, with the host's four operations and each kind's own. It writes the records, moving their secrets to the vault, and gives the host `startAll`, `stopAll` and `urls`. `packages/sdk/src/index.ts` exports both, and `packages/sdk/src/channels/owners.ts` gained the `tunnel` secret subject and `TUNNEL_SECRETS`.
+
+Departures from the steps:
+
+- `packages/sdk/src/channels/owners.ts` gained `'tunnel'` in `SecretSubject` and `TUNNEL_SECRETS`, because a tunnel's secret needs the subject and the vault name `host:tunnel/<id>/<field>`. The Files list did not name this file.
+- A record keeps its settings as fields of its own, as the plan's answer says, and the kind is handed them as `tunnel.settings`. The host's fields are `id`, `kind`, `plugin`, `purpose`, `enabled` and `owner`.
+- The host makes a new tunnel's id as `<kind>-<8 hex>`. Neither the kind's schema nor the command carries one, and the brief calls it the host's id.
+- The whole operations array is sent on `x-ahpd-tunnels/operations` when a list operation's status changes, not a diff. A tunnel operation's change rides the record's `changed`.
+- `startAll` starts only enabled records that are not already running, so a second call starts nothing twice and adds no second system tunnel.
+- `invokeOperation` checks an operation's input with the label `<id>'s input`, and passes no input when the operation declares no schema.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit` and `pnpm -s boundary` pass. `packages/sdk/test/kinds-operations.test.ts` (7 tests) and `packages/sdk/test/tunnels-channel.test.ts` (7 tests) pass. The prose lint reports no finding in the two new sections; it still reports the file's pre-existing long sentences.

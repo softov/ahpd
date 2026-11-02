@@ -56,3 +56,7 @@ export type {
   Adapter, CallOutcome, Capability, CapabilityType, CheckResult, Connector, ConnectorHealth, ConnectorOwner, ModelDialect,
   ModelPricing, ModelProvider, ProviderConnector, ProviderModel, ServedAdapter,
 } from './connectors.js';
+export type { KindOperation, Operation, OperationScope, OperationStatus } from './kinds.js';
+export type {
+  ReportTunnel, ServedTunnelKind, Tunnel, TunnelKind, TunnelPurpose, TunnelReport, TunnelStatus, TunnelSystemContext,
+} from './tunnels.js';

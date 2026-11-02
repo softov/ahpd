@@ -78,6 +78,8 @@ export interface Options {
   resource?: string;
   /** The origins this host also answers to, beside its own names. */
   origins?: string[];
+  /** Whether the API answers to the tunnels' host names. Off unless the file says. */
+  tunnelHosts: boolean;
   /** An authorization server whose tokens this host also accepts. */
   issuer?: string;
   /** How a token from that issuer is checked, absent when the deployment said nothing. */
@@ -560,6 +562,11 @@ export const serverFields = {
     description: 'An origin this host also answers to, such as http://203.0.113.5:9187. Repeatable.',
     cli: { flag: '--origin', value: 'URL' },
   },
+  tunnelHosts: {
+    type: 'boolean',
+    title: 'Tunnel host names',
+    description: 'Answer the HTTP API to the host names of the tunnels this host keeps, as the plugin routes always do. Off by default: a tunnel is a fresh name on every start, and the API is an administration surface. Set in the configuration file only.',
+  },
   issuer: {
     type: 'string',
     description: 'An authorization server whose tokens are also accepted: github, or an OpenID Connect issuer.',
@@ -750,7 +757,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser'] as const;
+const FILE_ONLY = ['httpApi', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1244,6 +1251,7 @@ const noCwd = input['noCwd'] === true;
     ...(users === undefined ? {} : { users }),
     ...(resource === undefined ? {} : { resource }),
     ...(origins.length === 0 ? {} : { origins }),
+    tunnelHosts: given('tunnelHosts') ?? false,
     ...(issuer === undefined ? {} : { issuer }),
     ...(issuerVerify === undefined ? {} : { issuerVerify }),
     requireIssuer: given('requireIssuer') ?? false,

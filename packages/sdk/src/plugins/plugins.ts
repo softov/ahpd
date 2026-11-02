@@ -20,6 +20,7 @@ import type { HostOptions, HostTool, NodeRegistry } from '../types/host.js';
 import type { ChannelHandle, Contribution, LoaderContext, Alert, InstallAnswer, PluginConnects, PluginContext, PluginContracts, PluginHost, PluginStarts, PluginView, SessionMetaKey, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta, PluginTriggers, PortContribution, PortKey, PortOf, Route, TriggerTypeDefinition, ViewSurface } from '../types/plugin.js';
 import type { CollectionOptions, RecordCollection, RecordStore } from '../types/records.js';
 import type { SessionStore } from '../types/sessions.js';
+import type { ServedTunnelKind } from '../types/tunnels.js';
 import type { Usage } from '../types/usage.js';
 import type { Grant, Principal } from '../types/users.js';
 import type { Vault } from '../types/vault.js';
@@ -32,7 +33,7 @@ import { isRecordPath, isRecordSlug, RECORD_PATH, RECORD_SLUG } from '../resourc
 import type { Pair } from '../utils/pair.js';
 import { reason } from '../utils/values.js';
 import { readSecret } from '../access/vault.js';
-import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, declared, miss, reservedName, type CheckedSchema } from './validate.js';
+import { checkAdapter, checkAgent, checkEngine, checkChannel, checkChatRequest, checkMethod, checkPort, checkResourceProvider, checkRoute, checkScheme, checkSessionRequest, checkTool, checkTriggerType, checkTunnelKind, declared, miss, reservedName, type CheckedSchema } from './validate.js';
 import { checkView } from './view.js';
 import { gapLine, schemaGaps } from './schemagaps.js';
 
@@ -554,6 +555,26 @@ export function foldHostOptions(base: HostOptions, contributions: Contribution[]
     }
   }
   if (Object.keys(engines).length > 0) options.engines = engines;
+
+  /*
+   * The kinds of tunnel, keyed by name and never merged over one another.
+   *
+   * A kind names one form and one set of handlers, so two plugins offering one
+   * name is a collision: it is reported, and the first registration keeps it.
+   * Seeded from the base for the same reason the adapters are.
+   */
+  const tunnelKinds: Record<string, ServedTunnelKind> = { ...base.tunnelKinds };
+  for (const contribution of contributions) {
+    for (const [name, kind] of Object.entries(contribution.tunnelKinds ?? {})) {
+      const held = tunnelKinds[name];
+      if (held !== undefined) {
+        problems.push(`plugin ${contribution.by} registers tunnel kind ${name}, which ${held.by === 'the daemon' ? 'the daemon' : `plugin ${held.by}`} already registered`);
+        continue;
+      }
+      tunnelKinds[name] = kind;
+    }
+  }
+  if (Object.keys(tunnelKinds).length > 0) options.tunnelKinds = tunnelKinds;
 
   /*
    * The agents made from records, after the plugins' own.
@@ -1096,6 +1117,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
     channels: {},
     adapters: {},
     engines: {},
+    tunnelKinds: {},
     methods: {},
     events: events as unknown as HostHandlers,
     closers: [],
@@ -1794,6 +1816,17 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
       }
       reportGaps(checked);
       held[named] = { ...engine, by, ...(options.spec === undefined ? {} : { spec: options.spec }) };
+    },
+    registerTunnelKind(kind) {
+      open();
+      const { name: named, checked } = checkTunnelKind(kind, by);
+      declared(by, options.contracts, 'tunnelKinds', named);
+      const held = contribution.tunnelKinds ??= {};
+      if (held[named] !== undefined) {
+        throw new Error(miss(by, 'registerTunnelKind', named, 'a name no other tunnel kind in this plugin uses'));
+      }
+      reportGaps(checked);
+      held[named] = { ...kind, by };
     },
     on(event, handle) {
       // The context is captured, not rebuilt when the event fires: it is the

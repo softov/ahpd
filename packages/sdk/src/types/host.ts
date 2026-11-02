@@ -15,6 +15,7 @@ import type { EnablementStore } from '../plugins/enablement.js';
 import type { ChatPreamble, PluginConnects, PluginStarts, PluginTriggers, ServedBindings, ServedCanvases, ServedChannel, ServedMethod, ServedPlan, ServedSessionMeta } from './plugin.js';
 import type { ConnectorRef, ServedAdapter } from './connectors.js';
 import type { AgentOwner, ServedEngine } from './agents.js';
+import type { ServedTunnelKind } from './tunnels.js';
 import type { ConnectorsChannel } from '../connectors/channel.js';
 import type { SessionStore } from './sessions.js';
 import type { ComputerPort, HandedAgent, NestedStart, NestedStarted } from './computers.js';
@@ -212,6 +213,15 @@ export interface HostOptions {
    * stored record whose `engine` is not here is served as `unavailable`.
    */
   engines?: Record<string, ServedEngine>;
+  /**
+   * The kinds of tunnel the plugins offer, by name.
+   *
+   * The fold fills this from `registerTunnelKind`, and one name is one kind: a
+   * second plugin registering it is reported and loses that kind alone. The
+   * host asks each kind for its system tunnel and calls its handlers for a
+   * stored record; a record whose kind is not here cannot be started.
+   */
+  tunnelKinds?: Record<string, ServedTunnelKind>;
   /**
    * Whose each agent is, by its id, as the last read of its record found it.
    *

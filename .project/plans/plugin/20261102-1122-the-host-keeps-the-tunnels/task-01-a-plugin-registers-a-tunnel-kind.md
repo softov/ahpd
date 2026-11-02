@@ -1,6 +1,6 @@
 ---
 title: A plugin registers a tunnel kind
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -65,3 +65,16 @@ The operation shape is generic, so the computers can share it later.
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built the kind registration. `packages/sdk/src/types/kinds.ts` holds `KindOperation`, `Operation`, `OperationScope` and `OperationStatus`; `packages/sdk/src/types/tunnels.ts` holds `TunnelKind`, `Tunnel`, `TunnelReport`, `ReportTunnel`, `TunnelPurpose`, `TunnelStatus`, `TunnelSystemContext` and `ServedTunnelKind`. `PluginHost.registerTunnelKind` checks the value with `checkTunnelKind`, holds the name against `contracts.tunnelKinds`, and keeps it with `by`. `foldHostOptions` folds the kinds by name and reports a name two plugins took, and `HostOptions.tunnelKinds` is where they land.
+
+Departures from the steps:
+
+- `packages/sdk/src/types/host.ts` gained `tunnelKinds`, because the fold has to put the kinds in `HostOptions` and the Files list did not name it.
+- `packages/sdk/src/types/index.ts` gained the type re-exports, which the star export in `sdk/src/index.ts` carries, and `sdk/src/index.ts` exports `checkTunnelKind` beside `checkIcons`.
+- The grant check uses `isGrant` from `access/users.ts` rather than a `<word>:<word>` regex. It refuses a grant a role could not hold, as well as one with no colon. A kind's own subject (`tunnel:restart`) is accepted.
+- The typecheck gate ran as `pnpm exec tsc -p tsconfig.json --noEmit`, because `pnpm typecheck` is denied in this environment.
+
+`docs/plugins/PLUGINS.md` gained "A tunnel kind of your own", with the devtunnel kind as its example. It sits after "An adapter of your own", and *The contracts* has a `tunnelKinds` row.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit` and `pnpm -s boundary` pass. `packages/sdk/test/plugin-validate.test.ts` (35 tests) and `packages/sdk/test/plugin-fold.test.ts` (34 tests) pass. The prose lint reports no finding in the new section; it reports the file's pre-existing long sentences elsewhere.

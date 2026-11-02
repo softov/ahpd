@@ -12,6 +12,7 @@ import type { Usage } from '../src/types/usage.js';
 import type { Policies } from '../src/types/policies.js';
 import type { Vault } from '../src/types/vault.js';
 import type { Adapter } from '../src/types/connectors.js';
+import type { TunnelKind } from '../src/types/tunnels.js';
 import type { Contribution, LoaderContext, PortContribution, PortKey, Route } from '../src/types/plugin.js';
 
 /*
@@ -472,6 +473,71 @@ describe('the adapters a fold carries', () => {
     const engine = { name: 'claude', title: 'Claude', description: 'An agent.', schema: { type: 'object' }, open: () => agent('claude') };
 
     expect(() => old.registerEngine(engine)).toThrow('engines');
+  });
+});
+
+/*
+ * The kinds of tunnel a plugin offers.
+ *
+ * A kind is registered through `pluginHost`, which checks its shape and its
+ * contract, and the fold keeps it by name. Its handlers are the kind's own;
+ * nothing here, and nothing in this task, calls one.
+ */
+
+/** A tunnel kind whose handlers do nothing, which is all a registration check reads. */
+const tunnelKind = (name: string, parts: Partial<TunnelKind> = {}): TunnelKind => ({
+  name,
+  title: `${name} tunnel`,
+  description: `A tunnel of the ${name} kind.`,
+  schema: { type: 'object', properties: {} },
+  create: () => {},
+  remove: () => {},
+  invoke: () => {},
+  ...parts,
+});
+
+describe('the tunnel kinds a fold carries', () => {
+  it('collects two kinds of two plugins, by name', () => {
+    const alpha = pluginHost('alpha', ADAPTER_CONTEXT);
+    alpha.host.registerTunnelKind(tunnelKind('devtunnel'));
+    const beta = pluginHost('beta', ADAPTER_CONTEXT);
+    beta.host.registerTunnelKind(tunnelKind('ngrok'));
+
+    const { options, problems } = foldHostOptions(base(), [alpha.contribution, beta.contribution]);
+    expect(problems).toEqual([]);
+    expect(Object.keys(options.tunnelKinds ?? {})).toEqual(['devtunnel', 'ngrok']);
+    expect(options.tunnelKinds?.devtunnel?.by).toBe('alpha');
+    expect(options.tunnelKinds?.ngrok?.by).toBe('beta');
+  });
+
+  it('refuses a kind name two plugins register, and names both', () => {
+    const alpha = pluginHost('alpha', ADAPTER_CONTEXT);
+    alpha.host.registerTunnelKind(tunnelKind('devtunnel'));
+    const beta = pluginHost('beta', ADAPTER_CONTEXT);
+    beta.host.registerTunnelKind(tunnelKind('devtunnel'));
+
+    const { options, problems } = foldHostOptions(base(), [alpha.contribution, beta.contribution]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('alpha');
+    expect(problems[0]).toContain('beta');
+    expect(problems[0]).toContain('devtunnel');
+    // The first keeps the name, and the second keeps everything else it
+    // contributed rather than failing its whole load.
+    expect(options.tunnelKinds?.devtunnel?.by).toBe('alpha');
+  });
+
+  it('refuses a kind its contracts do not list, naming the kind', () => {
+    const listed = pluginHost('alpha', ADAPTER_CONTEXT, { contracts: { tunnelKinds: ['devtunnel'] } }).host;
+    expect(() => listed.registerTunnelKind(tunnelKind('devtunnel'))).not.toThrow();
+
+    const other = pluginHost('beta', ADAPTER_CONTEXT, { contracts: { tunnelKinds: ['devtunnel'] } }).host;
+    expect(() => other.registerTunnelKind(tunnelKind('ngrok'))).toThrow('ngrok');
+  });
+
+  it('refuses a kind a plugin whose contracts say tunnels registers, naming tunnelKinds', () => {
+    const old = pluginHost('alpha', ADAPTER_CONTEXT, { contracts: { tunnels: ['devtunnel'] } }).host;
+
+    expect(() => old.registerTunnelKind(tunnelKind('devtunnel'))).toThrow('tunnelKinds');
   });
 });
 
