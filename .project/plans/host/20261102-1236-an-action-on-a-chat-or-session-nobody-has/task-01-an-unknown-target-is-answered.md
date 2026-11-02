@@ -1,6 +1,6 @@
 ---
 title: An unknown target is answered as the reference host answers it
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -42,4 +42,9 @@ A session's read or archive toggle for an unknown session is dropped, and any ot
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `6c71a804`.
+
+- The check of an unknown chat sits before `session/activeClientSet`, so every action on such a chat takes it.
+- An action on an unknown chat goes out on the channel the client named: `meantBy` reads an unknown `ahp-chat:/<x>` as a default chat of `<x>`.
+- `host-snapshots.test.ts` moved with the behavior: its draft for a chat naming a session nobody has was refused.
+- That case now holds the draft taken and kept nowhere, by the chat of that session, made later, opening with no draft.

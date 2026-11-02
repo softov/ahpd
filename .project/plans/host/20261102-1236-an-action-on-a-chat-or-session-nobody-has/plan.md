@@ -1,7 +1,7 @@
 ---
 title: An action on a chat or session nobody has
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -92,7 +92,7 @@ dispatchAction -> actions.ts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An unknown target is answered as the reference host answers it](task-01-an-unknown-target-is-answered.md) | todo | - |
+| [01 - An unknown target is answered as the reference host answers it](task-01-an-unknown-target-is-answered.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -103,13 +103,13 @@ dispatchAction -> actions.ts
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-an-unknown-target-is-answered.md](task-01-an-unknown-target-is-answered.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a chat's URI resolves through `meantBy` before the check, so a known session's chat in any spelling is known.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `60fa2ccd` for the reason it names, and passes after the change; a control passes on both.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `60fa2ccd` for the reason it names, and passes after the change; a control passes on both.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
