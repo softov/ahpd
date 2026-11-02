@@ -68,7 +68,7 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A nested turn says how long it ran](task-01-a-nested-turn-says-how-long-it-ran.md) | done | - |
-| [02 - A bot's failed turn ends as failed](task-02-a-bots-failed-turn-ends-as-failed.md) | todo | - |
+| [02 - A bot's failed turn ends as failed](task-02-a-bots-failed-turn-ends-as-failed.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -76,8 +76,8 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
-- **Next action:** [task-02-a-bots-failed-turn-ends-as-failed.md](task-02-a-bots-failed-turn-ends-as-failed.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** the implemented record.
 - **Open questions:** none.
 - **Watch out for:** a halt ends the outer turn too, so both endings take the turn's start.
 

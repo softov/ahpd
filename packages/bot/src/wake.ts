@@ -173,8 +173,11 @@ export interface Wake {
    *
    * Nothing where no main turn is waiting on this session, which is a session
    * that posted already and one this wake never woke.
+   *
+   * `failed` is the sentence a turn that failed ended with, and the main turn
+   * fails with it.
    */
-  finished(backSession: string, text: string): void;
+  finished(backSession: string, text: string, failed?: string): void;
   /**
    * The connectors one back session may use, by alias, read live.
    *
@@ -480,11 +483,16 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
       return true;
     },
 
-    finished: (backSession, text) => {
+    finished: (backSession, text, failed) => {
       const held = answering.get(backSession);
       if (held === undefined) return;
       // Let go first, for the reason `posted` says.
       answering.delete(backSession);
+      // A turn that failed fails the main turn, as the reference host ends a failed send.
+      if (failed !== undefined && held.handle.fail !== undefined) {
+        held.handle.fail(failed);
+        return;
+      }
       /*
        * The table `mainTurnPostMessageAbsent` names. A turn that said nothing
        * has nothing to post, so it is ended rather than given an empty reply;

@@ -164,6 +164,8 @@ export interface TurnHandle {
   notice(text: string): void;
   /** End the open turn with no response at all. */
   end(): void;
+  /** End the open turn as failed, in the words of what failed. */
+  fail?(message: string): void;
   /**
    * Say the open turn is waiting on a chat of another session, and link it.
    *
@@ -729,10 +731,14 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       // Whatever it answered with, before the turn is said to be over: a part
       // that arrived after the end is a part of a turn nobody is holding. The
       // calls are not here: their starts already appended them.
-      for (const part of parts) start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
-      start.emit('chat', state === 'cancelled'
-        ? { type: 'chat/turnCancelled', turnId: held.id, duration }
-        : { type: 'chat/turnComplete', turnId: held.id, duration });
+      // A failed turn's one part is its error, which `chat/error` carries.
+      if (state === 'error') start.emit('chat', { type: 'chat/error', turnId: held.id, duration, part: parts[0] });
+      else {
+        for (const part of parts) start.emit('chat', { type: 'chat/responsePart', turnId: held.id, part });
+        start.emit('chat', state === 'cancelled'
+          ? { type: 'chat/turnCancelled', turnId: held.id, duration }
+          : { type: 'chat/turnComplete', turnId: held.id, duration });
+      }
       // Whatever was waiting behind it, now that there is nothing in front of
       // it. After the turn is said to be over, so a client reads one ending and
       // then the next beginning rather than the other way round.
@@ -768,6 +774,16 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         const held = open;
         if (held === undefined) return;
         finish(held, 'complete', []);
+      },
+      /*
+       * A turn whose work failed ends as failed, with an error part, as the
+       * reference host ends a failed send with `chat/error`.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1860
+       */
+      fail: (message) => {
+        const held = open;
+        if (held === undefined) return;
+        finish(held, 'error', [{ kind: 'error', error: { errorType: 'turnFailed', message } }]);
       },
       working: (chat, title) => {
         const held = open;

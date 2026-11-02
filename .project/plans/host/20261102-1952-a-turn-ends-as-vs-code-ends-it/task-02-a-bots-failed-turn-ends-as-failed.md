@@ -1,6 +1,6 @@
 ---
 title: A bot's failed turn ends as failed
-status: todo
+status: done
 depends: []
 layer: bot
 refs:
@@ -39,3 +39,8 @@ The chat's log keeps the turn as failed.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- `fail` is optional on the handle, as `working` is; a handle without it ends the turn the way `finished` ended it before.
+- On `89ebe4d5`'s sources both cases fail: no handle failed, and no `chat/error` was said.
