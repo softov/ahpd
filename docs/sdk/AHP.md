@@ -71,8 +71,8 @@ and `dispatchAction`. The protocol names the channel `ahp-automations://`, and
 for two weeks the reference host spelt it with an authority so the URI survived
 a round trip through its own URI class; Insiders builds from that window still
 subscribe under it, and were refused here with `-32001` about a session nobody
-had named. Answered under whichever spelling the client used, the way a chat
-is.
+had named. Answered under whichever spelling the client used, the way the root
+is: the root and the automations catalogue are this host's own channels.
 
 | command | ahpd | Notes |
 | --- | :---: | --- |
@@ -91,9 +91,9 @@ is.
 | `createTerminal` | 🧩 | The `terminals` port. Opens in a directory this host serves, under the URI the client chose. |
 | `disposeTerminal` | 🧩 | Kills the process group rather than the shell, because a detached shell's children outlive it. |
 | `createResourceWatch` | 🧩 | A channel per watch, with globs for `includes` and `excludes`. No dispose command, as the protocol has none: the last `unsubscribe` releases the watcher. |
-| `fetchTurns` | ✅ | Walks back from the `turnsNextCursor` a snapshot carries, which is there only when a `view` left older turns behind. With no cursor it answers nothing older, because the host keeps no record of which window a connection was given. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Resolved under whatever spelling the client used for the chat. |
+| `fetchTurns` | ✅ | Walks back from the `turnsNextCursor` a snapshot carries, which is there only when a `view` left older turns behind. With no cursor it answers nothing older, because the host keeps no record of which window a connection was given. The page arrives as `chat/turnsLoaded` on the channel rather than in the result, so every client watching the chat gets it. Answered for the chat under the URI it is held by. |
 | `completions` | ✅ | `/` against the session's own commands - read from the `children` of its containers, because a prompt or a skill is never a top-level customization - falling back to the harness-wide list when a session has not answered yet. `@`, and every `#` that is not a chat, against the files this host serves, relative to the session's own directory. `#chat:` against the other chats of the session, filtered case blind on the title, newest first and capped at twenty - each item a `chat` attachment naming the chat and pinning `endTurn` to its last completed turn, which is absent for a chat that has not finished one. A `#` still on its way to `#chat:` - `#`, `#ch`, `#chat` - is answered with those chats and then the files both, because VS Code asks every provider at once and its client shows the merged list; only a word that already says `chat:` is answered with chats alone. A chat a tool started is not offered, and neither is the chat the text is being typed in; a session's chat is answered under the name the client knows it by, which for the default chat is the one built from the session channel it created. A skill the CLI loaded and did *not* put behind a slash is the agent's own and stays out of the menu. Every item carries `_meta.command`, without which the reference client drops it - see [a slash command is a message](#a-slash-command-is-a-message) - and a skill carries `_meta.isSkill: true` beside it, which is what keeps one in an automation's text in the reference client's editor. |
-| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions, which for an MCP server are the sessions it watches under any spelling of their names. `ahpd://users` is the one resource whose token this host verifies itself, against its own user directory; every other resource keeps the unverified pass-through a backend or an MCP server needs. A `target` names one MCP server of one session, and the token is that server's alone: no server beside it, no other session and no backend's own resource is given it, and a target this host does not publish, or whose server is not waiting for that resource, is `-32602`. An empty token takes it back, which is the protocol's word for signing out, and with a target takes back only that server's; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. A token the directory does not know answers `-32007`. See [Users](USERS.md). |
+| `authenticate` | ✅ | A token for a resource this host advertised, kept per connection and spent only on that connection's sessions, which for an MCP server are the sessions it watches. `ahpd://users` is the one resource whose token this host verifies itself, against its own user directory; every other resource keeps the unverified pass-through a backend or an MCP server needs. A `target` names one MCP server of one session, and the token is that server's alone: no server beside it, no other session and no backend's own resource is given it, and a target this host does not publish, or whose server is not waiting for that resource, is `-32602`. An empty token takes it back, which is the protocol's word for signing out, and with a target takes back only that server's; `expiresIn` says how long it is good for, and past that it is neither spent nor kept. A token the directory does not know answers `-32007`. See [Users](USERS.md). |
 | `resolveSessionConfig` | ✅ | The same schema a session reports, so a catalogue row is configurable before it is resumed. Iterative: what has been answered comes back answered, so re-asking does not quietly undo a choice. This host contributes seven worktree properties of its own when it was given a `worktrees` port and the directory is a repository. |
 | `sessionConfigCompletions` | ✅ | `branch`, the one key of this host's own with more values than a picker holds. The schema seeds twenty, most recently committed first; this answers what somebody types, matching on substring. A plugin's key is answered by whoever registered it - `@ahpd/computer` lists the machines it made - and `resolveSessionConfig` asks that answerer once with an empty query to seed the property's `enum`, so a client can label the value it holds before opening anything. A key with nobody registered is an enum a client already has, answered with nothing. |
 | `invokeChangesetOperation` | 🧩 | The `changes` port advertises the verbs; this host owns their status. A result may carry a `followUp`. An operation that writes needs no grant, exactly as the resource half does not. |
@@ -157,7 +157,7 @@ handed them again as if it had not.
 | `root/sessionRemoved` | ✅ | Carries `session`. |
 | `root/sessionSummaryChanged` | ✅ | Carries `session` and a `changes` partial with the three identity fields - `resource`, `provider`, `createdAt` - left out, because the protocol says they MUST be. `activity` is `null` when there is none: a partial is spread over the row a client holds, so a key left off is a field that did not move, and a row that went idle kept saying what its last tool was doing. The type says `string`; the reference host sends `null` and its client reads it as cleared. `chats` carries the session's whole compact chat catalogue and replaces the list a client holds, and `defaultChat` names the chat a client gets when it names none. A row and the state it opens build that list with one function, so they cannot disagree about which chats a session has. |
 | `root/progress` | ✅ | Only when the request carried a `progressToken`, and only to the client that sent it: the token is that request's and means nothing to anybody else. Three frames against a total of 2 - the tree, the agent, ready - because making a worktree on a large repository is seconds somebody otherwise waits through with nothing on screen. |
-| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, each under the spelling of its name that connection watches, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does, naming a session it watches whose server waits for that resource, or the root channel: nothing here verifies a token, but `authenticate` carries `expiresIn`, so when one goes stale is a fact this host holds. |
+| `auth/required` | ✅ | Off the same state change that carries the requirement, to the connections watching that session, under the session's URI, once per resource. And `reason: 'expired'` to the one connection whose token ran out, at the moment it does, naming a session it watches whose server waits for that resource, or the root channel: nothing here verifies a token, but `authenticate` carries `expiresIn`, so when one goes stale is a fact this host holds. |
 | `otlp/exportLogs` | ✅ | `ahp-otlp://logs/{level}`, a template a client expands before subscribing - a literal URI would mean every subscriber got every line. Carries an OTLP/JSON `ExportLogsServiceRequest` verbatim, the same lines the daemon writes to stdout. |
 | `otlp/exportTraces` | ✅ | `ahp-otlp://traces`, a literal channel: the protocol defines template variables for `logs` alone, and one of this host's invention would be a channel nobody can expand. A turn is a `SPAN_KIND_SERVER` span and every tool call in it a `SPAN_KIND_CLIENT` child, joined by `traceId` and sent as each ends. |
 | `otlp/exportMetrics` | ✅ | `ahp-otlp://metrics`. Cumulative sums against the process start, so a collector arriving late reads totals rather than a difference it missed the beginning of. |
@@ -594,77 +594,87 @@ the CLI's shell tool is bash everywhere; an empty list clears the file.
 
 ### Chat URIs
 
-A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, and the
-older `ahp-chat:/<sessionId>` still resolves to the same chat.
+A session's first chat is `ahp-chat://default/<base64url(sessionUri)>`, the
+shape VS Code's host builds and an older VS Code window computes from the
+session. `defaultChat`, every entry in `chats` and `ChatState.resource` name the
+chat by that one URI, so a client that computed it and a client that read it
+hold the same string.
 
-That is the reference implementation's shape rather than the one the
-specification illustrates, and it is a deliberate retreat. The specification
-documents `ahp-chat:/<uuid>` and says the owning session is "**not** encoded in
-the chat URI - the relationship is expressed via the session's `chats`
-catalogue". This host published exactly that. VS Code's client computes the
-other shape from the session rather than reading the catalogue, so it subscribed
-to a channel that did not exist while the conversation sat on the one it had
-been told about, and its pane stayed empty against a host that was working.
+That URI is the session's chat while the session records no other default
+chat, or records that one, as VS Code's host gives a derived default chat an
+owner only while the session's record agrees
+([agentHostChatOwnershipService.ts#L226-L242](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242)).
 
-Answering *both* was tried first and is not enough. The disagreement is not only
-about which channel to open: `defaultChat`, every entry in `chats`, and
-`ChatState.resource` name a chat too, and a client that subscribed to one string
-and is then told the chat is at another cannot pair them up. One name has to win
-everywhere, and it has to be the one the only other implementation computes.
-
-`default` is a **role**, not an identity: it means whichever chat a client gets
-when it names none. Dispose that chat and the name follows the default to its
-successor. A second chat is named by whoever created it and is not derived from
-anything.
+`default` is a **role**: it means whichever chat a client gets when it names
+none. Dispose that chat and the role moves to another chat of the session, under
+that chat's own URI, and the disposed chat's URI names nothing. A second chat is
+named by whoever created it, and `ahp-chat:/<id>` is a chat of that URI and of
+no session `<id>`. A chat moved to another session keeps its URI
+([chat-channel.md#L203-L204](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L203-L204)).
 
 ### Session URIs
 
 The protocol names a session `ahp-session:/<uuid>`, and keeps its provider on
-`SessionSummary.provider` rather than in the URI. This host therefore names
-every session it makes `ahp-session:/<uuid>`.
+`SessionSummary.provider`. This host names every session it makes
+`ahp-session:/<uuid>`, as VS Code's host does since commit `bd64649be19`, with
+the one exception below.
 
-VS Code did the same on 2026-10-05, in commit `bd64649be19` ("Use proper
-ahp-session: scheme URIs for new AH sessions"). Its older reading of the scheme
-is now a fallback that returns nothing for `ahp-session`. The reason this host
-used `<provider>:/<uuid>` is gone, and that name disagreed with the protocol.
+A session is held under one URI, and answered under that URI alone, for every
+client, as VS Code's host keys a session by the URI a client sends
+([agentService.ts#L11472-L11490](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490)):
 
-A session that already exists keeps the `<provider>:/<uuid>` name it has, as
-VS Code keeps its legacy names. The host stores each session's URI in its row,
-so a name survives a restart. A session listed from a backend's disk that this
-host never made is `ahp-session:/<id>`.
+- A session a client creates is held under the channel it named:
+  `ahp-session:/<uuid>`, `<provider>:/<uuid>`, or a scheme of the client's own
+  ([protocolServerHandler.ts#L2213-L2221](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221)).
+- A session that already exists keeps the `<provider>:/<uuid>` name it has. The
+  host stores each session's URI in its row, so a name survives a restart, and a
+  row a client marks or configures keeps the name it was listed by.
+- A session listed from a backend's disk that this host keeps no record of is
+  `ahp-session:/<id>`, whether a listing or a lookup by id found it.
+- A session an agent's tool makes during a turn an older VS Code window sent is
+  `<provider>:/<uuid>`, so that window can address it
+  ([agentService.ts#L10074-L10108](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108)).
 
-A session URI is the **client's** to name and this host's to echo, and only the
-id inside one is ever read. A client may still create a session on
-`<provider>:/<uuid>`, and that session keeps that URI as its name. Any other
-spelling is an alias.
-
-Both are also *keyed* as one now. They were not: who owns a session, where it
-ran, the bits a client set on it and the settings chosen for it before it starts
-were all stored under the catalogue's name, and a lookup under the client's name
-found nothing - a row marked read that came back unread, and a browsed session
-that could not be continued because no backend owned a name nobody had stored.
-
-And a session answered under an alias has **every** URI in it spelled from that
-alias, because a chat URI and a changeset URI both contain a session URI. Told
-otherwise, a client subscribes to the chat it computed, reads a `defaultChat`
-naming another, and cannot pair the two: it holds a subscription nothing refers
-to and a reference nothing is subscribed to, and draws an empty conversation
-with no error.
-
-A `changesets` template is the subtler half of that, and it is how the held
-spelling escaped. A client resolves a changeset channel back to the session
-that owns it, so a template naming `ahp-session:/x` teaches a client that asked
-about `claude:/x` a second name for the same session - and it then addresses
-the session, its chat and its annotations under that one. Which name the
-conversation ends up keyed by is whichever subscription happened to land
-first, so it drew sometimes and not others.
+The id inside a session's URI keys what the store holds of the session, and is
+read only from the URI the session is held under. A URI no session is held under
+is no session here, whatever id it carries: a subscribe to it answers `-32001`
+([agentService.ts#L14083](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083)).
+A read or archive flag or a mark dispatched on it is dropped with nothing said,
+as the protocol has a server ignore an action naming a session that does not
+exist
+([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)),
+and a config change, a draft or a turn is refused as one for a session nobody
+has is. Nothing of any session changes.
 
 A session a client creates is stored under the id the client chose, by naming
-it to the backend. Left to itself the backend invents an id and writes the
-transcript under that, so while this daemon ran it answered to both names and
-the moment it restarted the client's own URI was dead - `No agent for session`,
-about a session that was still there. Only where the client named a UUID, which
-is what the backend will take.
+it to the backend, so the backend writes its transcript under that id and the
+session's URI opens it after a restart. Only where the client named a UUID,
+which is what the backend will take.
+
+### An older VS Code window
+
+A VS Code window names itself `vscode-editor-window` or `vscode-agents-window`
+in `clientInfo`. One that does not declare `vscode.ahpSessionUris` in the
+`_meta` of `initialize` cannot address an `ahp-session:` session, and one that
+does not declare `vscode.ahpChatUris` cannot address an opaque chat. This host
+reads both at `initialize`, and at `reconnect` from the name given at
+`initialize` and the reconnect's own `_meta`, as VS Code's host does
+([protocolServerHandler.ts#L1054-L1055](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055),
+[#L1350-L1351](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351)).
+Such a window is shown what it can address
+([protocolServerHandler.ts#L4326-L4355](https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4326-L4355)):
+
+- A window without `vscode.ahpSessionUris` is listed no `ahp-session:` session,
+  told nothing of one in the root, and refused one as a subscription with
+  `-32001`. One in its first subscriptions is left out, and at `reconnect` it is
+  reported missing.
+- A window without `vscode.ahpChatUris` sees only the shaped chats that name
+  their session, in a snapshot's `chats` and in the chat list actions, and no
+  session whose default chat is another.
+- Neither receives an envelope on a channel it may not see, and a move of a chat
+  to a session it may not see is refused as a session not found.
+
+Every other client sees every session and every chat.
 
 ### A slash command is a message
 
