@@ -391,7 +391,16 @@ it('ends a turn with a notice, and with a cancellation', async () => {
   expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: 't2', state: 'cancelled', responseParts: [] });
 });
 
-it('turns a steer into a turn of its own', async () => {
+/*
+ * A steer goes into the open turn, and the turn goes on.
+ *
+ * The reference host hands steering into a running turn through its
+ * provider, and the turn goes on (queueDrainContribution.ts L171-L208 at
+ * a4e689ae). The message is handed to whoever answers as a message into that
+ * turn, whose answer lands there, and the log keeps it on a line of its own,
+ * so a chat read back after a restart still shows what was said.
+ */
+it('steers a message into the open turn, which goes on', async () => {
   const { host, configDir, records } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -406,43 +415,32 @@ it('turns a steer into a turn of its own', async () => {
     params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
   });
 
-  /*
-   * The open turn ends, and the steered text begins the next one: what a client
-   * watching is told is one ending and then a turn of its own, rather than a
-   * message folded into a turn it cannot see.
-   */
   const life = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/turn'));
-  expect(life.map((one) => one['type'])).toEqual(['chat/turnStarted', 'chat/turnComplete', 'chat/turnStarted']);
-  const steered = life[2] as Bag;
-  expect(steered).toMatchObject({ type: 'chat/turnStarted', message: { text: 'stop that', origin: { kind: 'user' } } });
-
-  // What was steered reaches whoever answers as the new turn rather than after
-  // the entry the client held it as.
-  expect(heard).toHaveLength(2);
-  expect(heard[0]).toEqual({ session: HELD, turnId: 't1', text: 'hello' });
-  expect(heard[1]).toMatchObject({ session: HELD, text: 'stop that' });
-  expect(typeof heard[1]?.turnId).toBe('string');
-  expect(heard[1]?.turnId).not.toBe('t1');
-  const steeredId = heard[1]?.turnId as string;
-
-  // The log says the same: the first turn ended complete with no reply, and
-  // the steered turn is the one open.
-  const kept = lines(configDir, 'one');
-  expect(kept.map((one) => one['id'])).toEqual(['t1', 't1', steeredId]);
-  expect(kept[1]).toMatchObject({ id: 't1', state: 'complete', responseParts: [] });
-  expect(kept[2]).toMatchObject({ id: steeredId, message: { text: 'stop that' } });
-  expect(kept[2]).not.toHaveProperty('state');
+  expect(life.map((one) => one['type'])).toEqual(['chat/turnStarted']);
+  // Said as the chat's steering message, then taken out once it is handed on.
+  const pending = actions(notes, CHAT).filter((one) => String(one['type']).startsWith('chat/pendingMessage'));
+  expect(pending.map((one) => [one['type'], one['kind'], one['id']])).toEqual([
+    ['chat/pendingMessageSet', 'steering', 's1'],
+    ['chat/pendingMessageRemoved', 'steering', 's1'],
+  ]);
+  expect(heard).toEqual([
+    { session: HELD, turnId: 't1', text: 'hello' },
+    { session: HELD, turnId: 't1', text: 'stop that' },
+  ]);
 
   chat.reply('done');
+  const state = await stateOf(client);
+  expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [{ kind: 'markdown', content: 'done' }] }]);
+  expect(state['steeringMessage']).toBeUndefined();
+
+  // Read back, the steer is still there, on its own line against the turn.
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
   expect(read?.map((turn) => turn.message.text)).toEqual(['hello', 'stop that']);
-  // The first turn keeps what it held, and the reply is the steered turn's.
-  expect(read?.[0]).toMatchObject({ id: 't1', state: 'complete', responseParts: [] });
-  expect(read?.[1]?.responseParts).toEqual([{ id: `${steeredId}:reply`, kind: 'markdown', content: 'done' }]);
+  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
-it('answers a steer to the client that sent it, and names it on the turn that takes it in', async () => {
+it('answers a steer to the client that sent it', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -463,13 +461,10 @@ it('answers a steer to the client that sent it, and names it on the turn that ta
   expect(answers.map((one) => one.action)).toEqual([
     expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'steering', id: 's1' }),
   ]);
-  // And the turn that takes it in names it, which takes it out of every
-  // client's state.
-  const started = actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted');
-  expect(started.at(-1)).toMatchObject({ queuedMessageId: 's1', message: { text: 'stop that' } });
+  expect(actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted')).toHaveLength(1);
 });
 
-it('keeps the sender of a steered message on its turn', async () => {
+it('keeps the sender of a steered message on the message', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -484,17 +479,13 @@ it('keeps the sender of a steered message on its turn', async () => {
     params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that', ...outside } } },
   });
 
-  /*
-   * The steered turn is the message's own, so it says who sent it rather than
-   * falling back to the person at the keyboard.
-   */
-  const started = actions(notes, CHAT).filter((one) => one['type'] === 'chat/turnStarted');
-  expect(started[1]).toMatchObject({ message: { text: 'stop that', ...outside } });
-  const state = await stateOf(client);
-  expect(state['activeTurn']).toMatchObject({ message: { text: 'stop that', ...outside } });
+  // Who sent it rides the steering message, rather than falling back to the
+  // person at the keyboard.
+  const set = actions(notes, CHAT).find((one) => one['type'] === 'chat/pendingMessageSet');
+  expect(set).toMatchObject({ message: { text: 'stop that', ...outside } });
 });
 
-it('keeps a queued message behind a steered turn', async () => {
+it('keeps a queued message behind the steered turn', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -510,11 +501,9 @@ it('keeps a queued message behind a steered turn', async () => {
     params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'stop that' } } },
   });
 
-  // A steer is in front of the queue: the steered turn is open, and what was
-  // waiting is still waiting rather than started by the ending.
+  // The steered turn is the open one, and what was waiting is still waiting.
   const steered = await stateOf(client);
-  expect(steered['activeTurn']).toMatchObject({ message: { text: 'stop that' } });
-  expect(steered['turns']).toMatchObject([{ id: 't1', state: 'complete' }]);
+  expect(steered['activeTurn']).toMatchObject({ id: 't1', message: { text: 'hello' } });
   expect(steered['queuedMessages']).toMatchObject([{ id: 'q1', message: { text: 'and then this' } }]);
   expect(heard.map((one) => one.text)).toEqual(['hello', 'stop that']);
 
@@ -744,7 +733,7 @@ it('holds a begin behind the open turn rather than taking its place', async () =
   ]);
 });
 
-it('shows the back session as a subagent call on each turn', async () => {
+it('shows the back session as one subagent call in a turn a steer goes into', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -754,8 +743,8 @@ it('shows the back session as a subagent call on each turn', async () => {
   const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
   /*
    * What the wake does for a message: the turn it leaves open shows the chat it
-   * is waiting on. A steer is a turn of its own, so it wakes the same chat and
-   * shows a call of its own rather than a second one in the turn it ended.
+   * is waiting on. A steer goes into the open turn and wakes the same chat, so
+   * the turn keeps the one call it shows.
    */
   chat.onMessage = () => { chat.working?.(back, 'Backer'); };
 
@@ -765,24 +754,11 @@ it('shows the back session as a subagent call on each turn', async () => {
     params: { channel: CHAT, action: { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'and this' } } },
   });
 
-  /*
-   * The interrupted turn is over, and the call it showed with it: completed,
-   * with the chat a client opens. The steered turn is open and waiting on the
-   * same chat, by a call of its own.
-   */
+  // The steered turn is the open one, waiting on the back session's chat by one call.
   const running = await stateOf(client);
-  const first = (running['turns'] as Bag[])[0] as Bag;
-  expect(first).toMatchObject({ id: 't1', state: 'complete' });
-  expect((first['responseParts'] as Bag[])[0]).toMatchObject({
-    kind: 'toolCall',
-    toolCall: {
-      status: 'completed',
-      success: true,
-      content: [{ type: 'subagent', resource: back, title: 'Backer' }],
-    },
-  });
+  expect(running['turns']).toEqual([]);
   const active = running['activeTurn'] as Bag;
-  expect(active['message']).toMatchObject({ text: 'and this' });
+  expect(active['message']).toMatchObject({ text: 'hello' });
   expect(active['responseParts']).toMatchObject([{
     kind: 'toolCall',
     toolCall: {
@@ -799,12 +775,8 @@ it('shows the back session as a subagent call on each turn', async () => {
     'chat/toolCallStart',
     'chat/toolCallReady',
     'chat/toolCallContentChanged',
-    'chat/toolCallStart',
-    'chat/toolCallReady',
-    'chat/toolCallContentChanged',
   ]);
   expect(started[2]?.['content']).toEqual([{ type: 'subagent', resource: back, title: 'Backer' }]);
-  expect(started[5]?.['content']).toEqual([{ type: 'subagent', resource: back, title: 'Backer' }]);
 
   chat.reply('done');
 
@@ -813,7 +785,7 @@ it('shows the back session as a subagent call on each turn', async () => {
    * appended, completed, and not a second part a response could have added.
    */
   const idle = await stateOf(client);
-  const turn = (idle['turns'] as Bag[])[1] as Bag;
+  const turn = (idle['turns'] as Bag[])[0] as Bag;
   const parts = turn['responseParts'] as Bag[];
   expect(parts).toHaveLength(2);
   expect(parts[0]).toMatchObject({

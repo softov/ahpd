@@ -321,9 +321,9 @@ it('steers a message into the back session that is already working', async () =>
   await one.wake.woken(message('t1', 'hello'), said.handle);
   one.working.add('ahp-session:/1');
 
-  // The main chat's steer is a turn of its own, and the message wakes the
+  // The main chat's steer goes into its open turn, and the message wakes the
   // working session again rather than starting it.
-  await one.wake.woken(message('t2', 'stop that'), said.handle);
+  await one.wake.woken(message('t1', 'stop that'), said.handle);
 
   expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/turnStarted', 'chat/pendingMessageSet']);
   expect(one.sent[1]).toMatchObject({
@@ -332,8 +332,8 @@ it('steers a message into the back session that is already working', async () =>
   });
   // The entry is the sender's own, which is what the protocol asks of a steer.
   expect(typeof one.sent[1]?.action['id']).toBe('string');
-  // The answer follows the steered turn, which is the one the person waits in.
-  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't2', handle: said.handle });
+  // The answer lands in the steered turn, which is the one the person waits in.
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ turnId: 't1', handle: said.handle });
   expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
   expect(said.replies).toEqual(['done']);
   expect(said.notices).toEqual([]);

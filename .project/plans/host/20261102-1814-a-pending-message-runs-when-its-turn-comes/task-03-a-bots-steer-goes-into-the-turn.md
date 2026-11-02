@@ -1,6 +1,6 @@
 ---
 title: A bot's steer goes into the open turn
-status: todo
+status: done
 depends: []
 layer: bot
 refs:
@@ -41,3 +41,12 @@ The steer is kept on a log line against that turn, so a chat read back after a r
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- Plan 56 made a steer a turn of its own so the bot chat showed the steered message, live and after a reload.
+- The steer still shows: said as the chat's steering message while it is handed on, and read back from its log line.
+- The log line is the one the reader of plan 56 already reads as a finished turn of its own.
+- Five cases moved with the behavior: four steer cases and the subagent call case, each now reading one open turn.
+- `bot-wake.test.ts` names the open turn for the steer, which is what the chat now hands the wake.
+- On `89ebe4d5`'s sources four of the five fail: the open turn ended and another began; the sender case reads the steering message, which both say.
