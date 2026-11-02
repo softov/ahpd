@@ -887,20 +887,19 @@ export function createSpawn(ctx: HostContext): Spawn {
     /*
      * What this backend is told about the folders it is handed.
      *
-     * Read from the connection that sent the turn that starts or restarts this
-     * backend, and on a host with people only when that connection is the
-     * session's owner. A turn somebody
-     * else sends into this session is not theirs to widen, which is why the
-     * two are compared rather than the value simply passed along; and an
-     * automation, a host tool and a daemon coming back up have no connection
-     * at all, so what they start is untrusted - which is the same answer as a
-     * window that pushed nothing.
+     * Read from the host's one `workspaceTrust`, which the last push from any
+     * window set, as the reference host reads it for every session it starts,
+     * and from the folders the window that sent the turn said yes to one at a
+     * time.
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162
      *
-     * Where the host has no people directory there is nobody to be other than
-     * the sender, and the sender decides. `ownerFor` answers
-     * `undefined` for every connection there, so comparing owners would refuse
-     * every folder on such a host and make the value a window pushes dead on
-     * it.
+     * On a host with people, only a turn the session's owner sends reads it. A
+     * turn somebody else sends into this session is not theirs to widen, which
+     * is why the two are compared; and an automation, a host tool and a daemon
+     * coming back up send nothing, so what they start there is untrusted.
+     * Where the host has no people directory there is nobody to compare:
+     * `ownerFor` answers `undefined` for every connection, and every start
+     * reads the host's value.
      *
      * A worktree this host made is read as the repository it was cut from: it
      * is a folder the window has never opened and so cannot have pushed, and
@@ -916,17 +915,16 @@ export function createSpawn(ctx: HostContext): Spawn {
     const trustedBy = (folder: string): boolean => {
       const asked = kept.trustedFolder?.(idOf(uri));
       if (asked !== undefined && sameFolder(asked, folder)) return true;
-      if (sender === undefined) return false;
       if (options.users !== undefined) {
-        const who = ctx.ownerFor(sender);
+        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
         if (who === undefined || who !== kept.owner(idOf(uri))) return false;
       }
       const made = ctx.worktreeOf(uri);
       const vouched = made !== undefined && sameFolder(made.path, folder) ? made.repository : folder;
-      return trusted(vouched, sender.config?.workspaceTrust, sender.trustedFolders);
+      return trusted(vouched, ctx.rootConfig.workspaceTrust, sender?.trustedFolders);
     };
     /*
-     * Whether a command or tool this session runs is answered by its owner's
+     * Whether a command or tool this session runs is answered by the host's
      * rules, or asks every time because the operator said so.
      *
      * The operator's `eligibleForAutoApproval` rule is read first, and without
@@ -935,17 +933,15 @@ export function createSpawn(ctx: HostContext): Spawn {
      * it names is `ask`, which is a call that asks every time and offers no
      * "always" option - before any terminal rule could approve it.
      *
-     * The terminal rules are read from the same connection `trustedBy` reads,
-     * and for the same reason: what a window lets its agent run without asking
-     * is that window's answer, and a turn somebody else sends into this
-     * session is not theirs to widen. A start nobody's connection asked for
-     * has no terminal rules at all, which is a command that asks.
-     *
-     * The rules and the edit patterns are the connection's own push. A window
-     * that pushed no rules gets what the daemon's setting applies - VS Code's
-     * table or none - and one that pushed an empty table gets no rules: an
-     * empty object is a table with nothing in it, not a window that never
-     * spoke.
+     * The terminal rules and the edit patterns are the host's one value each,
+     * which the last push from any window set, as the reference host reads
+     * them for every session it runs; on a host with people they answer the
+     * owner's turns alone, as `trustedBy` reads trust. Where no window pushed
+     * rules the daemon's setting applies - VS Code's table or none - and a
+     * pushed empty table is no rules: an empty object is a table with nothing
+     * in it, not a window that never spoke.
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L884
      *
      * Only `approved` is an approval. A command a deny rule named, and a line no
      * rule could read, are both `undefined`, which leaves the backend to ask.
@@ -955,17 +951,17 @@ export function createSpawn(ctx: HostContext): Spawn {
       const named = kind === 'tool' ? line : tool;
       if (named !== undefined && asksForTool(ctx.rootConfig, named)) return 'ask';
       if (kind === 'tool') return undefined;
-      if (shell === undefined || sender === undefined) return undefined;
+      if (shell === undefined) return undefined;
       if (options.users !== undefined) {
-        const who = ctx.ownerFor(sender);
+        const who = sender === undefined ? undefined : ctx.ownerFor(sender);
         if (who === undefined || who !== kept.owner(idOf(uri))) return undefined;
       }
-      if (sender.config?.['terminalAutoApproveEnabled'] === false) return undefined;
-      const pushed = sender.config?.['terminalAutoApproveRules'];
+      if (ctx.rootConfig['terminalAutoApproveEnabled'] === false) return undefined;
+      const pushed = ctx.rootConfig['terminalAutoApproveRules'];
       const rules = pushed !== null && typeof pushed === 'object'
         ? pushed as TerminalAutoApproveRules
         : options.terminalAutoApproveDefaults === 'none' ? {} : DEFAULT_TERMINAL_AUTO_APPROVE_RULES;
-      const patterns = sender.config?.['editAutoApprovePatterns'];
+      const patterns = ctx.rootConfig['editAutoApprovePatterns'];
       const result = approver.evaluate(line, {
         rules,
         ...(patterns !== null && typeof patterns === 'object' ? { editPatterns: patterns as TerminalAutoApprovePatterns } : {}),

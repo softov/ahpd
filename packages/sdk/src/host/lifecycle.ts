@@ -935,13 +935,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * moved or made.
      *
      * The same question a client adding a folder is asked, and answered from
-     * the same value: a folder the asking window has already pushed as trusted
-     * is entered without a round trip, and one it has not is entered only on
-     * its yes.
+     * the same value: a folder the host's `workspaceTrust` already trusts is
+     * entered without a round trip, and any other only on the asking window's
+     * yes.
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
-    await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
+    await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
     decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
     offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
     await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
@@ -956,7 +956,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * started in the worktree is told the same thing.
        */
       if (repository !== move.directory) {
-        await requireTrust({ folder: repository, sender: move.sender, autoApproved: auto });
+        await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
       }
     });
     const lead = byChat.get(chatUriFor(uri));

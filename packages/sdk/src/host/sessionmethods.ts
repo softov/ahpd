@@ -418,7 +418,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
        */
       const asked = params.view;
       const view = typeof asked === 'object' && asked !== null ? asked as SubscribeView : undefined;
-      const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection, view);
+      const snapshot = await snapshotOf(meantBy(channel), connection, view);
       /*
        * Resolved again, after the snapshot rather than before it.
        *

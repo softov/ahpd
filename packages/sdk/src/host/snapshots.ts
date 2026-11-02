@@ -16,7 +16,7 @@ import type { SubscribeView, Turn } from '@microsoft/agent-host-protocol';
 /** What a subscribe is answered with, and the state a session or chat channel opens with. */
 export interface Snapshots {
   value(snapshot: Record<string, unknown>): Record<string, unknown>;
-  snapshotOf(channel: string, mine?: Record<string, unknown>, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
+  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
   /**
    * The state a running session's channel opens with: what its default chat's
    * backend says, with what this host keeps beside it. Read once, when the
@@ -256,7 +256,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return ctx.openState(uri, 'session', sessionSeed(uri));
   };
 
-  const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
     if (isRootChannel(channel)) {
       /*
        * The root's held state, as this connection may read it.
@@ -267,7 +267,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        */
       const daemon = ctx.stateOf(ROOT) === undefined ? await ctx.daemonValues() : {};
       const root = heldOf(ROOT, 'root', () => ctx.rootSeed(daemon));
-      return served(ROOT, ctx.rootFor(root, mine, connection));
+      return served(ROOT, ctx.rootFor(root, connection));
     }
     /*
      * A plugin channel, answered by its plugin and by nothing else here: an

@@ -10,13 +10,14 @@ import type { Peer } from '../src/types/rpc.js';
 import type { Users } from '../src/types/users.js';
 
 /*
- * A session's commands, answered by the window that started it.
+ * A session's commands, answered by the host's rules.
  *
  * `Start.getAutoApproval` is the host's answer to "does this run without
- * asking?", and it is read from the connection that sent the turn the session
- * started for - the same connection `trusted` reads. This file is the answer in
- * each of the cases that can decide it: one window, two windows on one session,
- * and a window that turned the check off.
+ * asking?", and it is read from the host's one value of each rule, which the
+ * last push from any window set, as the reference host reads it. This file is
+ * the answer in each of the cases that can decide it: one window, two windows
+ * pushing, and a window that turned the check off.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/sessionPermissions.ts#L361
  */
 
 const DIR = mkdtempSync(join(tmpdir(), 'ahpd-autoapproval-'));
@@ -126,7 +127,7 @@ function serving(terminalAutoApproveDefaults: 'vscode' | 'none' = 'vscode') {
   return { signedIn, pushing, opening, start };
 }
 
-it('answers a command from the window that started the session', async () => {
+it('answers a command from the rules a window pushed', async () => {
   const { signedIn, pushing, opening, start } = serving();
   const ana = await signedIn('admin', 'ana');
   // A rule of its own, to show the pushed table is the one that answers: `ls`
@@ -140,25 +141,25 @@ it('answers a command from the window that started the session', async () => {
   expect(approval(start(), 'rm -rf /')).toBeUndefined();
 });
 
-it('reads the owner\'s window when two windows drive one session', async () => {
+it('reads the last push of any window when two windows push rules', async () => {
   const { signedIn, pushing, opening, start } = serving();
   const ana = await signedIn('admin', 'ana');
   const bo = await signedIn('admin-two', 'bo');
   await pushing(ana, { terminalAutoApproveRules: { 'make test': true } });
-  await pushing(bo, { terminalAutoApproveRules: { 'make build': true } });
   await opening(ana, 'ana-one');
-  // Bo is in the session too, and his rules are still his own.
-  await bo.handle({ method: 'subscribe', params: { channel: 'ahp-session:/ana-one' } });
-  await settle();
-
   expect(approval(start(), 'make test')).toBe('not-needed');
-  expect(approval(start(), 'make build')).toBeUndefined();
+
+  // Bo's push is the host's table now, Ana's session's among them: one value,
+  // which the last push set.
+  await pushing(bo, { terminalAutoApproveRules: { 'make build': true } });
+  expect(approval(start(), 'make build')).toBe('not-needed');
+  expect(approval(start(), 'make test')).toBeUndefined();
 
   // An empty table pushed is a table with nothing in it, not a window that
   // never spoke: the answers above fall back to none, and the default table
   // does not come back.
   await pushing(ana, { terminalAutoApproveRules: {} });
-  expect(approval(start(), 'make test')).toBeUndefined();
+  expect(approval(start(), 'make build')).toBeUndefined();
   expect(approval(start(), 'ls -la')).toBeUndefined();
 });
 

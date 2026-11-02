@@ -336,7 +336,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           // question it will not be asked.
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
-          const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
+          const snapshot = await snapshotOf(meantBy(channel), connection);
           const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
           connection.watching.add(channel);
@@ -566,7 +566,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
           const meant = meantBy(channel);
-          await snapshotOf(meant, connection.config ?? {}, connection);
+          await snapshotOf(meant, connection);
           if (meant !== channel) connection.aliases.set(meant, channel);
           connection.watching.add(channel);
           openedBy(meant, connection.clientId);
@@ -621,7 +621,7 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       log(`${clientId} came back at ${since}, too far behind ${oldest} - snapshotting`);
       const snapshots = [];
       for (const channel of resumed.values()) {
-        const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
+        const snapshot = await snapshotOf(meantBy(channel), connection);
         answeredAs(connection, channel, snapshot);
         snapshots.push(snapshot);
       }

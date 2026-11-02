@@ -4,7 +4,7 @@ import { idOf, Status } from '../sessions/catalog.js';
 import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
-import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn, PER_CONNECTION } from './gate.js';
+import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
@@ -152,8 +152,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        *
        * On the root the channel's own answer is the whole of it, because it
        * is the only place that can read the action: a `root/configChanged`
-       * setting nothing but this connection's own shell needs no grant at
-       * all, which no operation can say on its own.
+       * naming only `workspaceTrust` needs `trust:push`, and one naming no
+       * key needs no grant at all, which no operation can say on its own.
        */
       const onRoot = isRootChannel(asked) || isRootChannel(channel);
       const all = [...new Set([onRoot ? undefined : ownIn(ACTION_NEEDS, type), dispatchNeeds(asked, channelKind(asked), action), dispatchNeeds(channel, channelKind(channel), action), computerNeeds(action)])]
@@ -362,25 +362,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        */
       const apply = (): void => {
         /*
-         * Kept twice, because the keys are two kinds.
+         * The host's keys are kept, and the daemon's are not. Every key a
+         * client pushes, the window's own among them - the shell, the trust,
+         * and the command and edit rules - is one value for the whole host,
+         * which the last push sets and every session and every client reads,
+         * as the reference host keeps one root config for every window
+         * connected to it.
+         * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostConfigurationSync.ts#L47-L55
+         * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2888-L2899
          *
-         * What changed is who *acts* on a key. `PER_CONNECTION` names the
-         * person's - the shell, the trust and the command rules a window
-         * pushes - and those are also written to this connection, which is the
-         * only place anything reads them from now. `rootConfig`'s copy is display state and nothing opens a shell
-         * with it. So two people on one daemon each get their own, and the
-         * paths with no connection in hand take the daemon's own shell and
-         * nobody's preference at all.
-         */
-        const mine = Object.fromEntries(Object.entries(config).filter(([key]) => PER_CONNECTION.has(key)));
-        /*
-         * The host's half and the person's are kept; the daemon's are not.
          * A daemon key is the port's, and `rootState` answers it by asking
          * the port, so a copy kept here would be a second opinion - and
          * `rootState` shows this map to every connection, which would hand a
          * member a credential it has no schema for.
          */
-        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key) && key !== RESTART_KEY));
+        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key) && key !== RESTART_KEY));
         const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
           for (const [key, value] of Object.entries(from)) {
             // `undefined` is how a key is taken back, and JSON has no such
@@ -391,13 +387,11 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         };
         if (action.replace === true) {
           for (const key of Object.keys(rootConfig)) delete rootConfig[key];
-          delete connection.config;
           delete connection.trustedFolders;
         }
         into(rootConfig, ours);
         // A merged sessions key moved: the pass runs now, with the new days.
         if (Object.prototype.hasOwnProperty.call(config, AUTO_ARCHIVE_KEY) || Object.prototype.hasOwnProperty.call(config, AUTO_DELETE_KEY)) ctx.mergedSoon();
-        if (Object.keys(mine).length > 0) into(connection.config ??= {}, mine);
         /*
          * A `workspaceTrust` push answers for every folder at once, so the
          * folders this window said yes to one at a time are behind it: a window
@@ -405,7 +399,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * one it answered about earlier. A pushed `null` takes the key back,
          * which is a new answer like any other and clears them too.
          */
-        if (Object.prototype.hasOwnProperty.call(mine, 'workspaceTrust')) delete connection.trustedFolders;
+        if (Object.prototype.hasOwnProperty.call(config, 'workspaceTrust')) delete connection.trustedFolders;
         // What the echo carries, which is what a log line about it says too:
         // a value the daemon holds back is not a value the log may print.
         const echoConfig = { ...config, ...said };
@@ -426,11 +420,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          *
          * One envelope and one `serverSeq` for everybody, because the
          * sequence and the replay buffer are one per host. What each
-         * connection reads in it is `seenBy`'s: the sender's
-         * `PER_CONNECTION` keys reach only the sender, and the daemon's
-         * keys go out as the port answered them rather than as this client
-         * sent them, so a value the port holds back is not carried to the
-         * second admin by the echo.
+         * connection reads in it is `seenBy`'s: the daemon's keys go out as
+         * the port answered them rather than as this client sent them, so a
+         * value the port holds back is not carried to the second admin by
+         * the echo.
          */
         dispatch(ROOT, { ...action, config: echoed }, origin);
       };

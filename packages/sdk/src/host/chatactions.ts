@@ -807,7 +807,7 @@ export function chatAction(
       void (async () => {
         try {
           if (entering !== undefined) {
-            await requireTrust({ folder: entering, sender: connection, autoApproved: auto });
+            await requireTrust({ folder: entering, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
           }
           /*
            * A new first folder is a move, made as `set_workspace` makes one:

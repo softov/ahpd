@@ -58,7 +58,7 @@ import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
 import type { Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
-import { GREETINGS, UNGATED, PER_CONNECTION, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
+import { GREETINGS, UNGATED, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
 import type { Home } from './host/gate.js';
 import { createChatRecord } from './host/chatrecord.js';
 import { createRouting } from './host/routing.js';
@@ -629,15 +629,11 @@ export function createHost(options: HostOptions): Host {
    * An action envelope as one connection receives it.
    *
    * Two actions are not the same for every connection. `root/configChanged`
-   * carries `PER_CONNECTION` keys that belong to the client that sent them:
-   * the sender gets its echo whole, and every other connection gets the same
-   * envelope and `serverSeq` without those keys, with its own values in their
-   * place when the action replaces the config. It carries the daemon's own keys
-   * too, which are dropped for a connection without `config:read`, and the
-   * agents' accounts, which are dropped for one without `account:read` - the
-   * email is the operator's, and the root config is read before anybody signs
-   * in. A dropped key is absent rather than emptied, the same shape the
-   * snapshot leaves it in.
+   * carries the daemon's own keys, which are dropped for a connection without
+   * `config:read`, and the agents' accounts, which are dropped for one without
+   * `account:read` - the email is the operator's, and the root config is read
+   * before anybody signs in. A dropped key is absent rather than emptied, the
+   * same shape the snapshot leaves it in.
    * `root/agentsChanged` carries
    * the root agent list, whose sign-in resource says `required: true` for a
    * connection that must sign in and `false` for one the host already treats
@@ -725,17 +721,7 @@ export function createHost(options: HostOptions): Host {
     const shown = seesAccount(connection)
       ? mine
       : Object.fromEntries(Object.entries(mine).filter(([key]) => !isAccountKey(key)));
-    const echo = (config: Record<string, unknown>): E => ({ ...envelope, action: { ...action, config } });
-    if (envelope.origin !== undefined && envelope.origin.clientId === connection.clientId) {
-      return shown === config ? envelope : echo(shown);
-    }
-    const theirs = Object.keys(shown).filter((key) => PER_CONNECTION.has(key));
-    const own = action.replace === true
-      ? Object.fromEntries(Object.entries(connection.config ?? {}).filter(([key]) => PER_CONNECTION.has(key)))
-      : {};
-    if (theirs.length === 0 && Object.keys(own).length === 0) return shown === config ? envelope : echo(shown);
-    const kept = Object.fromEntries(Object.entries(shown).filter(([key]) => !PER_CONNECTION.has(key)));
-    return { ...envelope, action: { ...action, config: { ...kept, ...own } } };
+    return shown === config ? envelope : { ...envelope, action: { ...action, config: shown } };
   };
   /**
    * The dispatch being applied right now, and whether it has been said back.
@@ -1520,12 +1506,11 @@ export function createHost(options: HostOptions): Host {
   const backendSnapshot = ctx.snapshotOf;
   ctx.snapshotOf = async (
     channel: string,
-    mine?: Record<string, unknown>,
     connection?: Connection,
     view?: SubscribeView,
   ): Promise<Record<string, unknown>> => {
     if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
-    return backendSnapshot(channel, mine, connection, view);
+    return backendSnapshot(channel, connection, view);
   };
   /*
    * A session's customizations as its state opens with them: the backend's,
