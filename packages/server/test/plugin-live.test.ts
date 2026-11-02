@@ -8,9 +8,10 @@ import type { JsonSchema } from '@cofold/commands';
 import { createHost } from '../../sdk/src/host.js';
 import { connectorsChannel } from '../../sdk/src/connectors/channel.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
-import { applyPlugins, type Applied } from '../src/applyplugins.js';
+import { applyPlugins, eventFailed, type Applied } from '../src/applyplugins.js';
 import { memoryAutomations } from '../../sdk/src/automations/automations.js';
 import { loadPlugins, pluginSet } from '../src/plugins.js';
+import { raise } from '../../sdk/src/plugins/plugins.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ServedAdapter } from '../../sdk/src/types/connectors.js';
 import type { HostOptions } from '../../sdk/src/types/host.js';
@@ -500,4 +501,126 @@ it('gives a session start to a plugin enabled while the daemon runs', async () =
   expect(typeof starts[0]?.startChat).toBe('function');
   expect(typeof starts[0]?.opens).toBe('function');
   await close();
+});
+
+/** A plugin that writes each `listening` and `stopping` it hears, and its closer, to the marker. */
+const eventPlugin = (id: string): string => {
+  const file = pluginFile(id);
+  writeFileSync(file, `
+import { appendFileSync } from 'node:fs';
+export const name = ${JSON.stringify(id)};
+export function apply(host, options) {
+  host.on('listening', (event) => { appendFileSync(options.marker, 'listening ' + options.tag + ' ' + event.port + '\\n'); });
+  host.on('stopping', () => { appendFileSync(options.marker, 'stopping ' + options.tag + '\\n'); });
+  host.registerClose(() => { appendFileSync(options.marker, 'closed ' + options.tag + '\\n'); });
+}
+`);
+  return file;
+};
+
+/** The `listening` event `run.ts` keeps from the start, which a late load is raised. */
+const LISTENED = { type: 'listening', runtime: 'node', host: '127.0.0.1', port: 4100, guarded: false } as const;
+
+/**
+ * A daemon whose socket is open, with the two hooks `run.ts` gives an apply:
+ * `stopping` before a plugin's closers, and the kept `listening` after a load.
+ */
+const listening = async () => {
+  const running = await daemon();
+  const apply = (reload?: string[]): Promise<Applied> => applyPlugins({
+    set: running.set, configFile, host: () => running.host, log: () => {},
+    ...(reload === undefined ? {} : { reload }),
+    beforeUnload: (_id, events) => raise(events, { type: 'stopping' }),
+    afterLoad: (_id, events) => raise(events, LISTENED),
+  });
+  return { ...running, apply };
+};
+
+/** The marker, one line each. */
+const marked = (): string[] => readFileSync(marker, 'utf8').split('\n').filter((one) => one !== '');
+
+it('raises listening to a plugin enabled after the socket opened, once, with the port of the start', async () => {
+  const { apply, close } = await listening();
+  configured(spec(eventPlugin('heard'), 'one'));
+  expect((await apply()).problems).toEqual([]);
+  expect(marked()).toEqual(['listening one 4100']);
+  await close();
+});
+
+it('raises stopping to a plugin disabled while the daemon runs, before its closer', async () => {
+  const { apply, close } = await listening();
+  configured(spec(eventPlugin('heard'), 'one'));
+  await apply();
+  configured();
+  expect((await apply()).problems).toEqual([]);
+  expect(marked()).toEqual(['listening one 4100', 'stopping one', 'closed one']);
+  await close();
+});
+
+it('gives the old copy of a reconfigured plugin stopping and the new copy listening', async () => {
+  const { apply, close } = await listening();
+  const file = eventPlugin('heard');
+  configured(spec(file, 'one'));
+  await apply();
+  configured(spec(file, 'two'));
+  expect((await apply()).problems).toEqual([]);
+  expect(marked()).toEqual(['listening one 4100', 'stopping one', 'closed one', 'listening two 4100']);
+  await close();
+});
+
+it('gives the old copy of a reloaded plugin stopping and the new copy listening', async () => {
+  const { apply, close } = await listening();
+  configured(spec(eventPlugin('heard'), 'one'));
+  await apply();
+  expect((await apply(['heard'])).problems).toEqual([]);
+  expect(marked()).toEqual(['listening one 4100', 'stopping one', 'closed one', 'listening one 4100']);
+  await close();
+});
+
+it('does not raise listening again to a plugin a later apply leaves as it was', async () => {
+  const { apply, close } = await listening();
+  const first = spec(eventPlugin('first'), 'one');
+  configured(first);
+  await apply();
+  configured(first, spec(eventPlugin('second'), 'two'));
+  expect((await apply()).problems).toEqual([]);
+  expect(marked()).toEqual(['listening one 4100', 'listening two 4100']);
+  await close();
+});
+
+/** A plugin whose `listening` handler throws, with the count of throws in its message. */
+const throwingPlugin = (id: string): string => {
+  const file = pluginFile(id);
+  writeFileSync(file, `
+let times = 0;
+export const name = ${JSON.stringify(id)};
+export function apply(host) {
+  host.on('listening', () => { times += 1; throw new Error('no tunnel ' + times); });
+}
+`);
+  return file;
+};
+
+it('alerts the row of a plugin whose listening handler throws, and keeps the line for the log', async () => {
+  const running = await daemon();
+  const lines: string[] = [];
+  configured(spec(throwingPlugin('broken'), 'one'));
+  await applyPlugins({ set: running.set, configFile, host: () => running.host, log: () => {} });
+  const events = running.set.held('broken')?.contribution.events;
+  await raise(events, LISTENED, eventFailed(running.set, (line) => { lines.push(line); }, 'listening'));
+  expect(lines).toEqual(['broken failed at listening: no tunnel 1']);
+  expect(running.set.alerts().broken).toEqual([
+    { level: 'error', ref: 'event:listening', text: 'This plugin failed when ahpd started, and the ahpd log has the details.' },
+  ]);
+  await raise(events, LISTENED, eventFailed(running.set, (line) => { lines.push(line); }, 'listening'));
+  expect(lines).toHaveLength(2);
+  expect(running.set.alerts().broken).toHaveLength(1);
+  await running.close();
+});
+
+it('raises no alert for a plugin the set does not hold', async () => {
+  const running = await daemon();
+  running.set.alert('gone', { level: 'error', ref: 'event:stopping', text: 'x' });
+  expect(running.set.alerts()).toEqual({});
+  await running.close();
 });

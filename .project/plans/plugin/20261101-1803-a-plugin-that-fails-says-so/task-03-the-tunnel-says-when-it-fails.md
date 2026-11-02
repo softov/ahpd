@@ -1,6 +1,6 @@
 ---
 title: The tunnel says when it fails
-status: todo
+status: implemented
 depends:
   - task-01-the-anonymous-flag.md
   - task-02-a-plugin-loaded-late-hears-listening.md
@@ -49,3 +49,10 @@ Each failure of the Dev Tunnel plugin is an alert on its row, and the alert goes
 - By hand: break the tunnel, and ahpw's list shows the Dev Tunnel row as failing.
 
 ## Resume
+
+The `tunnel` alert carries the logged reason.
+An unasked exit is one whose child is still the held one.
+`stopping` lets go of the child before it kills it, so no flag is needed.
+A spawn that fails before the process starts emits `error` and no `exit`, so it raises no alert. `find` would fail first with the same missing CLI.
+The read warning test is in `tunnel-devtunnel-view.test.ts`, beside the other poll tests.
+The by-hand check waits on Softov.

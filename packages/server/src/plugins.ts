@@ -1801,6 +1801,12 @@ export interface PluginSet {
   /** The alerts each plugin's row carries, by id; a plugin with none has no entry. */
   alerts(): Record<string, Alert[]>;
   /**
+   * Raise one alert on a plugin's row from outside the plugin, such as the
+   * daemon's own for a handler that threw. A plugin this set does not hold
+   * gets none.
+   */
+  alert(id: string, alert: Alert): void;
+  /**
    * The views each plugin's row carries, by id and then by surface.
    *
    * A plugin with no view has no entry, and a surface holds one view.
@@ -2161,6 +2167,7 @@ export const pluginSet = (options: LoadOptions): PluginSet => {
     // A copy of each list: a row a client reads is not the one the next alert
     // would push into while it is being served.
     alerts: () => Object.fromEntries([...alerted].map(([id, list]) => [id, [...list]])),
+    alert: (id, alert) => { if (kept.has(id)) addAlert(id, alert); },
     // A copy of each plugin's surfaces and of each view on it: what a client
     // reads is not the object the next view of that surface would replace.
     views: () => Object.fromEntries([...viewed].map(([id, bySurface]) => [id, { ...bySurface }])),

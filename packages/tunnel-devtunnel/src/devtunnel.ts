@@ -217,7 +217,7 @@ export async function prepare(tunnel: Tunnel, anonymous: boolean, runner: Runner
     throw new TunnelError(`devtunnel port create failed:\n${why(port)}`);
   }
   if (!anonymous) return;
-  const access = await runner(['access', 'create', tunnel.tunnelId, '--anonymous', '--port', String(TUNNEL_PORT)]);
+  const access = await runner(['access', 'create', tunnel.tunnelId, '--anonymous', '-p', String(TUNNEL_PORT)]);
   if (access.status !== 0 && !already(access)) {
     throw new TunnelError(`devtunnel access create failed:\n${why(access)}`);
   }
@@ -234,9 +234,15 @@ export async function remove(tunnel: Tunnel, runner: Runner = run): Promise<void
  * The one command here that does not end: it holds the connection to the Dev
  * Tunnels relay and serves `127.0.0.1:31546` through it. Its output goes to
  * `log` rather than to the daemon's stdout, which is an announcement a client
- * parses and not a place for another program's chatter.
+ * parses and not a place for another program's chatter. `onExit` hears the
+ * process end, for whatever reason it ended.
  */
-export function host(tunnel: Tunnel, log: (line: string) => void, spawner: Spawner = start): ChildProcess {
+export function host(
+  tunnel: Tunnel,
+  log: (line: string) => void,
+  spawner: Spawner = start,
+  onExit?: (code: number | null, signal: NodeJS.Signals | null) => void,
+): ChildProcess {
   const child = spawner(['host', tunnel.tunnelId]);
   const lines = (from: 'out' | 'err') => (chunk: Buffer | string) => {
     for (const line of String(chunk).split('\n')) {
@@ -247,5 +253,6 @@ export function host(tunnel: Tunnel, log: (line: string) => void, spawner: Spawn
   child.stdout?.on('data', lines('out'));
   child.stderr?.on('data', lines('err'));
   child.on('error', (error) => { log(`devtunnel host failed: ${error.message}`); });
+  child.on('exit', (code, signal) => { onExit?.(code, signal); });
   return child;
 }

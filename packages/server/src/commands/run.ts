@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { canonicalFromCli, check, createRegistry, optionTable, optionsOf, tokenize } from '@cofold/commands';
 import type { Command, JsonSchema, Registry } from '@cofold/commands';
-import type { Agent, Alert, AutomationStore, AutomationsOptions, CommandSplitter, Connected, Contribution, DoorOptions, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
+import type { Agent, Alert, AutomationStore, AutomationsOptions, CommandSplitter, Connected, Contribution, DoorOptions, HostEventOf, HostHandlers, HostOptions, Loaded, Opened, Peer, Principal, Raw, RequestHandler, Route, ServedAdapter, ServedEngine, SessionStore, Tap, Usage, Vault } from '@ahpd/sdk';
 import {
   adaptersChannel,
   enginesChannel,
@@ -72,7 +72,7 @@ import { connectorModels, proxyHandler, type ProxyOptions } from '../proxy/liste
 import { modelCatalog } from '../proxy/catalog.js';
 import { hostAdapters } from '../proxy/adapters.js';
 import { loadPlugins, pluginSet, type LoadOptions } from '../plugins.js';
-import { applyPlugins, type Applied } from '../applyplugins.js';
+import { applyPlugins, eventFailed, type Applied } from '../applyplugins.js';
 import { pluginsChannel } from '../pluginschannel.js';
 import { fileRecords } from '../records.js';
 import { applyPresets, planPresets, splitModels } from '../agents/migrate.js';
@@ -1472,6 +1472,19 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    * own read this through a closure on each request.
    */
   let liveRoutes: Record<string, Route> = {};
+  /*
+   * The handlers of every plugin held now, which the way down raises `stopping`
+   * to: a plugin loaded later is in it, and one unloaded since is not.
+   */
+  let liveEvents: HostHandlers | undefined;
+  /*
+   * The `listening` event the start raised, once the socket is open. A plugin
+   * loaded later is raised the same event; while it is unset, over stdio or
+   * before the socket is bound, a late load is raised nothing.
+   */
+  let listened: HostEventOf<'listening'> | undefined;
+  // A handler that throws at an event the daemon raises writes its line and alerts its row.
+  const failed = (type: 'listening' | 'stopping') => eventFailed(pluginHoldings, stamp, type);
   applyNow = async (reload?: string[]) => {
     const answer = await applyPlugins({
       set: pluginHoldings,
@@ -1481,6 +1494,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
       log: stamp,
       records: () => recordAgents,
       ...(reload === undefined ? {} : { reload }),
+      // A plugin closed while the daemon runs hears `stopping` before its
+      // closers, as it would on the way down, and one loaded after the socket
+      // opened hears the `listening` the others heard at start.
+      beforeUnload: (_id, events) => raise(events, { type: 'stopping' }, failed('stopping')),
+      afterLoad: async (_id, events) => { if (listened !== undefined) await raise(events, listened, failed('listening')); },
     });
     const now = pluginHoldings.fold().options;
     // The channels read these through closures, so a load or unload reaches a
@@ -1493,6 +1511,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // against, so the list is replaced before they are opened again.
     engines = now.engines ?? {};
     liveRoutes = answer.routes;
+    liveEvents = now.events;
     // A plugin loaded later acts on the host as its own client, as one loaded
     // at start does, and it can only be handed the host once the host exists.
     for (const one of now.pluginConnects ?? []) one.host = host;
@@ -1515,6 +1534,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   loaded = didLoad;
   alerts = didAlert;
   liveRoutes = registered;
+  liveEvents = folded.events;
   // And the two channels start answering adapters, which is what a stored
   // connector is checked against when it opens below.
   adapters = withHostAdapters(folded.adapters);
@@ -1808,17 +1828,14 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   if (!options.stdio) {
     // Not said over stdio, where nothing is listening for anybody to reach.
     stamp('start: listening');
-    await raise(
-      folded.events,
-      {
-        type: 'listening',
-        runtime: listener.runtime,
-        host: listener.host,
-        port: listener.port,
-        guarded: listener.guarded,
-      },
-      stamp,
-    );
+    listened = {
+      type: 'listening',
+      runtime: listener.runtime,
+      host: listener.host,
+      port: listener.port,
+      guarded: listener.guarded,
+    };
+    await raise(folded.events, listened, failed('listening'));
   }
 
   stamp('start: checks');
@@ -1951,7 +1968,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   let controlListener: ControlServer | undefined;
   const way = lifecycle({
     down: async () => {
-      await raise(folded.events, { type: 'stopping' }, stamp);
+      await raise(liveEvents, { type: 'stopping' }, failed('stopping'));
       peopleLists?.close();
       // The hourly fetch of the provider lists stops with the daemon that reads them.
       catalogue.stop();
