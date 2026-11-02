@@ -1,6 +1,6 @@
 ---
 title: One answer serves every tools server
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -37,3 +37,9 @@ The session servers and `/mcp` both use it, and a session's server answers exact
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built. `answerTools(request, serving, info)` holds the whole transport except who may ask: a `GET` is a stream for a serving that notifies and a 405 for one that does not, a non-`POST` is a 405, a body that is not one JSON-RPC message is a 400 - with -32700 for JSON that does not parse and -32600 for a batch - and a message with no `id` is answered 202. The three methods answer from `serving.tools` through the old `answered`. `request` keeps the path lookup and the timing-safe bearer check and then hands the request to `answerTools`, so a wrong token still learns nothing about the method or the body. The package index exports `answerTools`, `ToolsServing` and `ToolsInfo`.
+
+Departures. `ToolsServing` is the name given to what a serving is, and it keeps `streams` optional so a caller such as `/mcp`, which never opens a stream, can pass the four fields alone; `Serving` stays private and requires all of them. `ToolsInfo` is exported rather than the `{ name: string; version: string }` literal being repeated at each call site, because task 04 builds one too. The new cases in `packages/sdk/test/toolserver.test.ts` live in their own describe block and call `answerTools` with no token and no path, which is what the function is now for; the existing cases are untouched and pass.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit` and `pnpm -s boundary` pass; `packages/sdk/test/toolserver.test.ts` passes 27 of 27 and `packages/sdk/test/toolauth.test.ts` passes 4 of 4.

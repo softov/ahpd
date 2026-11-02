@@ -51,8 +51,10 @@ export { shellTerminals } from './machines/terminals.js';
 export { isShellName, shellEnvOf } from './machines/shellenv.js';
 export type { ShellEnv } from './machines/shellenv.js';
 export { hostTools } from './tools/index.js';
-export { toolServers, TOOLS_PREFIX } from './tools/server.js';
-export type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint, ToolsServerOptions, ToolsServers } from './tools/server.js';
+export { answerTools, toolServers, TOOLS_PREFIX } from './tools/server.js';
+export type {
+  MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint, ToolsInfo, ToolsServing, ToolsServerOptions, ToolsServers,
+} from './tools/server.js';
 export { createClientCalls, DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from './tools/clientcalls.js';
 export type { ClientCall, ClientCallAnswer, ClientCalls, ClientCallsOptions } from './tools/clientcalls.js';
 export { toMcpContent } from './tools/mcpcontent.js';

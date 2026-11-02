@@ -112,7 +112,7 @@ client POST /mcp, Authorization: Bearer <person token>
 | --- | --- | --- |
 | [01 - A host tool may run with no session](task-01-a-host-tool-may-run-with-no-session.md) | implemented | - |
 | [02 - create_session takes an agent and a config](task-02-create-session-takes-an-agent.md) | implemented | 01 |
-| [03 - One answer serves every tools server](task-03-one-answer-serves-every-tools-server.md) | todo | - |
+| [03 - One answer serves every tools server](task-03-one-answer-serves-every-tools-server.md) | implemented | - |
 | [04 - /mcp opens to a person's token](task-04-mcp-opens-to-a-persons-token.md) | todo | 01, 03 |
 
 ## Risks and tradeoffs
@@ -124,8 +124,8 @@ client POST /mcp, Authorization: Bearer <person token>
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02 are implemented and their gates pass. `HostTool` has the sessionless branch, `Host.sessionlessTools(caller)` builds a caller's list, the seven session tools run with no session, and `create_session` takes an `agent` and a `config` checked against that agent. `docs/sdk/TOOLS.md` says both. Two commits on the branch.
-- **Next action:** [task-03-one-answer-serves-every-tools-server.md](task-03-one-answer-serves-every-tools-server.md).
+- **Done so far:** tasks 01, 02 and 03 are implemented and their gates pass. `HostTool` has the sessionless branch, `Host.sessionlessTools(caller)` builds a caller's list, the seven session tools run with no session, and `create_session` takes an `agent` and a `config` checked against that agent. `answerTools` now holds the transport that a session's `/ahp-mcp/<uuid>` and `/mcp` share, with the token check left in `request`. `docs/sdk/TOOLS.md` says the first two. Three commits on the branch.
+- **Next action:** [task-04-mcp-opens-to-a-persons-token.md](task-04-mcp-opens-to-a-persons-token.md).
 - **Open questions:** none.
 - **Watch out for:** a session's `/ahp-mcp/<uuid>` must answer exactly as before. `toolserver.test.ts` and `toolauth.test.ts` pass unchanged.
 

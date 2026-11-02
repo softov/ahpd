@@ -1,13 +1,13 @@
 import { expect, describe, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { toolServers } from '../src/tools/server.js';
+import { answerTools, toolServers } from '../src/tools/server.js';
 import { toMcpContent } from '../src/tools/mcpcontent.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, BoundTool, Start } from '../src/types/agent.js';
 import type { ClientCallAnswer } from '../src/tools/clientcalls.js';
 import type { OnWire } from '../src/types/wire.js';
 import type { Peer } from '../src/types/rpc.js';
-import type { RunClientTool, ToolsEndpoint, ToolsServers } from '../src/tools/server.js';
+import type { RunClientTool, ToolsEndpoint, ToolsInfo, ToolsServing, ToolsServers } from '../src/tools/server.js';
 import type { ToolResultContent } from '@microsoft/agent-host-protocol';
 
 /*
@@ -413,6 +413,72 @@ describe('a client\'s tool, run through the server', () => {
 
     endpoint.setTools([tool('poke', 'poked')]);
     expect(await names(servers, endpoint)).toEqual(['poke']);
+  });
+});
+
+describe('one answer, for any list of tools', () => {
+  const INFO: ToolsInfo = { name: 'ahpd', version: '9.9.9' };
+
+  /** A serving with no path and no token, which is what the answer needs. */
+  const serving = (over: Partial<ToolsServing> = {}): ToolsServing => ({
+    tools: [tool('peek', 'peeked')],
+    ...over,
+  });
+
+  /** One message, asked of the answer directly. */
+  const ask = async (
+    held: ToolsServing, method: string, params?: unknown,
+  ): Promise<{ status: number; said: Record<string, unknown> }> => {
+    const answered = await answerTools(new Request(`${ORIGIN}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 7, method, ...(params === undefined ? {} : { params }) }),
+    }), held, INFO);
+    return { status: answered.status, said: await answered.json() as Record<string, unknown> };
+  };
+
+  it('answers initialize, tools/list and tools/call for a list it was handed', async () => {
+    const held = serving();
+    expect((await ask(held, 'initialize')).said).toEqual({
+      jsonrpc: '2.0',
+      id: 7,
+      result: {
+        protocolVersion: '2025-06-18',
+        capabilities: { tools: {} },
+        serverInfo: INFO,
+      },
+    });
+    expect((await ask(held, 'tools/list')).said).toEqual({
+      jsonrpc: '2.0',
+      id: 7,
+      result: {
+        tools: [{
+          name: 'peek',
+          description: 'peek does one thing',
+          inputSchema: { type: 'object', properties: { what: { type: 'string' } }, required: ['what'] },
+        }],
+      },
+    });
+    expect((await ask(held, 'tools/call', { name: 'peek', arguments: { what: 'here' } })).said).toEqual({
+      jsonrpc: '2.0',
+      id: 7,
+      result: { content: [{ type: 'text', text: 'peeked here' }] },
+    });
+  });
+
+  it('refuses a GET, a batch and a method it does not answer, with no token in the way', async () => {
+    const held = serving();
+    expect((await answerTools(new Request(`${ORIGIN}/mcp`), held, INFO)).status).toBe(405);
+    const batch = await answerTools(new Request(`${ORIGIN}/mcp`, {
+      method: 'POST',
+      body: JSON.stringify([{ jsonrpc: '2.0', id: 1, method: 'tools/list' }]),
+    }), held, INFO);
+    expect(batch.status).toBe(400);
+    expect(((await ask(held, 'resources/list')).said.error as { code: number }).code).toBe(-32601);
+    expect((await answerTools(new Request(`${ORIGIN}/mcp`, {
+      method: 'POST',
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    }), held, INFO)).status).toBe(202);
   });
 });
 
