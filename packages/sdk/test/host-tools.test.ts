@@ -1523,6 +1523,71 @@ describe('tools a client contributes', () => {
     expect(((await watched(client, uri)).inputNeeded ?? []).some((one) => one.id === entry?.id)).toBe(false);
   });
 
+  it('answers a client\'s result with the completion the session reports, under the client\'s origin', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 9,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } },
+      },
+    });
+    await answering;
+    // The CLI writes the tool's result, which is what the session reports the
+    // call complete from.
+    await emit({
+      type: 'user',
+      uuid: 'u1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'opened /a.txt' }] },
+    });
+    await settle();
+
+    // The client holds its result until an envelope with its origin answers
+    // it, and the completion the session reports is that answer: said once,
+    // from what the harness did.
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 9);
+    expect(answered.map((e) => [e.action.type, e.action.toolCallId, e.rejectionReason]))
+      .toEqual([['chat/toolCallComplete', 'call-1', undefined]]);
+  });
+
+  it('answers the first of two results for one call with its completion, and refuses the second', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    const complete = (clientSeq: number, text: string) => client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text }] } },
+      },
+    });
+    complete(9, 'opened /a.txt');
+    // The client sends its result again before the session says the call is
+    // complete. The harness took the first, so the second is refused.
+    complete(10, 'opened /a.txt again');
+    await answering;
+    await emit({
+      type: 'user',
+      uuid: 'u1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'opened /a.txt' }] },
+    });
+    await settle();
+
+    const answers = (clientSeq: number) => actions(p, chatUri)
+      .filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === clientSeq)
+      .map((e) => [e.action.type, e.rejectionReason === undefined ? 'said' : 'refused']);
+    expect(answers(9)).toEqual([['chat/toolCallComplete', 'said']]);
+    expect(answers(10)).toEqual([['chat/toolCallComplete', 'refused']]);
+  });
+
   it('keeps an answer that arrives before the CLI runs the tool', async () => {
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
@@ -2027,7 +2092,7 @@ describe('a client\'s call, held by the backend', () => {
     }]);
   });
 
-  it('keeps the session in progress while the call is out, not waiting on a person', async () => {
+  it('leaves the session not waiting on a person while the call is out', async () => {
     const { held, clients, uri, chatUri } = await open(['a']);
     const { calls } = held();
     const id = calls.open({ turnId: 't1', toolCall: running('call-1'), owner: 'a' });
@@ -2036,7 +2101,9 @@ describe('a client\'s call, held by the backend', () => {
     const held_ = await state(clients[0] as Client, uri);
     const entry = (held_.inputNeeded ?? []).find((one) => one.id === id);
     expect(entry).toBeDefined();
-    expect(held_.status).toBe(IN_PROGRESS | 32);
+    // The session's own status is its reducer's, which the entry does not
+    // move: idle and read, as it opened.
+    expect(held_.status).toBe(1 | 32);
 
     /*
      * The protocol's own reducer, on the state the host serves.
@@ -2044,11 +2111,12 @@ describe('a client\'s call, held by the backend', () => {
      * `channels-session/reducer.ts` counts every entry that blocks on a person
      * and deliberately does not count a `toolClientExecution`: the call has
      * cleared its confirmation gate and is running somewhere else. Reducing
-     * this entry must leave the session running, and a question must not -
-     * which is what makes this an assertion rather than a tautology.
+     * this entry must leave the session as it was, waiting on nobody, and a
+     * question must not - which is what makes this an assertion rather than
+     * a tautology.
      */
     const again = raised(held_, entry as SessionInputRequest);
-    expect(again.status & IN_PROGRESS).toBe(IN_PROGRESS);
+    expect(again.status).toBe(held_.status);
     expect(again.status & NEEDS_PERSON).toBe(0);
 
     const asked = raised(again, { id: 'q-1', kind: 'chatInput', chat: chatUri } as SessionInputRequest);

@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import type { Turn } from '@microsoft/agent-host-protocol';
 import { idOf, uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Listed, MessageFrom, Session, Start, WireTurn } from '@ahpd/sdk';
+import type { Agent, Bag, Listed, MessageAttachment, MessageFrom, Session, Start, WireTurn } from '@ahpd/sdk';
 
 /**
  * A backend that answers by saying it back, and nothing else.
@@ -146,7 +146,13 @@ export function echo(options: EchoOptions): Agent {
      * reducer takes it out of the queue on that word, which is what empties
      * the queue as its turns start.
      */
-    const beginTurn = (turnId: string, text: string, queuedMessageId?: string, from?: MessageFrom): void => {
+    const beginTurn = (
+      turnId: string,
+      text: string,
+      queuedMessageId?: string,
+      from?: MessageFrom,
+      attachments?: MessageAttachment[],
+    ): void => {
       if (title === 'Echo session' && text) {
         title = text.slice(0, 60);
         // Said, because a client that opened the session holds the old one.
@@ -156,11 +162,13 @@ export function echo(options: EchoOptions): Agent {
       // The origin the client sent, carried through: a turn that comes back
       // without it is a person's message a client can only draw as a system
       // line, and `Message.origin` is required by the protocol for exactly
-      // this reason.
+      // this reason. The attachments go with it, so a client reading the turn
+      // shows what the person pasted.
       const message: Bag = {
         text,
         ...(from?.origin !== undefined ? { origin: from.origin } : {}),
         ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
       };
       active = { id: turnId, startedAt, message, responseParts: [] };
       start.emit('chat', {
@@ -209,7 +217,13 @@ export function echo(options: EchoOptions): Agent {
       const next = queued.shift();
       if (!next) return;
       const message = (next.message ?? {}) as Bag;
-      beginTurn(crypto.randomUUID(), String(message.text ?? ''), String(next.id), next.from as MessageFrom | undefined);
+      beginTurn(
+        crypto.randomUUID(),
+        String(message.text ?? ''),
+        String(next.id),
+        next.from as MessageFrom | undefined,
+        message.attachments as MessageAttachment[] | undefined,
+      );
     };
 
     return {
@@ -267,7 +281,7 @@ export function echo(options: EchoOptions): Agent {
        * `chat/delta` naming a part nobody opened appends to nothing, and a
        * part naming a turn no client has is dropped.
        */
-      begin: (turnId, text, _model, from) => beginTurn(turnId, text, undefined, from),
+      begin: (turnId, text, _model, from, attachments) => beginTurn(turnId, text, undefined, from, attachments),
 
       /**
        * Wait, then be the next turn.
@@ -276,11 +290,12 @@ export function echo(options: EchoOptions): Agent {
        * started at once, which a client sees as an entry that appears and
        * leaves rather than one that was never there.
        */
-      queue: (id, text, _model, from) => {
+      queue: (id, text, _model, from, attachments) => {
         const message: Bag = {
           text,
           ...(from?.origin !== undefined ? { origin: from.origin } : {}),
           ...(from?._meta !== undefined ? { _meta: from._meta } : {}),
+          ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
         };
         const entry: Bag = { id, message, ...(from !== undefined ? { from } : {}) };
         const at = queued.findIndex((held) => held.id === id);

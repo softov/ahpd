@@ -626,7 +626,14 @@ export interface Session {
    */
   resume?(turnId: string): boolean;
 
-  /** Stop the running turn, and answer anything it was blocked on. */
+  /**
+   * Stop the running turn, named by its id, and answer anything it was
+   * blocked on.
+   *
+   * The host calls this while the chat runs a turn, with that turn's id: it
+   * refuses a stop on a chat with no turn running, as the protocol has a
+   * server do, and answers a stop naming another turn itself.
+   */
   cancel(turnId: string): void;
 
   /**
@@ -800,13 +807,17 @@ export interface Session {
    * Code's own for the same seam. The server keeps starting; what changes is
    * that the next message does not wait for it.
    *
-   * The backend says how it went by emitting, not by answering: the action and
-   * the `session/mcpServerStateChanged` that follows it when it took the
-   * request, and a state restoring `blocking: true` when it could not.
+   * True when the backend took the request, which it says by emitting: the
+   * action, and the `session/mcpServerStateChanged` that follows it, or a state
+   * restoring `blocking: true` when it could not stop waiting. False when
+   * nothing here was waiting on that server.
    *
-   * Optional, and absent is not a refusal. No backend here holds a message back
-   * on a starting server, so the host calls this where it exists and says
-   * nothing where it does not.
+   * Optional: no backend here holds a message back on a starting server. Where
+   * this is absent or answers false the host answers the request from the
+   * state the server has. A server starting with `blocking: true` keeps it, so
+   * the request goes to every client and that state follows it, which is how
+   * the protocol has a host decline one; on any other server the request moves
+   * nothing, and its sender alone hears it back.
    */
   backgroundMcpServerStartup?(id: string): Promise<boolean>;
 

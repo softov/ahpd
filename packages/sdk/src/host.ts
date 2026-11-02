@@ -18,8 +18,11 @@
  */
 
 import { resolve } from 'node:path';
-import { ACTION_INTRODUCED_IN, chatReducer, isActionKnownToVersion } from '@microsoft/agent-host-protocol';
-import type { AnnotationsState, ChatAction, SessionInputRequestKind, StateAction, SubscribeView, ToolDefinition } from '@microsoft/agent-host-protocol';
+import { ACTION_INTRODUCED_IN, chatReducer, isActionKnownToVersion, rootReducer, sessionReducer } from '@microsoft/agent-host-protocol';
+import type {
+  AnnotationsState, ChatAction, ChatState, RootAction, RootState, SessionAction, SessionInputRequestKind, SessionState, StateAction,
+  SubscribeView, ToolDefinition,
+} from '@microsoft/agent-host-protocol';
 import type { WireTurn } from './types/wire.js';
 import { INVALID_PARAMS, RpcError, METHOD_NOT_FOUND } from './rpc.js';
 import { computerId, computersFor } from './machines/computers.js';
@@ -48,13 +51,13 @@ import { bag, ownerFilter, ownerOfPrincipal } from './utils/values.js';
 import { reason } from './host/common.js';
 import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
-  ROOT, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, URI_KEYS, named,
+  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, URI_KEYS, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
 import { DELTA_WINDOW_MS, merger } from './host/deltas.js';
 import { Claiming } from './host/state.js';
-import type { Claimed, Dispatched, Held, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
+import type { Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, NameKind, Origin } from './host/state.js';
 import { GREETINGS, UNGATED, PER_CONNECTION, seesAccount, seesConfig, DECLARED, REVERSE, ownIn } from './host/gate.js';
 import type { Home } from './host/gate.js';
 import { createChatRecord } from './host/chatrecord.js';
@@ -65,7 +68,7 @@ import { createFacts } from './host/facts.js';
 import { createOwners } from './host/owners.js';
 import { createMachines } from './host/machines.js';
 import { createSessionConfig } from './host/sessionconfig.js';
-import { accountKey, createRoot } from './host/root.js';
+import { accountKey, createRoot, RESTART_KEY } from './host/root.js';
 import { createCatalogue } from './host/catalogue.js';
 import { createSpawn } from './host/spawn.js';
 import { createBackground } from './host/background.js';
@@ -140,15 +143,6 @@ const WAIT_LIMIT = 60_000;
  * does not hold would throw rather than answer.
  */
 const PROTOCOL_ACTIONS = new Set(Object.keys(ACTION_INTRODUCED_IN));
-
-/**
- * The notification that says the root state now carries `ahpd.restartNeeded`.
- *
- * An `x-ahpd` extension rather than a protocol method: no action carries
- * `_meta`, and a client that does not know the name ignores it and reads the
- * root state the way it always has.
- */
-const RESTART_NEEDED = 'x-ahpd/restartNeeded';
 
 /**
  * One principal, held as this host's own: frozen, and its `roles` with it.
@@ -333,7 +327,7 @@ export function createHost(options: HostOptions): Host {
    * each was created with, naming the source chat as this host holds it.
    */
   const madeFrom = new Map<string, Bag>();
-  /** What each chat's summary last said, so an unchanged one is not re-sent. */
+  /** The title each chat's backend said last, so a move of it is noticed. */
   const described = new Map<string, string>();
 
   const subagents = new Claiming<LiveSubagent>(claims, 'chat', (_, held) => held.session);
@@ -461,6 +455,32 @@ export function createHost(options: HostOptions): Host {
   const weights: number[] = [];
   /** What `replayable` weighs together, so the budget is not a sum over it. */
   let weight = 0;
+  /**
+   * The state of the root channel and of every session and chat channel this
+   * host holds open, as the protocol's reducers make it.
+   *
+   * Seeded once, when the channel opens, from what its backend restores and
+   * what this host keeps beside it, and changed from then on only by the
+   * actions `emit` sends on the channel, each through the reducer for its
+   * kind before anything reads the state. That is the reducer a client runs
+   * over the same actions, so a client that watched and a client that
+   * subscribes afterwards hold one state. What a backend holds for its own
+   * work stays the backend's; what a client is served is this.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L232
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2881-L2971
+   */
+  const states = new Map<string, HeldState>();
+  /**
+   * One action through the protocol's reducer for the kind of state it lands
+   * on. A type the reducer does not know is said in this host's log, which is
+   * where the reducer's own warning goes.
+   */
+  const reduced = (open: HeldState, action: Bag): Bag => {
+    const said = (message: string): void => { log(message); };
+    if (open.kind === 'root') return rootReducer(open.state as unknown as RootState, action as unknown as RootAction, said) as unknown as Bag;
+    if (open.kind === 'session') return sessionReducer(open.state as unknown as SessionState, action as unknown as SessionAction, said) as unknown as Bag;
+    return chatReducer(open.state as unknown as ChatState, action as unknown as ChatAction, said) as unknown as Bag;
+  };
   /** Everything watching a channel, which is not everything connected. */
 
   /**
@@ -692,7 +712,7 @@ export function createHost(options: HostOptions): Host {
      */
     const mine = seesConfig(connection)
       ? config
-      : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonKey(key)));
+      : Object.fromEntries(Object.entries(config).filter(([key]) => !daemonHeld(key)));
     /*
      * And the accounts go to a connection holding `account:read` and to no
      * other, the sender among them. A client pushing a config it may not read
@@ -749,22 +769,36 @@ export function createHost(options: HostOptions): Host {
    */
   let applying: (Dispatched & { type: string; turnId: string; answered: boolean }) | undefined;
   /**
-   * The echoes a backend still owes, by the action and what it names.
+   * The echoes a backend still owes, by the chat, the action and what it names.
    *
-   * A turn begun or stopped, and a message queued, are said back by the
-   * backend, and a backend says it when it is ready: once a policy check or a
-   * machine has answered, once Claude has switched models, once pi, cofold or
-   * ACP has let the cancelled prompt go, once the host inside a machine has
-   * answered the proxy. The turn id, or the queued message's own id, is the
-   * one thing that action carries that names the client's dispatch, the way
-   * `senders` follows a turn by its id. Let go of once said, once refused, and
-   * once the turn has ended.
+   * A turn begun or stopped, a message queued, and a client's result for a
+   * tool call it runs are said back by the backend, and a backend says it when
+   * it is ready: once a policy check or a machine has answered, once Claude
+   * has switched models, once pi, cofold or ACP has let the cancelled prompt
+   * go, once the host inside a machine has answered the proxy, once the
+   * harness has written the tool's result. The turn id, the queued message's
+   * own id, or the tool call's, is the one thing that action carries that
+   * names the client's dispatch, the way `senders` follows a turn by its id.
+   * A client names its own turns and messages, so two chats can each hold one
+   * of the same id, and the chat is part of the key. Let go of once said, once
+   * refused, and once the turn has ended.
    */
   const owed = new Map<string, Dispatched>();
-  const owedKey = (type: string, name: string): string => `${type}\n${name}`;
+  const owedKey = (chat: string, type: string, name: string): string => `${chat}\n${type}\n${name}`;
   /**
-   * Where the dispatch an action says back is owed: under the action's kind
-   * and the queued message it is, or the turn it names.
+   * The chat a chat action on `channel` is about, as a dispatch reads it: a
+   * chat channel names that chat, and a session channel its default chat,
+   * which is the chat the backend says the answer on.
+   */
+  const chatAbout = (channel: string): string => {
+    if (byChat.has(channel)) return channel;
+    const holding = sessions.get(channel);
+    return (holding === undefined ? undefined : leadOf(holding)?.chatUri) ?? channel;
+  };
+  /**
+   * Where the dispatch an action says back is owed: under the chat it is about,
+   * the action's kind, and the queued message it is, the tool call it
+   * completes, or the turn it names.
    *
    * A queued message is also what a client's turn of the same id became. A
    * command sent as a turn while another turn runs waits behind it as a queued
@@ -772,43 +806,55 @@ export function createHost(options: HostOptions): Host {
    * turn in front of it ends, so the client is told of its turn by that
    * message. An absent `kind` is `queued`, as the protocol reads one.
    */
-  const owedUnder = (action: Record<string, unknown>): string | undefined => {
+  const owedUnder = (channel: string, action: Record<string, unknown>): string | undefined => {
     const queued = action.type === 'chat/pendingMessageSet';
-    const named = queued ? action.id : action.turnId;
+    const named = queued ? action.id
+      : action.type === 'chat/toolCallComplete' ? action.toolCallId
+        : action.turnId;
     if (typeof named !== 'string' || named === '') return undefined;
-    const own = owedKey(String(action.type ?? ''), named);
-    const turn = owedKey('chat/turnStarted', named);
+    const chat = chatAbout(channel);
+    const own = owedKey(chat, String(action.type ?? ''), named);
+    const turn = owedKey(chat, 'chat/turnStarted', named);
     return queued && action.kind !== 'steering' && !owed.has(own) && owed.has(turn) ? turn : own;
   };
   /**
    * The client's dispatch an action says back: the dispatch being applied,
    * when the action is of its kind and about its turn, or one a backend owes
-   * under what the action names.
+   * in the action's chat under what the action names.
    */
-  const answering = (action: Record<string, unknown>): Dispatched | undefined => {
+  const answering = (channel: string, action: Record<string, unknown>): Dispatched | undefined => {
     const type = String(action.type ?? '');
     const turnId = typeof action.turnId === 'string' ? action.turnId : '';
     if (applying !== undefined && !applying.answered && applying.type === type
       && (applying.turnId === '' || applying.turnId === turnId)) return applying;
-    const key = owedUnder(action);
+    const key = owedUnder(channel, action);
     return key === undefined ? undefined : owed.get(key);
   };
   /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
    */
-  const originOf = (action: Record<string, unknown>): Origin | undefined => {
-    const answered = answering(action);
+  const originOf = (channel: string, action: Record<string, unknown>): Origin | undefined => {
+    const answered = answering(channel, action);
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
-    owed.delete(owedUnder(action) ?? '');
+    owed.delete(owedUnder(channel, action) ?? '');
     return answered.origin;
   };
-  /** The dispatch being applied, answered by `origin` on a road that says so itself. */
-  const answeredBy = (origin: Origin | undefined, action: Record<string, unknown>): void => {
+  /**
+   * The dispatch being applied, answered by `origin` on a road that says so
+   * itself, and the answer owed to that dispatch let go of.
+   *
+   * Only an answer owed to `origin`'s own dispatch: a client that sends a
+   * call's result twice is refused the second, under the key the first is
+   * still owed its answer by.
+   */
+  const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
     if (applying?.origin === origin) applying.answered = true;
-    owed.delete(owedUnder(action) ?? '');
+    const key = owedUnder(channel, action) ?? '';
+    const held = owed.get(key)?.origin;
+    if (held?.clientId === origin.clientId && held.clientSeq === origin.clientSeq) owed.delete(key);
   };
   /**
    * One state action, to everyone watching that channel.
@@ -833,11 +879,35 @@ export function createHost(options: HostOptions): Host {
     // followed, and the client then applies those deltas too: the word
     // written twice. The live broadcast below is serialised in this same
     // tick, so it is the copy in the buffer that has to be frozen.
+    const held = { ...envelope, action: structuredClone(action) };
+    /*
+     * The channel's state takes the action before anything reads it, through
+     * the reducer for its kind and from the frozen copy: a reducer keeps what
+     * an action carries, and the live object is one a backend may still be
+     * writing into. An action of another kind than its channel's is no change
+     * to that state, and a reducer that throws on a malformed one leaves the
+     * state as it was.
+     */
+    /*
+     * A running session's state opens at its first action if nothing read it
+     * before. The seed is read now and the action reduced on top: a session
+     * action sets, upserts or removes what it names, so on a seed that already
+     * carries it the action leaves it as it was.
+     */
+    if (!states.has(channel) && sessions.has(channel)) ctx.sessionStateOf(channel);
+    const open = states.get(channel);
+    if (open !== undefined) {
+      const type = String(action.type ?? '');
+      if (!type.startsWith(`${open.kind}/`)) log(`${channel}: ${type} is not a ${open.kind} action, so its state is as it was`);
+      else {
+        try { open.state = reduced(open, held.action); }
+        catch (error) { log(`${channel}: ${type} was not reduced: ${reason(error)}`); }
+      }
+    }
     ctx.telemetered(channel, action);
     ctx.asking(channel, action);
     ctx.links.observe(channel, action);
     ctx.sessionEvents.observe(channel, action);
-    const held = { ...envelope, action: structuredClone(action) };
     replayable.push(held);
     // Measured once, here, as the text this envelope will go out as.
     const size = JSON.stringify(held).length;
@@ -876,8 +946,8 @@ export function createHost(options: HostOptions): Host {
    */
   const dispatch = (channel: string, given: Record<string, unknown>, named?: Origin): void => {
     const action = ctx.withWorkerUri(channel, given);
-    answeredBy(named, action);
-    const origin = named ?? originOf(action);
+    answeredBy(channel, named, action);
+    const origin = named ?? originOf(channel, action);
     /*
      * A turn that has ended owes nothing more: a stop the backend never said
      * because the turn finished first, or a start a backend refused in a turn
@@ -885,8 +955,12 @@ export function createHost(options: HostOptions): Host {
      */
     if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error') {
       const turnId = String(action.turnId ?? '');
-      owed.delete(owedKey('chat/turnStarted', turnId));
-      owed.delete(owedKey('chat/turnCancelled', turnId));
+      const chat = chatAbout(channel);
+      owed.delete(owedKey(chat, 'chat/turnStarted', turnId));
+      owed.delete(owedKey(chat, 'chat/turnCancelled', turnId));
+      for (const [key, held] of owed) {
+        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) owed.delete(key);
+      }
     }
     /*
      * A session's customizations are two halves, and one action carries both.
@@ -909,9 +983,36 @@ export function createHost(options: HostOptions): Host {
       const halves = laid(channel, reported);
       if (halves.length > 0) action.customizations = halves;
     }
+    /*
+     * A session's `_meta` has several producers - its backend, the facts of
+     * the folder it works in, its plugins, its origin and owner - and the
+     * action replaces the map whole, so whoever says it moved says all of it:
+     * the map `describes` composes, the one the session's state opened with.
+     */
+    if (action.type === 'session/metaChanged' && sessions.has(channel)) {
+      const meta = ctx.describes(channel)._meta;
+      if (meta === undefined) delete action._meta;
+      else action._meta = meta;
+    }
     ctx.stirred(channel, action);
     if (deltas.push(channel, action, origin)) return;
     emit(channel, action, origin);
+    // What the chat's state moved, said on its session: a streamed delta moves
+    // nothing a session reads, which is why only this road says it.
+    if (states.get(channel)?.kind === 'chat') {
+      if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
+      ctx.chatMoved(channel);
+    }
+    /*
+     * A terminal's title and claim are on the root's list of terminals too,
+     * so the list is said again when either moves it: the root's state holds
+     * the list it was last told.
+     */
+    if (action.type === 'terminal/titleChanged' || action.type === 'terminal/claimed') {
+      const listed = ctx.terminalInfo();
+      const held = states.get(ROOT)?.state.terminals ?? [];
+      if (JSON.stringify(listed) !== JSON.stringify(held)) dispatch(ROOT, { type: 'root/terminalsChanged', terminals: listed });
+    }
     /*
      * The catalogue narrowed to the caller's own is a channel of its own.
      *
@@ -1008,7 +1109,7 @@ export function createHost(options: HostOptions): Host {
     reason: string,
   ): void => {
     log(`${channel}: ${reason}`);
-    answeredBy(origin, action);
+    answeredBy(channel, origin, action);
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
   };
   /**
@@ -1035,7 +1136,7 @@ export function createHost(options: HostOptions): Host {
     action: Record<string, unknown>,
     origin: Origin | undefined,
   ): void => {
-    answeredBy(origin, action);
+    answeredBy(channel, origin, action);
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin });
   };
   /**
@@ -1063,6 +1164,34 @@ export function createHost(options: HostOptions): Host {
     held.watcher.close();
     watches.delete(channel);
     log(`released ${channel}`);
+  };
+
+  /**
+   * Let the state of a session this host is not running go, with its chats',
+   * once no connection watches any of them.
+   *
+   * A running session holds its state for as long as it runs. One asleep, or
+   * read from its record, holds it while somebody watches it, and opens again
+   * from the record at the next subscribe: what was held belonged to nobody
+   * still looking at it. The reference host lets a session's state go on the
+   * same terms, never while a client is subscribed to it.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentSessionResidency.ts#L346-L361
+   */
+  const statesUnwatched = (channel: string): void => {
+    const open = states.get(channel);
+    if (open === undefined || open.kind === 'root') return;
+    const session = open.kind === 'session' ? channel : sessionFor(channel);
+    if (sessions.has(session)) return;
+    const its = [...states]
+      .filter(([one, held]) => one === session || (held.kind === 'chat' && sessionFor(one) === session))
+      .map(([one]) => one);
+    for (const connection of connections) {
+      for (const one of its) {
+        const alias = connection.aliases.get(one);
+        if (connection.watching.has(one) || (alias !== undefined && connection.watching.has(alias))) return;
+      }
+    }
+    for (const one of its) states.delete(one);
   };
 
   /** Who this session currently has in it. Always a list, because the field is required. */
@@ -1202,12 +1331,25 @@ export function createHost(options: HostOptions): Host {
     markRestart: () => {
       if (ctx.restartNeeded) return;
       ctx.restartNeeded = true;
+      dispatch(ROOT, { type: 'root/configChanged', config: { [RESTART_KEY]: true } });
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    owe: (type: string, name: string) => { if (applying !== undefined) owed.set(owedKey(type, name), applying); },
+    owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
     answering,
     flushDeltas: deltas.flush,
+    stateOf: (channel: string) => states.get(channel)?.state,
+    openState: (channel: string, kind: HeldState['kind'], seed: Bag): Bag => {
+      const open = states.get(channel);
+      if (open !== undefined) return open.state;
+      const state = options.opening?.(channel, kind) ?? seed;
+      states.set(channel, { kind, state });
+      return state;
+    },
+    closeState: (channel: string) => { states.delete(channel); },
+    heldStates: states as ReadonlyMap<string, HeldState>,
+    statesUnwatched,
+    asleep: new Set<string>(),
   } as HostContext;
   // Before any area is built, because everything a person or a backend does
   // goes out through `emit`, which folds into this stream on the way.
@@ -1250,15 +1392,10 @@ export function createHost(options: HostOptions): Host {
   Object.assign(ctx, createMerged(ctx));
   Object.assign(ctx, createWakes(ctx));
   /*
-   * The state a subscriber reads, with the entries and the client plugins on it.
-   *
-   * The outgoing half of the rule `dispatch` carries: a session is what its
-   * backend reports and what its clients handed it, and a client that
-   * subscribed reads the whole of it - with the same entries on the backend's
-   * half, because a client that reads back what it was told about a session
-   * has to read the decision the same way. Wrapped here rather than in the
-   * snapshot's own file because the entries are this host's, and this is
-   * where a host has both the snapshot and the tooling that holds them.
+   * Every subscription passes here - the command, and the two handshakes that
+   * subscribe on their way in - so this is where a client that comes back is
+   * seen to have come back. The wait a dropped connection began is over: the
+   * client never left, and nothing is on its way to saying it did.
    */
   const backendSnapshot = ctx.snapshotOf;
   ctx.snapshotOf = async (
@@ -1267,24 +1404,18 @@ export function createHost(options: HostOptions): Host {
     connection?: Connection,
     view?: SubscribeView,
   ): Promise<Record<string, unknown>> => {
-    /*
-     * Every subscription passes here - the command, and the two handshakes
-     * that subscribe on their way in - so this is where a client that comes
-     * back is seen to have come back. The wait a dropped connection began is
-     * over: the client never left, and nothing is on its way to saying it did.
-     */
     if (connection !== undefined) waitingOver(channel, connection.clientId || 'anonymous');
-    const answer = await backendSnapshot(channel, mine, connection, view);
-    const state = answer.state as Bag;
-    const reported = Array.isArray(state.customizations) ? state.customizations : [];
-    const customizations = [
-      ...reported.map((one) => ctx.withEntries(channel, bag(one))),
-      ...ctx.clientPluginsOf(channel),
-    ];
-    // Nothing reported and nothing handed over, which is what leaves a state
-    // with no `customizations` key as it was.
-    if (customizations.length === 0) return answer;
-    return { ...answer, state: { ...state, customizations } };
+    return backendSnapshot(channel, mine, connection, view);
+  };
+  /*
+   * A session's customizations as its state opens with them: the backend's,
+   * with this host's entries on them, then its clients' plugins - the two
+   * halves `dispatch` lays on every `session/customizationsChanged`. Nothing
+   * reported and nothing handed over is no `customizations` at all.
+   */
+  ctx.laidCustomizations = (channel: string, reported: unknown): Bag[] | undefined => {
+    const halves = laid(channel, reported);
+    return halves.length === 0 ? undefined : halves;
   };
   const {
     spaceHere, heldAs, nameOf, ownName, sessionOfChat, sessionFor, chatOf, meantBy,
@@ -1301,13 +1432,13 @@ export function createHost(options: HostOptions): Host {
     sessionMachines, enteredIn, inMachine, bringBackOf, followOf, leaveForgotten, machineFor, admitted, placedIn,
     isolating, mergedConfig, propertyOf, sessionSchema, runningSchema, seeded,
     contributedDefaults, storedConfig,
-    rootConfig, descriptors, daemonSchema, daemonProperties, daemonKey,
-    advertisedSchemes, advertisedChannels, advertisedMethods, rootState,
+    rootConfig, descriptors, daemonSchema, daemonProperties, daemonHeld,
+    advertisedSchemes, advertisedChannels, advertisedMethods,
     statusOf, startedBy, chatSummary, subagentSummary, restoredSubagentSummary,
     activityOf, sessionAdded, summaryMoved, activeSessionsMoved, learnModels, learnAccount,
     listing, waitingFor, readStored,
-    absorb, unstamped, withWorkerUri, stampedCalls, withSender,
-    sendSubagent, describedSub, endedWorkers, openSubagent,
+    unstamped, withWorkerUri, stampedCalls, withSender,
+    sendSubagent, endedWorkers, openSubagent,
     formerChatUri, titleOf, keepTitle, keepProvider, spawn,
     removeSession, restart, restartChat, backendsOwn, isolated,
     beginOrRun, beginTurn, modelIn, messageFrom, messageAttachments, openSession,
@@ -1738,11 +1869,12 @@ export function createHost(options: HostOptions): Host {
      */
     refuseTurns: (why) => { ctx.refusing = why; },
     /*
-     * The root state reads this flag when a connection takes it, so every
-     * connection sees the mark from here on, and one already watching it is
-     * told by `x-ahpd/restartNeeded` rather than left to ask again.
+     * The root's config says the mark from here on, through the host's own
+     * `root/configChanged`, and a connection watching the root is also told
+     * by `x-ahpd/restartNeeded`.
      */
     markRestartNeeded: () => { ctx.markRestart(); },
+    daemonValuesMoved: () => ctx.daemonValuesMoved(),
     accept(peer: Peer, principal?: Principal, root?: boolean) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
@@ -1905,6 +2037,7 @@ export function createHost(options: HostOptions): Host {
           // protocol says a client stops being active in it.
           leaves(channel, connection.clientId || 'anonymous');
           leftChannel(connection.clientId, channel);
+          statesUnwatched(meantBy(channel));
         },
         /**
          * What the client says happened.
@@ -2091,6 +2224,7 @@ export function createHost(options: HostOptions): Host {
           // A plugin channel forgets the client at once: a client that comes
           // back is asked for its snapshot again.
           for (const channel of was) leftChannel(connection.clientId, channel);
+          for (const channel of was) statesUnwatched(meantBy(channel));
           log(`${connection.clientId || 'a client'} went away`);
         },
       };

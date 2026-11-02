@@ -347,6 +347,7 @@ A worker's chat is read-only, but a client may still answer what the worker aske
 A stop given there calls the backend's optional `Session.stopWorker(toolCallId)` with the call the chat was opened for, which stops that worker and leaves the lead turn running.
 A backend without `stopWorker` gets `cancel` for the lead chat's running turn instead, which stops the worker with everything else that turn runs.
 The Claude backend has `stopWorker`, and its `workerStop: "session"` option makes it cancel the lead turn instead.
+A stop once the worker has ended is refused, as on any chat with no turn running.
 
 ### The MCP servers a session is offered
 
@@ -1458,15 +1459,18 @@ grant in place of the deployment token, so a person holding it installs a plugin
 from a client. `POST /plugin/update`, the option writes, the switch and the
 restart still take the deployment token.
 
-A command that writes also marks `ahpd.restartNeeded` on the root state, for
-every connection and for one that subscribes afterwards: the daemon holding the
-old file says so until it is restarted, which clears the mark. A client already
-subscribed is sent `x-ahpd/restartNeeded` with `{ channel: "ahp-root://" }` as
-the mark is set, so it does not have to read the root state again. That is an
-`x-ahpd` extension, because no protocol action carries `_meta`, and a client
-that does not know the name ignores it. It is sent once, when the mark changes
-from unset to set; a second mark changes nothing and sends nothing. A refused
-command marks nothing.
+A command that writes moves the root's config with it: the host sends the
+`root/configChanged` that carries the `plugins.<id>` values the file now holds,
+so a client that reads the root after a switch reads the switch. A write the
+daemon cannot apply while it runs also marks a restart as needed, for every
+connection and for one that arrives afterwards: the root's config carries the
+read-only value `ahpd.restartNeeded: true`, set by the host's own
+`root/configChanged`, until the daemon is restarted, which clears the mark. A
+client already subscribed to the root is also sent `x-ahpd/restartNeeded` with
+`{ channel: "ahp-root://" }` as the mark is set. The notification is an
+`x-ahpd` extension, and a client that does not know the name ignores it. It is
+sent once, when the mark changes from unset to set; a second mark changes
+nothing and sends nothing. A refused command marks nothing.
 
 ### `x-ahpd-adapters`
 

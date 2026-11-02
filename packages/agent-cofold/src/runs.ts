@@ -226,9 +226,18 @@ export const createRuns = (ctx: SessionContext): Runs => {
      * seed is the side that gives way, because only this session knows the run
      * is about to be replayed; the transcript still carries the turn for the
      * catalogue row a client browses without continuing it.
+     *
+     * Said as `chat/truncated` back to the turn before it, the action that
+     * drops a chat's turns after a named one, so every client's chat and the
+     * host's give way with it. The open run is the newest, so its turn is the
+     * last one the seed holds.
      */
     const seeded = turns.findIndex((turn) => String(turn.id) === turnId);
-    if (seeded >= 0) turns.splice(seeded, 1);
+    if (seeded >= 0) {
+      turns.splice(seeded, 1);
+      const before = turns[seeded - 1];
+      start.emit('chat', before === undefined ? { type: 'chat/truncated' } : { type: 'chat/truncated', turnId: String(before.id) });
+    }
     /*
      * The same opening as a live turn, with no part: the replayed events open
      * each part as they did when the turn first ran.

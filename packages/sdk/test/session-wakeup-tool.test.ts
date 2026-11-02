@@ -130,6 +130,9 @@ async function serving(world: { dir: string; kept: SessionStore; time: Clock; co
 
   const read = async (channel: string): Promise<Bag> =>
     ((await client.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  /** The sessions whose agent runs now: every start less every close. */
+  const awake = (): number => counts.starts.length - counts.closes;
+  /** The sessions the root says are open: running, and asleep until disposed. */
   const active = async (): Promise<number> => Number((await read('ahp-root://')).activeSessions);
   const turnsOf = async (chat: string): Promise<Bag[]> => (await read(chat)).turns as Bag[];
   const textsOf = async (chat: string): Promise<string[]> => (await turnsOf(chat)).map((turn) => String((turn.message as Bag).text));
@@ -173,7 +176,7 @@ async function serving(world: { dir: string; kept: SessionStore; time: Clock; co
   /** The wake a chat's record holds. */
   const stored = (id: string, chat: string): Bag | undefined => kept.chats(id).find((one) => one.uri === chat)?.wake;
 
-  return { host, client, open, wakeup, sleep, prompt, read, active, turnsOf, textsOf, stored };
+  return { host, client, open, wakeup, sleep, prompt, read, active, awake, turnsOf, textsOf, stored };
 }
 
 const world = () => {
@@ -203,14 +206,14 @@ it('begins a turn with the prompt when the wake is due', async () => {
 
 it('wakes a sleeping session for its wake', async () => {
   const w = world();
-  const { open, wakeup, sleep, active, textsOf } = await serving(w);
+  const { open, wakeup, sleep, awake, textsOf } = await serving(w);
   const one = await open('one');
   await wakeup(one.chat, { delaySeconds: 3600, prompt: 'check the build' });
   await sleep(one);
-  expect(await active()).toBe(0);
+  expect(awake()).toBe(0);
 
   w.time.pass(30);
-  await until(async () => await active() === 1, 'the wake');
+  await until(() => awake() === 1, 'the wake');
   await until(async () => (await textsOf(one.chat)).length === 2, 'the woken turn');
   expect(await textsOf(one.chat)).toEqual(['hello one', 'check the build']);
   expect(w.counts.starts).toEqual([undefined, 'one']);
@@ -281,12 +284,12 @@ it('fires a wake that fell due while the host was down once', async () => {
 
 it('lets a session with a pending host wake sleep', async () => {
   const w = world();
-  const { open, wakeup, sleep, active, stored } = await serving(w);
+  const { open, wakeup, sleep, awake, stored } = await serving(w);
   const one = await open('one');
   await wakeup(one.chat, { delaySeconds: 3600, prompt: 'check the build' });
 
   await sleep(one);
-  expect(await active()).toBe(0);
+  expect(awake()).toBe(0);
   // Still held, for the clock to fire.
   expect(stored(one.id, one.chat)?.prompt).toBe('check the build');
 });
@@ -329,12 +332,12 @@ it('keeps a wake whose session cannot resume, for the next start', async () => {
   const one = await first.open('one');
   await first.wakeup(one.chat, { delaySeconds: 3600, prompt: 'check the build' });
   await first.sleep(one);
-  expect(await first.active()).toBe(0);
+  expect(first.awake()).toBe(0);
   w.counts.failResume = true;
 
   w.time.pass(30);
   await settle(20);
-  expect(await first.active()).toBe(0);
+  expect(first.awake()).toBe(0);
   expect(first.stored(one.id, one.chat)?.prompt).toBe('check the build');
   await first.host.close();
 

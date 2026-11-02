@@ -1,6 +1,6 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createHost, GATE, ROOT } from '../src/host.js';
 import { uriOf } from '../src/resources/resources.js';
 import { fileUsers } from '../src/access/users.js';
@@ -475,51 +475,59 @@ it('lets a person read their own usage pools, and refuses them another person\'s
    * Every `usage:` URI is `usage:read` at the gate, which would refuse the very
    * person the scheme serves their own pools to. The provider's own `authorize`
    * is what opens those.
+   *
+   * The records are October's and a pool's month is read from the clock, so
+   * the clock is held in that October, only `Date`, while the case runs.
    */
-  const usage = fileUsage({ folder: join(root, 'usage') });
-  // Now, because `/month` is the month the read happens in.
-  const at = new Date().toISOString();
-  for (const [who, pool] of [['ana', 'user:ana'], ['bob', 'user:bob']] as const) {
-    await usage.record({
-      at,
-      kind: 'model',
-      source: 'proxy',
-      owner: `user:${who}`,
-      model: { name: 'anthropic/opus-5' },
-      pools: [pool, 'team:backend'],
-      cost: { amount: 0.25, currency: 'usd', from: 'harness' },
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-07T12:00:00.000Z'));
+  try {
+    const usage = fileUsage({ folder: join(root, 'usage') });
+    for (const [who, pool] of [['ana', 'user:ana'], ['bob', 'user:bob']] as const) {
+      await usage.record({
+        at: '2026-10-02T10:00:00.000Z',
+        kind: 'model',
+        source: 'proxy',
+        owner: `user:${who}`,
+        model: { name: 'anthropic/opus-5' },
+        pools: [pool, 'team:backend'],
+        cost: { amount: 0.25, currency: 'usd', from: 'harness' },
+      });
+    }
+    const made = host({
+      users: people(
+        { ana: [], bob: [], keeper: ['usage:read'] },
+        { ana: ['backend'], bob: ['frontend'] },
+      ),
+      usage,
+      resourceProviders: { usage: usageProvider({ usage, timezone: 'UTC' }) },
     });
+
+    // A guest with no `usage:read` at all: their own pool, their team's pool, and
+    // the listing that says which pools those are.
+    const ana = made.accept(peer());
+    await hello(ana, 'ana'); await signIn(ana, 'ana');
+    expect(await call(ana, 'resourceList', { channel: ROOT, uri: 'usage://' }))
+      .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }] } });
+    expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Aana' }))
+      .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:ana"') } });
+    expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://team%3Abackend/month' }))
+      .toMatchObject({ result: { data: expect.stringContaining('"calls": 2') } });
+    // Somebody else's is refused by the gate, with the host's own sentence.
+    expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
+      .toMatchObject({ code: -32009, message: 'ana may not usage:get here' });
+
+    // A role naming `usage:read` reads every pool the store holds.
+    const keeper = made.accept(peer());
+    await hello(keeper, 'keeper'); await signIn(keeper, 'keeper');
+    expect(await call(keeper, 'resourceList', { channel: ROOT, uri: 'usage://' }))
+      .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }, { name: 'user:bob' }] } });
+    expect(await call(keeper, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
+      .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:bob"') } });
   }
-  const made = host({
-    users: people(
-      { ana: [], bob: [], keeper: ['usage:read'] },
-      { ana: ['backend'], bob: ['frontend'] },
-    ),
-    usage,
-    resourceProviders: { usage: usageProvider({ usage, timezone: 'UTC' }) },
-  });
-
-  // A guest with no `usage:read` at all: their own pool, their team's pool, and
-  // the listing that says which pools those are.
-  const ana = made.accept(peer());
-  await hello(ana, 'ana'); await signIn(ana, 'ana');
-  expect(await call(ana, 'resourceList', { channel: ROOT, uri: 'usage://' }))
-    .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }] } });
-  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Aana' }))
-    .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:ana"') } });
-  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://team%3Abackend/month' }))
-    .toMatchObject({ result: { data: expect.stringContaining('"calls": 2') } });
-  // Somebody else's is refused by the gate, with the host's own sentence.
-  expect(await call(ana, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
-    .toMatchObject({ code: -32009, message: 'ana may not usage:get here' });
-
-  // A role naming `usage:read` reads every pool the store holds.
-  const keeper = made.accept(peer());
-  await hello(keeper, 'keeper'); await signIn(keeper, 'keeper');
-  expect(await call(keeper, 'resourceList', { channel: ROOT, uri: 'usage://' }))
-    .toMatchObject({ result: { entries: [{ name: 'team:backend' }, { name: 'user:ana' }, { name: 'user:bob' }] } });
-  expect(await call(keeper, 'resourceRead', { channel: ROOT, uri: 'usage://user%3Abob' }))
-    .toMatchObject({ result: { data: expect.stringContaining('"pool": "user:bob"') } });
+  finally {
+    vi.useRealTimers();
+  }
 });
 
 it('lets a socket on the deployment token do everything, and nothing demotes it', async () => {

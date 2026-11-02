@@ -141,9 +141,17 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
   await settle();
 }
 
+/** The number a client gives each action it sends, so an answer names the action it answers. */
+let clientSeq = 0;
+
 const dispatch = (client: { handle(r: { method: string; params: unknown }): unknown }, channel: string, action: Record<string, unknown>): void => {
-  void client.handle({ method: 'dispatchAction', params: { channel, action } });
+  clientSeq += 1;
+  void client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
 };
+
+/** A person's message starting a turn, with the start time and origin the protocol's turn carries. */
+const started = (turnId: string, text: string): Record<string, unknown> =>
+  ({ type: 'chat/turnStarted', turnId, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } });
 
 /** The reducer for a channel, by the scheme of its URI. */
 /** Every action this host sent on one channel, in order. */
@@ -184,6 +192,10 @@ const reducerFor = (channel: string): ((state: never, action: never) => unknown)
 /**
  * Every channel as a client holds it: its snapshot, with every action applied.
  *
+ * A refused envelope is left out, as a client leaves it: "Remove from pending
+ * (optimistic effect reverted)".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L29-L30
+ *
  * The action that throws is named rather than left to a stack trace, because
  * the useful half of this failing is knowing which one this host got wrong.
  */
@@ -194,7 +206,8 @@ function held(p: ReturnType<typeof peer>, opened: Record<string, unknown>): Reco
   }
   for (const note of p.notes) {
     if (note.method !== 'action') continue;
-    const { channel, action } = note.params as { channel: string; action: Record<string, unknown> };
+    const { channel, action, rejectionReason } = note.params as { channel: string; action: Record<string, unknown>; rejectionReason?: string };
+    if (rejectionReason !== undefined) continue;
     const before = state[channel];
     if (!before) continue;
     try {
@@ -219,7 +232,7 @@ type Session = {
 
 it('reduces a whole turn - prose, a tool that ran, and a tool that failed', async () => {
   const { client, peer: p, uri, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   await said(
     { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
@@ -267,7 +280,7 @@ it('reduces a whole turn - prose, a tool that ran, and a tool that failed', asyn
 
 it('reduces a tool call somebody had to allow', async () => {
   const { client, peer: p, uri, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   await said({
     type: 'assistant',
@@ -295,7 +308,7 @@ it('reduces a tool call somebody had to allow', async () => {
 
 it('reduces a question, and takes decline for an answer', async () => {
   const { client, peer: p, uri, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   const asked = sdk.canUseTool?.('AskUserQuestion', {
     header: 'Which way?',
@@ -325,7 +338,7 @@ it('reduces a question, and takes decline for an answer', async () => {
 
 it('reduces a cancelled turn without throwing on its duration', async () => {
   const { client, peer: p, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   await said(
     { type: 'stream_event', event: { type: 'message_start', message: { id: 'm1' } } },
@@ -346,7 +359,7 @@ it('reduces a cancelled turn without throwing on its duration', async () => {
 
 it('reduces a turn that failed', async () => {
   const { client, peer: p, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   await said({ type: 'result', subtype: 'error_during_execution', is_error: true, duration_ms: 3 });
 
@@ -359,7 +372,7 @@ it('reduces a turn that failed', async () => {
 
 it('reduces a chat\'s background work, and shows it to a client arriving after', async () => {
   const { client, peer: p, chatUri, opened } = await running();
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   /*
    * A shell the agent left running. The level is the whole set of tasks after
@@ -399,7 +412,7 @@ it('reduces a Bash result too large to send, and serves its terminal exited with
   // A store that keeps a folder for each session, which is where the host
   // keeps the output.
   const { client, peer: p, uri, chatUri, opened } = await running({ sessions: fileSessions({ dir: mkdtempSync(join(tmpdir(), 'ahpd-kept-')) }) });
-  dispatch(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, chatUri, started('t1', 'go'));
   await settle();
   /*
    * The file Claude saved the output to, and the notice it gave the model in
@@ -463,7 +476,7 @@ it('reduces a chat reordered inside its session', async () => {
    * conversation the backend can be asked for again, so a chat nothing has run
    * in cannot be moved yet.
    */
-  dispatch(client, other, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'over here' } });
+  dispatch(client, other, started('t1', 'over here'));
   await settle();
   await said({ type: 'system', subtype: 'init', session_id: 'sdk-2' });
   await said({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -607,7 +620,7 @@ it('reduces a changeset, through an operation and a turn', async () => {
   // A turn disables every operation while it runs, and an operation moves
   // through `running` and back. Both are `changeset/operationStatusChanged`
   // and `changeset/operationsChanged`, and both go through the reducer here.
-  dispatch(client, 'ahp-chat:/one', { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  dispatch(client, 'ahp-chat:/one', started('t1', 'hello'));
   await settle(12);
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' } });
   await settle(12);
@@ -780,7 +793,7 @@ it('takes the session URI VS Code chose, and answers on it', async () => {
   };
   expect(conversation.snapshot.state.resource).toBe(chat);
 
-  dispatch(client, chat, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+  dispatch(client, chat, started('t1', 'hi'));
   await settle();
   expect(actions(p, chat).map((one) => one.type)).toContain('chat/turnStarted');
 });
@@ -888,28 +901,23 @@ it('maps the keys a client sends onto the mode this harness takes', () => {
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
   const { client, peer: p, uri } = await running();
 
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/configChanged', config: { mode: 'plan' } } },
-  });
+  // The key the session's schema declares: "Only properties with
+  // `sessionMutable: true` in the config schema may be changed."
+  dispatch(client, uri, { type: 'session/configChanged', config: { permissionMode: 'plan' } });
   await settle();
   // Confirmed back, so every client agrees rather than each showing whatever
   // it last chose for itself.
   expect(actions(p, uri).some((one) => one.type === 'session/configChanged'
-    && (one.config as { mode?: string }).mode === 'plan')).toBe(true);
+    && (one.config as { permissionMode?: string }).permissionMode === 'plan')).toBe(true);
 
-  // And the key this host *advertises* is the one that moved, so the control a
-  // client drew from the schema shows where the session actually is.
+  // And the state a client subscribing now reads says the same.
   const state = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
     snapshot: { state: { config: { values: Record<string, string> } } };
   };
   expect(state.snapshot.state.config.values.permissionMode).toBe('plan');
 
   const before = actions(p, uri).filter((one) => one.type === 'session/configChanged').length;
-  await client.handle({
-    method: 'dispatchAction',
-    params: { channel: uri, action: { type: 'session/configChanged', config: { mode: 'yolo' } } },
-  });
+  dispatch(client, uri, { type: 'session/configChanged', config: { permissionMode: 'yolo' } });
   await settle();
   expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toHaveLength(before);
   /*
@@ -917,10 +925,9 @@ it('takes one on a running session, and leaves the advertised control saying wha
    *
    * The client applied this before sending it, so a host that dropped it left
    * a control showing a mode the session was never in and nothing anywhere to
-   * put it back. What comes back names the *value*, because `mode` is a key
-   * this backend does take: `setConfig` answers `true` or a sentence, and only
-   * the backend knows which of the two things went wrong. Saying "no such key"
-   * about a bad value would tell a client to stop drawing a control that works.
+   * put it back. What comes back names the *value*, because `permissionMode` is
+   * a key this backend does take: `setConfig` answers `true` or a sentence, and
+   * only the backend knows which of the two things went wrong.
    */
   expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
 });
@@ -956,7 +963,7 @@ it("says a session's chats in its row as the session's own state says them", asy
   // about rather than one chat each.
   const second = 'ahp-chat:/second';
   await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-  dispatch(client, second, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } });
+  dispatch(client, second, started('t1', 'go'));
   await settle();
 
   let row: Record<string, unknown> | undefined;

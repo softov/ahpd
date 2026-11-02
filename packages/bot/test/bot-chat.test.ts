@@ -493,7 +493,8 @@ it('keeps a queued message behind a steered turn', async () => {
   chat.reply('done');
   const after = await stateOf(client);
   expect(after['activeTurn']).toMatchObject({ message: { text: 'and then this' } });
-  expect(after['queuedMessages']).toEqual([]);
+  // The chat's reducer leaves the key out once its queue is empty.
+  expect(after['queuedMessages'] ?? []).toEqual([]);
 });
 
 it('reads an old steering line as a turn of its own', async () => {
@@ -555,7 +556,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   // under a turn id of the chat's own, with the entry it was named on it.
   const started = await stateOf(client);
   const next = started['activeTurn'] as Bag;
-  expect(started['queuedMessages']).toEqual([]);
+  expect(started['queuedMessages'] ?? []).toEqual([]);
   expect(started['turns']).toMatchObject([{ id: 't1', state: 'complete' }]);
   expect(next).toMatchObject({ message: { text: 'and then this' } });
   expect(heard).toEqual([
@@ -602,7 +603,7 @@ it('starts what waited in the order the queue was left in', async () => {
   // queue emptying one turn at a time rather than all at once.
   const last = await stateOf(client);
   expect(last['activeTurn']).toMatchObject({ message: { text: 'first asked' } });
-  expect(last['queuedMessages']).toEqual([]);
+  expect(last['queuedMessages'] ?? []).toEqual([]);
   chat.reply('three');
 
   expect(lines(configDir, 'one').map((one) => (one['message'] as Bag)['text'])).toEqual([
@@ -622,7 +623,7 @@ it('takes a queued message back, and it is never a turn', async () => {
   await queued(client, 'q1', 'never said');
   await taken(client, 'q1');
 
-  expect((await stateOf(client))['queuedMessages']).toEqual([]);
+  expect((await stateOf(client))['queuedMessages'] ?? []).toEqual([]);
   chat.reply('one');
 
   // One turn in it, and nothing started behind it: what was taken back is a
@@ -802,8 +803,10 @@ it('shows the back session as a subagent call on each turn', async () => {
     'chat/turnComplete',
   ]);
   expect(kinds.filter((one) => one === 'chat/responsePart')).toHaveLength(1);
-  // And the line a restart reads holds the same two parts.
-  expect(lines(configDir, 'one').at(-1)).toMatchObject({ id: turn['id'], state: 'complete', responseParts: parts });
+  // And the line a restart reads holds the same two parts, as JSON writes
+  // them: a key whose value is undefined is left out of a line and of a frame.
+  expect(lines(configDir, 'one').at(-1))
+    .toMatchObject({ id: turn['id'], state: 'complete', responseParts: JSON.parse(JSON.stringify(parts)) as Bag[] });
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {

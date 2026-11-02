@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { chatReducer } from '@microsoft/agent-host-protocol';
+import type { ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../src/sessions/catalog.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -293,6 +295,13 @@ describe('the fields a client reads by name', () => {
     .filter((n) => n.method.startsWith('root/session'))
     .map((n) => ({ method: n.method, params: n.params as Record<string, unknown> }));
 
+  it('adds a session before any change to its row, which a client holds only once it is added', async () => {
+    const { peer: p, uri } = await running();
+    const about = catalogue(p).filter((n) => n.params.session === uri
+      || (n.params.summary as { resource?: string } | undefined)?.resource === uri);
+    expect(about[0]?.method).toBe('root/sessionAdded');
+  });
+
   it('names the session in root/sessionRemoved', async () => {
     const { client, peer: p, uri } = await running();
     await client.handle({ method: 'disposeSession', params: { channel: uri } });
@@ -312,18 +321,23 @@ describe('the fields a client reads by name', () => {
     });
     await settle();
 
-    const moved = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    expect(moved?.params.session).toBe('ahp-session:/live');
-    const changes = moved?.params.changes as Record<string, unknown>;
-    expect(changes).toBeDefined();
-    // What moved is in there under its own name.
-    expect(changes.status).toBe(Status.InProgress);
-    expect(changes.title).toEqual(expect.any(String));
-    // And the three the protocol says never change are left out, because a
-    // *change* carrying them is a change claiming they did.
-    expect(changes).not.toHaveProperty('resource');
-    expect(changes).not.toHaveProperty('provider');
-    expect(changes).not.toHaveProperty('createdAt');
+    const moves = catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged');
+    expect(moves).not.toHaveLength(0);
+    for (const moved of moves) {
+      expect(moved.params.session).toBe('ahp-session:/live');
+      const changes = moved.params.changes as Record<string, unknown>;
+      // And the three the protocol says never change are left out, because a
+      // *change* carrying them is a change claiming they did.
+      expect(changes).not.toHaveProperty('resource');
+      expect(changes).not.toHaveProperty('provider');
+      expect(changes).not.toHaveProperty('createdAt');
+    }
+    // What moved is in there under its own name: the row a client holds, each
+    // change spread over the one before, says the session is running, the read
+    // bit beside it the person's and not the turn's.
+    const row = moves.reduce<Record<string, unknown>>((held, moved) => ({ ...held, ...(moved.params.changes as Record<string, unknown>) }), {});
+    expect(Number(row.status) & (Status.IsRead - 1)).toBe(Status.InProgress);
+    expect(row.title).toEqual(expect.any(String));
   });
 
   it('still says what moved on a session no agent is running for', async () => {
@@ -672,9 +686,13 @@ describe('the fields a client reads by name', () => {
   const statusOf = (p: ReturnType<typeof peer>, session: string, chat: string) =>
     chatsOf(p, session).find((one) => one.resource === chat)?.status;
 
+  /**
+   * A session's status as the client holds it: the row it was added with,
+   * with every change folded over it. A change carries the fields that moved,
+   * so the last change alone says nothing of a status it did not move.
+   */
   const sessionStatus = (p: ReturnType<typeof peer>, session: string) =>
-    (catalogue(p).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1)?.params.changes as
-      { status?: number } | undefined)?.status;
+    rowOf(p, session)?.status as number | undefined;
 
   it("marks one chat read without moving its other chats", async () => {
     const { client, peer: p, uri } = await running();
@@ -689,7 +707,6 @@ describe('the fields a client reads by name', () => {
       params: { channel: second, action: { type: 'chat/isReadChanged', isRead: false } },
     });
     await settle();
-    p.notes.length = 0;
 
     client.handle({
       method: 'dispatchAction',
@@ -699,7 +716,7 @@ describe('the fields a client reads by name', () => {
 
     // On the chat's own channel, which is where the client watching that one
     // chat reduces it.
-    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged')).toBe(true);
+    expect(actions(p, second).some((e) => e.action.type === 'chat/isReadChanged' && e.action.isRead === true)).toBe(true);
     // And on the session channel, which is where a client watching the session
     // reads what each of its chats is doing. `changes` carries the status the
     // protocol says to project, not a chat summary it has no field for.
@@ -710,7 +727,7 @@ describe('the fields a client reads by name', () => {
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
     const others = chatsOf(p, 'ahp-session:/live').filter((one) => one.resource !== second);
     expect(others.map((one) => one.status)).toEqual(others.map(() => Status.Idle | Status.IsRead));
-    // Every chat is read again, so the session is read with them.
+    // The session's bit is the session's own, read from its start.
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
     // A client opening the chat afterwards gets the bit in its state, so a
     // restart of the client is not a chat that forgot it was read.
@@ -781,7 +798,6 @@ describe('the fields a client reads by name', () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
-    p.notes.length = 0;
     const archive = (on: boolean) => client.handle({
       method: 'dispatchAction',
       params: { channel: second, action: { type: 'chat/isArchivedChanged', isArchived: on } },
@@ -799,38 +815,76 @@ describe('the fields a client reads by name', () => {
     expect(statusOf(p, 'ahp-session:/live', second)).toBe(Status.Idle | Status.IsRead);
   });
 
-  it('takes archiving the default chat as archiving the session', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+  it('takes archiving the default chat as archiving the session, and says both to every client', async () => {
+    const { host, client, peer: p, uri, chatUri } = await running();
+    // A second client on the same session and chat.
+    const q = peer();
+    const other = host.accept(q);
+    await other.handle(hello(['0.9.0'], { clientId: 'other' }));
+    const opened = await other.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: ChatState; fromSeq: number };
+    };
+    await other.handle({ method: 'subscribe', params: { channel: uri } });
     p.notes.length = 0;
+    // What the second client holds of the chat: its snapshot with every action
+    // it was told of since, through the protocol's own reducer.
+    const archived = () => (actions(q, chatUri)
+      .filter((e) => e.serverSeq > opened.snapshot.fromSeq && e.rejectionReason === undefined)
+      .reduce((state, e) => chatReducer(state, e.action as never), opened.snapshot.state)
+      .status & Status.IsArchived) !== 0;
+    const said = (r: ReturnType<typeof peer>, channel: string, type: string, on: boolean) =>
+      actions(r, channel).filter((e) => e.action.type === type && e.action.isArchived === on).length;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+      params: { channel: chatUri, clientSeq: 4, action: { type: 'chat/isArchivedChanged', isArchived: true } },
     });
     await settle();
-
-    // Said on the session channel, because the session is what moved, and with
-    // the action the protocol declares for it.
-    expect(actions(p, uri).some((e) => e.action.type === 'session/isArchivedChanged'
-      && e.action.isArchived === true)).toBe(true);
-    // And not on the chat channel. The default chat *is* the session, so a
-    // chat action here would be a chat a client hides while the session it
-    // names says it is still there.
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/isArchivedChanged')).toBe(false);
+    // The archive is the chat's for every client of it, the sender's copy
+    // answering the sender: the protocol makes archiving the default chat
+    // equivalent to archiving the session, and the chat's reducer sets the
+    // chat's archived bit.
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 4);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason])).toEqual([['chat/isArchivedChanged', undefined]]);
+    expect(said(q, chatUri, 'chat/isArchivedChanged', true)).toBe(1);
+    expect(archived()).toBe(true);
+    // And the session is archived, for every client of it.
+    expect(said(q, uri, 'session/isArchivedChanged', true)).toBe(1);
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead | Status.IsArchived);
-    // The chat's own entry carries no archive bit: the session is what is
-    // archived, and an entry repeating it says one thing twice.
-    const chats = chatsOf(p, 'ahp-session:/live');
-    expect(chats).toHaveLength(1);
-    expect((chats[0]?.status ?? 0) & Status.IsArchived).toBe(0);
+    // The chat's entry in the session's list carries the bit its chat does.
+    expect((statusOf(p, 'ahp-session:/live', chatUri) ?? 0) & Status.IsArchived).toBe(Status.IsArchived);
 
-    // And back the other way, which is a session taken out of the archive.
+    // A client taking the session out of the archive takes its default chat
+    // with it, on the chat as well.
+    other.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 7, action: { type: 'session/isArchivedChanged', isArchived: false } },
+    });
+    await settle();
+    expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
+    expect(said(p, chatUri, 'chat/isArchivedChanged', false)).toBe(1);
+    expect(said(q, chatUri, 'chat/isArchivedChanged', false)).toBe(1);
+    expect(archived()).toBe(false);
+    expect(actions(q, uri).filter((e) => e.origin?.clientId === 'other' && e.origin.clientSeq === 7)
+      .map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/isArchivedChanged', undefined]]);
+
+    // Archiving the session archives its default chat.
+    other.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, action: { type: 'session/isArchivedChanged', isArchived: true } },
+    });
+    await settle();
+    expect(said(p, chatUri, 'chat/isArchivedChanged', true)).toBe(2);
+    expect(archived()).toBe(true);
+
+    // And taking the default chat out takes the session out.
     client.handle({
       method: 'dispatchAction',
       params: { channel: chatUri, action: { type: 'chat/isArchivedChanged', isArchived: false } },
     });
     await settle();
     expect(sessionStatus(p, 'ahp-session:/live')).toBe(Status.Idle | Status.IsRead);
+    expect(archived()).toBe(false);
   });
 
   it('marks a chat unread when a turn starts in it, and keeps it read when a client says so', async () => {

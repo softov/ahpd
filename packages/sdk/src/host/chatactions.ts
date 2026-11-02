@@ -1,7 +1,7 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatIdFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -19,11 +19,16 @@ import type { ConnectionContext, HostContext } from './context.js';
  * on the session's default chat, which archives the session because that chat
  * is what the session's row is.
  *
- * A read bit that moved moves its chats with it. A session marked read marks
- * every counted chat read, and a session marked unread with one counted chat
- * marks that chat unread: with one chat there is no other place the unread
- * conversation can be. With several, which one is new is not the session's
- * to say, and each chat keeps its own bit.
+ * The read bit is the session's alone, as the protocol has it:
+ * "`session/isReadChanged` independently changes the owning session's read
+ * state; neither action implies the other".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
+ *
+ * An archived bit that moved moves the default chat's with it. The protocol
+ * makes archiving the default chat the same act as archiving the session, and
+ * the chat and the session each carry the bit, so a client of either channel
+ * holds it as the other does. A session that is not running names its default
+ * chat as its catalogue row does.
  *
  * Answers whether anything moved. A bit handed the value it already had is not
  * a change, and a client told about one is a client woken for a message that
@@ -45,10 +50,13 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
-  if (bit === Status.IsRead) {
-    const counted = countedChats(ctx, uri);
-    if (on) for (const chat of counted) chatFlag(ctx, uri, chat, Status.IsRead, true);
-    else if (counted.length === 1) chatFlag(ctx, uri, counted[0] as string, Status.IsRead, false);
+  if (bit === Status.IsArchived) {
+    const id = idOf(uri);
+    const recorded = ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = ctx.sessions.get(uri)?.defaultChat
+      ?? recorded.find((one) => one.default === true)?.uri
+      ?? chatUriFor(ctx.nameOf(id));
+    chatFlag(ctx, uri, lead, Status.IsArchived, on);
   }
   if (bit === Status.IsArchived && on) queueMicrotask(() => { void ctx.sleep(uri).catch(() => undefined); });
   // Unarchived: the tree back before anything wakes the session into it, and
@@ -58,20 +66,6 @@ export function sessionFlag(
     void ctx.restore(uri);
   }
   return true;
-}
-
-/**
- * The chats whose read bits make up their session's.
- *
- * The open chats the store records for the session, so a session that is not
- * running answers as well as one that is. A worker is left out: it is the
- * harness's work inside another chat's call, and a person reads the chat that
- * called it rather than the worker.
- */
-export function countedChats(ctx: HostContext, session: string): string[] {
-  return ctx.recordedChats(idOf(session))
-    .filter((one) => one.origin?.['kind'] !== 'tool' && toolCallOfSubagentChat(one.uri) === undefined)
-    .map((one) => one.uri);
 }
 
 /**
@@ -103,31 +97,17 @@ export function chatFlag(
   ctx.dispatch(chat, action ?? (bit === Status.IsRead
     ? { type: 'chat/isReadChanged', isRead: on }
     : { type: 'chat/isArchivedChanged', isArchived: on }));
-  const lead = ctx.byChat.get(chat)?.chat;
-  const base = lead !== undefined
-    ? lead.status()
-    : Number(((ctx.subagents.get(chat)?.state ?? {}) as Bag).status ?? Status.Idle);
-  ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status: base | after } });
-  ctx.summaryMoved(session);
+  /*
+   * A running chat's row follows its state as every action on it moves it. A
+   * chat of a session nothing is running has no backend to follow, so its row
+   * is said here: idle, with its bits, or what its held state says.
+   */
+  if (ctx.sessionHolding(chat) === undefined) {
+    const status = Number(ctx.stateOf(chat)?.status ?? (Status.Idle | after));
+    ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
+    ctx.summaryMoved(session);
+  }
   return true;
-}
-
-/**
- * The session's read bit, brought into step with one chat's.
- *
- * A counted chat that is unread makes a read session unread. A counted chat
- * that is read makes an unread session read once no counted chat is left
- * unread. A chat that is not counted moves nothing.
- */
-export function sessionFollows(ctx: HostContext, session: string, chat: string): void {
-  const counted = countedChats(ctx, session);
-  if (!counted.includes(chat)) return;
-  const id = idOf(session);
-  const read = (ctx.kept.chatFlags(id, chat) & Status.IsRead) !== 0;
-  const sessionRead = (ctx.kept.flags(id) & Status.IsRead) !== 0;
-  if (read === sessionRead) return;
-  if (read && counted.some((one) => (ctx.kept.chatFlags(id, one) & Status.IsRead) === 0)) return;
-  sessionFlag(ctx, session, Status.IsRead, read, { type: 'session/isReadChanged', isRead: read });
 }
 
 /**
@@ -139,6 +119,15 @@ export function startsRead(ctx: HostContext, session: string, chat: string): voi
   const id = idOf(session);
   ctx.kept.setChatFlags(id, chat, ctx.kept.chatFlags(id, chat) | Status.IsRead);
 }
+
+/**
+ * The key a `!` command's turn is held under in `commandTurns`: its chat, then
+ * the turn's id.
+ *
+ * A client names its own turns, so two chats can each run a turn of the same
+ * id at once, and one chat's command turn says nothing about the other's.
+ */
+export const commandTurnKey = (chat: string, turn: string): string => `${chat}\u0000${turn}`;
 
 /**
  * A session's and a chat's actions.
@@ -213,8 +202,10 @@ export function chatAction(
    * one - a chat read back off a disk is a row nothing was recorded for, and
    * the guard below answers for it.
    *
-   * A read bit that moves brings the session's into step with it - see
-   * `sessionFollows`.
+   * A chat's read bit is its own, as the protocol has it: the action "toggles
+   * `SessionStatus.IsRead` only on the addressed `ChatState`; it does not
+   * change the read state of the owning session or sibling chats".
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
    */
   const bitOf = type === 'chat/isReadChanged' ? Status.IsRead
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
@@ -226,16 +217,20 @@ export function chatAction(
      * Archiving the chat that is the session's row archives the session.
      *
      * A session is a row in a list and its first chat is what that row is, so
-     * the protocol makes the two the same act. It goes out as the session's
-     * own action on the session channel, and nothing is said on the chat
-     * channel: a chat reducer applying this there would set the chat's own bit
-     * as well, and the chat and its session would then disagree about whether
-     * the session is archived.
+     * the protocol makes the two the same act: "Archiving the session's default
+     * chat is equivalent to archiving the session"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts).
+     * The chat's archived bit is kept
+     * and said as any chat's is, the client's own action going out to every
+     * client of the chat, and the session's follows on the session channel as
+     * this host's action; a session archived by its own action moves the two
+     * bits alike, in `sessionFlag`.
      */
     if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
-      if (!sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on })) {
-        echoTo(connection.peer, channel, action, origin);
-      }
+      const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
+      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
+      // A chat already archived or not as asked is answered to its sender.
+      if (!moved) echoTo(connection.peer, channel, action, origin);
       return;
     }
     // Said again, a bit that did not move is not a change: it would move the
@@ -245,10 +240,13 @@ export function chatAction(
       echoTo(connection.peer, channel, action, origin);
       return;
     }
-    if (bitOf === Status.IsRead) sessionFollows(ctx, flagSession, channel);
-    // A chat filed away is read: nobody is going to come back to it for what
-    // is new in it. Taking one back out leaves its read bit as it is.
-    else if (on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel);
+    /*
+     * A chat filed away is read: nobody is going to come back to it for what
+     * is new in it, and the reference host marks it so. Taking one back out
+     * leaves its read bit as it is.
+     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+     */
+    if (bitOf === Status.IsArchived && on) chatFlag(ctx, flagSession, channel, Status.IsRead, true);
     return;
   }
   /*
@@ -460,6 +458,19 @@ export function chatAction(
     const carried = Object.keys(action).filter((key) => key !== 'type');
     no(`${type} names nothing here${carried.length > 0 ? ` (${carried.join(', ')})` : ''}`);
   };
+  const asleep = !session && !worker && !sessions.has(sessionFor(channel)) && owners.has(sessionFor(channel));
+  /*
+   * A stop on a session asleep in the catalogue.
+   *
+   * A session with no backend runs no turn, so the stop has nothing to stop
+   * and is refused, as the protocol has a server refuse a stop with no turn
+   * running, before anything is woken to find that out.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+   */
+  if (asleep && type === 'chat/turnCancelled') {
+    no(`Nothing is running on ${channel} to stop`);
+    return;
+  }
   /*
    * Any other action on a session asleep in the catalogue.
    *
@@ -468,7 +479,7 @@ export function chatAction(
    * change and a draft are kept above without a wake. The wait is returned, so
    * this connection's later dispatches go behind it.
    */
-  if (!session && !worker && !sessions.has(sessionFor(channel)) && owners.has(sessionFor(channel))) {
+  if (asleep) {
     const uri = sessionFor(channel);
     const release = hold(uri);
     return conn.bounded(wake(uri, channel, connection), `${channel} waking`).then(
@@ -1144,53 +1155,66 @@ export function chatAction(
       break;
     }
     /*
-     * On a worker's chat, that worker, when the backend can stop one;
-     * otherwise the lead turn that runs the worker. The action names the
-     * worker's own turn, which the backend has no turn under, so the
-     * worker is named by the call its chat was opened for.
+     * A stop, checked against the turn the chat it names is running.
+     *
+     * A chat with no turn running has nothing to stop, and the protocol has
+     * the server refuse the action: "`chat/turnCancelled` | No active turn |
+     * Server MUST reject the action".
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+     *
+     * A worker's chat runs the worker's turn, which this host opened and
+     * reduces itself; every other chat runs the turn its backend reports.
      */
     case 'chat/turnCancelled': {
+      const running = (worker
+        ? (ctx.stateOf(channel) as { activeTurn?: { id?: unknown } } | undefined)
+        : (session.chatState() as { activeTurn?: { id?: unknown } }))?.activeTurn;
+      if (running === undefined) {
+        no(`Nothing is running on ${channel} to stop`);
+        break;
+      }
       if (!worker) {
         /*
-         * A stop that names a turn this chat is not running stops nothing.
+         * A stop that names a turn other than the running one stops nothing:
+         * the protocol's reducer ends a turn only when the id it names is the
+         * active turn's, so a client that names another, one it saw end,
+         * holds a stop that changed nothing, and it alone is answered.
+         * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
          *
-         * Read here rather than left to the backend, because the example
-         * backends cancel whatever they are running whatever id they were
-         * handed - `turnId || turn.id` in both - and a client stopping a turn
-         * it had already finished would end somebody else's.
+         * A stop that names no turn means the running one, the one turn a
+         * client with no id to give can mean.
          *
-         * A stop that names nothing is not one of those. A client with no id
-         * to give means the running turn, and there is nothing for a name to
-         * disagree with.
-         *
-         * Where nothing stops, the client applied the action all the same and
-         * is holding it, so it is answered rather than dropped: an echo to
-         * that client alone, since nothing here changed for anybody else.
+         * The backend is handed the running turn's id, and says the turn's
+         * end back under it, which answers the client.
          */
         const named = String(action.turnId ?? '');
-        const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-        if (current === undefined || (named !== '' && String(current.id ?? '') !== named)) {
+        const turn = String(running.id ?? '');
+        if (named !== '' && named !== turn) {
           echoTo(connection.peer, channel, action, origin);
           break;
         }
-        // Said back by the backend once the turn has let go, under the turn
-        // it stopped whether or not the client named it.
-        ctx.owe('chat/turnCancelled', String(current.id ?? ''));
-        session.cancel(named);
+        ctx.owe('chat/turnCancelled', turn);
+        session.cancel(turn);
         break;
       }
+      /*
+       * On a worker's chat, that worker, when the backend can stop one;
+       * otherwise the lead turn that runs the worker. The worker's turn is
+       * this host's, which the backend has no turn under, so the worker is
+       * named by the call its chat was opened for.
+       */
       const call = toolCallOfSubagentChat(channel);
       if (session.stopWorker !== undefined && call !== undefined) {
         session.stopWorker(call);
         break;
       }
-      const current = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
-      if (current === undefined) {
+      const lead = (session.chatState() as { activeTurn?: { id?: unknown } }).activeTurn;
+      if (lead === undefined) {
         no(`Nothing is running on ${session.chatUri} to stop`);
         break;
       }
-      ctx.owe('chat/turnCancelled', String(current.id ?? ''));
-      session.cancel(String(current.id ?? ''));
+      ctx.owe('chat/turnCancelled', String(lead.id ?? ''));
+      session.cancel(String(lead.id ?? ''));
       break;
     }
     /**
@@ -1378,8 +1402,15 @@ export function chatAction(
        * put it. A server of a plugin is the agent's as well, and the same id
        * names it there, so that half is asked of the backend too.
        */
-      const toggled = ctx.toggleClientPlugin(session.uri, id,
-        store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }]);
+      const applied = store === undefined || lasting ? enablement : [{ kind: 'session', enabled: asked }];
+      /*
+       * The client's switch, said back to every client of the session with
+       * its origin once it is made, which answers the client that turned it.
+       * It carries the enablement this host applied, which is the session's
+       * own decision for a sender who may not keep one for every session.
+       */
+      const said = { ...action, enablement: applied };
+      const toggled = ctx.toggleClientPlugin(session.uri, id, applied);
       if (toggled !== undefined) {
         /*
          * The backend is offered the switch and its answer is dropped.
@@ -1391,6 +1422,7 @@ export function chatAction(
          */
         if (toggled.server !== undefined)
           void session.setCustomizationEnabled(id, onFor(session.uri, asked));
+        dispatch(session.uri, said, origin);
         break;
       }
       const on = onFor(session.uri, asked);
@@ -1403,8 +1435,10 @@ export function chatAction(
          * nothing about one it has stopped loading. So the decision is kept
          * here, by id, and the list below is what reads it back.
          */
-        if (took)
+        if (took) {
           ctx.keepDecision(session.uri, id, on);
+          dispatch(session.uri, said, origin);
+        }
         else
           no(`${id} has no runtime switch`);
         /*
@@ -1432,19 +1466,45 @@ export function chatAction(
     /*
      * A startup a client asked to stop waiting on.
      *
-     * Handed to the backend, which is the only thing that knows whether this
-     * server was blocking and how to stop holding a turn on it. The backend
-     * answers by emitting - the action and the state that follows - so there
-     * is nothing to report here on either answer.
+     * Handed to the backend, which is the only thing that knows how to stop
+     * holding a turn on a server. A backend that takes it answers by emitting:
+     * the action, and the state that follows.
      *
-     * No refusal, and no `no(...)`: a backend without the call, and a server
-     * that was not blocking, both leave the state alone. The protocol's own
-     * reducer is a no-op for them, and a refusal would tell the client its
-     * request was wrong when there was simply nothing to do.
+     * Where no backend takes it, the server keeps the state it has. On a
+     * server starting with `blocking: true` the protocol's reducer clears the
+     * flag, so the request goes out to every client of the session and the
+     * server's state follows it, which is how the protocol has a host decline
+     * one: the host "MAY restore `blocking: true` via
+     * `session/mcpServerStateChanged` to reject the request"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+     * On any other server the reducer changes nothing, and the request is
+     * answered to its sender. The server is found where the reducer's
+     * `updateMcpServerCustomization` finds it: at the top of the list, or in
+     * the `children` of an entry that is not a server, a plugin's.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts
      */
-    case 'session/mcpServerBackgroundRequested':
-      void session.backgroundMcpServerStartup?.(String(action.id ?? ''));
+    case 'session/mcpServerBackgroundRequested': {
+      const id = String(action.id ?? '');
+      const declined = (): void => {
+        const listed = session.customizations() as Bag[];
+        const found = listed.find((one) => one.id === id)
+          ?? listed.flatMap((one) => one.type === 'mcpServer' ? [] : (one.children as Bag[] | undefined) ?? []).find((one) => one.id === id);
+        const state = found?.type === 'mcpServer' ? found.state as Bag | undefined : undefined;
+        if (state?.kind !== 'starting' || state.blocking !== true) {
+          echoTo(connection.peer, channel, action, origin);
+          return;
+        }
+        dispatch(channel, action, origin);
+        dispatch(channel, { type: 'session/mcpServerStateChanged', id, state });
+      };
+      if (session.backgroundMcpServerStartup === undefined) declined();
+      else {
+        void session.backgroundMcpServerStartup(id).then((took) => {
+          if (!took) declined();
+        });
+      }
       break;
+    }
     case 'chat/draftChanged': {
       // A `Message`, not a string: `ChatState.draft` is the message
       // somebody is part-way through writing, model and all. Absent
@@ -1755,12 +1815,12 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * Nothing is echoed from here. The result goes back to the harness,
-     * the harness writes the tool result, and the session reports the
-     * completion to every client from that - the same path every other
-     * tool call takes. Relaying it here as well would draw the row
-     * finished twice, once from a client's word and once from what
-     * actually happened.
+     * The result goes back to the harness, the harness writes the tool
+     * result, and the session reports the completion to every client from
+     * that - the same path every other tool call takes, so the row is drawn
+     * finished once, from what actually happened. That completion is the
+     * answer to the client that gave the result: owed to it under the call,
+     * it goes out with that client's origin.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
@@ -1792,7 +1852,13 @@ export function chatAction(
         ok,
         text: ok ? text : (wrong || text || 'The tool failed'),
         content: content as ClientCallAnswer['content'],
-      })) no(`${toolCallId} is not a call ${clientId} is running here`);
+      })) {
+        no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
+      // Owed once the harness holds the result: a second result for the call
+      // is refused, and the completion still answers the result it took.
+      ctx.owe('chat/toolCallComplete', toolCallId);
       break;
     }
     /*

@@ -7,7 +7,9 @@ import type { Agent } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
 import type { Session } from '../types/session.js';
 import type { StoredChat } from '../types/sessions.js';
+import type { WireTurn } from '../types/wire.js';
 import type { HostContext } from './context.js';
+import type { Turn } from '@microsoft/agent-host-protocol';
 
 /**
  * A live session let go while it is quiet, and brought back when something
@@ -165,6 +167,10 @@ export function createSleep(ctx: HostContext): Sleep {
     }
     const dir = dirOf(uri);
     sessions.delete(uri);
+    // Asleep and still open: counted as one this host holds, and its state
+    // kept for whoever is watching it.
+    ctx.asleep.add(uri);
+    ctx.statesUnwatched(uri);
     if (row !== undefined) {
       wheres.set(uri, row.workingDirectories);
       moves.set(uri, row.modifiedAt);
@@ -316,6 +322,12 @@ export function createSleep(ctx: HostContext): Sleep {
     const back = other === undefined
       ? undefined
       : await ctx.transcriptOf(other.agent, other.one.backendId, at, named, other.one.uri);
+    /*
+     * The workers its record names, read before its chats' states open: the
+     * lead chat links each from the call that ran it, and the session lists
+     * them, from the moment each opens.
+     */
+    if (owner.subagents !== undefined) await ctx.restoredSubagents(id, owner, seed as unknown as WireTurn<Turn>[]);
     // A host that closed while this resume read its record starts no agent.
     if (ctx.closed) throw new Error(CLOSING);
     /*

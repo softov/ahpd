@@ -623,6 +623,36 @@ it('asks a backend that can stop one worker to stop that worker, and leaves the 
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled')).toBe(false);
 });
 
+/*
+ * A worker chat runs a turn of its own, the worker's, and once the worker has
+ * ended a stop there has no turn to stop: "`chat/turnCancelled` | No active
+ * turn | Server MUST reject the action".
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+ */
+it('stops a worker that runs on after its lead turn, and refuses a stop once it has ended', async () => {
+  const { ask, uri, lead } = await busyHost(true);
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('subscribe', { channel: worker });
+  await settle();
+  const refusals = (): string[] => wire
+    .filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')
+    .map((one) => String(one.params.rejectionReason));
+
+  await ask('dispatchAction', { channel: worker, clientSeq: 1, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await settle();
+  expect(refusals()).toEqual([]);
+  expect(told).toEqual([{ what: 'stop', id: 'toolu_bg' }]);
+
+  finishWorker();
+  await settle();
+  told.length = 0;
+  await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: '' } });
+  await settle();
+  expect(refusals()).toEqual([`Nothing is running on ${worker} to stop`]);
+  expect(told).toEqual([]);
+});
+
 it('refuses anything else on a worker chat as read-only', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/draftChanged', draft: { text: 'hi', origin: { kind: 'user' } } });
@@ -639,9 +669,10 @@ let finishWorker = (): void => {};
  *
  * `spawn` opens a worker that says what it is doing and goes on after the lead
  * turn completes, until `finishWorker`; `ask` opens a worker that waits on a
- * person while the lead turn runs; anything else runs and does not end.
+ * person while the lead turn runs; anything else runs and does not end. With
+ * `stoppable`, the backend stops one worker, and says so in `told`.
  */
-function busy(): Agent {
+function busy(stoppable = false): Agent {
   return {
     provider: 'fake',
     displayName: 'Fake',
@@ -710,6 +741,7 @@ function busy(): Agent {
         reorder: () => {},
         confirm: () => false,
         answer: () => false,
+        ...(stoppable ? { stopWorker: (toolCallId: string) => { told.push({ what: 'stop', id: toolCallId }); } } : {}),
         setCustomizationEnabled: async () => false,
         startMcpServer: async () => false,
         stopMcpServer: async () => false,
@@ -720,9 +752,10 @@ function busy(): Agent {
 }
 
 /** A host running the busy fake, with one session subscribed from the root. */
-async function busyHost() {
+async function busyHost(stoppable = false) {
   wire.length = 0;
-  const host = createHost({ path: '/tmp', agents: [busy()] });
+  told.length = 0;
+  const host = createHost({ path: '/tmp', agents: [busy(stoppable)] });
   const client = host.accept(peer());
   const ask = asking(client);
   await ask('initialize', {
@@ -734,48 +767,62 @@ async function busyHost() {
   const lead = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
   await ask('subscribe', { channel: lead });
   await settle();
-  /** The session's catalogue row as the root has announced it so far, one change at a time. */
+  /** The session's catalogue row as the root has announced it so far: the row it was added with, then each change. */
   const row = (): Bag[] => wire
     // Published under the name it was created with.
-    .filter((one) => one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy')
-    .map((one) => one.params.changes as Bag);
+    .filter((one) => (one.method === 'root/sessionAdded' && (one.params.summary as Bag | undefined)?.resource === 'ahp-session:/busy')
+      || (one.method === 'root/sessionSummaryChanged' && one.params.session === 'ahp-session:/busy'))
+    .map((one) => (one.method === 'root/sessionAdded' ? one.params.summary : one.params.changes) as Bag);
   /** The activity bits of a status, without the read and archived flags. */
   const activity = (status: unknown): number => Number(status) & 31;
   return { ask, uri, lead, row, activity };
 }
 
-it('reads a session as running while its worker runs after the lead turn, and idle once it ends', async () => {
-  const { ask, lead, row, activity } = await busyHost();
+/** The row as a client holds it: each change spread over the one before. */
+const held = (changes: Bag[]): Bag => changes.reduce<Bag>((row, one) => ({ ...row, ...one }), {});
+/** One chat's status on a row's list of chats. */
+const chatOn = (row: Bag, chat: string): number | undefined =>
+  (row.chats as Bag[] | undefined)?.find((one) => one.resource === chat)?.status as number | undefined;
+
+/*
+ * A session's row takes its activity from the default chat, promoted only by
+ * a chat that needs input or failed, as the protocol aggregates a session made
+ * of chats. Each chat's own status is on the row's list of chats.
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L89-L101
+ */
+it('reads a session by its default chat while its worker runs after the lead turn, and the worker on its own row', async () => {
+  const { ask, uri, lead, row, activity } = await busyHost();
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
-  const running = row().at(-1);
-  expect(activity(running?.status)).toBe(8);
-  expect(running?.activity).toBe('Reading files');
+  const running = held(row());
+  expect(activity(running.status)).toBe(1);
+  expect(activity(chatOn(running, worker))).toBe(8);
 
   finishWorker();
   await settle();
-  const ended = row().at(-1);
-  expect(activity(ended?.status)).toBe(1);
-  expect(ended?.activity).toBeNull();
+  const ended = held(row());
+  expect(activity(ended.status)).toBe(1);
+  expect(activity(chatOn(ended, worker))).toBe(1);
 });
 
 it('reads a session as waiting while its worker asks, though the lead is running', async () => {
   const { ask, lead, row, activity } = await busyHost();
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'ask' } } });
   await settle();
-  expect(activity(row().at(-1)?.status)).toBe(24);
+  expect(activity(held(row()).status)).toBe(24);
 });
 
-it('reads a session as running while a second chat runs and the lead is idle', async () => {
+it('reads a session by its idle default chat while a second chat runs, and the second on its own row', async () => {
   const { ask, uri, row, activity } = await busyHost();
   const second = 'ahp-chat:/busy-second';
   await ask('createChat', { channel: uri, chat: second });
   await ask('subscribe', { channel: second });
   await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'work' } } });
   await settle();
-  const moved = row().at(-1);
-  expect(activity(moved?.status)).toBe(8);
-  expect(moved?.activity).toBe('Leading');
+  const moved = held(row());
+  expect(activity(moved.status)).toBe(1);
+  expect(activity(chatOn(moved, second))).toBe(8);
 });
 
 /** Whether the state a client opening `channel` gets says it is read. */
@@ -789,7 +836,7 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
-  // The lead turn has ended, which made the session unread; read it again.
+  // The lead turn has ended, which marked the session unread; read it again.
   await ask('dispatchAction', { channel: uri, action: { type: 'session/isReadChanged', isRead: true } });
   await settle();
   expect(await readOn(ask, uri)).toBe(true);
@@ -801,7 +848,12 @@ it('marks a worker chat unread when it ends, and leaves the session read', async
   finishWorker();
   await settle();
   expect(await readOn(ask, worker)).toBe(false);
-  // A worker is the harness's work inside the lead's call, and does not count.
+  /*
+   * A worker's chat is a tool's, and its end leaves the session as it is, as
+   * the reference host leaves it: "Tool/subagent/hidden chats retain exact
+   * per-chat state without making the session unread".
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
+   */
   expect(await readOn(ask, uri)).toBe(true);
 });
 

@@ -303,6 +303,7 @@ export const declarePaths = (registry: Registry<object>, served?: ServedFacts): 
           else if (at === -1) live.push(folder);
           rewritePaths(process.pid, live);
         }
+        await served?.valuesMoved?.();
         say(said);
         const restart = restarting();
         if (restart) say(restartLine);

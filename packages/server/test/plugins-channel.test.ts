@@ -16,7 +16,7 @@ import { createHost, fileResources, fileUsers, servedRecords, type PluginHost, t
 import { echo } from '../../../examples/echo/agent.js';
 import { applyPlugins } from '../src/applyplugins.js';
 import { SET } from '../src/commands/config.js';
-import type { Options } from '../src/commands/options.js';
+import { optionsFrom, type Options } from '../src/commands/options.js';
 import { apiOrigins } from '../src/commands/run.js';
 import { servedRegistry, type ServedFacts } from '../src/commands/served.js';
 import { apiHandler } from '../src/http.js';
@@ -24,6 +24,7 @@ import type { Runner } from '../src/install.js';
 import { registry, type Fetch } from '../src/update.js';
 import { loadPlugins, pluginSet, type PluginSet } from '../src/plugins.js';
 import { pluginsChannel } from '../src/pluginschannel.js';
+import { daemonRootConfig } from '../src/rootconfig.js';
 
 const URI = 'x-ahpd-plugins://';
 const ROOT = 'ahp-root://';
@@ -225,7 +226,8 @@ type Host = Awaited<ReturnType<typeof served>>['host'];
  * loads, unloads or imports a plugin again through `applyPlugins`, against the
  * same host the channel serves. A command that writes is therefore answered
  * with what actually happened, and a second write of one plugin runs its new
- * text, as `ahpd plugin reload` does at the terminal.
+ * text, as `ahpd plugin reload` does at the terminal. The root carries the
+ * daemon's keys from the same file, and hears the values each apply moved.
  */
 const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; version?: string } = {}) => {
   let set: PluginSet;
@@ -247,6 +249,7 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
         ...(reload === undefined ? {} : { reload }),
       });
       await refresh();
+      await host.daemonValuesMoved();
       return answer;
     },
     restartNeeded: () => markRestart(),
@@ -269,6 +272,7 @@ const live = async ({ run, fetch, version }: { run?: Runner; fetch?: Fetch; vers
     channels: wire.channels,
     methods: wire.methods,
     users,
+    rootConfig: daemonRootConfig(optionsFrom({ configFile: config })),
   };
   const where = { configDir: fixtures, cwd: here, log: () => {}, alertsChanged: () => { void refresh(); }, viewsChanged: () => { void refresh(); } };
   set = pluginSet({ base, ...where });
@@ -314,7 +318,9 @@ const as = async (host: Host, users: Users, id: string, locale?: string) => {
     const answer = await call('subscribe', { channel: ROOT });
     return (answer.result as Bag)['snapshot'].state as Bag;
   };
-  return { call, actions, heard, rows, root, close: () => { client.close(); } };
+  /** The parameters of each notification of `method` this client was sent. */
+  const told = (method: string): Bag[] => seen.filter((one) => one.method === method).map((one) => one.params);
+  return { call, actions, heard, rows, root, told, close: () => { client.close(); } };
 };
 
 /** The authority the served handler is asked at; nothing listens on it. */
@@ -1175,24 +1181,32 @@ it('masks a secret option on a switched-off plugin, and lists its schema', async
   await close();
 });
 
-it('marks a restart on the root every client reads, and a new host over the same file starts without it', async () => {
+it('says a restart to every client of the root and to every client after it, and a new host over the same file starts without it', async () => {
   const { host, users, close } = await served();
   const ana = await as(host, users, 'ana');
   const cy = await as(host, users, 'cy');
   await ana.rows();
-  expect(((await cy.root())['_meta'] as Bag | undefined)?.['ahpd.restartNeeded']).toBeUndefined();
+  expect((await cy.root()).config.values['ahpd.restartNeeded']).toBeUndefined();
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([]);
 
   expect(await cy.call('x-ahpd/plugins/enable', { id: 'declared' })).toEqual({
     result: { id: 'declared', enabled: true, restart: true },
   });
-  // Ana sent nothing: the mark is the host's, not the calling client's.
-  expect((((await ana.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBe(true);
+  // Ana sent nothing: the mark is the host's, not the calling client's. It is
+  // said to her on the root she watches, as the host's own config change.
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([{ channel: ROOT }]);
+  expect(ana.actions(ROOT).filter((one) => one.type === 'root/configChanged'))
+    .toEqual([{ type: 'root/configChanged', config: { 'ahpd.restartNeeded': true } }]);
+  // A client that connects afterwards reads it in the root's config.
+  const bo = await as(host, users, 'bo');
+  expect((await bo.root()).config.values['ahpd.restartNeeded']).toBe(true);
 
   // The mark lives only in memory, so the daemon that reads the file next
   // starts without it.
   const again = await served();
-  const bo = await as(again.host, again.users, 'bo');
-  expect((((await bo.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBeUndefined();
+  const later = await as(again.host, again.users, 'bo');
+  expect((await later.root()).config.values['ahpd.restartNeeded']).toBeUndefined();
+  expect(later.told('x-ahpd/restartNeeded')).toEqual([]);
   await again.close();
   await close();
 });
@@ -1207,7 +1221,61 @@ it('does not mark a restart for a refused command', async () => {
   // file is written, and a refusal is not a change a restart would apply.
   expect(await cy.call('x-ahpd/plugins/options', { id: 'secret', key: 'retries', value: -1 }))
     .toMatchObject({ code: -32602 });
-  expect((((await ana.root())['_meta'] ?? {}) as Bag)['ahpd.restartNeeded']).toBeUndefined();
+  expect(ana.told('x-ahpd/restartNeeded')).toEqual([]);
+  expect((await (await as(host, users, 'bo')).root()).config.values['ahpd.restartNeeded']).toBeUndefined();
+  await close();
+});
+
+it('moves the root config with a plugin switched through the channel, and the restart mark with a switch that needs one', async () => {
+  writeFileSync(config, JSON.stringify({ plugins: [DECLARED, './fixtures/plugin-uri-resources'] }));
+  const { host, users, close } = await live();
+  const fa = await as(host, users, 'fa');
+  const cy = await as(host, users, 'cy');
+  const configChanges = (): Bag[] => fa.actions(ROOT).filter((one) => one.type === 'root/configChanged');
+  expect((await fa.root()).config.values['plugins.declared']).toMatchObject({ enabled: true });
+
+  // `declared` holds no port and no URI scheme, so the daemon unloads it at
+  // once: the root's value moves, and nothing waits on a restart.
+  expect(await cy.call('x-ahpd/plugins/disable', { id: 'declared' })).toEqual({
+    result: { id: 'declared', enabled: false, restart: false },
+  });
+  expect((await fa.root()).config.values['plugins.declared']).toMatchObject({ enabled: false });
+  expect((await fa.root()).config.values['ahpd.restartNeeded']).toBeUndefined();
+  expect(configChanges()).toMatchObject([{ config: { 'plugins.declared': { enabled: false } } }]);
+
+  // A plugin holding a URI scheme stays loaded until the daemon starts again,
+  // so its switch moves the restart mark beside its value.
+  expect(await cy.call('x-ahpd/plugins/disable', { id: 'uri-resources-plugin' })).toEqual({
+    result: { id: 'uri-resources-plugin', enabled: false, restart: true },
+  });
+  const values = (await fa.root()).config.values as Bag;
+  expect(values['plugins.uri-resources-plugin']).toMatchObject({ enabled: false });
+  expect(values['ahpd.restartNeeded']).toBe(true);
+  expect(configChanges().slice(1)).toEqual([
+    { type: 'root/configChanged', config: { 'plugins.uri-resources-plugin': values['plugins.uri-resources-plugin'] } },
+    { type: 'root/configChanged', config: { 'ahpd.restartNeeded': true } },
+  ]);
+  await close();
+});
+
+it('says a plugin removed through the channel as null to a reader of the daemon settings, and nothing to anybody else', async () => {
+  const { runner } = fakeNpm({});
+  const { host, users, close } = await live({ run: runner });
+  const fa = await as(host, users, 'fa');
+  const ana = await as(host, users, 'ana');
+  const jo = await as(host, users, 'jo');
+  expect((await fa.root()).config.values['plugins.secret']).toMatchObject({ enabled: true });
+
+  expect(await jo.call('x-ahpd/plugins/remove', { id: 'secret' })).toEqual({ result: { id: 'secret', restart: false } });
+  expect(fa.actions(ROOT).filter((one) => one.type === 'root/configChanged')).toEqual([
+    { type: 'root/configChanged', config: { 'plugins.secret': null } },
+  ]);
+  expect((await fa.root()).config.values['plugins.secret']).toBeNull();
+  // Ana may not read the daemon's settings, so the key was never hers to see,
+  // in the change or in the root's schema and values after it.
+  expect(ana.actions(ROOT).flatMap((one) => one.type === 'root/configChanged' ? Object.keys(one.config as Bag) : [])).toEqual([]);
+  const seen = (await ana.root()).config as { schema: { properties: Bag }; values: Bag };
+  expect([...Object.keys(seen.schema.properties), ...Object.keys(seen.values)].filter((key) => key.startsWith('plugins.'))).toEqual([]);
   await close();
 });
 

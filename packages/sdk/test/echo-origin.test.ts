@@ -92,7 +92,22 @@ const serving = async (agent: Agent, more: Partial<HostOptions> = {}, config?: B
   await client.handle({ method: 'subscribe', params: { channel: CHAT } });
   const dispatch = (clientSeq: number, action: Bag) =>
     client.handle({ method: 'dispatchAction', params: { channel: CHAT, clientSeq, action } });
-  return { host, p, dispatch };
+  return { host, p, client, dispatch };
+};
+
+/** The echo backend, with every turn begun only once `release` is called. */
+const gated = (agent: Agent) => {
+  const held: (() => void)[] = [];
+  return {
+    agent: {
+      ...agent,
+      create: (start: Start): Session => {
+        const session = agent.create(start) as Session;
+        return { ...session, begin: (...args: Parameters<Session['begin']>) => { held.push(() => { session.begin(...args); }); } };
+      },
+    },
+    release: () => { for (const begin of held.splice(0)) begin(); },
+  };
 };
 
 it('gives the echo the origin of the dispatch, and the actions it causes none', async () => {
@@ -121,6 +136,33 @@ it('gives a turn its origin when the backend says it began after an await', asyn
   expect(started?.origin).toEqual({ clientId: 'window', clientSeq: 7 });
   // And nothing else of the turn takes it.
   expect(p.heard.filter((one) => one.origin !== undefined)).toHaveLength(1);
+  await host.close();
+});
+
+it('gives each chat its own turn\'s origin when two chats start a turn of the same id', async () => {
+  // Both turns are owed before either backend says one began, and a client
+  // names its own turns, so the two share an id and only the chat tells them
+  // apart.
+  const { agent, release } = gated(echo({ path: dir, pace: 0 }));
+  const { host, p, client, dispatch } = await serving(agent);
+  const other = 'ahp-session:/two';
+  await client.handle({ method: 'createSession', params: { channel: other, provider: 'echo' } });
+  const otherChat = (await client.handle({ method: 'subscribe', params: { channel: other } }) as {
+    snapshot: { state: { defaultChat: string } };
+  }).snapshot.state.defaultChat;
+  await client.handle({ method: 'subscribe', params: { channel: otherChat } });
+  p.heard.length = 0;
+
+  await dispatch(3, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one' } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: otherChat, clientSeq: 4, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'two' } } },
+  });
+  release();
+  await until(() => p.heard.filter((one) => one.action.type === 'chat/turnComplete').length === 2, 'both turns');
+
+  const started = p.heard.filter((one) => one.action.type === 'chat/turnStarted');
+  expect(started.map((one) => [one.channel, one.origin?.clientSeq]).sort()).toEqual([[CHAT, 3], [otherChat, 4]].sort());
   await host.close();
 });
 

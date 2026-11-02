@@ -427,28 +427,24 @@ describe('driving a turn', () => {
   });
 
   /**
-   * A failure is about the turn that failed, not about the session for ever.
+   * A failure is about the turn that failed, not about the chat for ever.
    *
    * `Status.Error` was read off a flag that was set when a turn failed and
    * never unset, so one bad tool call left every client showing the session
    * in error through every turn after it - and through a restart of the
    * client, because the flag lives in the host rather than in the client that
-   * draws it. The only way back was a new session.
+   * draws it. The only way back was a new session. The chat's status is the
+   * protocol's chat reducer's over its turns, and the failure is the turn's.
    */
-  it('stops calling a session failed once it is working again', async () => {
-    const { client, uri } = await running();
-    const statusOf = async (): Promise<number> => {
-      const seen = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-        snapshot: { state: { status: number; error?: string } };
-      };
-      return seen.snapshot.state.status;
-    };
-    const errorOf = async (): Promise<string | undefined> => {
-      const seen = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-        snapshot: { state: { error?: string } };
-      };
-      return seen.snapshot.state.error;
-    };
+  it('stops calling a chat failed once it is working again', async () => {
+    const { client, uri, chatUri } = await running();
+    type Part = { kind: string; error?: { message?: string } };
+    const seen = async (): Promise<{ status: number; turns: { state?: string; responseParts: Part[] }[] }> =>
+      ((await client.handle({ method: 'subscribe', params: { channel: chatUri } })) as {
+        snapshot: { state: { status: number; turns: { state?: string; responseParts: Part[] }[] } };
+      }).snapshot.state;
+    // The activity bits, without the read and archived flags.
+    const statusOf = async (): Promise<number> => (await seen()).status & (Status.IsRead - 1);
 
     client.handle({
       method: 'dispatchAction',
@@ -461,10 +457,13 @@ describe('driving a turn', () => {
     });
 
     expect(await statusOf()).toBe(Status.Error);
-    expect(await errorOf()).toBe('the tool exploded');
+    // The turn that failed carries why, as its last part.
+    const failed = (await seen()).turns.at(-1);
+    expect(failed?.state).toBe('error');
+    expect(failed?.responseParts.at(-1)).toMatchObject({ kind: 'error', error: { message: 'the tool exploded' } });
 
     // The next thing asked of it. Running, not still in error, from the
-    // moment the turn starts - the row does not wait for it to succeed to
+    // moment the turn starts - the chat does not wait for it to succeed to
     // stop saying the last one failed.
     client.handle({
       method: 'dispatchAction',
@@ -472,11 +471,9 @@ describe('driving a turn', () => {
     });
     await settle();
     expect(await statusOf()).toBe(Status.InProgress);
-    expect(await errorOf()).toBeUndefined();
 
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
     expect(await statusOf()).toBe(Status.Idle);
-    expect(await errorOf()).toBeUndefined();
   });
 
   it('says a turn ended badly even when the harness gave no words', async () => {

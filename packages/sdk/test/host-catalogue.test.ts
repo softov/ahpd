@@ -498,7 +498,15 @@ describe('the flags a client sets', () => {
   });
 });
 
-describe('a session and its chats, read together', () => {
+/*
+ * A chat's read bit and its session's, each moved by its own action alone:
+ * "The action toggles `SessionStatus.IsRead` only on the addressed
+ * `ChatState`; it does not change the read state of the owning session or
+ * sibling chats ... `session/isReadChanged` independently changes the owning
+ * session's read state; neither action implies the other."
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
+ */
+describe('a chat\'s read bit and its session\'s', () => {
   type Client = Awaited<ReturnType<typeof running>>['client'];
   const second = 'ahp-chat:/second';
 
@@ -537,79 +545,84 @@ describe('a session and its chats, read together', () => {
     expect(chat.status & Status.IsRead).toBe(Status.IsRead);
   });
 
-  it('makes a read session unread when one of its chats turns unread', async () => {
+  it('leaves the session and the other chat as they are when a chat turns unread', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     p.notes.length = 0;
     await send(client, second, chatRead(false));
-    expect(await isRead(client, uri)).toBe(false);
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged').map((e) => e.action.isRead))
-      .toEqual([false]);
-    // The other chat has not changed: what is new is in the chat that said so.
+    expect(await isRead(client, second)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
     expect(await isRead(client, chatUri)).toBe(true);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+    // The chat's row in its session moves with the chat, which keeps the list in step.
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated').map((e) => e.action.chat)).toEqual([second]);
   });
 
-  it('makes the session read when its last unread chat is read, and not before', async () => {
+  it('leaves an unread session unread when its chats are read', async () => {
     const { client, uri, chatUri } = await twoChats();
+    await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
-    await send(client, chatUri, chatRead(false));
 
     await send(client, second, chatRead(true));
-    // One chat is still unread, so the session is too.
+    expect(await isRead(client, second)).toBe(true);
+    expect(await isRead(client, chatUri)).toBe(true);
     expect(await isRead(client, uri)).toBe(false);
-    await send(client, chatUri, chatRead(true));
-    expect(await isRead(client, uri)).toBe(true);
   });
 
-  it('marks the one chat unread when a session with one chat is marked unread', async () => {
+  it('leaves the one chat read when a session with one chat is marked unread', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     p.notes.length = 0;
     await send(client, uri, sessionRead(false));
-    // With one chat, that chat is the only place the unread conversation can be.
-    expect(await isRead(client, chatUri)).toBe(false);
-    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/isReadChanged' && e.action.isRead === false))
-      .toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(true);
+    expect(actions(p, chatUri)).toEqual([]);
   });
 
   it('leaves each chat as it is when a session with two chats is marked unread', async () => {
     const { client, uri, chatUri } = await twoChats();
     await send(client, uri, sessionRead(false));
-    // Which of two chats is new is not the session's to say.
     expect(await isRead(client, chatUri)).toBe(true);
     expect(await isRead(client, second)).toBe(true);
   });
 
-  it('marks every chat read when the session is marked read, and says each once', async () => {
+  it('leaves unread chats unread when the session is marked read, and says the session once', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
+    await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
     await send(client, chatUri, chatRead(false));
     p.notes.length = 0;
 
     await send(client, uri, sessionRead(true));
-    expect(await isRead(client, chatUri)).toBe(true);
-    expect(await isRead(client, second)).toBe(true);
-    const updated = actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated').map((e) => e.action.chat);
-    expect(updated.sort()).toEqual([chatUri, second].sort());
+    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, chatUri)).toBe(false);
+    expect(await isRead(client, second)).toBe(false);
+    expect(actions(p).map((e) => e.action.type)).toEqual(['session/isReadChanged']);
 
-    // Said again, nothing moved: the sender is answered, and no chat or row
-    // is said again.
+    // Said again, nothing moved: the sender alone is answered.
     const said = p.notes.length;
     await send(client, uri, sessionRead(true));
     expect(p.notes.slice(said).map((one) => one.method)).toEqual(['action']);
     expect(actions(p, uri).at(-1)?.action.type).toBe('session/isReadChanged');
   });
 
-  it('marks a chat and its session unread when a turn starts, as a client reduces it', async () => {
+  it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
 
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
     // After the turn's start, which is where a client's reducer clears it.
     const types = actions(p, chatUri).map((e) => e.action.type);
     expect(types.indexOf('chat/turnStarted')).toBeLessThan(types.indexOf('chat/isReadChanged'));
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
   });
 
-  it('keeps a chat marked read while its turn runs, and marks it unread when the turn completes', async () => {
+  /*
+   * A turn's end marks its chat unread, and a read session unread, each with
+   * this host's own action on its own channel, as the reference host does at
+   * a turn's end.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/markUnread/markUnreadContribution.ts#L27-L48
+   */
+  it('keeps a chat marked read while its turn runs, and marks the chat and its session unread when the turn completes', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
     await send(client, chatUri, chatRead(true));
@@ -619,9 +632,11 @@ describe('a session and its chats, read together', () => {
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
     expect(await isRead(client, chatUri)).toBe(false);
     expect(await isRead(client, uri)).toBe(false);
-    // After the ending, so a client applies the turn's end before the bit.
-    const types = actions(p, chatUri).map((e) => e.action.type);
-    expect(types.indexOf('chat/turnComplete')).toBeLessThan(types.lastIndexOf('chat/isReadChanged'));
+    // After the ending, so a client applies the turn's end before the bits:
+    // the chat's first, then the session's.
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/turnComplete ${chatUri}`)).toBeLessThan(said.lastIndexOf(`chat/isReadChanged ${chatUri}`));
+    expect(said.lastIndexOf(`chat/isReadChanged ${chatUri}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
   it('marks a chat and its session unread when a turn fails', async () => {
@@ -643,6 +658,17 @@ describe('a session and its chats, read together', () => {
     expect(await isRead(client, uri)).toBe(false);
   });
 
+  it('says nothing more of a session that is unread when a turn ends', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await send(client, uri, sessionRead(false));
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+
+    expect(await isRead(client, uri)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged').map((e) => e.action.isRead))
+      .toEqual([false]);
+  });
+
   /** A second client of the same session, subscribed to both its channels. */
   const alsoWatching = async (started: Awaited<ReturnType<typeof running>>) => {
     const p = peer();
@@ -654,33 +680,32 @@ describe('a session and its chats, read together', () => {
   };
 
   /*
-   * A stop naming a turn that is not running applies to nothing, and this host
-   * used to hand it to the backend anyway - which cancels whatever it *is*
-   * running, whatever id it was handed. What the client holds meanwhile is its
-   * own action, pending until an echo carrying its `clientSeq` comes back: the
-   * same answer an unchanged announcement gets, and to the same one client.
+   * A stop with no turn running is one the protocol has the server refuse:
+   * "`chat/turnCancelled` | No active turn | Server MUST reject the action".
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+   * A refusal goes to its sender, who drops the stop it holds; no other client
+   * applied it, so no other client hears of it.
    */
-  it('echoes a cancel that stopped nothing to its sender alone', async () => {
+  it('refuses a cancel with no turn running, whatever turn it names, to its sender alone', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
-    // The sequence this host is at now, which the echo has to leave alone.
-    const at = Math.max(...actions(started.peer).map((e) => e.serverSeq));
     started.peer.notes.length = 0;
     two.notes.length = 0;
 
-    started.client.handle({
-      method: 'dispatchAction',
-      params: { channel: started.chatUri, clientSeq: 7, action: { type: 'chat/turnCancelled', turnId: 't1' } },
-    });
-    await settle();
+    for (const [clientSeq, turnId] of [[7, 't1'], [8, '']] as const) {
+      started.client.handle({
+        method: 'dispatchAction',
+        params: { channel: started.chatUri, clientSeq, action: { type: 'chat/turnCancelled', turnId } },
+      });
+      await settle();
+    }
 
     const said = actions(started.peer, started.chatUri);
-    expect(said).toHaveLength(1);
-    expect(said[0]?.action).toEqual({ type: 'chat/turnCancelled', turnId: 't1' });
-    expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
-    // Still where it was: no state moved, so no sequence did either.
-    expect(said[0]?.serverSeq).toBe(at);
-    // Nobody else applied it, so nobody else has anything to put back.
+    expect(said.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }, { clientId: 'probe', clientSeq: 8 }]);
+    expect(said.map((e) => e.rejectionReason)).toEqual([
+      `Nothing is running on ${started.chatUri} to stop`,
+      `Nothing is running on ${started.chatUri} to stop`,
+    ]);
     expect(actions(two)).toEqual([]);
   });
 
@@ -716,6 +741,10 @@ describe('a session and its chats, read together', () => {
     expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 9 });
   });
 
+  /*
+   * A chat archived on its own is marked read, as the reference host marks it.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+   */
   it('marks an unread chat read when it is archived, after the archive', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     await send(client, chatUri, chatRead(false));
@@ -725,17 +754,20 @@ describe('a session and its chats, read together', () => {
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
     expect(actions(p, second).map((e) => e.action.type)).toEqual(['chat/isArchivedChanged', 'chat/isReadChanged']);
     expect(await isRead(client, second)).toBe(true);
-    // The default chat is still unread, so the session is too.
-    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
   });
 
-  it('makes the session read when the last unread chat is archived', async () => {
-    const { client, uri } = await twoChats();
+  it('leaves an unread session unread when its last unread chat is archived', async () => {
+    const { client, peer: p, uri } = await twoChats();
+    await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
-    expect(await isRead(client, uri)).toBe(false);
+    p.notes.length = 0;
 
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, second)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
   });
 
   it('changes no read bit when a chat is taken out of the archive', async () => {
@@ -949,7 +981,10 @@ describe("a row lists the session's chats", () => {
     });
     await settle();
 
-    const updated = actions(p).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === second).at(-1);
+    // Each row change carries the fields that moved, so the status is the
+    // last one any of them carried.
+    const updated = actions(p).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === second
+      && (e.action.changes as { status?: number }).status !== undefined).at(-1);
     const status = (updated?.action.changes as { status?: number } | undefined)?.status;
     expect(status).toBe(Status.InProgress);
     // And the row agrees with the chat, which is what a client listing
@@ -1247,35 +1282,32 @@ describe('a summary that did not change', () => {
     }, { timeout: 3000 });
   });
 
-  it('sends the first move of a session re-created under the same URI', async () => {
+  it('measures the first move of a session re-created under the same URI against its new row', async () => {
     /*
      * The clock held still, because what this is about is a row that comes
      * back exactly as it was: the last summary sent for the URI was recorded
      * against the session that was disposed, and a client has nothing of the
-     * new one to start from.
+     * new one but the row it was added with.
      */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
     try {
       const { client, peer: p, uri } = await running();
-      // The row a session sends once its customizations arrive, which is the
-      // last one this session sends.
       await settle();
-      const opened = rowsMoved(p, 'ahp-session:/live');
-      expect(opened).not.toHaveLength(0);
 
       await client.handle({ method: 'disposeSession', params: { channel: uri } });
       await settle();
+      const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
       await settle();
-      // The same conversation, under the same name, with nothing on it - and a
-      // client that watched it go has an empty row for it. The row it is sent
-      // here is byte for byte the row the disposed session last sent.
+      // The same conversation, under the same name, added whole: what a client
+      // that watched it go now holds, and what the next move is a change from.
+      expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
       const before = rowsMoved(p, 'ahp-session:/live');
-      expect(before).toHaveLength(opened.length + 1);
-      expect(before.at(-1)).toEqual(opened.at(-1));
       await retitle(client, uri, 'Paging');
-      expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
+      const moved = rowsMoved(p, 'ahp-session:/live');
+      expect(moved).toHaveLength(before.length + 1);
+      expect(moved.at(-1)).toMatchObject({ title: 'Paging' });
       await retitle(client, uri, 'Paging');
       expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
     }
@@ -1313,9 +1345,18 @@ describe("a row's counts are the session's own", () => {
     .filter((n) => n.session === session)
     .map((n) => n.changes);
 
-  /** The counts a session's row carried last. */
-  const countsOf = (p: ReturnType<typeof peer>, session: string) =>
-    rowsMoved(p, session).at(-1)?.changes as { files?: number; additions?: number; deletions?: number } | undefined;
+  /**
+   * The counts a session's row carries, as a client holds them: the last
+   * change that carried any, or the row it was added with. A change carries
+   * the fields that moved, so a later one about the title leaves the counts.
+   */
+  const countsOf = (p: ReturnType<typeof peer>, session: string) => {
+    const moved = rowsMoved(p, session).filter((changes) => changes.changes !== undefined).at(-1)?.changes;
+    const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
+      .map((n) => (n.params as { summary: Record<string, unknown> }).summary)
+      .filter((summary) => summary.resource === session).at(-1)?.changes;
+    return (moved ?? added) as { files?: number; additions?: number; deletions?: number } | undefined;
+  };
 
   /**
    * A source whose counts are the session's, with a directory's of its own.

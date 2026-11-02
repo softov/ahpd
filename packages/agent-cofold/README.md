@@ -152,6 +152,12 @@ Memory is per workspace and shared by the sessions in it, under `<store>/memory/
 
 The named providers are tried in the order the configuration lists them, and a failing one is skipped.
 
+## Messages sent while a turn runs
+
+A steering message goes into the running turn: cofold appends it to the run's transcript before the model's next step. The session says it back as the chat's steering message as it takes it, and takes it out once cofold has written it. A run that ends before a step reads it leaves it to a turn of its own, which starts once the chat is idle, ahead of any queued message; after a run a client stopped, it waits until the chat's next turn ends.
+
+A session that resumes, forks or rewinds a conversation reads it before any turn starts, and holds the turns it is handed meanwhile. A turn that finds another running once the read is done is refused with "A turn is running in this chat": the turn that opened first, or a run that was waiting on a person when the daemon stopped and that the resume reopened.
+
 ## A turn that fails
 
 A turn that fails on a model call can be resumed from the client, and the same prompt runs again under the turn's own id. cofold cuts the store through the last message of the turn before, so the failed prompt and what the run wrote after it leave the store. The conversation holds the prompt once, not once for each attempt. A conversation whose first turn failed has its session dropped, and the run makes it again on the same workspace. The calls the failed turn ran are run again, because the cut drops them with the prompt.

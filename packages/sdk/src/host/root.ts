@@ -5,6 +5,7 @@ import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
 import { sdkVersion } from '../version.js';
 import { vscodeRootProperties } from '../vscoderootconfig.js';
 import { CLIENT_QUEUE_BYTES, MINIMUM_LIMIT_BYTES, REPLAY_BYTES } from './limits.js';
+import { ROOT } from './channels.js';
 import type { Connection } from '../types/host.js';
 import type { Bag } from '../types/common.js';
 import type { HostContext } from './context.js';
@@ -111,6 +112,17 @@ const capacity = (measure: () => number | undefined): number | undefined => {
 export const accountKey = (provider: string): string =>
   provider === 'codex' ? 'vscode.codexAccount' : `ahpd.${provider}Account`;
 
+/**
+ * The root config key that says the daemon has to start again for a write it
+ * took to apply.
+ *
+ * The host's own value, which it sets with its own `root/configChanged` and
+ * which ends with the process that set it. Declared `readOnly`, so a client
+ * draws it and does not edit it. A client's push that names it never moves
+ * it: the echo says the host's value.
+ */
+export const RESTART_KEY = 'ahpd.restartNeeded';
+
 /** What the root channel advertises, and the config a client pushes to it. */
 export interface Root {
   rootConfig: Record<string, unknown>;
@@ -118,12 +130,42 @@ export interface Root {
   daemonSchema(): Record<string, unknown>;
   daemonProperties(): Record<string, unknown>;
   daemonKey(key: string): boolean;
+  /** Whether a key the root's config holds is the daemon's to show, a plugin removed while the daemon runs among them. */
+  daemonHeld(key: string): boolean;
   declaresConfigKey(key: string): boolean;
   advertisedSchemes(): Record<string, unknown> | undefined;
   advertisedChannels(): { scheme: string; title: string; description?: string; grant: string }[] | undefined;
   advertisedMethods(): { method: string; title: string; description?: string; grant: string }[] | undefined;
   advertisedGrants(): Record<string, unknown>;
-  rootState(mine?: Record<string, unknown>, connection?: Connection): Promise<Bag>;
+  /** The daemon's own config values, as its port answers them now, or none on a host with no daemon keys. */
+  daemonValues(): Promise<Record<string, unknown>>;
+  /**
+   * The state the root channel opens with: every agent, the sessions and
+   * terminals this host holds, and the whole config - the host's keys, the
+   * daemon's `daemon` values and every backend's account. Read once; every
+   * change after it is a root action.
+   */
+  rootSeed(daemon: Record<string, unknown>): Bag;
+  /**
+   * The root's held state as one connection reads it: the agents it may use,
+   * the config keys it may read with its own preferences in theirs, and the
+   * `_meta` the handshake gave it.
+   */
+  rootFor(held: Bag, mine?: Record<string, unknown>, connection?: Connection): Bag;
+  /**
+   * What a root config `replace` keeps that the push names none of: the
+   * daemon's values, every backend's account and the restart mark, as the
+   * root's state holds them. None of them is a client's to clear.
+   */
+  keptOnReplace(pushed: Record<string, unknown>): Record<string, unknown>;
+  /**
+   * Say each daemon value that moved since the root's state last said it.
+   *
+   * For a write to the daemon's file that no client's `root/configChanged`
+   * made, which is what a plugin command and a served paths command do.
+   * Nothing when the root is not held yet: its first snapshot reads the port.
+   */
+  daemonValuesMoved(): Promise<void>;
 }
 
 export function createRoot(ctx: HostContext): Root {
@@ -317,6 +359,17 @@ export function createRoot(ctx: HostContext): Root {
         readOnly: true,
       },
       /*
+       * Whether the daemon has to start again for a write it took to apply.
+       * The host's own fact and not a setting, so `readOnly`: a client shows
+       * it and its push never moves it (`RESTART_KEY`).
+       */
+      [RESTART_KEY]: {
+        type: 'boolean',
+        title: 'Restart Needed',
+        description: 'The daemon has to start again for a change it took to apply.',
+        readOnly: true,
+      },
+      /*
        * Where a commit message and a pull request's words come from.
        *
        * This host's own key and not VS Code's: the reference client pushes
@@ -426,6 +479,21 @@ export function createRoot(ctx: HostContext): Root {
   };
   /** Whether a key is the daemon's rather than this host's. */
   const daemonKey = (key: string): boolean => Object.hasOwn(daemonProperties(), key);
+  /**
+   * Every key the daemon's port has declared or answered since the root
+   * opened, filled by `rootSeed` and `daemonValuesMoved`.
+   *
+   * A plugin removed while the daemon runs keeps its property in the root's
+   * schema and its `null` in the values, and they are the daemon's still,
+   * though the port no longer declares them.
+   */
+  const daemonSeen = new Set<string>();
+  /**
+   * Whether a key the root's config holds is the daemon's, shown only to a
+   * connection that may read the daemon's settings: one its port declares
+   * now, or one it declared or answered since the root opened.
+   */
+  const daemonHeld = (key: string): boolean => daemonKey(key) || daemonSeen.has(key);
   /**
    * Whether a pushed key is one this host can describe.
    *
@@ -560,33 +628,107 @@ export function createRoot(ctx: HostContext): Root {
     ...schemeGrants(),
   ]);
 
-  const rootState = async (mine: Record<string, unknown> = {}, connection?: Connection): Promise<Bag> => {
-    /*
-     * The daemon's own half, for a connection that may read it and nobody else.
-     *
-     * Its keys are not held here the way `rootConfig` holds the host's: the
-     * daemon's file is what they are, and a client that read them before a
-     * change and reads them after must see two different answers. So both are
-     * asked of the port per root state, and asked for nobody who does not hold
-     * `config:read`.
-     */
-    const theirs = seesConfig(connection) ? daemonProperties() : {};
-    const daemonValues = Object.keys(theirs).length === 0 || options.rootConfig === undefined
+  /*
+   * The daemon's own half of the config.
+   *
+   * Its keys are not held here the way `rootConfig` holds the host's: the
+   * daemon's file is what they are, so the root's state opens with what the
+   * port answers. A write a client pushes moves the state through its own
+   * `root/configChanged`, and a write no client pushed through
+   * `daemonValuesMoved`.
+   */
+  const daemonValues = async (): Promise<Record<string, unknown>> =>
+    (Object.keys(daemonProperties()).length === 0 || options.rootConfig === undefined
       ? {}
-      : await options.rootConfig.values();
+      : await options.rootConfig.values());
+
+  const rootSeed = (daemon: Record<string, unknown>): Bag => {
+    for (const key of [...Object.keys(daemonProperties()), ...Object.keys(daemon)]) daemonSeen.add(key);
+    return {
+      agents: descriptors(),
+      // What this host is running, not what is on disk beside it.
+      activeSessions: ctx.activeCount(),
+      ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
+      /*
+       * Always present, and present even when empty.
+       *
+       * The root reducer returns the state *unchanged* when there is no `config`
+       * on it, so a root without one would make every `root/configChanged` a
+       * no-op on every client - including the one that had just pushed it.
+       */
+      config: {
+        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...daemonProperties() } },
+        values: { ...rootConfig, ...daemon, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) },
+      },
+    };
+  };
+
+  /** Whether a root config key is one a backend's account is published under. */
+  const isAccountKey = (key: string): boolean =>
+    [...agents.values()].some((agent) => accountKey(agent.provider) === key);
+
+  const keptOnReplace = (pushed: Record<string, unknown>): Record<string, unknown> => {
+    const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+    return Object.fromEntries(Object.entries(held)
+      .filter(([key]) => !Object.hasOwn(pushed, key) && (daemonKey(key) || isAccountKey(key) || key === RESTART_KEY)));
+  };
+
+  const daemonValuesMoved = async (): Promise<void> => {
+    if (ctx.stateOf(ROOT) === undefined) return;
+    const now = await daemonValues();
+    for (const key of [...Object.keys(daemonProperties()), ...Object.keys(now)]) daemonSeen.add(key);
+    const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
+    // A key the file no longer holds is said as `null`, the way a client takes
+    // a key back, so a reader that merged the old value is told it is gone.
+    const moved = Object.fromEntries([...new Set([...Object.keys(now), ...Object.keys(held).filter(daemonHeld)])]
+      .filter((key) => Object.hasOwn(now, key) ? JSON.stringify(held[key]) !== JSON.stringify(now[key]) : held[key] !== null)
+      .map((key) => [key, Object.hasOwn(now, key) ? now[key] : null]));
+    if (Object.keys(moved).length > 0) ctx.dispatch(ROOT, { type: 'root/configChanged', config: moved });
+  };
+
+  const rootFor = (held: Bag, mine: Record<string, unknown> = {}, connection?: Connection): Bag => {
+    const config = (held.config ?? { schema: ROOT_CONFIG_SCHEMA, values: {} }) as { schema: Bag; values: Bag };
     /*
-     * The account each backend bills to, for a connection that may read it.
-     *
-     * The operator's own, so it is `account:read`'s and the host's - decision
+     * The daemon's own keys for a connection that may read them and nobody
+     * else, and the account each backend bills to likewise: the operator's
+     * own, so it is `account:read`'s and the host's - decision
      * `an-agent-account-is-shown-to-account-readers`. A connection without the
-     * grant is handed no account value at all rather than an empty one, which
-     * is the same absence a backend nothing has reported an account for has.
+     * grant is handed neither, which is the same absence a backend nothing has
+     * reported an account for has.
+     *
+     * A `PER_CONNECTION` key is the pushing client's, so another connection
+     * reads its own in its place: the state holds whatever was pushed last,
+     * and that copy belongs to nobody.
      */
-    const accounts = seesAccount(connection) ? accountValues() : {};
+    const reads = seesConfig(connection);
+    const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
+      !PER_CONNECTION.has(key) && (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
+    const properties = (config.schema.properties ?? {}) as Bag;
+    const meta = metaFor(connection);
+    return {
+      ...held,
+      // The host's list, rewritten for the one connection asking when it is
+      // already somebody: the sign-in resource is the one field that differs.
+      agents: connection === undefined ? held.agents : ctx.agentsFor(connection, held.agents),
+      config: {
+        schema: reads
+          ? config.schema
+          : { ...config.schema, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !daemonHeld(key))) },
+        values: { ...values, ...mine },
+      },
+      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
+    };
+  };
+
+  /**
+   * The root's `_meta`, as one connection reads it: what this host and its
+   * plugins offer, in that connection's words, and who the connection is.
+   */
+  const metaFor = (connection?: Connection): Bag => {
     const schemes = advertisedSchemes();
     const channels = advertisedChannels();
     const methods = advertisedMethods();
-    const meta = {
+    return {
       /*
        * The machine, for a window choosing which host to delegate to.
        *
@@ -624,66 +766,21 @@ export function createRoot(ctx: HostContext): Root {
       ...(channels === undefined ? {} : { 'ahpd.channels': channels }),
       ...(methods === undefined ? {} : { 'ahpd.methods': methods }),
       'ahpd.grants': advertisedGrants(),
-      ...(ctx.restartNeeded ? { 'ahpd.restartNeeded': true } : {}),
       /*
-       * Who this snapshot is for, in the block the handshake already uses.
+       * Who this connection is, in the block the handshake already uses.
        *
-       * The root snapshot is built per connection, which is the whole of why
-       * this key can live here: a client that signs in after connecting learns
-       * its id by taking the root snapshot again, and this is the same statement
-       * as the handshake's, so a client that subscribes later reads what a
-       * client that connected earlier was told. Nobody else's - a snapshot is
-       * never cached and never replayed to another connection.
+       * A client that signs in after connecting learns its id by taking the
+       * root snapshot again, and this is the same statement as the handshake's,
+       * so a client that subscribes later reads what a client that connected
+       * earlier was told. Nobody else's.
        */
       ...(connection === undefined || ctx.ownerFor(connection) === undefined ? {} : { 'ahpd.principal': ctx.ownerFor(connection) }),
-    };
-    return {
-      // The host's list, rewritten for the one connection asking when it is
-      // already somebody: the sign-in resource is the one field that differs.
-      agents: connection === undefined ? descriptors() : ctx.agentsFor(connection, descriptors()),
-      // What this host is running, not what is on disk beside it.
-      activeSessions: sessions.size,
-      ...(terminals.size > 0 ? { terminals: ctx.terminalInfo() } : {}),
-      /*
-       * Always present, and present even when empty.
-       *
-       * A client's root reducer returns the state *unchanged* when there is no
-       * `config` on it, so a host that left this out made every
-       * `root/configChanged` a no-op on every client - including the one that
-       * had just pushed it.
-       */
-      /*
-       * The host's keys, the daemon's beside them, then this connection's own
-       * preferences.
-       *
-       * A `PER_CONNECTION` key is dropped from the host's half rather than
-       * merged under: `rootConfig` still holds whatever was pushed last, because
-       * the echo and the replay buffer are one per host, but that copy belongs to
-       * nobody and showing it would tell a client that somebody else's shell was
-       * its own. So what a connection reads back here is what it pushed, or
-       * nothing.
-       */
-      config: {
-        schema: { ...ROOT_CONFIG_SCHEMA, properties: { ...ROOT_CONFIG_SCHEMA.properties, ...theirs } },
-        values: {
-          ...Object.fromEntries(Object.entries(rootConfig).filter(([key]) => !PER_CONNECTION.has(key))),
-          ...mine,
-          ...daemonValues,
-          ...accounts,
-        },
-      },
-      /*
-       * The same statement as the handshake's, so a client that subscribes later
-       * reads what a client that connected earlier was told. `restartNeeded` is
-       * for everybody: it names no key and no value, and a client that cannot
-       * read the settings is still owed to know that one of them is not in force.
-       */
-      ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
     };
   };
 
   return {
     rootConfig, descriptors, daemonSchema, daemonProperties,
-    daemonKey, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants, rootState,
+    daemonKey, daemonHeld, declaresConfigKey, advertisedSchemes, advertisedChannels, advertisedMethods, advertisedGrants,
+    daemonValues, rootSeed, rootFor, keptOnReplace, daemonValuesMoved,
   };
 }

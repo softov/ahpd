@@ -1582,10 +1582,15 @@ export function createTooling(ctx: HostContext): Tooling {
       chats: [...held.chats].map(([one, chat]) => chatSummary(at, one, chat) as unknown as ChatSummary),
     }, log);
     if (sessions.get(at) !== held) throw new Error(`${session} is not a session this host is running`);
+    /*
+     * Read until something is said in it, and named, both written before its
+     * state opens: `spawn` hands the backend the name it finds kept.
+     */
+    startsRead(ctx, at, chatUri);
+    if (asked.title !== undefined) kept.setChatTitle(idOf(at), chatUri, asked.title);
     const chat = spawn(agent, at, chatUri, chatIdFor(at, chatUri), config, preamble === undefined ? undefined : { context: preamble }, held.workingDirectory, undefined, held.additional);
     log(`opened ${chatUri} in ${at}`);
-    if (asked.title !== undefined) { chat.setTitle?.(asked.title); keepTitle(at, chatUri, asked.title); }
-    startsRead(ctx, at, chatUri);
+    if (asked.title !== undefined) keepTitle(at, chatUri, asked.title);
     dispatch(at, { type: 'session/chatAdded', summary: chatSummary(at, chatUri, chat) });
     // And the row: a client listing sessions reads a session's chats there.
     summaryMoved(at);

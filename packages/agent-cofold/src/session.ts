@@ -174,6 +174,7 @@ export function cofoldSession(
   const points = new Map<string, string>();
   /** Messages waiting for the running turn to end. The host's, not a client's. */
   const queued: Bag[] = [];
+  const untaken: SessionContext['untaken'] = [];
   /** What somebody is part-way through typing. */
   let draft: Bag | undefined;
   /**
@@ -215,6 +216,8 @@ export function cofoldSession(
     closed: false,
     opening: undefined,
     refused: undefined,
+    steering: undefined,
+    untaken,
     activity: activityOf(start.emit),
   } as SessionContext;
 
@@ -322,6 +325,7 @@ export function cofoldSession(
       ...(ctx.active !== undefined ? { activeTurn: ctx.active } : {}),
       ...(ctx.activity.current() !== undefined ? { activity: ctx.activity.current() } : {}),
       ...(draft !== undefined ? { draft } : {}),
+      ...(ctx.steering !== undefined ? { steeringMessage: ctx.steering } : {}),
       // The protocol's `PendingMessage` is `{ id, message }` and nothing else,
       // so the model a queued turn will run on stays in this session.
       queuedMessages: queued.map((held) => ({ id: held.id, message: held.message })),
@@ -364,24 +368,51 @@ export function cofoldSession(
      * to steer, because a chat with nothing running has nothing to inject
      * into.
      *
+     * Said and held as the chat's steering message before cofold has it, so
+     * the client that sent it is answered inside its dispatch. cofold's submit
+     * settles once the message is in the transcript, which is when it is taken
+     * out. A submit the run rejects, because it settled before a step read the
+     * message, leaves it in `untaken`, a turn of its own once the chat is idle;
+     * after a run a client stopped it waits as the queue does.
+     * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
+     *
      * A correction with something attached is read the way a turn's own message
      * is, on the model the running turn was built on - the turn is the one that
      * answers, and a picture it cannot take would fail it. cofold takes the
      * text and then the parts, and the first part is always that text, so only
      * what follows it is handed over.
      */
-    steer: (_id, text, attachments) => {
+    steer: (id, text, attachments, from) => {
       const live = ctx.handle;
       if (live === undefined) return false;
-      // Fire and forget: the answer is whether a turn was running, which is
-      // known here, and the submit settles when the transcript takes it.
-      if (attachments === undefined || attachments.length === 0) {
-        void live.submit({ type: 'steer', text }).catch(() => {});
-        return true;
-      }
-      void partsFor(text, attachments, ctx.takesImages())
-        .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }))
-        .catch(() => {});
+      const message: Bag = {
+        text,
+        origin: from?.origin ?? { kind: 'user' },
+        ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+      };
+      ctx.steering = { id, message };
+      start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message });
+      ctx.touch();
+      const submitted = attachments === undefined || attachments.length === 0
+        ? live.submit({ type: 'steer', text })
+        : partsFor(text, attachments, ctx.takesImages())
+          .then((parts) => live.submit({ type: 'steer', text, parts: parts.slice(1) }));
+      void submitted.then(
+        () => {
+          if (ctx.steering?.id === id) ctx.steering = undefined;
+          start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+          ctx.touch();
+        },
+        () => {
+          ctx.untaken.push({
+            id,
+            text,
+            ...(from !== undefined ? { from } : {}),
+            ...(attachments !== undefined && attachments.length > 0 ? { attachments } : {}),
+          });
+          if (!ctx.cancelRequested) ctx.startNext();
+        },
+      );
       return true;
     },
 
