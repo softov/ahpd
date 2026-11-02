@@ -1,6 +1,6 @@
-import type { Agent, Alert, Host, HostHandlers, Loaded, Route } from '@ahpd/sdk';
+import type { Agent, Alert, Host, HostHandlers, Loaded, PluginSpec, Route } from '@ahpd/sdk';
 import { specsIn } from './install.js';
-import { sourceOf } from './plugins.js';
+import { runPlugins, sourceOf } from './plugins.js';
 import type { Planned, PluginSet } from './plugins.js';
 
 /**
@@ -31,7 +31,9 @@ export interface ApplyPluginsOptions {
   set: PluginSet;
   /** The configuration file the plugin list is read from. */
   configFile: string;
-  /** The daemon loads no plugin at all, whatever the file names. */
+  /** The plugins `--plugin` named, which every apply adds to the file's list. */
+  typed?: PluginSpec[];
+  /** The daemon leaves the file's plugins out, and loads only the `--plugin` ones. */
   noPlugins?: boolean;
   /**
    * The host, for the fold to reach a daemon already serving.
@@ -121,11 +123,11 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
   };
 
   if (options.noPlugins === true) {
-    trouble('this daemon was started with --no-plugins, so it loads nothing; restart it without the flag to load a plugin');
+    trouble('this daemon was started with --no-plugins, so it does not load the plugins in its file; restart it without the flag to load them');
     return { restart: true, changed: false, problems, loaded: set.loaded(), alerts: set.alerts(), routes: {} };
   }
 
-  const planned = await set.plan(specsIn(options.configFile));
+  const planned = await set.plan(runPlugins(specsIn(options.configFile), options.typed ?? [], false));
   for (const line of planned.problems) trouble(line);
   const asked = new Map<string, Planned>();
   for (const entry of planned.entries) if (!entry.disabled) asked.set(entry.id, entry);

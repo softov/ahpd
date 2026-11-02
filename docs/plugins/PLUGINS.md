@@ -1004,6 +1004,8 @@ The three calls are refused with `Canvases are disabled.` until a window turns `
 
 A canvas lives as long as its chat. A chat that closes, is removed or moves to another session takes its canvases with it. A subscription to one answers `-32008` "Canvas is no longer available", and nothing survives a restart.
 
+[examples/canvas](../../examples/canvas) is a whole plugin that does this: a route serves its page, and a tool opens it on the chat that calls it.
+
 ### Writing a usage record
 
 `host.recordUsage(entry)` keeps one `UsageEntry` in the host's `usage` port: a model call, whose `kind` is `model`, or a stretch a computer was up, whose `kind` is `computer`. It is how a plugin says what its work cost, and the store is the host's own, so every record a daemon keeps lands in one place whichever plugin wrote it.
@@ -1619,6 +1621,7 @@ ahpd --plugin @acme/agent-mine              # an installed package
 ahpd --plugin ./my-plugin                   # a directory with a manifest
 ahpd --plugin ./scratch-plugin.mjs          # a single file, with a plugin.json beside it
 ahpd --plugin @acme/agent-mine --plugin ./another
+ahpd --no-plugins --plugin ./another        # only ./another, leaving out the file's list
 ahpd --no-plugins                           # load none, whatever the file says
 ```
 
@@ -1637,10 +1640,12 @@ Or in the configuration file:
 `source` names the module: a package, a directory or a file, written as a spec in the table below. A bare string in `plugins` is shorthand for an entry whose only key is `source`. `name` is a display name, which a listing prints instead of the id; an entry written with `name` and no `source` is the old form, and its `name` is read as the module. The daemon writes `source` the next time it changes such an entry, so an old file keeps working and moves over one entry at a time.
 
 `--plugin` is repeatable and plugins apply in the order named. A command line
-`--plugin` **replaces** the file's `plugins` list rather than adding to it, the
-way `--path` replaces `paths`. `--no-plugins` beside a `--plugin` is refused as
-contradictory. The options an object names are merged over the plugin's own
-`defaults`, so the configuration wins.
+`--plugin` **adds** to the file's `plugins` list, after the file's entries.
+`--no-plugins` leaves the file's list out, so `--no-plugins --plugin <spec>`
+loads only the plugins the line names. A `--plugin` that the file also lists
+takes the file's options and grants, but not its `enabled`. The options an
+object names are merged over the plugin's own `defaults`, so the configuration
+wins.
 
 An object may also carry `grants`, what the plugin's own connection to this
 host may do. Each one is `<subject>:<operation>`, the grammar a role's grants
@@ -2252,11 +2257,11 @@ load:
 
 ```bash
 pnpm build
-node packages/server/dist/main.js --port 0 --plugin ./packages/agent-claude
-node packages/server/dist/main.js --port 0 --plugin ./packages/agent-cofold
-node packages/server/dist/main.js --port 0 --plugin ./packages/agent-acp
-node packages/server/dist/main.js --port 0 --plugin ./packages/server/test/fixtures/plugin-echo
-node packages/server/dist/main.js --port 0 --plugin ./packages/server/test/fixtures/plugin-uri-resources
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./packages/agent-claude
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./packages/agent-cofold
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./packages/agent-acp
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./packages/server/test/fixtures/plugin-echo
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./packages/server/test/fixtures/plugin-uri-resources
 ```
 
 Load a package by its directory, not by its `src/index.ts`: the manifest names
@@ -2295,7 +2300,7 @@ export function apply(host) {
 ```
 
 ```bash
-node packages/server/dist/main.js --port 0 --plugin ./scratch-plugin.mjs
+node packages/server/dist/main.js --port 0 --no-plugins --plugin ./scratch-plugin.mjs
 ```
 
 Naming either file loads the plugin: the `plugin.json` names the module, and

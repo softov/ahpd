@@ -194,14 +194,14 @@ describe('vault', () => {
 });
 
 describe('plugin', () => {
-  it('says none is named, and says when --no-plugins turned them all off', async () => {
+  it('says none is named, with the file\'s list or with --no-plugins', async () => {
     const none = await cli(['plugin', 'list', '--config-file', config]);
     expect(none.code).toBe(0);
     expect(none.stdout).toBe('plugins: none named\n');
 
     const off = await cli(['plugin', 'list', '--no-plugins', '--config-file', config]);
     expect(off.code).toBe(0);
-    expect(off.stdout).toBe('plugins: --no-plugins, so nothing is listed\n');
+    expect(off.stdout).toBe('plugins: none named\n');
   }, 20000);
 
   it('describes a --plugin without loading it', async () => {

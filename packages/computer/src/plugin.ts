@@ -1746,8 +1746,13 @@ export const apply: Plugin['apply'] = (host, options) => {
     const record = asked.record === undefined ? undefined : away ? asked.record.bare : asked.record.whole;
     const startWith = {
       command: program ?? hostDefault[0],
-      // One `--plugin` per spec, which is how the daemon's own flag repeats.
-      args: [...before, '--stdio', ...asked.plugins.flatMap((plugin) => ['--plugin', plugin])],
+      // `--no-plugins` leaves the box's own list out, and one `--plugin` per spec
+      // names what loads; the box's file still sets up each one it lists.
+      args: [
+        ...before, '--stdio',
+        ...(asked.plugins.length > 0 ? ['--no-plugins'] : []),
+        ...asked.plugins.flatMap((plugin) => ['--plugin', plugin]),
+      ],
       ...(asked.cwd === undefined ? {} : { cwd: asked.cwd }),
       ...(asked.provider === undefined ? {} : { provider: asked.provider }),
       ...(record === undefined ? {} : { env: { [AGENT_RECORD_VARIABLE]: JSON.stringify(record) } }),

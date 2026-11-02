@@ -27,7 +27,7 @@ import {
   updatePlugins,
 } from './install.js';
 import type { Moved, Runner } from './install.js';
-import { describePlugin, sourceOf, optionsSchemaLoaded, optionsSchemaOf, pluginIdOf, schemaOf } from './plugins.js';
+import { describePlugin, sourceOf, optionsSchemaLoaded, optionsSchemaOf, pluginIdOf, runPlugins, schemaOf } from './plugins.js';
 import type { Fetch } from './update.js';
 import { version } from './version.js';
 
@@ -126,6 +126,10 @@ const shownIn = (
 export interface PluginsChannelOptions {
   /** The configuration file whose `plugins` are listed and edited. */
   configFile: string;
+  /** The plugins `--plugin` named, which are listed beside the file's. */
+  typed?: PluginSpec[];
+  /** The daemon leaves the file's plugins out, so only the `--plugin` ones are listed. */
+  noPlugins?: boolean;
   /** What a spec is resolved against, as `describePlugin` takes it. */
   where: { configDir: string; cwd: string };
   /**
@@ -246,8 +250,8 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
     return at !== undefined && dirname(at) === here && existsSync(join(at, 'index.ts')) ? at : undefined;
   };
 
-  /** The specs the file names, in its order. */
-  const specs = (): PluginSpec[] => specsIn(configFile);
+  /** The specs this run loads: the file's, in its order, and the `--plugin` ones. */
+  const specs = (): PluginSpec[] => runPlugins(specsIn(configFile), options.typed ?? [], options.noPlugins === true);
 
   /**
    * The schema a plugin's options are masked and checked by.
@@ -342,6 +346,9 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
 
   /** The entry a command names, by its id or by the spec as written. */
   const specOf = (id: string): PluginSpec | undefined => specs().find((one) => idOf(one) === id || sourceOf(one) === id);
+
+  /** The file's own entry a command names, which is the one a write edits. */
+  const filedSpecOf = (id: string): PluginSpec | undefined => specsIn(configFile).find((one) => idOf(one) === id || sourceOf(one) === id);
 
   const source: RecordsSource = {
     ids: async () => {
@@ -714,7 +721,7 @@ export const pluginsChannel = (options: PluginsChannelOptions): PluginsChannel =
       if (typeof key !== 'string' || key === '') {
         throw new RpcError(INVALID_PARAMS, `${name} needs key, the name of one of the plugin's options`);
       }
-      const spec = specOf(id);
+      const spec = filedSpecOf(id);
       if (spec === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not in plugins in ${configFile}.`);
       const value = params.value;
 

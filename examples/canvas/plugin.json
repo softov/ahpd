@@ -1,0 +1,21 @@
+{
+  "id": "example-canvas",
+  "name": "Example canvas",
+  "version": "0.1.0",
+  "main": "./index.ts",
+  "description": "Serves one page and opens it as a canvas on the chat that asks.",
+  "optionsSchema": {
+    "type": "object",
+    "properties": {
+      "origin": {
+        "type": "string",
+        "pattern": "^https?://",
+        "description": "Where a window reaches the daemon, such as https://ahpd.example.test. The page URL starts with it. Unset, the URL is built from the address the daemon bound."
+      }
+    }
+  },
+  "contracts": {
+    "tools": ["open_check_canvas"],
+    "routes": ["get /plugins/example-canvas/"]
+  }
+}

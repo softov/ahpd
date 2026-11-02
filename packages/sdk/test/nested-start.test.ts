@@ -120,20 +120,20 @@ it('starts the host a profile names, and ahpd when it names none', async () => {
   // The default: the command the container's install step provides.
   const plain = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold'], cwd: work });
   expect(plain?.command).toBe(process.execPath);
-  expect(execOf(plain)).toEqual(['exec', '-i', '-w', '/work', 'plain', 'ahpd', '--stdio', '--plugin', '@ahpd/agent-cofold']);
+  expect(execOf(plain)).toEqual(['exec', '-i', '-w', '/work', 'plain', 'ahpd', '--stdio', '--no-plugins', '--plugin', '@ahpd/agent-cofold']);
 
-  // A profile's own host, with the same `--stdio --plugin` argv after it.
+  // A profile's own host, with the same `--stdio --no-plugins --plugin` argv after it.
   const nodejs = await computers.nested('nodejs', { plugins: ['@ahpd/agent-cofold'], cwd: work });
   expect(execOf(nodejs)).toEqual([
     'exec', '-i', '-w', '/work', 'nodejs',
-    'node', '/work/ahpd.js', '--stdio', '--plugin', '@ahpd/agent-cofold',
+    'node', '/work/ahpd.js', '--stdio', '--no-plugins', '--plugin', '@ahpd/agent-cofold',
   ]);
 
   // More than one plugin, in the order the caller named them.
   const many = await computers.nested('plain', { plugins: ['@ahpd/agent-cofold', '@ahpd/some-other'], cwd: work });
   expect(execOf(many)).toEqual([
     'exec', '-i', '-w', '/work', 'plain',
-    'ahpd', '--stdio', '--plugin', '@ahpd/agent-cofold', '--plugin', '@ahpd/some-other',
+    'ahpd', '--stdio', '--no-plugins', '--plugin', '@ahpd/agent-cofold', '--plugin', '@ahpd/some-other',
   ]);
 
   // A machine that is not there is nothing, the same answer `how` gives.

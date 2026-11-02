@@ -138,8 +138,8 @@ Every verb and every flag is one declaration under [`src/commands`](https://gith
 | `--unowned-automations <scope>` | `every`, the default, or `none`: what an automation that names no owner wakes on |
 | `--sessions <where>` | Where the read and archived bits, a session's settings, whose each session is and who sent each of its turns go. `file`, the default, keeps them beside the config. `memory` forgets them when the process ends |
 | `--wire <file>` | Append every frame, both directions, to this file as JSON lines |
-| `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, and replaces the config file's list |
-| `--no-plugins` | Load none, whatever the configuration file says |
+| `--plugin <spec>` | A plugin to load: a package, a path, or an object. Repeatable, and adds to the config file's list |
+| `--no-plugins` | Leave the configuration file's list out, so only the `--plugin` ones load |
 | `--plugin-option <id>.<key>[.<key>...]=<value>` | Set one option of a loaded plugin for this run, as deep in its options as the key path goes. Repeatable |
 | `--update-check`, `--no-update-check` | Ask npm, in the background, whether a newer version exists. On by default |
 | `--json` | Print the value the prose is rendered from, as JSON on stdout. Every command takes it |

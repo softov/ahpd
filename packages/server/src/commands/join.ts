@@ -220,7 +220,9 @@ const serveSession = (options: {
     ...process.execArgv,
     program,
     '--stdio',
-    // One `--plugin` per spec, which is how the host's own flag repeats.
+    // `--no-plugins` leaves the host's own list out, and one `--plugin` per
+    // spec names what loads.
+    ...((asked.plugins ?? []).length > 0 ? ['--no-plugins'] : []),
     ...(asked.plugins ?? []).flatMap((plugin) => ['--plugin', plugin]),
   ], {
     cwd: workdir,

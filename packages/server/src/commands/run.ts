@@ -783,6 +783,8 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   };
   const pluginLists = pluginsChannel({
     configFile: pluginFile,
+    typed: options.typedPlugins,
+    noPlugins: options.noPlugins,
     where: { configDir: configDir(), cwd: process.cwd() },
     loaded: () => loaded,
     alerts: () => alerts,
@@ -1506,6 +1508,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     const answer = await applyPlugins({
       set: pluginHoldings,
       configFile: pluginFile,
+      typed: options.typedPlugins,
       noPlugins: options.noPlugins,
       host: () => host,
       log: stamp,
@@ -1704,8 +1707,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * from the release before this one: the refusals above say which. Moving
      * them is the fix, and installing one the file already names is not.
      */
-    if (planned.plugins.length > 0)
-      stamp(`No backend is loaded, so no session can start until one is. The plugins in ${options.configFile ?? configPath()} loaded none; if they are from an older release, run ahpd plugin update all, or update them from a client.`);
+    if (planned.plugins.length > 0) {
+      const file = options.configFile ?? configPath();
+      const named = options.noPlugins ? 'named with --plugin' : options.typedPlugins.length > 0 ? `in ${file} and named with --plugin` : `in ${file}`;
+      stamp(`No backend is loaded, so no session can start until one is. The plugins ${named} loaded none; if they are from an older release, run ahpd plugin update all, or update them from a client.`);
+    }
     else
       stamp(`No backend is loaded, so no session can start until one is. Run ahpd plugin install @ahpd/agent-claude${flag} to install Claude Code and add it to "plugins" in ${options.configFile ?? configPath()}, or run npm i in ${configDir()} and add the package to "plugins" yourself.`);
   }

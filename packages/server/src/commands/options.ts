@@ -21,7 +21,7 @@ import { isRecord, secretRef } from '@ahpd/sdk';
 import type { IssuerVerify, McpServer, PayOrder, PluginSpec, ShellEnv } from '@ahpd/sdk';
 import type { Config, HttpSetting, RoutesSetting } from '../config.js';
 import { asSpec, configDir, configPath, loadConfig, shellEnvProblems } from '../config.js';
-import { sourceOf, pluginIdOf, pluginIdsOf } from '../plugins.js';
+import { sourceOf, pluginIdOf, pluginIdsOf, runPlugins } from '../plugins.js';
 import { proxyConfiguration, proxyProblems, proxySchema, type ProxyConfiguration } from '../proxy/providers.js';
 
 /**
@@ -205,7 +205,9 @@ export interface Options {
   mcpServers: Record<string, McpServer>;
   /** Plugins to load, in the order they apply. */
   plugins: PluginSpec[];
-  /** Load none, whatever the configuration file names. */
+  /** The plugins `--plugin` named, which every reload of the file's list adds again. */
+  typedPlugins: PluginSpec[];
+  /** Leave the configuration file's plugins out, and load only the `--plugin` ones. */
   noPlugins: boolean;
   /** Ask npm, in the background, whether a newer version exists. */
   updateCheck: boolean;
@@ -727,12 +729,12 @@ export const serverFields = {
   plugins: {
     type: 'array',
     items: { type: 'string' },
-    description: 'A package, a path, or a package installed in the configuration directory, loaded at startup. Repeatable. Naming one runs its code in this process with this process\'s permissions: installing a plugin is the trust decision.',
+    description: 'A package, a path, or a package installed in the configuration directory, loaded at startup. Repeatable. On the command line, each one is added to the configuration file\'s list. Naming one runs its code in this process with this process\'s permissions: installing a plugin is the trust decision.',
     cli: { flag: '--plugin', value: 'SPEC' },
   },
   noPlugins: {
     type: 'boolean',
-    description: 'Load none, whatever the configuration file says.',
+    description: 'Leave the configuration file\'s plugins out, and load only the ones --plugin names.',
     cli: { negatable: false },
   },
   pluginOptions: {
@@ -1103,41 +1105,24 @@ const noCwd = input['noCwd'] === true;
   /*
    * The plugins, under the flags.
    *
-   * A command line `--plugin` replaces the file's list rather than adding to
-   * it, the way `--path` does: a flag is this run and the file is every run,
-   * and a person who names one plugin meant that one. `--no-plugins` is the
-   * explicit off, and passing it beside a `--plugin` is refused rather than
-   * resolved, because nobody means both.
-   *
-   * The flag picks which plugins run, not how each is set up: a `--plugin`
-   * naming a plugin the file lists takes that entry's options and grants. A
-   * nested host is started as `ahpd --stdio --plugin <each>`, and a box's own
-   * ahpd keeps its backends' settings in its file - an ACP load's `hostTools`, a
-   * model - so without this every such host loaded its backends bare. The
-   * entry's `enabled` is not taken: the person named the plugin for this run.
+   * A command line `--plugin` adds to the file's list, and `--no-plugins`
+   * leaves the file's list out, so the two together load only what the line
+   * names. `runPlugins` says how a `--plugin` the file also lists is set up.
    */
-  const typed = input['plugins'] as string[] | undefined;
-  if (noPlugins && typed !== undefined && typed.length > 0) {
-    stop('--no-plugins contradicts the --plugin you also passed.');
-  }
-  const filed = (source: string): PluginSpec => {
-    const entry = (file.plugins ?? []).map(asSpec).find((one) => typeof one === 'object' && sourceOf(one) === source);
-    if (typeof entry !== 'object') return source;
-    const { enabled: _enabled, ...rest } = entry;
-    return rest;
-  };
-  const plugins: PluginSpec[] = [];
-  if (!noPlugins) {
-    (given('plugins') ?? []).forEach((entry, index) => {
-      const spec = asSpec(entry);
-      if (spec === undefined) {
-        stop(typed === undefined
-          ? `${source('plugins')} has plugins[${String(index)}] = ${JSON.stringify(entry)}, which is not a plugin spec.`
-          : `--plugin takes a name or a path, not ${String(entry)}.`);
-      }
-      plugins.push(typed !== undefined && typeof spec === 'string' ? filed(spec) : spec);
-    });
-  }
+  const typedPlugins = ((input['plugins'] as string[] | undefined) ?? []).map((entry) => {
+    const spec = asSpec(entry);
+    if (spec === undefined) stop(`--plugin takes a name or a path, not ${String(entry)}.`);
+    return spec;
+  });
+  // Under `--no-plugins` the file's list is not loaded, so an entry that is not
+  // a spec is skipped rather than refused; the others still set up a `--plugin`.
+  const filedPlugins = (file.plugins ?? []).flatMap((entry, index) => {
+    const spec = asSpec(entry);
+    if (spec !== undefined) return [spec];
+    if (!noPlugins) stop(`${source('plugins')} has plugins[${String(index)}] = ${JSON.stringify(entry)}, which is not a plugin spec.`);
+    return [];
+  });
+  const plugins = runPlugins(filedPlugins, typedPlugins, noPlugins);
 
   /*
    * `--plugin-option`, over the options of the plugin it names: each one is
@@ -1277,6 +1262,7 @@ const noCwd = input['noCwd'] === true;
     modelProxy,
     mcpServers: mcp.servers,
     plugins,
+    typedPlugins,
     noPlugins,
     updateCheck: given('updateCheck') ?? true,
     warnings,
