@@ -215,6 +215,33 @@ describe('an open connector', () => {
     expect(tunnels.held('ana')).toBeUndefined();
   });
 
+  it('waits for the open\'s refresh before a check, so a start checks with the new token', async () => {
+    const probe = fake();
+    probe.on(ACCESS_TOKEN_URL, { body: { access_token: 'gho_new', refresh_token: 'ghr_new', expires_in: 28800 } });
+    probe.on(TUNNELS_URL, { body: { tunnels: [] } });
+    // GitHub answers the refresh only once the case lets it.
+    let answer: () => void = () => {};
+    const gate = new Promise<void>((resolve) => { answer = resolve; });
+    const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url) === ACCESS_TOKEN_URL) await gate;
+      return probe.fetch(url, init);
+    }) as typeof globalThis.fetch;
+    const tunnels = new OpenTunnels();
+    const adapter = devtunnelAdapter(tunnels, { fetch, secret: async () => {} });
+    const connector = connectorOf('ana', { token: 'gho_old', refresh: 'ghr_old' });
+
+    const close = adapter.open(connector);
+    const checked = adapter.check!(connector);
+    await Promise.resolve();
+    expect(probe.calls.some((call) => call.url === TUNNELS_URL)).toBe(false);
+    answer();
+
+    await expect(checked).resolves.toEqual({ result: 'ok' });
+    const call = probe.calls.find((one) => one.url === TUNNELS_URL);
+    expect(headersOf(call!.init).get('authorization')).toBe('github gho_new');
+    (close as () => void)();
+  });
+
   it('logs one line on a failed refresh and asks for a check, with no token in the line', async () => {
     const probe = fake();
     probe.on(ACCESS_TOKEN_URL, { status: 400, body: { error: 'bad_refresh_token', echo: 'gho_old ghr_old' } });
