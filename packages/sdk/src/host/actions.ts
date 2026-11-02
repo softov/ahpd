@@ -882,15 +882,17 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * `terminal/data`, once the shell has actually said something. So it
          * is answered to the client that sent it alone, as `echoTo` says, and
          * every client reads what it did in the `terminal/data` that follows.
-         * Input with no process to reach is refused, in the terminal's words.
+         * It is answered whatever the process's state, as VS Code's host says
+         * a client's terminal action before its terminal manager reads it, and
+         * it reaches a process only while one runs, as that manager writes it.
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/terminal-channel.md#L110-L112
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L222-L232
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
          */
-        case 'terminal/input': {
-          const taken = terminal.write(String(action.data ?? ''));
-          if (taken === true) echoTo(connection.peer, channel, action, origin);
-          else no(taken, true);
+        case 'terminal/input':
+          terminal.write(String(action.data ?? ''));
+          echoTo(connection.peer, channel, action, origin);
           break;
-        }
         case 'terminal/resized':
           terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
           break;

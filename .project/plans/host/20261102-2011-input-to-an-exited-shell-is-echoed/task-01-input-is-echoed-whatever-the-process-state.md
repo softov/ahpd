@@ -1,6 +1,6 @@
 ---
 title: Input is echoed whatever the process's state
-status: todo
+status: done
 depends: []
 layer: sdk
 refs:
@@ -28,7 +28,7 @@ It reaches the process only while one runs, as VS Code's host writes it.
 
 1. Make `write` answer nothing, and drop input it has no process to send to.
 2. Echo `terminal/input` after the write, whatever the terminal's state.
-3. Add a case for input after the shell has gone, and change the output terminal's case to the echo.
+3. Change the exited shell's case and the output terminal's case to the echo.
 4. Change the `terminal/input` row of AHP.md.
 
 ## Validation
@@ -39,4 +39,8 @@ It reaches the process only while one runs, as VS Code's host writes it.
 
 ## Resume
 
-Not started.
+Built 2026-11-02.
+
+- The exited shell's case was a refusal case already, and asserts the echo with no reason.
+- On `89ebe4d5`'s sources both cases fail: each input is refused, the shell's as "has exited, and has no process to send input to".
+- The other files that send `terminal/input` pass: the gate, conformance, changes and retained terminal files.

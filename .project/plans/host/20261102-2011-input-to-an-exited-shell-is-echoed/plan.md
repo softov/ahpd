@@ -70,7 +70,7 @@ dispatchAction terminal/input -> actions.ts -> terminal.write
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Input is echoed whatever the process's state](task-01-input-is-echoed-whatever-the-process-state.md) | todo | - |
+| [01 - Input is echoed whatever the process's state](task-01-input-is-echoed-whatever-the-process-state.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -78,8 +78,8 @@ dispatchAction terminal/input -> actions.ts -> terminal.write
 
 ## Resume state
 
-- **Done so far:** the plan, 2026-11-02.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** the implemented record.
 - **Open questions:** none.
 - **Watch out for:** a shell's `exitCode` is set at `exit`, before `terminal/exited` is said at `close`; input in between goes nowhere too.
 

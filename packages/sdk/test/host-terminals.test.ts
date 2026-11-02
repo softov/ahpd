@@ -761,7 +761,13 @@ describe('a shell on this machine', () => {
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone, to the client that typed it alone', async () => {
+  /*
+   * Input after the shell has gone is answered, and goes nowhere: VS Code's
+   * host says a client's terminal action before its terminal manager reads
+   * it, and that manager writes input only to a running process.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
+   */
+  it('answers what it is sent once the shell has gone, to the client that typed it alone', async () => {
     const uri = 'ahp-terminal:/gone';
     const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
@@ -769,12 +775,13 @@ describe('a shell on this machine', () => {
       await new Promise((r) => { setTimeout(r, 50); });
       if (actions(p, uri).some((e) => e.action.type === 'terminal/exited')) break;
     }
+    const before = actions(p, uri).length;
     await send(5, { type: 'terminal/input', data: 'echo too-late\n' });
     await settle();
 
-    const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
-    expect(late?.rejectionReason).toBeDefined();
-    // Refused keystrokes stay with the client that typed them, as taken ones do.
+    expect(actions(p, uri).slice(before).map((e) => [e.action.type, e.origin?.clientSeq, e.rejectionReason]))
+      .toEqual([['terminal/input', 5, undefined]]);
+    // The keystrokes stay with the client that typed them, as any input does.
     expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
   });
 

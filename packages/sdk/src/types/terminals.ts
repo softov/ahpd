@@ -104,11 +104,12 @@ export interface Terminal {
   state(): OnWire<TerminalState> & { exitCode?: number };
 
   /**
-   * Send input: `true` when it reached the process, otherwise the sentence
-   * that says why it did not, a process that has exited or none behind the
-   * terminal at all.
+   * Send input to the process, while one runs. Input to a process that has
+   * exited, or to a terminal with none behind it, goes nowhere, as VS Code's
+   * host writes input only to a running process terminal.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
    */
-  write(data: string): true | string;
+  write(data: string): void;
   /**
    * Record a new size and say it. A pseudoterminal behind the terminal is
    * told, and sends SIGWINCH itself.

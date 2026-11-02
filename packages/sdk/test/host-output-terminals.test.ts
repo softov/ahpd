@@ -144,10 +144,12 @@ describe('an output terminal', () => {
 
   /*
    * A client's action on one is answered, as on any terminal: input has no
-   * process to reach and is refused, and a new size is the size it reads back.
+   * process to reach and goes nowhere, as VS Code's host writes input only to
+   * a running process terminal, and a new size is the size it reads back.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
    */
-  it('refuses input, which has no process to reach', async () => {
+  it('answers input, which has no process to reach', async () => {
     const { client, p, chatUri, out } = await opened();
     const terminal = out().create({ title: 'a build', chat: chatUri });
     await client.handle({ method: 'subscribe', params: { channel: terminal.uri } });
@@ -159,7 +161,7 @@ describe('an output terminal', () => {
 
     const answer = actions(p, terminal.uri).find((one) => one.action.type === 'terminal/input');
     expect(answer?.origin?.clientSeq).toBe(2);
-    expect(answer?.rejectionReason).toBeDefined();
+    expect(answer?.rejectionReason).toBeUndefined();
   });
 
   it('takes a new size, and reads it back', async () => {
