@@ -753,21 +753,20 @@ export function createHandlers(ctx: SessionContext): Handlers {
       request: { id, chat: start.chatUri, kind: 'chatInput', request: asking },
     });
     /*
-     * The question the server takes back, off the chat.
+     * The question the server takes back.
      *
      * Nothing happens if the question is no longer open: a person's answer, a
      * stop, or the server's own completion has already ended it, and a second
-     * ending would be a second settle of a promise already settled. The entry
-     * goes the way an answer takes it, and the chat is told the request is over
-     * the way a completion tells it, because no client is going to send that
-     * `chat/inputCompleted` for a question it was never asked to answer.
+     * ending would be a second settle of a promise already settled. The chat
+     * is told nothing: no client sent a completion, and the reference host says
+     * none in nobody's name, so the question stays in its turn until a client
+     * answers it or the turn ends.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L239
      */
     signal?.addEventListener('abort', () => {
       const open = elicitations.get(id);
       if (open === undefined) return;
       elicitations.delete(id);
-      emit('session', { type: 'session/inputNeededRemoved', id });
-      emit('chat', { type: 'chat/inputCompleted', requestId: id, response: 'cancel' });
       open.settle({ action: 'cancel' });
       doing('Thinking');
       touch();
@@ -819,9 +818,11 @@ export function createHandlers(ctx: SessionContext): Handlers {
    *
    * A page is the one elicitation nobody answers here: the person opens what
    * the server sent them to, and what happens on it is the server's business.
-   * So the completion is the server's, and it ends the question the same way a
-   * person's answer would have - the chat is told the request was accepted, and
-   * the server is told nothing more, because this is its own word arriving.
+   * So the completion is the server's, and the server is told nothing more,
+   * because this is its own word arriving. The chat is told nothing either: no
+   * client sent a completion, and the reference host says none in nobody's
+   * name, so the request stays in its turn until a client answers it or the
+   * turn ends.
    *
    * A completion for a request that is not open is nothing to do: either it was
    * never asked here, or somebody answered it while the person was away.
@@ -831,8 +832,6 @@ export function createHandlers(ctx: SessionContext): Handlers {
     const open = elicitations.get(id);
     if (open === undefined) return;
     elicitations.delete(id);
-    emit('chat', { type: 'chat/inputCompleted', requestId: id, response: 'accept' });
-    emit('session', { type: 'session/inputNeededRemoved', id });
     open.settle({ action: 'accept' });
   };
 
@@ -843,19 +842,11 @@ export function createHandlers(ctx: SessionContext): Handlers {
    * still blocked on, and an elicitation is one of those: a server left waiting
    * on a person who has already said stop is a turn that never ends. `cancel`
    * rather than a decline, because nobody said no - the question stopped being
-   * asked, and an answer that said no would be one the person never gave.
-   *
-   * The chat is told as well, for the same reason a withdrawal tells it: this
-   * is an ending nobody sent a `chat/inputCompleted` for, and a client left
-   * drawing the question would go on offering an answer no server is waiting
-   * on.
+   * asked, and an answer that said no would be one the person never gave. The
+   * chat's question goes with the turn the stop ends.
    */
   const settleElicitations = (): void => {
-    for (const [id, open] of elicitations) {
-      emit('session', { type: 'session/inputNeededRemoved', id });
-      emit('chat', { type: 'chat/inputCompleted', requestId: id, response: 'cancel' });
-      open.settle({ action: 'cancel' });
-    }
+    for (const open of elicitations.values()) open.settle({ action: 'cancel' });
     elicitations.clear();
   };
 

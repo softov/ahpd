@@ -639,38 +639,17 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
     };
 
     /**
-     * Take a request's copy out of the open turn.
+     * Stop handing on answers to a request the back session no longer asks.
      *
-     * The protocol has no action that removes a response part, so the copy is
-     * spliced out of the state a client subscribes to and a live client is told
-     * the part is resolved: a question is cancelled and a call is skipped. The
-     * back session asked and no longer asks, and a person left drawing it would
-     * be answering a question that is over.
+     * The copy stays in the open turn, and the chat is told nothing: no client
+     * answered it, and the reference host says no completion in nobody's name,
+     * so the request ends with its turn. An answer a person gives it meanwhile
+     * goes nowhere.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L239
      */
     const withdrawAsked = (held: OpenTurn, id: string): void => {
       const at = held.asked.findIndex((one) => one.id === id);
-      if (at < 0) return;
-      const [copy] = held.asked.splice(at, 1);
-      const part = copy?.part;
-      if (part === undefined) return;
-      const inTurn = held.responseParts.indexOf(part);
-      if (inTurn >= 0) held.responseParts.splice(inTurn, 1);
-      if (part['kind'] === 'inputRequest') {
-        const request = part['request'] as Bag;
-        start.emit('chat', {
-          type: 'chat/inputCompleted',
-          requestId: String(request['id'] ?? id),
-          response: 'cancel',
-        });
-        return;
-      }
-      const toolCall = part['toolCall'] as Bag;
-      start.emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        toolCallId: String(toolCall['toolCallId'] ?? id),
-        approved: false,
-        reason: 'skipped',
-      });
+      if (at >= 0) held.asked.splice(at, 1);
     };
 
     /**
