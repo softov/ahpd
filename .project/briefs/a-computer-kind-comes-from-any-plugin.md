@@ -104,7 +104,8 @@ The host owns:
 
 - the `computer:` scheme, and it routes each machine to its kind by the machine's id;
 - the `x-ahpd-computers://` channel, with the machines and the operations in its state;
-- one command that invokes an operation, as `invokeChangesetOperation` does;
+- `x-ahpd/invokeOperation`, the command that invokes an operation, shared with the tunnels;
+- the machines' records, with each machine's kind, settings and `enabled`. The catalogue of `@ahpd/computer` moves to the host;
 - the `computers` port, which sends each call to the kind that made the machine.
 
 The host's code is in the server package. The kind's type is in the SDK, beside `ComputerPort`, because a plugin calls `registerComputerKind`.
@@ -123,16 +124,23 @@ A plugin adds a kind:
 - The `runtime` option stays, and says which kinds the plugin registers.
 - A second plugin adds its own kind, such as a cloud provider's, beside them.
 
-The operations:
+The operations follow the four groups in the tunnels brief's *The operations*.
 
-| Operation | Scope | Input | Grant today |
-| --- | --- | --- | --- |
-| `<kind>/create` | The list | The kind's `schema` | `computer:put` |
-| `<kind>/start`, `<kind>/stop`, `<kind>/restart` | One machine | None | `computer:put` |
-| `<kind>/remove` | One machine, with a confirmation | None | `computer:delete` |
-| A kind's own, such as `<kind>/suspend` | One machine | The operation's `input` | Not set |
+| Operation | Group | Scope | Input | Grant |
+| --- | --- | --- | --- | --- |
+| `<kind>/create` | A change to the list | The list | The kind's `schema` | `computer:put` |
+| `<kind>/update` | A change to the list | One machine | The kind's `schema`, filled with the machine's values | `computer:put` |
+| `<kind>/remove` | A change to the list | One machine, with a confirmation | None | `computer:delete` |
+| `<kind>/start`, `<kind>/stop`, `<kind>/restart` | What runs now | One machine | None | `computer:put` |
+| `<kind>/enable`, `<kind>/disable` | Whether it runs | One machine | None | `computer:put` |
+| A kind's own, such as `<kind>/suspend` | The kind's own | One machine | The operation's `input` | `computer:put` |
 
-- The host offers a machine's operations from its kind. A runtime that cannot start a machine offers no `start`.
+- The host offers a machine's operations from its kind. A runtime that cannot start a machine lists no `start`.
+- A kind can give `restart` its own label, so a libvirt machine reads "Reboot" and a docker one reads "Restart".
+- A kind can name another grant for any of its operations, such as `computer:restart`.
+- The kind's `update` gets the running machine, and applies the change live or restarts the machine itself.
+- The host starts each enabled machine when the daemon starts. A disabled machine keeps its settings, and the host offers it to no session.
+- Each machine has `enabled` and a `status`, beside the operation's `status`.
 - The host sets an operation's `status` to `running`, then to `idle` or to `error`, so every subscriber sees it.
 - ahpw and ahpapp draw the operations from the state, and a form from the `input`.
 
@@ -144,14 +152,18 @@ The operations:
 | A kind is registered as an adapter is: the manifest lists its name, the code gives its title, description, icons and form | Softov, 2026-11-02: "Like adapters" |
 | The operations are in the channel's state and one command invokes them, with `invokeChangesetOperation` as the reference | Softov, 2026-11-02: "ok... put it as reference.." |
 | A kind is named for its maker | Softov, 2026-10-02: "One runtime per maker" |
+| The computer kind and the tunnel kind go in the SDK now, with one shape. A brief for a generic thing and its kinds comes later, from the two built kinds | Softov, 2026-11-02: "for computer and tunnel it need to go into the sdk.. but inclemente the brief for the generic resource latter? So when refined we can see what we move to it?" |
+| The operations fall into the four groups of the tunnels brief | Softov, 2026-11-02: "write onto the brief" |
+| The host stores each machine's record, so the catalogue moves to the host | Softov, 2026-11-02: "The host stores them" |
+| The kind's `update` decides whether the change applies live or restarts the machine | Softov, 2026-11-02: "The kind decides" |
+| One command, `x-ahpd/invokeOperation`, serves the computers and the tunnels | Softov, 2026-11-02: "One shared command" |
+| `remove` needs `computer:delete` and every other operation `computer:put`. A kind can name another grant, such as `computer:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
 
 ## Open points
 
 1. Do the three host tools move to the host, or does `@ahpd/computer` keep them for its own kinds? A model would then not reach a second plugin's machines.
 2. Does the `containers` port stay with `@ahpd/computer`? A dev container is made by docker today.
-3. Is the command `x-ahpd/computers/invoke`, or one `x-ahpd/invokeOperation` shared with the tunnels?
-4. Do the five `x-ahpd/computers/*` commands stay for a while beside the new command, so that ahpw and ahpapp keep working until they change?
-5. How does a machine's id name its kind? The id records its runtime today. Not checked: whether a second plugin's ids can clash with the format.
-6. Which grant guards a kind's own operations?
-7. Is a decision needed? The change reverses the 2026-09-22 answer, and its rejected option was a registry in the SDK. Here the registry is in the server, and only the kind's type is in the SDK.
-8. Which brief is built first, the tunnels or the computers?
+3. Do the five `x-ahpd/computers/*` commands stay for a while beside the new command, so that ahpw and ahpapp keep working until they change?
+4. How does a machine's id name its kind? The id records its runtime today. Not checked: whether a second plugin's ids can clash with the format.
+5. Is a decision needed? The change reverses the 2026-09-22 answer, and its rejected option was a registry in the SDK. Here the registry is in the server, and only the kind's type is in the SDK.
+6. Which brief is built first, the tunnels or the computers?

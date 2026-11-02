@@ -209,6 +209,7 @@ The change has five parts: the host's list, a kind of tunnel, the operations, a 
 
 - The host serves the list as a channel, `x-ahpd-tunnels://`, from the server package.
 - A plugin adds a tunnel when the host calls its kind, and when it finds one at `listening`.
+- The host saves each tunnel with its kind, its settings and `enabled`. It starts each enabled tunnel when the daemon starts.
 - A plugin reads the list. The canvas example builds its URL from the tunnel that forwards its port.
 - The list feeds the routes' `Host` check, as announced names do today.
 
@@ -222,6 +223,8 @@ Each tunnel in the list has:
 | `url` | The address a remote client reaches |
 | `anonymous` | Whether a person reaches it with no sign-in |
 | `users` | Who asked for it: the daemon for its own port, a plugin for a canvas, a person from a page |
+| `enabled` | Whether the host starts it when the daemon starts. A disabled tunnel keeps its settings and forwards nothing |
+| `status` | `running`, `stopped` or `error`, with its `error` |
 
 ### A kind of tunnel
 
@@ -253,6 +256,9 @@ host.registerTunnelKind({
     required: ['port'],
   },
   operations: [
+    { id: 'start' },
+    { id: 'stop' },
+    { id: 'restart', label: 'Start the relay again' },
     {
       id: 'anonymous',
       label: 'Anyone can open it',
@@ -265,11 +271,18 @@ host.registerTunnelKind({
     host.updateViewData('/tunnels', mine());
     return { ...tunnel, users: [owner] };
   },
+  update: async (tunnel, input) => {
+    await allow(tunnel.id, input.anonymous === true);
+    host.updateViewData('/tunnels', mine());
+  },
   remove: async (tunnel) => {
     await unforward(tunnel.id);
     host.updateViewData('/tunnels', mine());
   },
   invoke: async (operation, tunnel, input) => {
+    if (operation === 'start') await forward(tunnel.port, tunnel.anonymous);
+    if (operation === 'stop') await unforward(tunnel.id);
+    if (operation === 'restart') await relay(tunnel.id);
     if (operation === 'anonymous') await allow(tunnel.id, input.on === true);
     host.updateViewData('/tunnels', mine());
   },
@@ -301,36 +314,82 @@ host.registerTunnelKind({
 
 - A name another plugin took is refused, as for adapters.
 - The `key` field is marked `secret`, so the vault keeps it.
+- The ssh kind gives no `update` and lists no runtime operations, so the host offers it only `create`, `remove`, `enable` and `disable`.
 
 ### The operations
 
 The host puts the operations in the list's state, as a changeset does.
-For each kind, it offers a `create` operation on the list and a `remove` operation on each tunnel.
-It adds the kind's own operations, on each tunnel of that kind.
 An operation carries `input`, the JSON Schema of what it asks for. A changeset operation has no input.
+Each operation id is `<kind>/<name>`, and the operations fall into four groups:
+
+| Group | Names | Who knows the name | The kind's code |
+| --- | --- | --- | --- |
+| A change to the list | `create`, `update`, `remove` | The host | `create(input, owner)`, `update(target, input)`, `remove(target)` |
+| What runs now | `start`, `stop`, `restart` | The host, with a fixed meaning and no input | `invoke(name, target)` |
+| Whether it runs | `enable`, `disable` | The host alone, as the record's `enabled` | None: the host calls `start` or `stop` |
+| The kind's own | Such as devtunnel's `anonymous` | The kind | `invoke(name, target, input)` |
+
+A change to the list:
+
+- `create` is offered on the list. Its input is the kind's `schema`.
+- `update` is offered on each record when the kind gives an `update` handler. Its input is the kind's `schema`, filled with the record's values.
+- A secret field comes back blank in `update`. A blank secret keeps the stored one, as an adapter's does.
+- The host checks the input, moves each secret to the vault, and then calls the kind.
+- The kind's `update` gets the running record. The kind applies the change live, or restarts the record itself.
+- A kind with no `update` gets no update operation. A person removes the record and creates it again.
+- `remove` is offered on each record, with a confirmation.
+
+What runs now:
+
+- A kind lists the runtime names it supports in `operations`, by id alone: `{ id: 'restart' }`.
+- The host offers only the names a kind lists. A kind that cannot stop a record lists no `stop`.
+- A kind can give a runtime name its own `label`. A machine's `restart` can read "Reboot".
+- The host calls these names itself: it starts each enabled record when the daemon starts.
+- There is one name for restart and reboot: `restart`.
+
+Whether it runs:
+
+- A new record is enabled.
+- `disable` stops a running record, sets `enabled` to false, and keeps its settings.
+- `enable` sets `enabled` to true and starts the record.
+- The host offers `enable` and `disable` on every record. The kind gives no code for them.
+
+The record's `status` is what runs now. The operation's `status` is a call in progress.
+
+The grant for each operation:
+
+| Operation | Grant |
+| --- | --- |
+| `remove` | `tunnel:delete` |
+| Every other operation | `tunnel:put` |
+
+- A kind can name another grant for any of its operations, such as `tunnel:restart` or `tunnel:anonymous`.
 
 The state of `x-ahpd-tunnels://` with the two kinds:
 
 ```json
 {
   "tunnels": [
-    { "id": "t1", "kind": "devtunnel", "port": 8443, "url": "https://example-8443.usw2.devtunnels.ms/", "anonymous": false, "users": ["daemon"] }
+    { "id": "t1", "kind": "devtunnel", "port": 8443, "url": "https://example-8443.usw2.devtunnels.ms/", "anonymous": false, "users": ["daemon"], "enabled": true, "status": "running" }
   ],
   "operations": [
     { "id": "devtunnel/create", "kind": "devtunnel", "label": "Dev Tunnel", "icon": "plug", "scopes": ["list"], "input": { "$ref": "the devtunnel schema" }, "status": "idle" },
     { "id": "ssh/create", "kind": "ssh", "label": "SSH tunnel", "icon": "terminal", "scopes": ["list"], "input": { "$ref": "the ssh schema" }, "status": "idle" },
+    { "id": "devtunnel/update", "kind": "devtunnel", "label": "Edit", "icon": "edit", "scopes": ["tunnel"], "input": { "$ref": "the devtunnel schema" }, "status": "idle" },
     { "id": "devtunnel/remove", "kind": "devtunnel", "label": "Stop forwarding", "icon": "close", "scopes": ["tunnel"], "confirmation": "Stop forwarding this port?", "status": "idle" },
+    { "id": "devtunnel/restart", "kind": "devtunnel", "label": "Start the relay again", "icon": "refresh", "scopes": ["tunnel"], "status": "idle" },
+    { "id": "devtunnel/disable", "kind": "devtunnel", "label": "Disable", "icon": "pause", "scopes": ["tunnel"], "status": "idle" },
     { "id": "devtunnel/anonymous", "kind": "devtunnel", "label": "Anyone can open it", "icon": "globe", "scopes": ["tunnel"], "input": { "$ref": "the anonymous input" }, "status": "idle" },
     { "id": "ssh/remove", "kind": "ssh", "label": "Stop forwarding", "icon": "close", "scopes": ["tunnel"], "confirmation": "Stop forwarding this port?", "status": "idle" }
   ]
 }
 ```
 
-One command invokes them, as `invokeChangesetOperation` does:
+One command invokes them, as `invokeChangesetOperation` does. The same command serves every channel with operations, the computers too:
 
 ```json
 {
-  "method": "x-ahpd/tunnels/invoke",
+  "method": "x-ahpd/invokeOperation",
   "params": {
     "channel": "x-ahpd-tunnels://",
     "operationId": "devtunnel/create",
@@ -361,7 +420,7 @@ host.showView({
     title: { id: 'title', component: 'Text', variant: 'h3', text: 'Tunnels' },
     forward: {
       id: 'forward', component: 'Button', label: 'Forward a port',
-      action: { event: { name: 'x-ahpd/tunnels/invoke', context: { channel: 'x-ahpd-tunnels://', operationId: 'devtunnel/create' } } },
+      action: { event: { name: 'x-ahpd/invokeOperation', context: { channel: 'x-ahpd-tunnels://', operationId: 'devtunnel/create' } } },
     },
     rows: { id: 'rows', component: 'List', children: { path: '$/devtunnel/tunnels', componentId: 'row' } },
     row: { id: 'row', component: 'Row', justify: 'spaceBetween', align: 'center', children: ['url', 'port', 'stop'] },
@@ -369,7 +428,7 @@ host.showView({
     port: { id: 'port', component: 'Text', text: { path: 'port' } },
     stop: {
       id: 'stop', component: 'Button', label: 'Stop',
-      action: { event: { name: 'x-ahpd/tunnels/invoke', context: { channel: 'x-ahpd-tunnels://', operationId: 'devtunnel/remove', target: { id: { path: 'id' } } } } },
+      action: { event: { name: 'x-ahpd/invokeOperation', context: { channel: 'x-ahpd-tunnels://', operationId: 'devtunnel/remove', target: { id: { path: 'id' } } } } },
     },
   },
   dataModel: {
@@ -396,7 +455,7 @@ How the data reaches a client:
 
 A person clicks "Forward a port":
 
-1. The Button names `x-ahpd/tunnels/invoke` with the channel and `devtunnel/create`. ahpw follows `x-ahpd-tunnels://` and finds the operation in its state.
+1. The Button names `x-ahpd/invokeOperation` with the channel and `devtunnel/create`. ahpw follows `x-ahpd-tunnels://` and finds the operation in its state.
 2. The operation's `input` requires `port`, and the Button sent none. ahpw draws a form with a "Port" field and an "Anyone can open it" switch.
 3. The person types `8080` and confirms. ahpw sends the request with `input` on its connection.
 4. The host checks the operation, the input and the grant. It sets the operation to `running` and calls devtunnel's `create`.
@@ -433,6 +492,12 @@ The data and the store are two registrations in two places:
 | A kind is registered as an adapter is: the manifest lists its name, the code gives its title, description, icons and form | Softov, 2026-11-02: "Like adapters" |
 | The operations are in the list's state and one command invokes them, with `invokeChangesetOperation` as the reference | Softov, 2026-11-02: "ok... put it as reference.." |
 | Each kind asks for its own input, so a devtunnel tunnel and an ssh tunnel ask for different things | Softov, 2026-11-02: "that way I will be able like to create a tunnel devtunnel and a tunnel ssh with another plugin... while one ask for some info.. while another ask for another info?" |
+| The tunnel kind and the computer kind go in the SDK now, with one shape. A brief for a generic thing and its kinds comes later, from the two built kinds | Softov, 2026-11-02: "for computer and tunnel it need to go into the sdk.. but inclemente the brief for the generic resource latter? So when refined we can see what we move to it?" |
+| The operations fall into four groups: a change to the list, what runs now, whether it runs, and the kind's own, as *The operations* says | Softov, 2026-11-02: "write onto the brief" |
+| The host stores each record, with its kind, its settings and `enabled`, and starts the enabled ones | Softov, 2026-11-02: "The host stores them" |
+| The kind's `update` decides whether the change applies live or restarts the record | Softov, 2026-11-02: "The kind decides" |
+| One command, `x-ahpd/invokeOperation`, serves every channel with operations | Softov, 2026-11-02: "One shared command" |
+| `remove` needs `<thing>:delete` and every other operation `<thing>:put`. A kind can name another grant for an operation, such as `<thing>:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
 
 ## Open points
 
@@ -440,13 +505,11 @@ The data and the store are two registrations in two places:
 2. ahpw keeps a followed channel at `$/ahp/hosts/<host>/channels/<uri>`. Does a source get its own namespace, such as `$/crm`, or a short name under that path? Not checked: whether scena lets a page register a namespace while it shows, and unregister it after.
 3. Is `?id=<plugin>` a query of the plugins channel, or does each plugin's row get its own URI?
 4. Does devtunnel's view list its tunnels from its own data, or read `x-ahpd-tunnels://` filtered by its kind? The second keeps one copy of each tunnel.
-5. Is the command `x-ahpd/tunnels/invoke`, or one `x-ahpd/invokeOperation` that serves every channel with operations, computers too?
-6. Which grant guards each operation? A kind could name one for each operation, or the host could use one grant for all tunnels.
-7. Is an operation's `status` kept for the operation, as a changeset keeps it, or for each tunnel too?
-8. Does a plugin's own method still get its title, icon and input in the manifest, now that the tunnel operations are the host's?
-9. When two kinds can forward a port, which kind does the canvas example ask for?
-10. Does a second user of a forwarded port share the tunnel, and does the tunnel stop when its last user goes?
-11. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
-12. Does the API's `Host` check read the list by default?
-13. Does `say` stay for `ahpd status`, beside the list?
-14. Not checked: whether a running `devtunnel host` serves a port added after it started.
+5. An operation's `status` is kept for the operation, as a changeset keeps it. Two people who stop two tunnels at once share one `devtunnel/stop` status. Is it kept for each target too?
+6. Does a plugin's own method still get its title, icon and input in the manifest, now that the tunnel operations are the host's?
+7. When two kinds can forward a port, which kind does the canvas example ask for?
+8. Does a second user of a forwarded port share the tunnel, and does the tunnel stop when its last user goes?
+9. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
+10. Does the API's `Host` check read the list by default?
+11. Does `say` stay for `ahpd status`, beside the list?
+12. Not checked: whether a running `devtunnel host` serves a port added after it started.
