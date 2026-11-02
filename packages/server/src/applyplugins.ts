@@ -1,4 +1,4 @@
-import type { Agent, Alert, Host, Loaded, Route } from '@ahpd/sdk';
+import type { Agent, Alert, Host, HostHandlers, Loaded, Route } from '@ahpd/sdk';
 import { specsIn } from './install.js';
 import { sourceOf } from './plugins.js';
 import type { Planned, PluginSet } from './plugins.js';
@@ -61,6 +61,16 @@ export interface ApplyPluginsOptions {
    * nothing to do.
    */
   reload?: string[];
+  /**
+   * Called before a plugin this apply closes runs its closers, with the
+   * handlers it registered: the daemon raises `stopping` to it here.
+   */
+  beforeUnload?(id: string, events: HostHandlers | undefined): Promise<void>;
+  /**
+   * Called for each plugin this apply loaded or reloaded and kept, once the
+   * host holds the new fold: the daemon raises `listening` to it here.
+   */
+  afterLoad?(id: string, events: HostHandlers | undefined): Promise<void>;
 }
 
 /** Whether a contribution holds something the host cannot take on while it runs. */
@@ -86,11 +96,25 @@ const unfixable = (ports: object, providers: object): boolean =>
  * holds it - the channel, root config and the terminal all go through it - and
  * a second turn queued inside the first would wait on itself.
  */
+/**
+ * What the daemon does with a handler that threw at an event it raised.
+ *
+ * The line goes to `log`, and the plugin's row gets an `error` alert a person
+ * can read. The `ref` is the event, so a second throw at it replaces the first.
+ */
+export const eventFailed = (set: PluginSet, log: (line: string) => void, type: 'listening' | 'stopping') => (line: string, by: string): void => {
+  log(line);
+  const when = type === 'listening' ? 'when ahpd started' : 'when ahpd stopped it';
+  set.alert(by, { level: 'error', ref: `event:${type}`, text: `This plugin failed ${when}, and the ahpd log has the details.` });
+};
+
 export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applied> => {
   const { set } = options;
   const problems: string[] = [];
   let restart = false;
   let changed = false;
+  /** The plugins this apply loaded or reloaded and kept, in load order. */
+  const started: string[] = [];
   const trouble = (line: string): void => {
     problems.push(line);
     options.log?.(line);
@@ -142,6 +166,7 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
       continue;
     }
     await endSessions(one.name);
+    if (held !== undefined) await options.beforeUnload?.(one.name, held.contribution.events);
     for (const line of await set.unload(one.name)) trouble(line);
     changed = true;
   }
@@ -163,6 +188,7 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
       // A reload ends its agent's sessions too: the closers run before the next
       // `apply`, and a session running on one would hold an agent that moves.
       await endSessions(id);
+      await options.beforeUnload?.(id, held.contribution.events);
       for (const line of await set.unload(id)) trouble(line);
     }
     // A reload imports a URL of its own, so the code as it is now is what runs.
@@ -176,7 +202,10 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
       restart = true;
       continue;
     }
-    if (staged.loaded !== undefined) changed = true;
+    if (staged.loaded !== undefined) {
+      changed = true;
+      started.push(id);
+    }
   }
 
   /*
@@ -208,6 +237,11 @@ export const applyPlugins = async (options: ApplyPluginsOptions): Promise<Applie
       trouble(refused);
       restart = true;
     }
+  }
+
+  for (const id of started) {
+    const held = set.held(id);
+    if (held !== undefined) await options.afterLoad?.(id, held.contribution.events);
   }
 
   return { restart, changed, problems, loaded: set.loaded(), alerts: set.alerts(), routes: folded.routes };

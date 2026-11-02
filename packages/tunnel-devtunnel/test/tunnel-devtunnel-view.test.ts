@@ -3,7 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
 import { checkView } from '../../sdk/src/plugins/view.js';
 import { pluginHost, raise } from '../../sdk/src/plugins/plugins.js';
-import type { LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
+import type { Alert, LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
 import { LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT } from '../src/discovery.js';
 import { show } from '../src/devtunnel.js';
 import type { Result, Runner } from '../src/devtunnel.js';
@@ -222,6 +222,27 @@ it('keeps the view when a read fails, and logs one run of failures once', async 
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(views).toHaveLength(1);
   expect(logged.filter((line) => line.includes('the service is back down'))).toHaveLength(1);
+});
+
+it('warns on the row once for a run of failed reads, and clears it on the next good one', async () => {
+  vi.useFakeTimers();
+  const alerts: Alert[] = [];
+  const cleared: string[] = [];
+  const run = runner({ list: kept(), port: ok(''), show: [no('the service is gone'), no('the service is gone'), ok(UP)] });
+  const { host, contribution } = pluginHost('tunnel', context(), {
+    alert: (alert) => { alerts.push(alert); },
+    clearAlert: (ref) => { cleared.push(ref); },
+  });
+  await apply(host, { runner: run, spawner });
+  await raise(contribution.events, listening);
+  expect(alerts).toEqual([{ level: 'warning', ref: 'read', text: 'The tunnel\'s status could not be checked, so this page may be out of date.' }]);
+  expect(cleared).toEqual(['tunnel']);
+
+  await vi.advanceTimersByTimeAsync(POLL_MS);
+  expect(alerts).toHaveLength(1);
+
+  await vi.advanceTimersByTimeAsync(POLL_MS);
+  expect(cleared).toEqual(['tunnel', 'read']);
 });
 
 it('stops the poll and clears the view when the tunnel stops', async () => {

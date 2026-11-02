@@ -1,7 +1,7 @@
 ---
 title: A plugin that fails says so
 domain: plugin
-status: planned
+status: implemented
 priority: medium
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -74,9 +74,11 @@ daemon start -> raise(listening) -> devtunnel listening handler -> find/create, 
 | The plugin does not try again by itself after a failure | Softov, 2026-11-01: "no retry" | 03 |
 | The daemon raises `listening` to a plugin it loads after the socket is open, with the address it raised at start | Softov, 2026-11-01, chose "Raise listening late" | 02 |
 | The daemon raises `stopping` to a plugin it unloads while it runs, before the plugin's closers | (defaulted: the pair of a late `listening`; with no `stopping`, a disable leaves `devtunnel host` running and an enable starts a second one) | 02 |
+| The way down raises `stopping` to the handlers loaded now, not to the ones of the start | (defaulted: a plugin loaded late hears `stopping`, and a plugin unloaded already does not hear it twice) | 02 |
 | Over stdio, a late load raises no `listening`, as at start | (defaulted: [`code://docs/plugins/PLUGINS.md#L1171`](../../../../docs/plugins/PLUGINS.md#L1171)) | 02 |
 | The daemon raises an `error` alert on the plugin's row when one of its handlers throws, and keeps the line on stderr | Softov, 2026-11-01, chose "Commit it, then plan it" for the brief that states it | 04 |
 | The daemon's alert has the `ref` `event:<type>`, so the next throw at the same event replaces it | (defaulted: one alert per event, not one per throw) | 04 |
+| The daemon's alert says when the plugin failed and points to the ahpd log, without the error message | (defaulted: `onProblem` gets the line and the plugin, and the message can be internal) | 04 |
 | Clients work out "failing" from an `error` alert, as ahpw's list does; ahpd sends no new field, and `state` keeps its meaning | Softov, 2026-11-01, chose "Clients derive it" | - |
 | The words of each alert follow the brief `the-text-a-person-reads-is-plain.md` | (defaulted: the brief the other session holds for text a person reads) | 03, 04 |
 
@@ -92,10 +94,10 @@ daemon start -> raise(listening) -> devtunnel listening handler -> find/create, 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the anonymous flag](task-01-the-anonymous-flag.md) | todo | - |
-| [02 - a plugin loaded late hears listening](task-02-a-plugin-loaded-late-hears-listening.md) | todo | - |
-| [03 - the tunnel says when it fails](task-03-the-tunnel-says-when-it-fails.md) | todo | 01, 02 |
-| [04 - a handler that throws raises an alert](task-04-a-handler-that-throws-raises-an-alert.md) | todo | - |
+| [01 - the anonymous flag](task-01-the-anonymous-flag.md) | implemented | - |
+| [02 - a plugin loaded late hears listening](task-02-a-plugin-loaded-late-hears-listening.md) | implemented | - |
+| [03 - the tunnel says when it fails](task-03-the-tunnel-says-when-it-fails.md) | implemented | 01, 02 |
+| [04 - a handler that throws raises an alert](task-04-a-handler-that-throws-raises-an-alert.md) | implemented | - |
 
 ## Risks and tradeoffs
 
@@ -106,10 +108,10 @@ daemon start -> raise(listening) -> devtunnel listening handler -> find/create, 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-anonymous-flag.md](task-01-the-anonymous-flag.md).
+- **Done so far:** all four tasks are implemented, and the suites pass. See [implemented.md](implemented.md).
+- **Next action:** Softov reviews the PR, and does the by-hand checks in *Final verification checklist*.
 - **Open questions:** none.
-- **Watch out for:** `applyNow` is defined before the socket is bound. The event it raises must be the one kept after the first `listening`, at `run.ts:1811`.
+- **Watch out for:** a slow `listening` handler of a plugin enabled late holds the `x-ahpd/plugins` answer until it returns, as it holds the start.
 
 ## Final verification checklist
 

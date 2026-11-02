@@ -9,7 +9,7 @@ import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
 import { afterEach, expect, it } from 'vitest';
 import { pluginHost, raise } from '../../sdk/src/plugins/plugins.js';
-import type { LoaderContext } from '../../sdk/src/types/plugin.js';
+import type { Alert, LoaderContext } from '../../sdk/src/types/plugin.js';
 import {
   deriveConnectionToken, displayLabel, nameLabel, LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT,
 } from '../src/discovery.js';
@@ -128,7 +128,7 @@ it('puts the well-known port on the tunnel and leaves access alone by default', 
 it('opens it to the signed-out only when asked', async () => {
   const run = runner({ port: ok(''), access: ok('') });
   await prepare({ tunnelId: 'made', labels: [] }, true, run);
-  expect(run.calls[1]).toEqual(['access', 'create', 'made', '--anonymous', '--port', String(TUNNEL_PORT)]);
+  expect(run.calls[1]).toEqual(['access', 'create', 'made', '--anonymous', '-p', String(TUNNEL_PORT)]);
 });
 
 it('treats a port that is already there as prepared, which is what reuse means', async () => {
@@ -285,4 +285,99 @@ it('has nothing to take down when it never stood anything up', async () => {
 
   await raise(contribution.events, listening);
   await expect(raise(contribution.events, { type: 'stopping' })).resolves.toBeUndefined();
+});
+
+// The alerts --------------------------------------------------------------
+
+/** A plugin host whose alerts are kept as the daemon keeps them: one per `ref`. */
+const alerting = () => {
+  const alerts: Alert[] = [];
+  const made = pluginHost('tunnel', context(), {
+    alert: (alert) => {
+      const at = alerts.findIndex((one) => one.ref === alert.ref);
+      if (at !== -1) alerts.splice(at, 1);
+      alerts.push(alert);
+    },
+    clearAlert: (ref) => {
+      const at = alerts.findIndex((one) => one.ref === ref);
+      if (at !== -1) alerts.splice(at, 1);
+    },
+  });
+  return { alerts, ...made };
+};
+
+/** A spawner that keeps each child it made, so a case can end one. */
+const children = () => {
+  const made: (ChildProcess & { killed: boolean })[] = [];
+  const spawn = () => {
+    const child = spawner();
+    child.kill = () => { child.killed = true; child.emit('exit', null, 'SIGTERM'); return true; };
+    made.push(child);
+    return child;
+  };
+  return { made, spawn };
+};
+
+const hosted = { list: ok(JSON.stringify({ tunnels: [{ tunnelId: 'kept-one', labels: ['_ahpd'] }] })), port: ok('') };
+
+it('alerts the row when the tunnel cannot be found or made, and clears it once one is hosted', async () => {
+  const { alerts, host, contribution } = alerting();
+  let broken = true;
+  const answer = runner(hosted);
+  const run: Runner = (args) => {
+    if (broken) throw new TunnelError('`devtunnel` was not found on PATH.');
+    return answer(args);
+  };
+  await apply(host, { runner: run, spawner });
+
+  await raise(contribution.events, listening);
+  expect(alerts).toEqual([{ level: 'error', ref: 'tunnel', text: 'The tunnel could not be set up: `devtunnel` was not found on PATH.' }]);
+  await raise(contribution.events, { type: 'stopping' });
+  broken = false;
+  await raise(contribution.events, listening);
+  expect(alerts).toEqual([]);
+});
+
+it('alerts the row when the tunnel cannot be prepared', async () => {
+  const { alerts, host, contribution } = alerting();
+  const run = runner({ ...hosted, port: no('Tunnel service error: Unauthorized.') });
+  await apply(host, { runner: run, spawner });
+
+  await raise(contribution.events, listening);
+  expect(alerts.map((one) => [one.level, one.ref])).toEqual([['error', 'tunnel']]);
+  expect(alerts[0]?.text).toContain('Unauthorized');
+});
+
+it('alerts the row when the well-known port cannot be bound', async () => {
+  const taken = createServer();
+  const bound = await new Promise<boolean>((done) => {
+    taken.once('error', () => { done(false); });
+    taken.listen(TUNNEL_PORT, '127.0.0.1', () => { done(true); });
+  });
+  if (bound) closing.push(() => new Promise<void>((done) => { taken.close(() => done()); }));
+  const { alerts, host, contribution } = alerting();
+  await apply(host, { runner: runner(hosted), spawner });
+
+  // The daemon is elsewhere, so the plugin has to bind the well-known port itself.
+  await raise(contribution.events, { ...listening, port: TUNNEL_PORT + 1 });
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0]?.text).toContain(`could not use port ${TUNNEL_PORT}`);
+});
+
+it('alerts the row when devtunnel host exits on its own, and not when a stop ends it', async () => {
+  const { alerts, host, contribution } = alerting();
+  const { made, spawn } = children();
+  await apply(host, { runner: runner(hosted), spawner: spawn });
+
+  await raise(contribution.events, listening);
+  expect(alerts).toEqual([]);
+  made[0]?.emit('exit', 1, null);
+  expect(alerts).toEqual([{ level: 'error', ref: 'tunnel', text: 'The tunnel stopped unexpectedly, so disable and enable the plugin to start it again.' }]);
+
+  await raise(contribution.events, { type: 'stopping' });
+  expect(alerts).toEqual([]);
+  await raise(contribution.events, listening);
+  await raise(contribution.events, { type: 'stopping' });
+  expect(made[1]?.killed).toBe(true);
+  expect(alerts).toEqual([]);
 });

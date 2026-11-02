@@ -113,8 +113,9 @@ export const apply: Plugin['apply'] = (plugin, options) => {
    * Read the tunnel's state and draw it, when it is not what the page shows.
    *
    * A read that fails keeps the page as it was: a short loss of the network
-   * should not empty it. The first failure of a run is logged and the rest of
-   * that run is not, so a tunnel that stays unreachable costs one line.
+   * should not empty it. The first failure of a run is logged and warned on
+   * the row, and the rest of that run is not, so a tunnel that stays
+   * unreachable costs one line. The next good read takes the warning away.
    */
   const read = async (tunnel: Tunnel): Promise<void> => {
     let shown: Shown;
@@ -122,12 +123,16 @@ export const apply: Plugin['apply'] = (plugin, options) => {
       shown = await show(tunnel, seams.runner);
     }
     catch (error) {
-      if (!failing) plugin.log(`${name}: ${error instanceof TunnelError ? error.message : String(error)}`);
+      if (!failing) {
+        plugin.log(`${name}: ${error instanceof TunnelError ? error.message : String(error)}`);
+        plugin.alert({ level: 'warning', ref: 'read', text: 'The tunnel\'s status could not be checked, so this page may be out of date.' });
+      }
       failing = true;
       return;
     }
     // A stop, or a new tunnel, may have happened while the CLI was answering.
     if (held?.tunnel.tunnelId !== tunnel.tunnelId) return;
+    if (failing) plugin.clearAlert('read');
     failing = false;
     const next: TunnelState = {
       id: tunnel.tunnelId,
@@ -155,7 +160,9 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     catch (error) {
       // A tunnel that could not be made costs the tunnel and not the daemon:
       // the socket is already bound and a client on this machine can reach it.
-      plugin.log(`${name}: ${error instanceof TunnelError ? error.message : String(error)}`);
+      const reason = error instanceof TunnelError ? error.message : String(error);
+      plugin.log(`${name}: ${reason}`);
+      plugin.alert({ level: 'error', ref: 'tunnel', text: `The tunnel could not be set up: ${reason}` });
       return;
     }
 
@@ -174,13 +181,25 @@ export const apply: Plugin['apply'] = (plugin, options) => {
       }
     }
     catch (error) {
-      plugin.log(`${name}: nothing can listen on ${TUNNEL_PORT}: ${error instanceof Error ? error.message : String(error)}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      plugin.log(`${name}: nothing can listen on ${TUNNEL_PORT}: ${reason}`);
+      plugin.alert({ level: 'error', ref: 'tunnel', text: `The tunnel could not use port ${TUNNEL_PORT}: ${reason}` });
       if (!keep) await remove(tunnel, seams.runner).catch(() => undefined);
       return;
     }
 
-    const child = host(tunnel, plugin.log, seams.spawner);
+    /*
+     * An exit nobody asked for leaves the row saying so. A stop lets go of
+     * the child before it kills it, so the exit it causes finds another child
+     * held, or none, and says nothing.
+     */
+    const child = host(tunnel, plugin.log, seams.spawner, (code, signal) => {
+      if (held?.child !== child) return;
+      plugin.log(`${name}: devtunnel host exited (${code ?? signal ?? 'unknown'})`);
+      plugin.alert({ level: 'error', ref: 'tunnel', text: 'The tunnel stopped unexpectedly, so disable and enable the plugin to start it again.' });
+    });
     held = { tunnel, child, keep, ...(hop === undefined ? {} : { hop }) };
+    plugin.clearAlert('tunnel');
 
     const shown = displayLabel(tunnel.labels);
     plugin.say(`tunnel ${tunnel.tunnelId}${shown === undefined ? '' : ` (${shown})`}, port ${TUNNEL_PORT}`);
@@ -222,6 +241,8 @@ export const apply: Plugin['apply'] = (plugin, options) => {
     }
     drawn = undefined;
     failing = false;
+    plugin.clearAlert('tunnel');
+    plugin.clearAlert('read');
     const stood = held;
     held = undefined;
     if (stood === undefined) return;

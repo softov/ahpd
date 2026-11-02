@@ -1,6 +1,6 @@
 ---
 title: A plugin loaded late hears listening
-status: todo
+status: implemented
 depends: []
 layer: "server"
 refs:
@@ -46,3 +46,9 @@ A plugin that the daemon unloads or reloads while it runs gets `stopping` before
 - `pnpm --filter @ahpd/server test` passes.
 
 ## Resume
+
+`applyPlugins` takes `beforeUnload` and `afterLoad`, and `run.ts` raises `stopping` and the kept `listening` through them.
+A plugin that an apply loads and then unloads again for a port or a URI scheme hears neither event.
+The way down raises `stopping` to the live handlers, not to the ones of the start.
+A plugin loaded late then hears it, and one unloaded already does not hear it twice.
+Five cases in `plugin-live.test.ts` cover a late load, a disable, a reconfigure, a reload and an apply that leaves a plugin as it was.

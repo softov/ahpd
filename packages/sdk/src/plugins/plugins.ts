@@ -1834,7 +1834,7 @@ export function pluginHost(by: string, given: LoaderContext, options: HostRecord
 export async function raise<K extends EventName>(
   handlers: HostHandlers | undefined,
   event: HostEventOf<K>,
-  onProblem?: (line: string) => void,
+  onProblem?: (line: string, by: string) => void,
 ): Promise<void> {
   const listeners = handlers?.[event.type as K];
   if (listeners === undefined || listeners.length === 0) return;
@@ -1856,7 +1856,7 @@ export async function raise<K extends EventName>(
       );
     }
     catch (error) {
-      onProblem?.(`${listener.by} failed at ${event.type}: ${error instanceof Error ? error.message : String(error)}`);
+      onProblem?.(`${listener.by} failed at ${event.type}: ${error instanceof Error ? error.message : String(error)}`, listener.by);
     }
   }
 }
