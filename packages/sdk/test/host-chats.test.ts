@@ -1890,6 +1890,63 @@ describe('more than one chat in a session', () => {
  * begin where such a chat is already recorded: its row is written the way one
  * leaves it, and the host that restores the session is what starts it there.
  */
+/*
+ * A chat renamed on its own channel, as the reference host renames one: the
+ * client's action goes out on that channel, then the chat's held title and
+ * its row in the session move together, and a default chat renames its
+ * session after its row.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L72
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2316-L2331
+ */
+describe('a chat renamed on its own channel', () => {
+  const titled = (p: ReturnType<typeof peer>) => actions(p)
+    .filter((e) => e.action.type === 'session/titleChanged' || e.action.type === 'session/chatUpdated')
+    .map((e) => [e.channel, e.action, e.origin]);
+
+  it('answers a peer chat\'s rename there, and the chat keeps its new title past its next turn', async () => {
+    const { client, peer: p, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: second, clientSeq: 4, action: { type: 'session/titleChanged', title: 'Renamed' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [second, { type: 'session/titleChanged', title: 'Renamed' }, { clientId: 'probe', clientSeq: 4 }],
+      [uri, { type: 'session/chatUpdated', chat: second, changes: { title: 'Renamed' } }, undefined],
+    ]);
+
+    client.handle({ method: 'dispatchAction', params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'go' } } } });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string; title: string }[] } };
+    };
+    expect(session.snapshot.state.chats.find((one) => one.resource === second)?.title).toBe('Renamed');
+    const own = await client.handle({ method: 'subscribe', params: { channel: second } }) as { snapshot: { state: { title: string } } };
+    expect(own.snapshot.state.title).toBe('Renamed');
+  });
+
+  it('renames a default chat on its channel in its row, then its session', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 5, action: { type: 'session/titleChanged', title: 'Main' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [chatUri, { type: 'session/titleChanged', title: 'Main' }, { clientId: 'probe', clientSeq: 5 }],
+      [uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title: 'Main' } }, undefined],
+      [uri, { type: 'session/titleChanged', title: 'Main' }, undefined],
+    ]);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { title: string; chats: { resource: string; title: string }[] } };
+    };
+    expect(session.snapshot.state.title).toBe('Main');
+    expect(session.snapshot.state.chats.find((one) => one.resource === chatUri)?.title).toBe('Main');
+  });
+});
+
 describe('a chat of another backend', () => {
   const DIR = '/home/softov';
   const LIVE = 'ahp-session:/live';
