@@ -1,7 +1,7 @@
 ---
 title: An active client keeps the tools it sent
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -76,7 +76,7 @@ presence -> tooling.ts clientTools -> the tools each chat is handed
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The entry keeps the tools it was sent](task-01-the-entry-keeps-the-tools-it-was-sent.md) | todo | - |
+| [01 - The entry keeps the tools it was sent](task-01-the-entry-keeps-the-tools-it-was-sent.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -86,13 +86,13 @@ presence -> tooling.ts clientTools -> the tools each chat is handed
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the held entry is compared with the next set by its JSON, so a set sent again unchanged stays unchanged.
 
 ## Final verification checklist
 
-- [ ] The new presence cases fail on `89ebe4d5` for the `tools` it filled, and pass after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new presence cases fail on `89ebe4d5` for the `tools` it filled, and pass after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

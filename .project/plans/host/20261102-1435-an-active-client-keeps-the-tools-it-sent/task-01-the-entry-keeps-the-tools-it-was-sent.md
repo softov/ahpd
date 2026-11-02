@@ -1,6 +1,6 @@
 ---
 title: The entry keeps the tools it was sent
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -40,4 +40,7 @@ An entry with no `tools` stays with no `tools`, and its client provides no tool 
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `89c19e7c`.
+
+- No existing test asserted the filled list, so none moved with the behavior.
+- The two new cases each fail on `89ebe4d5` on the `tools: []` the host filled in.
