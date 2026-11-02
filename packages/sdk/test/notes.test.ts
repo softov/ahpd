@@ -78,10 +78,11 @@ async function talking(ask = 'writes') {
   return { dir, client, peer: p, uri, chatUri };
 }
 
+// A refused envelope is left out, as a client leaves it.
 const actions = (p: ReturnType<typeof peer>, channel: string) => p.notes
   .filter((n) => n.method === 'action')
-  .map((n) => n.params as { channel: string; action: Record<string, unknown> })
-  .filter((e) => e.channel === channel)
+  .map((n) => n.params as { channel: string; action: Record<string, unknown>; rejectionReason?: string })
+  .filter((e) => e.channel === channel && e.rejectionReason === undefined)
   .map((e) => e.action);
 
 const say = (client: { handle(r: { method: string; params: unknown }): unknown }, chatUri: string, text: string): void => {
