@@ -1,6 +1,6 @@
 ---
 title: A stop that stops nothing is echoed
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -43,4 +43,11 @@ Nothing is stopped, woken or asked of a backend for them.
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `b12462af`.
+
+- One test at the head of the stop's case echoes a stop with no running turn, or naming another.
+- The test serves a lead chat and a worker's chat alike.
+- A stop of a worker's running turn is refused when its lead runs nothing and its backend has no `stopWorker`.
+- Nothing can carry that stop out, and it names a running turn.
+- Two worker cases of `subagent-chat.test.ts` named a turn the worker was not running, `the-worker-turn`, and now name the worker's running turn, read from its chat.
+- No protocol case sends a stop that the host refused, so the oracle's row was an allowance that nothing read.

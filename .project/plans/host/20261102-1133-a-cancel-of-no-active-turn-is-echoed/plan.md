@@ -1,7 +1,7 @@
 ---
 title: A stop of no running turn is echoed
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -80,7 +80,7 @@ client chat/turnCancelled -> chatAction
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop that stops nothing is echoed](task-01-a-stop-that-stops-nothing-is-echoed.md) | todo | - |
+| [01 - A stop that stops nothing is echoed](task-01-a-stop-that-stops-nothing-is-echoed.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -90,14 +90,14 @@ client chat/turnCancelled -> chatAction
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-a-stop-that-stops-nothing-is-echoed.md](task-01-a-stop-that-stops-nothing-is-echoed.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a worker chat's running turn is the host's own, held in the worker chat's state.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
-- [ ] Every protocol case passes through the host.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
+- [x] Every protocol case passes through the host.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
