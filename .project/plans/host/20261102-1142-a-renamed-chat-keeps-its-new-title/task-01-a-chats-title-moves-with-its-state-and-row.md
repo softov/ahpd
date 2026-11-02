@@ -1,6 +1,6 @@
 ---
 title: A chat's title moves with its state and its row
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -36,4 +36,9 @@ A default chat's rename renames its session after the row.
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `ce8c9b6b`.
+
+- `renameChat` replaces the chat's held state with one that carries the title, as `updateChatTitle` replaces its entry's state.
+- `renameSession` keeps the steps a rename on the session's channel had: the backend's title, the store and `session/titleChanged`.
+- A probe drove the revert on `6e6d1ca8`: a renamed peer chat's row said `Renamed`, and `New session` after its next turn.
+- With the change the row says `Renamed` after the turn, and the probe was removed.

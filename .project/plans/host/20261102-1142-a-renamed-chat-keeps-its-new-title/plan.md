@@ -1,7 +1,7 @@
 ---
 title: A renamed chat keeps its new title
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -80,7 +80,7 @@ client session/titleChanged on a chat channel -> chatactions.ts
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A chat's title moves with its state and its row](task-01-a-chats-title-moves-with-its-state-and-row.md) | todo | - |
+| [01 - A chat's title moves with its state and its row](task-01-a-chats-title-moves-with-its-state-and-row.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -90,13 +90,13 @@ client session/titleChanged on a chat channel -> chatactions.ts
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-a-chats-title-moves-with-its-state-and-row.md](task-01-a-chats-title-moves-with-its-state-and-row.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the client's action on the chat channel is a session action, which the chat's reducer does not take.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `6e6d1ca8` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `6e6d1ca8` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
