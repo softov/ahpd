@@ -1947,6 +1947,58 @@ describe('a chat renamed on its own channel', () => {
   });
 });
 
+/*
+ * A session renamed on its own channel, as the reference host renames one: the
+ * client's action goes out on the session's channel, and a session that counts
+ * one chat has that chat's held title and its row moved after it. A session
+ * with a peer chat keeps its default chat's title.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+ */
+describe('a session renamed on its own channel', () => {
+  const titled = (p: ReturnType<typeof peer>) => actions(p)
+    .filter((e) => e.action.type === 'session/titleChanged' || e.action.type === 'session/chatUpdated')
+    .map((e) => [e.channel, e.action, e.origin]);
+  type Opened = { snapshot: { state: { title: string; chats: { resource: string; title: string }[] } } };
+
+  it('retitles the default chat of a session with one chat, and the chat keeps the title past its next turn', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 6, action: { type: 'session/titleChanged', title: 'Whole' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [uri, { type: 'session/titleChanged', title: 'Whole' }, { clientId: 'probe', clientSeq: 6 }],
+      [uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title: 'Whole' } }, undefined],
+    ]);
+
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'w1', message: { text: 'go' } } } });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    expect(session.snapshot.state.title).toBe('Whole');
+    expect(session.snapshot.state.chats.find((one) => one.resource === chatUri)?.title).toBe('Whole');
+    const own = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: { title: string } } };
+    expect(own.snapshot.state.title).toBe('Whole');
+  });
+
+  it('keeps the default chat\'s title in a session with a peer chat', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/second' } });
+    const before = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    const kept = before.snapshot.state.chats.find((one) => one.resource === chatUri)?.title;
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 7, action: { type: 'session/titleChanged', title: 'Whole' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [uri, { type: 'session/titleChanged', title: 'Whole' }, { clientId: 'probe', clientSeq: 7 }],
+    ]);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    expect(session.snapshot.state.title).toBe('Whole');
+    expect(session.snapshot.state.chats.find((one) => one.resource === chatUri)?.title).toBe(kept);
+  });
+});
+
 describe('a chat of another backend', () => {
   const DIR = '/home/softov';
   const LIVE = 'ahp-session:/live';
