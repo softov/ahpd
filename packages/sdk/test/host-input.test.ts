@@ -353,7 +353,7 @@ describe('driving a turn', () => {
       expect(await decision).toMatchObject({ behavior: 'deny' });
     });
 
-    it('refuses an answer to a request nothing is waiting on, to its sender alone', async () => {
+    it('refuses an answer to a request nothing is waiting on, to every client of the chat', async () => {
       const { p, q, chatUri } = await running().then(async ({ host, client, peer: p, chatUri }) => {
         const q = peer();
         const other = host.accept(q);
@@ -371,7 +371,9 @@ describe('driving a turn', () => {
       const refused = actions(p).filter((e) => e.rejectionReason !== undefined);
       expect(refused.map((e) => e.action.type)).toEqual(['chat/inputCompleted']);
       expect(refused[0]?.rejectionReason).toContain('nobody');
-      expect(actions(q, chatUri).map((e) => e.action.type)).not.toContain('chat/inputCompleted');
+      // The other client of the chat hears the same refusal, and neither hears
+      // the answer taken.
+      expect(actions(q, chatUri).map((e) => [e.action.type, e.rejectionReason])).toEqual([['chat/inputCompleted', refused[0]?.rejectionReason]]);
       expect(actions(p, chatUri).filter((e) => e.rejectionReason === undefined).map((e) => e.action.type))
         .not.toContain('chat/inputCompleted');
     });

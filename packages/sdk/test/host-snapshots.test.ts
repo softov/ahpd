@@ -611,7 +611,7 @@ describe('the fields a client reads by name', () => {
     expect(started?.origin).toEqual({ clientId: 'probe', clientSeq: 42 });
   });
 
-  it('refuses a dispatch out loud, to the client that sent it and nobody else', async () => {
+  it('refuses a dispatch out loud, to every client watching its channel, and holds the refusal for a reconnect', async () => {
     const host = serving('/home/softov');
     const mine = peer();
     const theirs = peer();
@@ -650,11 +650,24 @@ describe('the fields a client reads by name', () => {
     // `serverSeq > fromSeq`".
     // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
     expect(refused[0]?.serverSeq).toBeGreaterThan(at);
-    // And the client watching alongside hears nothing: it never applied this,
-    // so it has nothing to put back - and reducing a refused envelope would
-    // apply the very change this host declined to make.
-    expect(actions(theirs, uri)
-      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined)).toHaveLength(0);
+    // And the client watching alongside hears the same envelope: an action
+    // goes to every client subscribed to its channel, a refused one among
+    // them, and that client holds nothing of it to put back.
+    const heard = actions(theirs, uri)
+      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.serverSeq).toBe(refused[0]?.serverSeq);
+    expect(heard[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
+    // A client that comes back within the buffer is replayed it in its place
+    // in the order, as any action it missed.
+    const back = host.accept(peer());
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'probe', subscriptions: [uri], lastSeenServerSeq: at },
+    }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
+    expect(answer.type).toBe('replay');
+    expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
+      .toContain('not a completed turn');
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {

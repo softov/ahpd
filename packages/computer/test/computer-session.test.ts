@@ -365,7 +365,7 @@ it('allows a machine with no label, on every road', async () => {
   expect(uri).toMatch(/^ahp-session:\//);
 });
 
-it('refuses the machine in a change made before the first turn, and announces nothing', async () => {
+it('refuses the machine in a change made before the first turn, to every subscriber, and moves nothing', async () => {
   const room = await talking({ command: process.execPath, args: [FIXTURE], computers: machines() });
   const other = await watching(room, room.uri);
   await room.client.handle({
@@ -376,11 +376,12 @@ it('refuses the machine in a change made before the first turn, and announces no
   await settle();
 
   expect(rejection(room.peer)).toMatch(/computer:\/\/box was prepared for claude/);
-  // The action was refused and nothing else happened. Only the connection that
-  // asked heard about it, and it heard the refusal rather than the change: a
-  // `configChanged` broadcast would leave every subscriber holding a setting
-  // the session does not have.
-  expect(types(other.peer, room.uri)).toEqual([]);
+  // The action was refused and nothing else happened. Every subscriber heard
+  // the refusal, with its reason, and none heard the change: a `configChanged`
+  // said without a reason would leave every subscriber holding a setting the
+  // session does not have.
+  expect(actions(other.peer, room.uri).map((one) => one.rejectionReason))
+    .toEqual([expect.stringMatching(/computer:\/\/box was prepared for claude/)]);
   expect(actions(room.peer, room.uri).every((one) => one.rejectionReason !== undefined)).toBe(true);
   // And nothing was written to the store, which a resume starts the lead chat
   // with: a computer recorded there is a session that comes back in one.

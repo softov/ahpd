@@ -401,16 +401,19 @@ nothing.
 
 ### What a refusal is
 
-Anything dispatched that this host will not act on is **refused**, not dropped:
-an envelope carrying `rejectionReason` goes back to the connection that sent it,
-naming the action and saying what would not have it. A client applies an action
-before sending it, so a host that stayed silent left that client holding a
-change this host never made.
+Anything dispatched that this host will not act on is **refused**: an envelope
+carrying `rejectionReason` names the action and says what would not have it. A
+client applies an action before sending it, and the refusal is what tells it to
+put its own state back.
 
-A refusal moves no `serverSeq` and is not buffered for replay, because it moves
-no state; and it goes to the one connection that dispatched it rather than to
-everyone watching, because nobody else applied it optimistically and a client
-that reduced one would apply the very change this host declined to make.
+A refusal is an action envelope like any other. It takes the next `serverSeq`,
+is held for replay, and goes to every client subscribed to the channel the
+action was sent on, as the
+[specification](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143)
+sends an action and as the reference host records and broadcasts a rejection.
+The client that sent it is told even where it watches no such channel. No state
+takes a refusal: the client that sent the action drops it from what it holds
+pending, and the others hold nothing of it.
 
 ## Behaviour worth knowing
 
@@ -760,13 +763,11 @@ entry the state holds and with what it sent last, as
 [VS Code's session handler](https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253)
 does, sends its set once.
 
-A refusal goes to its sender alone, and is not buffered for replay. It takes
-the next `serverSeq` all the same, because a client that has just subscribed
-holds a snapshot taken at the number this host was at, and "Subsequent actions
-will have `serverSeq > fromSeq`"
+A refusal goes to every client of its channel and is held for replay, as
+[What a refusal is](#what-a-refusal-is) says. It takes the next `serverSeq`,
+because a client that has just subscribed holds a snapshot taken at the number
+this host was at, and "Subsequent actions will have `serverSeq > fromSeq`"
 ([state](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357)).
-The other clients never see that number, as they never see the numbers of a
-channel they do not watch.
 
 A request the protocol has a host decline by restoring the state, as
 `session/mcpServerBackgroundRequested` is on a server starting with
