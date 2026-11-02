@@ -374,7 +374,7 @@ interface ChatStart {
 export function createTooling(ctx: HostContext): Tooling {
   const {
     options, sessions, byChat, kept, terminals, learned, rootConfig, sentBy, about,
-    activeClientsOf, leadOf, heldAs, ownerOf, allRows, setArtifacts, forWhom,
+    activeClientsOf, leadOf, ownerOf, allRows, setArtifacts, forWhom,
     principalFor, senderOf, senders,
     chatSummary, keepTitle, summaryMoved, operationsMoved, dispatch, log, fire,
     isolated, settle, openSession, backendsOwn, removeSession, spawn,
@@ -660,7 +660,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * the set it starts with.
    */
   const folderOf = (uri: string): string | undefined => {
-    const held = sessions.get(heldAs(uri));
+    const held = sessions.get(uri);
     if (held === undefined) return undefined;
     const lead = leadOf(held)?.workingDirectories()[0];
     if (lead !== undefined) return lead;
@@ -751,12 +751,11 @@ export function createTooling(ctx: HostContext): Tooling {
    */
   const tellOff = (uri: string, reported: Bag[]): void => {
     if (store === undefined) return;
-    const session = heldAs(uri);
-    const held = sessions.get(session);
+    const held = sessions.get(uri);
     const lead = held === undefined ? undefined : leadOf(held);
     if (lead === undefined) return;
-    const said = told.get(session) ?? new Set<string>();
-    told.set(session, said);
+    const said = told.get(uri) ?? new Set<string>();
+    told.set(uri, said);
     /** Say every customization in a reported list, and in what each of them holds. */
     const walk = (list: Bag[], owner?: string): void => {
       for (const one of list.map(bag)) {
@@ -776,7 +775,7 @@ export function createTooling(ctx: HostContext): Tooling {
   };
 
   /** Forget what a session's backends were told, called where a chat starts. */
-  const forgetTold = (uri: string): void => { told.delete(heldAs(uri)); };
+  const forgetTold = (uri: string): void => { told.delete(uri); };
 
   /** What a plugin carries as its decisions for a session, most specific first. */
   const decisionsOf = (uri: string, one: HeldPlugin): Bag[] =>
@@ -817,7 +816,7 @@ export function createTooling(ctx: HostContext): Tooling {
   const byScope = (decisions: Bag[]): Bag[] => [...decisions].sort((a, b) => specificityOf(a) - specificityOf(b));
 
   /** What a session decided about one customization for itself, if it decided. */
-  const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(heldAs(uri))?.get(id);
+  const decisionOf = (uri: string, id: string): boolean | undefined => decided.get(uri)?.get(id);
 
   /**
    * Keep a session's own decision about one customization.
@@ -827,9 +826,8 @@ export function createTooling(ctx: HostContext): Tooling {
    * no entry to read it off, and what it keeps is its own to report.
    */
   const keepDecision = (uri: string, id: string, enabled: boolean): void => {
-    const session = heldAs(uri);
-    const held = decided.get(session) ?? new Map<string, boolean>();
-    decided.set(session, held);
+    const held = decided.get(uri) ?? new Map<string, boolean>();
+    decided.set(uri, held);
     held.set(id, enabled);
   };
 
@@ -1027,8 +1025,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * answer its snapshot gives, so a `customizationsChanged` and a snapshot of
    * the same session say the same thing.
    */
-  const reportedBy = (uri: string): Bag[] => {
-    const name = heldAs(uri);
+  const reportedBy = (name: string): Bag[] => {
     const held = sessions.get(name);
     const lead = held === undefined ? undefined : leadOf(held);
     if (lead !== undefined) return lead.customizations();
@@ -1379,7 +1376,7 @@ export function createTooling(ctx: HostContext): Tooling {
    * bound for, else the held session's.
    */
   const providerOf = (uri: string, bound?: string): { provider?: string } => {
-    const provider = bound ?? sessions.get(heldAs(uri))?.agent.provider;
+    const provider = bound ?? sessions.get(uri)?.agent.provider;
     return provider === undefined ? {} : { provider };
   };
 
@@ -1575,11 +1572,10 @@ export function createTooling(ctx: HostContext): Tooling {
    * a tool is counted where it runs, and a plugin has no turn to be charged.
    */
   const openChat = async (
-    session: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
+    at: string, asked: ChatStart, calling?: { uri: string; chatUri: string },
   ): Promise<{ chat: string }> => {
-    const at = heldAs(session);
     const held = sessions.get(at);
-    if (!held) throw new Error(`${session} is not a session this host is running`);
+    if (!held) throw new Error(`${at} is not a session this host is running`);
     /*
      * The tree the call is made from, which is the one it is counted against.
      *
@@ -1607,7 +1603,7 @@ export function createTooling(ctx: HostContext): Tooling {
       chat: chatUri,
       chats: [...held.chats].map(([one, chat]) => chatSummary(at, one, chat) as unknown as ChatSummary),
     }, log);
-    if (sessions.get(at) !== held) throw new Error(`${session} is not a session this host is running`);
+    if (sessions.get(at) !== held) throw new Error(`${at} is not a session this host is running`);
     /*
      * Read until something is said in it, and named, both written before its
      * state opens: `spawn` hands the backend the name it finds kept.
@@ -1655,7 +1651,7 @@ export function createTooling(ctx: HostContext): Tooling {
       return mayDo(chatUri, 'session:read') ? rows : [];
     },
     chats: (session) => {
-      const held = sessions.get(heldAs(session));
+      const held = sessions.get(session);
       if (!held) return [];
       const rows = [...held.chats].map(([at, chat]) => ({ resource: at, title: chat.title() }));
       // The default first, since that is the one a link without a chat opens.
@@ -1666,7 +1662,7 @@ export function createTooling(ctx: HostContext): Tooling {
       id: model.id, name: model.name, provider,
     }))),
     context: async (session, chatId) => {
-      const held = sessions.get(heldAs(session));
+      const held = sessions.get(session);
       const found = held === undefined ? undefined : chatMeant(held, chatId);
       if (found === undefined) return undefined;
       const state = found.chat.chatState() as { turns?: unknown; activeTurn?: unknown; turnsNextCursor?: unknown };
@@ -1681,8 +1677,7 @@ export function createTooling(ctx: HostContext): Tooling {
         hasMoreHistory: state.turnsNextCursor !== undefined,
       });
     },
-    send: async (session, chatId, text, from) => {
-      const at = heldAs(session);
+    send: async (at, chatId, text, from) => {
       /*
        * The tree the call is made from, which is the one it is counted against.
        *
@@ -1701,7 +1696,7 @@ export function createTooling(ctx: HostContext): Tooling {
         if (!sessions.has(at) && ctx.owners.has(at)) await ctx.wake(at);
         const held = sessions.get(at);
         const found = held === undefined ? undefined : chatMeant(held, chatId);
-        if (found === undefined) throw new Error(`${session} is not a session this host is running`);
+        if (found === undefined) throw new Error(`${at} is not a session this host is running`);
         const state = found.chat.chatState() as { activeTurn?: unknown; queuedMessages?: unknown; steeringMessage?: unknown };
         const busy = state.activeTurn !== undefined || state.steeringMessage !== undefined
           || (Array.isArray(state.queuedMessages) && state.queuedMessages.length > 0);
@@ -1740,8 +1735,16 @@ export function createTooling(ctx: HostContext): Tooling {
       }
       const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
       if (provider === undefined) throw new Error(NO_AGENT);
-      // Named the way a client's `createSession` names a session.
-      const made = uriFor(crypto.randomUUID());
+      /*
+       * Named for the client whose turn made it: `<provider>:/<uuid>` when an
+       * older VS Code window sent the running turn, so that window sees the
+       * session, and `ahp-session:/<uuid>` otherwise, as the reference host
+       * mints a session for the client that initiated its creation.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108
+       */
+      const turn = activeTurnOf(chatUri);
+      const older = turn !== undefined && sentBy.get(turn)?.legacySessionUris === true;
+      const made = older ? `${provider}:/${crypto.randomUUID()}` : uriFor(crypto.randomUUID());
       const config: Record<string, unknown> = {
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
         ...(asked.model !== undefined ? { model: asked.model } : {}),
@@ -1777,7 +1780,7 @@ export function createTooling(ctx: HostContext): Tooling {
       return { session: made, chat: chatUriFor(made) };
     },
     createChat: async (session, asked) => await openChat(session, asked, { uri, chatUri }),
-    rename: (session, chat, title) => { renameChat(heldAs(session), chat, title); },
+    rename: (session, chat, title) => { renameChat(session, chat, title); },
     /*
      * A session deleted from inside another one, by whoever is asking.
      *
@@ -1804,7 +1807,7 @@ export function createTooling(ctx: HostContext): Tooling {
       const turn = activeTurnOf(chatUri);
       const asking = turn === undefined ? undefined : senderOf(turn);
       const by = asking === undefined ? forWhom(kept.owner(idOf(uri))) : forWhom(asking);
-      await removeSession(heldAs(session), by?.principal ?? by?.owner);
+      await removeSession(session, by?.principal ?? by?.owner);
     },
     setWorkspace: (directory, isolation) => {
       /*

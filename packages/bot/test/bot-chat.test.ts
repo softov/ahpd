@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { createHost, ROOT } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { foldHostOptions, pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { memoryRecords } from '../../sdk/src/resources/records.js';
@@ -139,7 +140,7 @@ const SESSION = 'ahp-session:/one';
  * started with is the only one `turns` knows a chat by.
  */
 const HELD = SESSION;
-const CHAT = 'ahp-chat:/one';
+const CHAT = chatUriFor(SESSION);
 
 /** A bot, a chat with it, and a client watching that chat. */
 async function talkTo(client: Client): Promise<void> {

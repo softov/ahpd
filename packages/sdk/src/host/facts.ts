@@ -43,7 +43,7 @@ export interface Facts {
 export function createFacts(ctx: HostContext): Facts {
   const {
     options, sessions, owners, connections, worktreeOf, githubFacts, kept, log, lent, dispatch,
-    dirOf, leadOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, heldAs, listedMeta,
+    dirOf, leadOf, changesetAt, changesetOf, catalogueOf, contentMoved, operationsMoved, listedMeta,
   } = ctx;
 
   /**
@@ -312,8 +312,7 @@ export function createFacts(ctx: HostContext): Facts {
    * The sessions in a directory that a move of its changesets is told to.
    *
    * Every running one, and each catalogued one that is not running whose
-   * changeset a connection watches, under the name that connection watches it
-   * by.
+   * changeset a connection watches.
    */
   const toldIn = (dir: string): string[] => {
     const told = new Set(inThere(dir));
@@ -321,8 +320,7 @@ export function createFacts(ctx: HostContext): Facts {
       for (const channel of connection.watching) {
         const at = changesetAt(channel);
         if (at === undefined || at.dir !== dir) continue;
-        const named = heldAs(at.owner);
-        if (!sessions.has(named) && owners.has(named)) told.add(at.owner);
+        if (!sessions.has(at.owner) && owners.has(at.owner)) told.add(at.owner);
       }
     }
     return [...told];

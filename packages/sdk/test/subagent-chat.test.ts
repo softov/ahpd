@@ -19,6 +19,7 @@ import { undeclaredIn } from './support/wire.js';
  */
 
 const { createHost } = await import('../src/host.js');
+const { chatUriFor } = await import('../src/host/channels.js');
 
 /** Every frame the host put on the wire, in order. */
 const wire: { method: string; params: Record<string, unknown> }[] = [];
@@ -224,7 +225,7 @@ async function running(late = false, hold = false) {
     channel: 'ahp-root://', clientId: 'sub', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'],
   });
   const uri = 'ahp-session:/sub';
-  const chatUri = 'ahp-chat:/sub';
+  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'fake' });
   await ask('subscribe', { channel: uri });
   await ask('subscribe', { channel: chatUri });
@@ -477,9 +478,9 @@ function askingInWorker(stoppable = false): Agent {
 }
 
 /**
- * A host running the asking fake, its session subscribed under `as`, with the
- * worker's asks on the wire. `worker` is the worker chat in the spelling the
- * client was given for it.
+ * A host running the asking fake, its session `ahp-session:/ask` subscribed as
+ * `as`, with the worker's asks on the wire. `worker` is the worker chat built
+ * from `as`.
  */
 async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   wire.length = 0;
@@ -550,12 +551,19 @@ it('refuses a second confirmation of a call the first one answered, without aski
   expect(told.map(({ id }) => id)).toEqual(['c1']);
 });
 
-it('takes an approval given on a worker chat spelt from a session alias', async () => {
-  const { ask, worker, send, refusals } = await waiting('fake:/ask');
-  expect(worker.startsWith(`ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/`)).toBe(true);
-  // The chat the snapshot tells this client to answer on is spelt the way it
-  // subscribed.
-  const answer = await ask('subscribe', { channel: 'fake:/ask' }) as { snapshot: { state: Bag } };
+/*
+ * A session and its worker chats have one URI each, the one they are held by:
+ * the session's id in another scheme is no session, and a worker chat built
+ * from it no chat, as the reference host keys a subscription by the URI sent.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
+ */
+it('refuses the session and its worker chat spelt from another scheme of its id', async () => {
+  const { ask, worker, send, refusals } = await waiting();
+  const elsewhere = `ahp-chat://subagent/${Buffer.from('fake:/ask', 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
+  await expect(ask('subscribe', { channel: 'fake:/ask' })).rejects.toMatchObject({ code: -32001 });
+  await expect(ask('subscribe', { channel: elsewhere })).rejects.toMatchObject({ code: -32001 });
+  // The worker chat the session names is the one built from the URI it is held by.
+  const answer = await ask('subscribe', { channel: 'ahp-session:/ask' }) as { snapshot: { state: Bag } };
   const needed = (answer.snapshot.state.inputNeeded ?? []) as Bag[];
   expect(needed.map((one) => one.chat)).toEqual([worker, worker]);
   await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: false, reason: 'denied' });
@@ -564,14 +572,13 @@ it('takes an approval given on a worker chat spelt from a session alias', async 
 });
 
 /*
- * The actions about a session, to two clients that name it differently.
+ * The actions about a session, to two clients of it.
  *
- * The creator made it as `ahp-session:/ask` and the host holds it as
- * `ahp-session:/ask`. Each client is sent every URI of the session inside an action in
- * its own spelling, the same as its snapshot, so the worker chat it is told
- * about is one it can subscribe to and answer on.
+ * Each client is sent every URI of the session inside an action as the host
+ * holds it, the same as its snapshot, so the worker chat it is told about is
+ * one it can subscribe to and answer on.
  */
-it('says the session\'s URIs inside an action in the spelling each client uses', async () => {
+it('says the session\'s URIs inside an action as the host holds them, to every client', async () => {
   const host = createHost({ path: '/tmp', agents: [askingInWorker()] });
   const listening = (into: Bag[]): Peer => ({
     send: () => {},
@@ -590,9 +597,9 @@ it('says the session\'s URIs inside an action in the spelling each client uses',
   const chatOf = (session: string): string => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
   const workerOf = (session: string): string =>
     `ahp-chat://subagent/${Buffer.from(session, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_agent')}`;
-  for (const [client, session] of [[creator, 'ahp-session:/ask'], [other, 'fake:/ask']] as const) {
-    await client('subscribe', { channel: session });
-    await client('subscribe', { channel: chatOf(session) });
+  for (const client of [creator, other]) {
+    await client('subscribe', { channel: 'ahp-session:/ask' });
+    await client('subscribe', { channel: chatOf('ahp-session:/ask') });
   }
   await creator('dispatchAction', {
     channel: chatOf('ahp-session:/ask'),
@@ -600,7 +607,8 @@ it('says the session\'s URIs inside an action in the spelling each client uses',
   });
   await settle();
 
-  for (const [said, session] of [[heard.creator, 'ahp-session:/ask'], [heard.other, 'fake:/ask']] as const) {
+  const session = 'ahp-session:/ask';
+  for (const said of [heard.creator, heard.other]) {
     const on_ = (channel: string, type: string): Bag[] => said
       .filter((one) => one.channel === channel && (one.action as Bag).type === type)
       .map((one) => one.action as Bag);

@@ -14,7 +14,7 @@ import { meter } from '../usage/meter.js';
 import { linkIn } from '../automations/calllinks.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../tools/clientcalls.js';
 import { asSentAttachment } from './chatattachment.js';
-import { chatUriFor, subagentChatUri } from './channels.js';
+import { chatUriFor, subagentChatUri, toolCallOfSubagentChat } from './channels.js';
 import { CLOSING } from './common.js';
 import { chatFlag, commandTurnKey, sessionFlag, startsRead } from './chatactions.js';
 import { sameFolder, trusted } from './trust.js';
@@ -190,7 +190,7 @@ export function createSpawn(ctx: HostContext): Spawn {
   const {
     options, sessions, byChat, subagents, owners, kept, names, births, drafts, about,
     dispatch, log, described, links, resumedSessions,
-    sessionHolding, respell, dirOf, heldAs, operationsMoved, refreshWatched, refreshFacts,
+    sessionHolding, dirOf, operationsMoved, refreshWatched, refreshFacts,
     fire, charged, senders, senderOf, sentBy, forgetSender, keysOf, forgetKeys, moveKeys, enteredIn, inMachine, bringBackOf,
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
     learnAccount, movableMoved,
@@ -490,19 +490,21 @@ export function createSpawn(ctx: HostContext): Spawn {
   };
 
   /**
-   * A chat of a session in the session's `ahp-session:/<id>` spelling, or
-   * nothing for a chat whose name does not carry its session - one a client
-   * named itself.
+   * A default or worker chat of a session held as `<provider>:/<id>`, built
+   * for `ahp-session:/<id>`, or nothing for any other chat.
    *
    * A default or worker chat's URI embeds its session's, and a session store
-   * may hold a chat's title under that spelling of it, so a title is looked
-   * for there too.
+   * may hold a chat's title under that URI of it, so a title is looked for
+   * there too.
    */
   const formerChatUri = (uri: string, chatUri: string): string | undefined => {
-    const former = respell(chatUri, uri, uriFor(idOf(uri)));
-    return former === chatUri ? undefined : former;
+    const former = uriFor(idOf(uri));
+    if (former === uri) return undefined;
+    if (chatUri === chatUriFor(uri)) return chatUriFor(former);
+    const callId = toolCallOfSubagentChat(chatUri);
+    return callId !== undefined && chatUri === subagentChatUri(uri, callId) ? subagentChatUri(former, callId) : undefined;
   };
-  /** A chat's stored title: under its name, or else under its `ahp-session:` spelling. */
+  /** A chat's stored title: under its URI, or else under `formerChatUri`. */
   const titleOf = (uri: string, chatUri: string): string | undefined => {
     const former = formerChatUri(uri, chatUri);
     return kept.chatTitle(idOf(uri), chatUri) ?? (former === undefined ? undefined : kept.chatTitle(idOf(uri), former));
@@ -513,7 +515,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     if (was === undefined) return;
     kept.setNested?.(id, { ...was, ...change, modifiedAt: new Date().toISOString() });
   };
-  /** Store a chat's title under its name, and clear one kept under its `ahp-session:` spelling. */
+  /** Store a chat's title under its URI, and clear one kept under `formerChatUri`. */
   const keepTitle = (uri: string, chatUri: string, title: string): void => {
     kept.setChatTitle(idOf(uri), chatUri, title);
     if (chatUri === chatUriFor(uri)) moveNested(idOf(uri), { title });
@@ -668,12 +670,9 @@ export function createSpawn(ctx: HostContext): Spawn {
    */
   const planDraws = new Set<Promise<void>>();
 
-  const drawPlan = async (uri: string): Promise<void> => {
+  const drawPlan = async (session: string): Promise<void> => {
     const plan = options.plan;
     if (plan === undefined) return;
-    // A plugin names a session by whichever URI it holds it under, while the
-    // host holds it by the one its turns run under.
-    const session = heldAs(uri);
     const held = sessions.get(session);
     if (held === undefined) return;
     const open: { chat: string; turn: string }[] = [];

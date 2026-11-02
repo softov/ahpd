@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { shellTerminals } from '../src/machines/terminals.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Owners } from '../src/host/owners.js';
@@ -127,7 +128,7 @@ async function signedIn(over: Partial<HostOptions> = {}, provider = 'echo') {
   const client = host.accept(p, ANA);
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/s', provider } });
-  const chat = 'ahp-chat:/s';
+  const chat = chatUriFor('ahp-session:/s');
   await client.handle({ method: 'subscribe', params: { channel: chat } });
   const dispatch = (action: Bag) => client.handle({ method: 'dispatchAction', params: { channel: chat, action } });
   /** What the two maps hold, by id. */

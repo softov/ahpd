@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatReducer } from '@microsoft/agent-host-protocol';
 import type { ChatState } from '@microsoft/agent-host-protocol';
 import { Status } from '../src/sessions/catalog.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -355,10 +356,9 @@ describe('the fields a client reads by name', () => {
     });
     await settle();
 
-    const moved = catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged').at(-1);
-    // Named the way the catalogue named it, which is by its provider. The
-    // client dispatched under the older spelling and is answered about the
-    // session it meant.
+    const summaries = () => catalogue(seen).filter((n) => n.method === 'root/sessionSummaryChanged');
+    const moved = summaries().find((n) => (n.params.changes as Record<string, unknown>).status !== undefined);
+    // Named the way the catalogue named it.
     expect(moved?.params.session).toBe('ahp-session:/browsed');
     // A row nobody is running still has a status - `IsRead` is this host's bit
     // and belongs to the row, not to a process - so the notification carries
@@ -366,6 +366,14 @@ describe('the fields a client reads by name', () => {
     // the case that needed saying.
     expect((moved?.params.changes as Record<string, unknown>).status)
       .toBe(Status.Idle | Status.IsRead);
+    // The mark is the first record the store holds for the row, and the row
+    // keeps the name it was listed by: the pass over the catalogue that lands
+    // after it says the row's fields under that name, and adds it under none.
+    await vi.waitFor(() => {
+      expect(summaries().some((n) => (n.params.changes as Record<string, unknown>).title !== undefined)).toBe(true);
+    });
+    expect(summaries().every((n) => n.params.session === 'ahp-session:/browsed')).toBe(true);
+    expect(catalogue(seen).filter((n) => n.method === 'root/sessionAdded')).toEqual([]);
   });
 
   it('holds a draft typed into a session nothing is running for', async () => {
@@ -375,7 +383,7 @@ describe('the fields a client reads by name', () => {
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/Y2xhdWRlOi90eXBlZA';
+    const chat = chatUriFor('ahp-session:/typed');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
 
     const draft = { text: '/', origin: { kind: 'user' } };
@@ -415,7 +423,7 @@ describe('the fields a client reads by name', () => {
     const watching = host.accept(other);
     await watching.handle(hello(['0.9.0'], { clientId: 'two', initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/Y2xhdWRlOi9oZWxk';
+    const chat = chatUriFor('ahp-session:/held');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     await watching.handle({ method: 'subscribe', params: { channel: chat } });
 
@@ -443,7 +451,7 @@ describe('the fields a client reads by name', () => {
     const client = host.accept(p);
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L2NhcnJpZWQ';
+    const chat = chatUriFor('ahp-session:/carried');
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',
@@ -469,20 +477,28 @@ describe('the fields a client reads by name', () => {
   it('will not hold a draft for a chat naming a session it has never heard of', async () => {
     const { client, peer: p } = await running();
     p.notes.length = 0;
+    // The default chat of a session nobody has made yet.
+    const later = chatUriFor('ahp-session:/later');
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat://default/Y2xhdWRlOi9ub2JvZHk',
+        channel: later,
         action: { type: 'chat/draftChanged', draft: { text: 'x', origin: { kind: 'user' } } },
       },
     });
     await settle();
     // A chat URI is a client's to spell, so a draft kept for every one that
-    // arrived would be a map that only grows.
+    // arrived would be a map that only grows. The session it names, made
+    // later, opens its chat with no draft.
     const refused = p.notes
       .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
       .filter((one): one is string => typeof one === 'string');
     expect(refused.some((one) => one.includes('not a session this host knows'))).toBe(true);
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: later } }) as {
+      snapshot: { state: { draft?: unknown } };
+    };
+    expect(opened.snapshot.state.draft).toBeUndefined();
   });
 
   it('advertises automations only where there are any', async () => {
@@ -840,7 +856,7 @@ describe('the fields a client reads by name', () => {
     // lists no chats - so the worker's chat is only there once one is.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
     });
     await settle(8);
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
@@ -880,7 +896,7 @@ describe('the fields a client reads by name', () => {
     const client = host.accept(peer());
     await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/cut' } });
-    const read = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/cut' } }) as { snapshot: { state: Record<string, unknown> } };
+    const read = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/cut') } }) as { snapshot: { state: Record<string, unknown> } };
     const parts = ((read.snapshot.state.turns as Record<string, unknown>[])[0]?.responseParts ?? []) as Record<string, unknown>[];
     const call = parts.map((part) => part.toolCall as Record<string, unknown> | undefined).find((one) => one?.toolCallId === 'toolu_task');
     expect(call).toMatchObject({ status: 'cancelled', reason: 'skipped' });

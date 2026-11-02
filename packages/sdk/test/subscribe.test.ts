@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -45,7 +46,7 @@ async function ready(uri: string) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'] },
   });
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
-  return { client, peer: p, chatUri: uri.replace('ahp-session:/', 'ahp-chat:/') };
+  return { client, peer: p, chatUri: chatUriFor(uri) };
 }
 
 it('misses nothing dispatched while its snapshot was being taken', async () => {

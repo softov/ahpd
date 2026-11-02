@@ -11,14 +11,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
 const SESSION = 'ahp-session:/one';
-/** The name the host holds it under, which is its provider's. */
+/** The name the host holds it under, the URI it was created with. */
 const HELD = 'ahp-session:/one';
-const CHAT = 'ahp-chat:/one';
+const CHAT = chatUriFor(SESSION);
 
 /**
  * A client that hears the chat, and answers `turning()` at the moment each

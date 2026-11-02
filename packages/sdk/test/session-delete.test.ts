@@ -204,7 +204,7 @@ it('passes no directory for a row that ran in none', async () => {
   const { client } = await serving(recording(order, deleted, [row]));
   await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
 
-  await dispose(client, 'echo:/nowhere');
+  await dispose(client, 'ahp-session:/nowhere');
 
   expect(deleted).toEqual([{ id: 'nowhere', directory: undefined }]);
   client.close();

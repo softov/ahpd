@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { uriOf } from '../src/resources/fileuri.js';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { PAGE } from '../src/sessions/paging.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { echo } from '../../../examples/echo/agent.js';
@@ -368,7 +369,7 @@ it('hands the agent of the first message of a session that was not running to th
   await second.client.handle({
     method: 'dispatchAction',
     params: {
-      channel: `ahp-chat:/one`,
+      channel: chatUriFor(SESSION),
       action: {
         type: 'chat/turnStarted',
         turnId: 't2',

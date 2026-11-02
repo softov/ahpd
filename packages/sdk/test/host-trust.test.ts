@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createHost, ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { uriOf } from '../src/resources/fileuri.js';
 import { trusted } from '../src/host/trust.js';
 import { memorySessions } from '../src/sessions/sessions.js';
@@ -235,7 +236,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   // than a session it has never heard of.
   await bo.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/bo-one', action: { type: 'chat/turnStarted', turnId: 't0', message: { text: 'hello' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't0', message: { text: 'hello' } } },
   });
   await settle(60);
 
@@ -250,7 +251,7 @@ it('tells a session nothing is trusted when somebody else sends its turn', async
   await settle();
   await ana.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/bo-one', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    params: { channel: chatUriFor('ahp-session:/bo-one'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
   });
   await settle(60);
 

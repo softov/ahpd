@@ -77,7 +77,7 @@ export function rowOf(task: BackgroundTask): BackgroundWork {
 }
 
 export function createBackground(ctx: HostContext): Background {
-  const { dispatch, log, subagents, byChat, sendSubagent, chatOf } = ctx;
+  const { dispatch, log, subagents, byChat, sendSubagent } = ctx;
 
   /** Every chat's tasks, by id. */
   const records = new Map<string, Held>();
@@ -89,11 +89,6 @@ export function createBackground(ctx: HostContext): Background {
    * `sendSubagent`: a worker has no `Session`, so what a subscriber reads of it
    * is the state this host folded from the backend's actions - and a row sent
    * round that is a row a late subscriber never sees.
-   *
-   * The chat is resolved first, because a backend may name it in the spelling
-   * it was handed while the host dispatches under its own - the two are the
-   * same chat, and a row filed under the alias is a row whose snapshot is
-   * taken from the other name and never finds it.
    */
   const send = (at: string, action: Bag): void => {
     if (subagents.has(at)) sendSubagent(at, action);
@@ -101,8 +96,7 @@ export function createBackground(ctx: HostContext): Background {
   };
 
   const heldTasks = (): BackgroundTasks => ({
-    set: (chat, task) => {
-      const at = chatOf(chat);
+    set: (at, task) => {
       const held = records.get(at) ?? new Map<string, Record>();
       const row = rowOf(task);
       const said = JSON.stringify(row);
@@ -115,8 +109,7 @@ export function createBackground(ctx: HostContext): Background {
       if (before?.said === said) return;
       send(at, { type: 'chat/backgroundWorkSet', work: row });
     },
-    remove: (chat, id) => {
-      const at = chatOf(chat);
+    remove: (at, id) => {
       const held = records.get(at);
       // An id the host never had is the protocol's no-op, and the backend
       // reports removals without tracking what the host kept.
@@ -145,7 +138,7 @@ export function createBackground(ctx: HostContext): Background {
    * host that took the row down here would show a task gone while it ran.
    */
   const stop = async (chat: string, id: string): Promise<boolean> => {
-    const act = records.get(chatOf(chat))?.get(id)?.task.stop;
+    const act = records.get(chat)?.get(id)?.task.stop;
     if (act === undefined) return false;
     try {
       return await act();

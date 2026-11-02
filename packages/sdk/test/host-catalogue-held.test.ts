@@ -492,12 +492,31 @@ describe('a listed session is named from its row', () => {
     expect(kept.sessions()).toEqual([]);
   });
 
-  it('still opens a session listed as the protocol\'s URI under a provider\'s scheme', async () => {
+  it('opens a session listed as the protocol\'s URI under that URI, and under no provider\'s scheme', async () => {
     const kept = memorySessions();
     const { here, client } = await started(backend, kept);
     await filled(here);
-    const one = await opened(client, 'slow:/one');
-    expect(one.snapshot.resource).toBe('slow:/one');
+    const one = await opened(client, 'ahp-session:/one');
+    expect(one.snapshot.resource).toBe('ahp-session:/one');
     expect(one.snapshot.state.title).toBe('One');
+    await expect(opened(client, 'slow:/one')).rejects.toMatchObject({ code: -32001 });
+  });
+
+  it('keeps the protocol\'s URI for a listed session once a client marks it, across a restart', async () => {
+    const kept = memorySessions();
+    const first = await started(backend, kept);
+    await filled(first.here);
+    first.client.handle({
+      method: 'dispatchAction',
+      params: { channel: 'ahp-session:/one', action: { type: 'session/isReadChanged', isRead: true } },
+    });
+    await new Promise((tick) => { setTimeout(tick, 20); });
+    expect(kept.flags('one')).not.toBe(0);
+    // The row holds the name its clients were given, so a host started again
+    // on the store lists it under that name.
+    expect(kept.uri?.('one')).toBe('ahp-session:/one');
+    const again = await started(backend, kept);
+    await filled(again.here);
+    expect((await listed(again.client)).items.map((one) => one.resource)).toEqual(['ahp-session:/one']);
   });
 });

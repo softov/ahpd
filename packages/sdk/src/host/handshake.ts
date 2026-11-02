@@ -81,10 +81,26 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
   const { connection } = conn;
   const {
     advertised, advertisedChannels, advertisedGrants, advertisedMethods, advertisedSchemes, agents, answeredAs, browsable, channelAwaiting,
-    clientPluginsOf, dir, fire, flushDeltas, heldAs, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
+    clientNames, clientPluginsOf, dir, fire, flushDeltas, holders, known, leadOf, leaves, locales, loginId, log, LOGS, METRICS, metaMoved,
     metadataFor, meantBy, openedBy, options, ownId, ownerFor, principals, refreshPullRequests, replayable, seenBy, sessions,
-    snapshotOf, spellingOf, TRACES, watchedAs,
+    snapshotOf, TRACES, visible, watchedAs,
   } = ctx;
+
+  /**
+   * Mark this connection as an older VS Code window, as the reference host
+   * marks one: a client that names itself `vscode-editor-window` or
+   * `vscode-agents-window` and does not declare `vscode.ahpSessionUris` cannot
+   * address an `ahp-session:` session, and one that does not declare
+   * `vscode.ahpChatUris` cannot address an opaque chat.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/common/agentHostClientInfo.ts#L8-L36
+   */
+  const markOlder = (name: string | undefined, meta: unknown): void => {
+    const window = name === 'vscode-editor-window' || name === 'vscode-agents-window';
+    const declared = bag(meta);
+    connection.legacySessionUris = window && declared['vscode.ahpSessionUris'] !== true;
+    connection.legacyChatUris = window && declared['vscode.ahpChatUris'] !== true;
+  };
 
   /**
    * Keeps the locale this client sent, on the connection and by client id.
@@ -183,10 +199,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     log(`${connection.clientId || 'a client'}'s token for ${resource}${target === undefined ? '' : ` at ${target.customizationId}`} expired`);
     connection.peer.notify('auth/required', {
       // An MCP server's requirement is drawn on its session, and a token
-      // aimed at one names that session itself, as this connection watches it.
-      channel: target === undefined
-        ? channelAwaiting(resource, connection)
-        : watchedAs(connection, target.session) ?? target.session,
+      // aimed at one names that session itself.
+      channel: target === undefined ? channelAwaiting(resource, connection) : target.session,
       resource: metadataFor(resource),
       reason: 'expired',
     });
@@ -220,15 +234,13 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     if (target.kind !== 'mcpServer') {
       throw new RpcError(INVALID_PARAMS, `A target of kind ${JSON.stringify(target.kind ?? null)} is not one this host knows`);
     }
-    const asked = str(target.session) ?? '';
+    const session = str(target.session) ?? '';
     const customizationId = str(target.customizationId) ?? '';
-    // Under whatever spelling the client knows the session by.
-    const session = heldAs(asked);
     const held = sessions.get(session);
     // A session this connection does not watch is not one its tokens are
     // spent on, whoever else holds it open.
     if (held !== undefined && watchedAs(connection, session) === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${asked} is not a session this connection watches`);
+      throw new RpcError(INVALID_PARAMS, `${session} is not a session this connection watches`);
     }
     const lead = held === undefined ? undefined : leadOf(held);
     // Both halves of what the session publishes: what its backend reports,
@@ -237,11 +249,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       ? undefined
       : mcpServerIn([...lead.customizations(), ...clientPluginsOf(session)], customizationId);
     if (server === undefined) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId || 'That'} is not an MCP server of ${asked || 'a session this host holds'}`);
+      throw new RpcError(INVALID_PARAMS, `${customizationId || 'That'} is not an MCP server of ${session || 'a session this host holds'}`);
     }
     const state = bag(server.state);
     if (state.kind !== 'authRequired' || bag(state.resource).resource !== resource) {
-      throw new RpcError(INVALID_PARAMS, `${customizationId} in ${asked} is not waiting for a token for ${resource || 'that resource'}`);
+      throw new RpcError(INVALID_PARAMS, `${customizationId} in ${session} is not waiting for a token for ${resource || 'that resource'}`);
     }
     return { session, customizationId };
   };
@@ -309,6 +321,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       connection.protocolVersion = agreed;
       // Met, so a later `reconnect` under this id is answerable.
       known.add(connection.clientId);
+      /*
+       * And what it called itself, which a `reconnect` reads again: an older
+       * VS Code window is told by its name and by what this `initialize`
+       * declares, before any snapshot below is taken.
+       */
+      const named = bag(params.clientInfo).name;
+      if (typeof named === 'string') clientNames.set(connection.clientId, named);
+      else clientNames.delete(connection.clientId);
+      markOlder(clientNames.get(connection.clientId), params._meta);
       keepLocale(params.locale, false);
       void fire({ type: 'client_connect', client: connection.clientId });
       // Introduced. Said after the version is agreed, so a client this
@@ -329,13 +350,16 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         // A handshake that fails because one requested channel is gone is
         // a client that cannot connect at all. Take what can be taken.
         try {
-          // Gated, resolved and answered the way `subscribe` is: the
-          // root, a session or a chat under another spelling is told
-          // under that spelling. Awaited only when the gate is waiting on
-          // a scheme, so a handshake does not spend a turn of the loop on a
-          // question it will not be asked.
+          // Gated, resolved and answered the way `subscribe` is: the root
+          // under another spelling is told under that spelling, and a
+          // channel an older VS Code window may not see is left out, as the
+          // reference host leaves it out. Awaited only when the gate is
+          // waiting on a scheme, so a handshake does not spend a turn of the
+          // loop on a question it will not be asked.
+          // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1197-L1201
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
+          if (!visible(connection, meantBy(channel))) continue;
           const snapshot = await snapshotOf(meantBy(channel), connection.config ?? {}, connection);
           const meant = answeredAs(connection, channel, snapshot);
           snapshots.push(snapshot);
@@ -526,6 +550,10 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         holders.set(clientId, connection.principal.id);
       }
       connection.clientId = clientId;
+      // An older VS Code window, by the name it gave at `initialize` and what
+      // this `reconnect` declares, as the reference host reads it.
+      // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
+      markOlder(clientNames.get(clientId), params._meta);
       // An ahpd extension: `reconnect` takes `locale` as `initialize` does,
       // and a client that sends none keeps the one it had.
       keepLocale(params.locale, true);
@@ -559,13 +587,15 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
       for (const channel of wanted) {
         try {
           // Resolved the way `subscribe` resolves it, so a client coming
-          // back under its own spelling of a chat, a session, or the
-          // automations catalogue is resumed rather than told the channel
-          // has gone - and is replayed, which is keyed by the name this
-          // host dispatches under rather than the one the client used.
+          // back under its own spelling of the root or the automations
+          // catalogue is resumed and replayed, and a replay is keyed by the
+          // name this host dispatches under. A channel an older VS Code
+          // window may not see is missing, as the reference host reports it.
+          // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1543-L1565
           const held = conn.admit('subscribe', { channel });
           if (held !== undefined) await held;
           const meant = meantBy(channel);
+          if (!visible(connection, meant)) throw new RpcError(-32001, `Resource not available to this client: ${channel}`);
           await snapshotOf(meant, connection.config ?? {}, connection);
           if (meant !== channel) connection.aliases.set(meant, channel);
           connection.watching.add(channel);
@@ -605,15 +635,11 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
         log(`${clientId} came back at ${since}, replaying`);
         return {
           type: 'replay',
+          // Each under the held name, the automations catalogue among them.
           actions: replayable.flatMap((held) => {
-            const alias = resumed.get(held.channel);
-            if (held.serverSeq <= since || alias === undefined) return [];
+            if (held.serverSeq <= since || !resumed.has(held.channel)) return [];
             const envelope = seenBy(connection, held);
-            if (envelope === undefined) return [];
-            // A session's actions under the name this connection uses for
-            // it, as they went out live; any other channel, the
-            // automations catalogue among them, under the held name.
-            return [spellingOf(connection, held.channel) === undefined ? envelope : { ...envelope, channel: alias }];
+            return envelope === undefined ? [] : [envelope];
           }),
           missing,
         };

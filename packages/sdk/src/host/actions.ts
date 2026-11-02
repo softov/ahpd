@@ -70,9 +70,8 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    */
   const applyDispatch = (params: Record<string, unknown>, origin: Origin): Promise<void> | undefined => {
     const asked = String(params.channel ?? '');
-    // Resolved before anything looks it up, so a client that talks to a
-    // chat - or a session - under its own spelling drives the same one it
-    // is watching rather than one nothing here has heard of.
+    // Resolved before anything looks it up, so the root and the automations
+    // catalogue under another spelling are the channels they name.
     const channel = meantBy(asked);
     const action = (typeof params.action === 'object' && params.action !== null
       ? params.action
@@ -234,24 +233,43 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         no(`${type} belongs on a session's ${MARKS} channel, not ${channel}`);
         return;
       }
+      const owning = channel.slice(0, -MARKS.length);
+      const id = idOf(owning);
       // A mark on a session this host cannot open is a mark kept for a
       // harness that is not here: refusing by name is what tells a client
       // the row is waiting rather than gone.
-      const marked = waitingFor(idOf(channel.slice(0, -MARKS.length)));
+      const marked = waitingFor(id);
       if (marked !== undefined) {
         no(`${marked} is not loaded on this host`);
         return;
       }
-      const id = idOf(channel.slice(0, -MARKS.length));
-      const before = marksOf(id);
-      const after = annotationsReducer(before, action as unknown as AnnotationsAction);
-      if (after === before) {
-        no(`${type} names an annotation this session does not have`);
+      const mark = (): void => {
+        const before = marksOf(id);
+        const after = annotationsReducer(before, action as unknown as AnnotationsAction);
+        if (after === before) {
+          no(`${type} names an annotation this session does not have`);
+          return;
+        }
+        marks.set(id, after);
+        dispatch(channel, action);
+      };
+      if (sessions.has(owning) || owners.has(owning)) {
+        mark();
         return;
       }
-      marks.set(id, after);
-      dispatch(channel, action);
-      return;
+      /*
+       * The marks are kept by the session's id, and only the name the session
+       * is published under reads as that id, as for a subscribe to its marks.
+       * The catalogue is read first, which is what names a row no listing
+       * reached. A mark under any other name names a session that does not
+       * exist here, and is dropped with nothing kept and nothing said, as the
+       * protocol has a server ignore such an action.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
+       */
+      return conn.bounded(past(id), 'reading the catalogue').then(() => {
+        if (ctx.connections.has(connection) && ctx.nameOf(id) === owning) mark();
+      });
     }
     /*
      * The client flags, which are the host's to keep.
@@ -857,20 +875,38 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3101-L3103
        */
       const uri = sessionFor(channel);
-      const read = type === 'session/isReadChanged';
-      const chats = read ? readAggregate(ctx, uri) : [];
-      const on = read
-        ? action.isRead === true && !(chats.length > 1 && chats.some((one) => !one.read))
-        : action.isArchived === true;
-      const said = read && on !== (action.isRead === true) ? { ...action, isRead: on } : action;
-      const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said);
-      if (!moved) dispatch(channel, said, origin);
-      // Sent on another channel of the session, it is answered on that one:
-      // the bit moved on the session's own.
-      else if (ctx.unanswered()) dispatch(channel, said, origin);
-      const sole = chats.length === 1 ? chats[0] : undefined;
-      if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
-      return;
+      const flag = (): void => {
+        const read = type === 'session/isReadChanged';
+        const chats = read ? readAggregate(ctx, uri) : [];
+        const on = read
+          ? action.isRead === true && !(chats.length > 1 && chats.some((one) => !one.read))
+          : action.isArchived === true;
+        const said = read && on !== (action.isRead === true) ? { ...action, isRead: on } : action;
+        const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said);
+        if (!moved) dispatch(channel, said, origin);
+        // Sent on another channel of the session, it is answered on that one:
+        // the bit moved on the session's own.
+        else if (ctx.unanswered()) dispatch(channel, said, origin);
+        const sole = chats.length === 1 ? chats[0] : undefined;
+        if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
+      };
+      if (sessions.has(uri) || owners.has(uri)) {
+        flag();
+        return;
+      }
+      /*
+       * The bits are kept by the session's id, and only the name the session
+       * is published under reads as that id. The catalogue is read first,
+       * which is what names a row no listing reached. A toggle under any other
+       * name names a session that does not exist here, and is dropped with
+       * nothing kept and nothing said, as the protocol has a server ignore
+       * such an action.
+       * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
+       */
+      return conn.bounded(past(idOf(uri)), 'reading the catalogue').then(() => {
+        if (ctx.connections.has(connection) && ctx.nameOf(idOf(uri)) === uri) flag();
+      });
     }
     const terminal = terminals.get(channel);
     if (terminal) {

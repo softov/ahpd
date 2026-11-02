@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { undeclaredIn } from '../../sdk/test/support/wire.js';
@@ -48,7 +49,7 @@ it('sends calls as the protocol declares them, and a late client reads them the 
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/declared';
-  const chatUri = 'ahp-chat:/declared';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));
@@ -133,7 +134,7 @@ it('runs a person\'s command as a terminal call that names its terminal while it
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/banged';
-  const chatUri = 'ahp-chat:/banged';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   const opened = openedFrom(await client.handle({ method: 'subscribe', params: { channel: chatUri } }));

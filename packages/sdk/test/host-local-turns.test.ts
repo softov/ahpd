@@ -732,10 +732,11 @@ describe('a Claude chat', () => {
     expect((turns[0]?.responseParts as Bag[]).filter((part) => part.kind === 'markdown').map((part) => part.content)).toEqual(['one', 'two']);
     await after.host.close();
 
-    // A store that kept no record of the chat reads it as its transcript gives it.
+    // A store that kept no record of the chat reads it as its transcript gives
+    // it, under the name a host with no record lists the session by.
     const elsewhere = await shelled(join(temp(), 'sessions'));
-    await stateOf(elsewhere.client, uri);
-    expect(await turnsOf(elsewhere.client, chat)).toEqual([prompt, steer]);
+    await stateOf(elsewhere.client, 'ahp-session:/steered');
+    expect(await turnsOf(elsewhere.client, chatUriFor('ahp-session:/steered'))).toEqual([prompt, steer]);
     await elsewhere.host.close();
   });
 
