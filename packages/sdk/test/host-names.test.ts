@@ -339,14 +339,12 @@ describe('a session asked for by the name a client computed', () => {
       await settle(6);
     }
 
-    // The flag and the mark are dropped with nothing said, as the protocol has
-    // a server ignore an action naming a session that does not exist, and the
-    // config change is refused as one for a session nobody has. Nothing is
-    // said on the session under its own name, its chat or its marks.
-    const said = actions(p).filter((e) => e.channel !== 'ahp-root://');
-    expect(said.filter((e) => e.channel === other || e.channel === `${other}/annotations`)
-      .map((e) => `${e.channel}: ${e.rejectionReason}`)).toEqual([`${other}: ${other} is not a session here`]);
-    expect(said.filter((e) => [ROW, derived(ROW), `${ROW}/annotations`].includes(e.channel))).toEqual([]);
+    // Each is dropped with nothing said, as the protocol has a server ignore
+    // an action naming a session or a chat that does not exist, and no VS Code
+    // window sends one: the flag, the config change, the mark, the draft and
+    // the turn. Nothing is said on the session under its own name, its chat
+    // or its marks either.
+    expect(actions(p).filter((e) => e.channel !== 'ahp-root://')).toEqual([]);
     // And the session keeps its flags, its config, its marks and its chat's
     // draft, and is not woken.
     expect(sessionQueries()).toHaveLength(0);

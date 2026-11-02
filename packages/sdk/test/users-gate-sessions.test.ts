@@ -262,10 +262,10 @@ it('keeps config for a channel that names no session out of the store', async ()
   const admin = await withRole(made, 'a');
   await admin.send('zzz:/nothing', { type: 'session/configChanged', config: { voice: 'shouty' } });
   await admin.send('ahp-session:/disk', { type: 'session/configChanged', config: { voice: 'shouty', isolation: 'worktree' } });
-  // The row's id in another scheme is refused the same way, and its config
-  // stays what the row's own name was given.
+  // The row's id in another scheme names no session and is ignored, with
+  // nothing said, and the row's config stays what its own name was given.
   await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'whisper' } });
-  expect(admin.refused()).toEqual(['zzz:/nothing: zzz:/nothing is not a session here', 'zzz:/disk: zzz:/disk is not a session here']);
+  expect(admin.refused()).toEqual(['zzz:/nothing: zzz:/nothing is not a session here']);
   expect(store.config('nothing')).toBeUndefined();
   // The row that is a session keeps the backend's key and not this host's own.
   expect(store.config('disk')).toEqual({ voice: 'shouty' });
