@@ -1,7 +1,7 @@
 ---
 title: A client's approval key moves the advertised mode
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -63,7 +63,7 @@ e4694965: setConfig answers {permissionMode: acceptEdits}
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an approval key is held through the host](task-01-an-approval-key-is-held-through-the-host.md) | todo | - |
+| [01 - an approval key is held through the host](task-01-an-approval-key-is-held-through-the-host.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -71,13 +71,13 @@ e4694965: setConfig answers {permissionMode: acceptEdits}
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the continuation's own case sends `mode`; this one sends `autoApprove`, and `mode` only for the refusal.
 
 ## Final verification checklist
 
-- [ ] `autoApprove: assisted` is answered and served as `acceptEdits`, and `autopilot` as `bypassPermissions`.
-- [ ] `mode: yolo` is refused naming `yolo`, and the served mode stays.
-- [ ] On main's code the case fails, because the served mode does not move.
+- [x] `autoApprove: assisted` is answered and served as `acceptEdits`, and `autopilot` as `bypassPermissions`.
+- [x] `mode: yolo` is refused naming `yolo`, and the served mode stays.
+- [x] On main's code the case fails, because the served mode does not move.

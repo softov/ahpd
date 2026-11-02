@@ -1,6 +1,6 @@
 ---
 title: An approval key is held through the host
-status: todo
+status: done
 depends: []
 layer: "sdk test"
 refs:
@@ -30,4 +30,4 @@ A value neither name has is refused naming the value.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `4392a0fd`; [implemented.md](implemented.md) says what was verified.
