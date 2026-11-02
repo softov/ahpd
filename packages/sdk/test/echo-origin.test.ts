@@ -282,3 +282,28 @@ it('answers a stop its backend never says, once the turn it stopped has finished
   expect(said.filter(([, seq]) => seq === 2)).toHaveLength(1);
   await host.close();
 });
+
+/*
+ * A dispatch the backend answered and then failed on is answered once. A
+ * refusal after its echo would have the client revert a change every other
+ * client holds.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
+ */
+it('answers a draft its backend says and then fails on once, with its echo', async () => {
+  const base = echo({ path: dir, pace: 0 });
+  const failing: Agent = {
+    ...base,
+    create: (start: Start): Session => {
+      const session = base.create(start) as Session;
+      return { ...session, setDraft: (next) => { session.setDraft(next); throw new Error('the draft was said and the store is gone'); } };
+    },
+  };
+  const { host, p, dispatch } = await serving(failing);
+  p.heard.length = 0;
+  await dispatch(9, { type: 'chat/draftChanged', draft: { text: 'half a thought', origin: { kind: 'user' } } });
+  await settle();
+
+  const answers = p.heard.filter((one) => one.origin?.clientSeq === 9) as (Heard & { rejectionReason?: string })[];
+  expect(answers.map((one) => [one.action.type, one.rejectionReason])).toEqual([['chat/draftChanged', undefined]]);
+  await host.close();
+});

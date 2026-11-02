@@ -833,6 +833,14 @@ export function createHost(options: HostOptions): Host {
     return key === undefined ? undefined : owed.get(key);
   };
   /**
+   * The dispatches answered already, by the origin each carries: an echo, a
+   * refusal, or an answer a backend said later. A dispatch is answered once,
+   * and a host that applied one and then refused it would leave the client
+   * reverted and itself moved.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L20
+   */
+  const said = new WeakSet<Origin>();
+  /**
    * The origin an action goes out with when its caller named none: the
    * dispatch's own, if this is its echo, or the one a backend owes for it.
    */
@@ -841,6 +849,7 @@ export function createHost(options: HostOptions): Host {
     if (answered === undefined) return undefined;
     if (answered === applying) applying.answered = true;
     owed.delete(owedUnder(channel, action) ?? '');
+    said.add(answered.origin);
     return answered.origin;
   };
   /**
@@ -853,6 +862,7 @@ export function createHost(options: HostOptions): Host {
    */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
+    said.add(origin);
     if (applying?.origin === origin) applying.answered = true;
     const key = owedUnder(channel, action) ?? '';
     const held = owed.get(key)?.origin;
@@ -2022,12 +2032,14 @@ export function createHost(options: HostOptions): Host {
        *
        * One that failed at once and one that failed after waiting are told the
        * same way: the client holds its action until it hears an echo or a
-       * refusal, and the error's own words are the reason it is given.
+       * refusal, and the error's own words are the reason it is given. One
+       * already answered is answered once: what failed after its answer is
+       * this host's to log.
        */
       const refuseFailed = (params: Record<string, unknown>, origin: Origin, error: unknown): void => {
         const reason = error instanceof Error ? error.message : String(error);
         log(`a dispatch from ${connection.clientId || 'anonymous'} failed: ${reason}`);
-        if (!connections.has(connection)) return;
+        if (!connections.has(connection) || said.has(origin)) return;
         const action = (typeof params.action === 'object' && params.action !== null ? params.action : {}) as Record<string, unknown>;
         refuse(connection.peer, meantBy(String(params.channel ?? '')), action, origin, reason);
       };
