@@ -302,7 +302,8 @@ const NEGOTIATION_DIVERGES: Record<number, Broken & { answered: Answered }> = {
 
 /*
  * A row with a version in common is answered with it; an invalid offer is
- * malformed params; a row with nothing in common is `-32005` with the
+ * malformed params, and the connection stays open, as the protocol's own
+ * interop host answers one; a row with nothing in common is `-32005` with the
  * protocol's baselines in `supportedVersions`, and the connection closed.
  * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/versioning.md#L52-L68
  * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/clients/dotnet/tests/AgentHostProtocol.Tests/interop/session-host.ts#L85-L101
@@ -325,7 +326,7 @@ describe('the protocol’s version negotiation cases, through ahpd', () => {
         }),
       );
       const owed: Answered = row.invalid === true
-        ? { code: -32602, closed: asked.closed }
+        ? { code: -32602, closed: false }
         : row.expected === null || row.expected === undefined
           ? { code: -32005, supportedVersions: [...SUPPORTED_PROTOCOL_VERSIONS], closed: true }
           : { protocolVersion: row.expected };
