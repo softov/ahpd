@@ -70,7 +70,7 @@ chat/toolCallConfirmed approved false -> the backend -> the refusal said back wi
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A call its turn left ends skipped](task-01-a-call-its-turn-left-ends-skipped.md) | done | - |
-| [02 - A refusal is said as denied](task-02-a-refusal-is-said-as-denied.md) | todo | - |
+| [02 - A refusal is said as denied](task-02-a-refusal-is-said-as-denied.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -78,8 +78,8 @@ chat/toolCallConfirmed approved false -> the backend -> the refusal said back wi
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
-- **Next action:** [task-02-a-refusal-is-said-as-denied.md](task-02-a-refusal-is-said-as-denied.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** the implemented record.
 - **Open questions:** none.
 - **Watch out for:** a backend's own record of a cancelled call keeps what the reducer keeps, so a read back matches.
 

@@ -1,6 +1,6 @@
 ---
 title: A refusal is said as denied
-status: todo
+status: done
 depends: []
 layer: agent-cofold
 refs:
@@ -28,3 +28,8 @@ cofold says a refusal with the reason `denied`, and gives the model its own sent
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- A client's own reason already wins in the answer, so only a refusal sent with no reason met the sentence.
+- On `89ebe4d5`'s sources the new case fails: the reason read "The person declined this action".

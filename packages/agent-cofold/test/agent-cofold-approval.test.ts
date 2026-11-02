@@ -395,6 +395,31 @@ it('denies a tool, carries the reason and does not run it', async () => {
   expect(types(p, chatUri)).toContain('chat/turnComplete');
 });
 
+/*
+ * A refusal a client sends without its reason is said back as `denied`, the
+ * protocol's word for a person who turned a call down; cofold's sentence is
+ * the model's alone.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts#L283
+ */
+it('says a refusal with no reason back as denied, and gives the model its sentence', async () => {
+  const ran: string[] = [];
+  const model = createFakeModel({ script: writeScript('call-a', 'hi'), stream: true });
+  const { client, peer: p } = await talking(model, [writer(ran)], asksFor(['write']));
+  const { uri, chatUri } = await open(client, 'one');
+  begin(client, chatUri, 't1', 'write hi');
+  await until(() => needed(p, uri, 'toolConfirmation') !== undefined);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: false } },
+  });
+  await until(() => ended(p, chatUri));
+
+  const confirmed = actions(p, chatUri).find((e) => e.action.type === 'chat/toolCallConfirmed');
+  expect(confirmed?.action.reason).toBe('denied');
+  expect(JSON.stringify(model.requests[1]?.messages)).toContain('declined');
+});
+
 it('keeps two open approvals independent, each answered by its own call id', async () => {
   const ran: string[] = [];
   const model = createFakeModel({
