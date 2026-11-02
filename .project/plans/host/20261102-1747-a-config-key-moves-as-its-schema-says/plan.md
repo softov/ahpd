@@ -1,7 +1,7 @@
 ---
 title: A config key moves as its schema says
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -108,12 +108,12 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 ## Resume state
 
 - **Done so far:** tasks 01 to 04, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a key this host owns, such as `isolation`, keeps its own rule in `ours`.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
