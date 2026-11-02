@@ -958,19 +958,20 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * terminal action, so it goes to every client of the terminal and is
          * held for replay, as the reference host records and broadcasts it,
          * and every client reads what it did in the `terminal/data` that
-         * follows. Input with no process to reach is refused, in the
-         * terminal's words, to the same clients.
+         * follows. It goes out whatever the process's state, as VS Code's host
+         * says a client's terminal action before its terminal manager reads
+         * it, and it reaches a process only while one runs, as that manager
+         * writes it.
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/terminal-channel.md#L110-L112
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L224-L233
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4215-L4253
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L520-L527
          */
-        case 'terminal/input': {
-          const taken = terminal.write(String(action.data ?? ''));
-          if (taken === true) dispatch(channel, action, origin);
-          else no(taken);
+        case 'terminal/input':
+          terminal.write(String(action.data ?? ''));
+          dispatch(channel, action, origin);
           break;
-        }
         case 'terminal/resized':
           terminal.resize(Number(action.cols ?? 80), Number(action.rows ?? 24));
           break;
