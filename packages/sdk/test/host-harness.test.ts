@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { sessionReducer } from '@microsoft/agent-host-protocol';
+import type { SessionState } from '@microsoft/agent-host-protocol';
 import {
   resetSdk, actions, claude, createHost, hello, machine, open, peer, sdk,
   serving, settle, running,
@@ -894,29 +896,30 @@ describe('turning a customization on and off', () => {
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
-  it('says nothing to a request to background a startup, since nothing here waits on one', async () => {
+  it('answers a request to background a startup to its sender, since nothing here waits on one', async () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review', description: 'Read the diff' }] };
     sdk.mcp = [{ name: 'desk', status: 'connected' }];
     const { client, peer: p, uri } = await running({ onEvent: (message) => said.push(message) });
     await settle(8);
 
-    const before = actions(p, uri).length;
+    const seq = actions(p, uri).at(-1)?.serverSeq;
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+      params: { channel: uri, clientSeq: 6, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
     });
     await settle(8);
 
     /*
-     * The Claude CLI's startup is not blocking unless a server says
-     * `alwaysLoad`, and this backend never reports one, so there is no seam on
-     * this session and the action changes nothing. A refusal would be worse
-     * than nothing: it would tell a client its request was wrong when the
-     * truth is that nothing was waiting on the server to begin with.
+     * The Claude CLI's startup holds a turn back only on a server that says
+     * `alwaysLoad`, and this backend reports none, so the server is not
+     * blocking and the protocol's reducer changes nothing for the request: its
+     * sender hears it back, alone, with nothing moved.
      */
     expect(said.filter((line) => line.includes('is not served yet'))).toEqual([]);
-    expect(actions(p, uri).length).toBe(before);
+    const answered = actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 6);
+    expect(answered.map((e) => [e.action.type, e.rejectionReason, e.serverSeq]))
+      .toEqual([['session/mcpServerBackgroundRequested', undefined, seq]]);
   });
 
   it('hands a background request to a backend that has the call, once, with the id', async () => {
@@ -948,11 +951,84 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
 
-    // The backend is the only thing that knows whether that server was
-    // blocking, so the host asks it and says nothing of its own. Once: the
-    // host is not the thing that decides, and asking twice would run whatever
-    // the backend does twice.
+    // A backend that has the call is asked first, and one that takes the
+    // request says what follows it, so the host says nothing of its own.
+    // Once: asking twice would run whatever the backend does twice.
     expect(asked).toEqual(['mcp:desk']);
+  });
+
+  it.each([
+    ['has no call for it', undefined, false],
+    ['declines it', async (): Promise<boolean> => false, false],
+    ['declines it, inside a plugin', async (): Promise<boolean> => false, true],
+  ])('says a background request on a blocking server a backend %s to every client, then the blocking it keeps', async (_, call, inPlugin) => {
+    // A server still starting and holding the session's turns back on it,
+    // listed on its own or as a plugin's, where the protocol's reducer finds
+    // it in the plugin's `children`.
+    const starting = {
+      type: 'mcpServer', id: 'mcp:desk', uri: 'desk', name: 'desk',
+      enablement: [{ kind: 'session', enabled: true }],
+      state: { kind: 'starting', blocking: true },
+    };
+    const server = inPlugin
+      ? { type: 'plugin', id: 'plugin:tools', uri: 'tools', name: 'tools', enablement: [{ kind: 'session', enabled: true }], children: [starting] }
+      : starting;
+    const backend = claude({ paths: ['/home/softov'] });
+    const host = createHost({
+      path: '/home/softov',
+      agents: [{
+        ...backend,
+        create: (start: Parameters<typeof backend.create>[0]) => {
+          const inner = backend.create(start);
+          return {
+            ...inner,
+            customizations: () => [server],
+            sessionState: () => ({ ...inner.sessionState(), customizations: [server] }),
+            ...(call === undefined ? {} : { backgroundMcpServerStartup: call }),
+          };
+        },
+      }],
+    });
+    const uri = 'ahp-session:/live';
+    type Opened = { snapshot: { state: SessionState; fromSeq: number } };
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0']));
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+    // Subscribed once the backend has said what it loaded, so both clients
+    // start from the session listing the server.
+    await settle(8);
+    const mine = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    const q = peer();
+    const other = host.accept(q);
+    await other.handle(hello(['0.9.0'], { clientId: 'other' }));
+    const theirs = await other.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: uri, clientSeq: 5, action: { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' } },
+    });
+    await settle(8);
+
+    // The request is said to every client of the session, the sender's copy
+    // answering the sender, and the state this host keeps follows it: the
+    // server is still blocking (the host "MAY restore `blocking: true` via
+    // `session/mcpServerStateChanged` to reject the request",
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+    expect(actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 5)
+      .map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/mcpServerBackgroundRequested', undefined]]);
+    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerBackgroundRequested')).toHaveLength(1);
+    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerStateChanged')
+      .map((e) => [e.action.id, e.action.state])).toEqual([['mcp:desk', { kind: 'starting', blocking: true }]]);
+    // So each client, reducing what it was told with the protocol's reducer,
+    // holds the server as this host does.
+    for (const [r, opened] of [[p, mine], [q, theirs]] as const) {
+      const held = actions(r, uri)
+        .filter((e) => e.serverSeq > opened.snapshot.fromSeq && e.rejectionReason === undefined)
+        .reduce((state, e) => sessionReducer(state, e.action as never), opened.snapshot.state);
+      const listed = held.customizations?.find((one) => one.id === server.id) as { children?: unknown[] } | undefined;
+      expect(inPlugin ? listed?.children?.[0] : listed).toHaveProperty('state', { kind: 'starting', blocking: true });
+    }
   });
 });
 

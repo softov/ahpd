@@ -334,12 +334,14 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * The dispatch being applied, handed to a backend that says it back when it
    * is ready.
    *
-   * `chat/turnStarted` and `chat/turnCancelled` under the turn they name, and
-   * `chat/pendingMessageSet` under the queued message's id, each in the chat
-   * the dispatch is about, go out carrying the client's origin, however long
-   * the backend takes; nothing else does.
+   * `chat/turnStarted` and `chat/turnCancelled` under the turn they name,
+   * `chat/pendingMessageSet` under the queued message's id, and
+   * `chat/toolCallComplete` under the tool call's, each in the chat the
+   * dispatch is about, go out carrying the client's origin, however long the
+   * backend takes; nothing else does. A dispatch the backend already said
+   * back owes nothing.
    */
-  owe: (type: 'chat/turnStarted' | 'chat/turnCancelled' | 'chat/pendingMessageSet', name: string) => void;
+  owe: (type: 'chat/turnStarted' | 'chat/turnCancelled' | 'chat/pendingMessageSet' | 'chat/toolCallComplete', name: string) => void;
   /**
    * The client's dispatch `action`, said on `channel`, says back: the one
    * being applied, when `action` is of its kind and about its turn, or one

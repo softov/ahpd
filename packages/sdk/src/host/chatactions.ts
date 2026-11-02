@@ -1,7 +1,7 @@
 import { idOf, Status } from '../sessions/catalog.js';
 import { localPath } from '../resources/fileuri.js';
 import { filesOf, needsWriting, snapshot } from './attachments.js';
-import { chatIdFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatIdFor, chatUriFor, isRootChannel, MARKS, ROOT, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
 import { HOSTS_OWN } from './common.js';
 import { autoApproved, requireTrust } from './trust.js';
 import type { Bag } from '../types/common.js';
@@ -25,6 +25,12 @@ import type { ConnectionContext, HostContext } from './context.js';
  * conversation can be. With several, which one is new is not the session's
  * to say, and each chat keeps its own bit.
  *
+ * An archived bit that moved moves the default chat's with it. The protocol
+ * makes archiving the default chat the same act as archiving the session, and
+ * the chat and the session each carry the bit, so a client of either channel
+ * holds it as the other does. A session that is not running names its default
+ * chat as its catalogue row does.
+ *
  * Answers whether anything moved. A bit handed the value it already had is not
  * a change, and a client told about one is a client woken for a message that
  * moved nothing.
@@ -45,6 +51,14 @@ export function sessionFlag(
   // each client keeping its own.
   ctx.dispatch(uri, action);
   ctx.summaryMoved(uri);
+  if (bit === Status.IsArchived) {
+    const id = idOf(uri);
+    const recorded = ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+    const lead = ctx.sessions.get(uri)?.defaultChat
+      ?? recorded.find((one) => one.default === true)?.uri
+      ?? chatUriFor(ctx.nameOf(id));
+    chatFlag(ctx, uri, lead, Status.IsArchived, on);
+  }
   if (bit === Status.IsRead) {
     const counted = countedChats(ctx, uri);
     if (on) for (const chat of counted) chatFlag(ctx, uri, chat, Status.IsRead, true);
@@ -235,16 +249,20 @@ export function chatAction(
      * Archiving the chat that is the session's row archives the session.
      *
      * A session is a row in a list and its first chat is what that row is, so
-     * the protocol makes the two the same act. It goes out as the session's
-     * own action on the session channel, and nothing is said on the chat
-     * channel: a chat reducer applying this there would set the chat's own bit
-     * as well, and the chat and its session would then disagree about whether
-     * the session is archived.
+     * the protocol makes the two the same act: "Archiving the session's default
+     * chat is equivalent to archiving the session"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts).
+     * The chat's archived bit is kept
+     * and said as any chat's is, the client's own action going out to every
+     * client of the chat, and the session's follows on the session channel as
+     * this host's action; a session archived by its own action moves the two
+     * bits alike, in `sessionFlag`.
      */
     if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
-      if (!sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on })) {
-        echoTo(connection.peer, channel, action, origin);
-      }
+      const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
+      sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
+      // A chat already archived or not as asked is answered to its sender.
+      if (!moved) echoTo(connection.peer, channel, action, origin);
       return;
     }
     // Said again, a bit that did not move is not a change: it would move the
@@ -1451,19 +1469,45 @@ export function chatAction(
     /*
      * A startup a client asked to stop waiting on.
      *
-     * Handed to the backend, which is the only thing that knows whether this
-     * server was blocking and how to stop holding a turn on it. The backend
-     * answers by emitting - the action and the state that follows - so there
-     * is nothing to report here on either answer.
+     * Handed to the backend, which is the only thing that knows how to stop
+     * holding a turn on a server. A backend that takes it answers by emitting:
+     * the action, and the state that follows.
      *
-     * No refusal, and no `no(...)`: a backend without the call, and a server
-     * that was not blocking, both leave the state alone. The protocol's own
-     * reducer is a no-op for them, and a refusal would tell the client its
-     * request was wrong when there was simply nothing to do.
+     * Where no backend takes it, the server keeps the state it has. On a
+     * server starting with `blocking: true` the protocol's reducer clears the
+     * flag, so the request goes out to every client of the session and the
+     * server's state follows it, which is how the protocol has a host decline
+     * one: the host "MAY restore `blocking: true` via
+     * `session/mcpServerStateChanged` to reject the request"
+     * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+     * On any other server the reducer changes nothing, and the request is
+     * answered to its sender. The server is found where the reducer's
+     * `updateMcpServerCustomization` finds it: at the top of the list, or in
+     * the `children` of an entry that is not a server, a plugin's.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts
      */
-    case 'session/mcpServerBackgroundRequested':
-      void session.backgroundMcpServerStartup?.(String(action.id ?? ''));
+    case 'session/mcpServerBackgroundRequested': {
+      const id = String(action.id ?? '');
+      const declined = (): void => {
+        const listed = session.customizations() as Bag[];
+        const found = listed.find((one) => one.id === id)
+          ?? listed.flatMap((one) => one.type === 'mcpServer' ? [] : (one.children as Bag[] | undefined) ?? []).find((one) => one.id === id);
+        const state = found?.type === 'mcpServer' ? found.state as Bag | undefined : undefined;
+        if (state?.kind !== 'starting' || state.blocking !== true) {
+          echoTo(connection.peer, channel, action, origin);
+          return;
+        }
+        dispatch(channel, action, origin);
+        dispatch(channel, { type: 'session/mcpServerStateChanged', id, state });
+      };
+      if (session.backgroundMcpServerStartup === undefined) declined();
+      else {
+        void session.backgroundMcpServerStartup(id).then((took) => {
+          if (!took) declined();
+        });
+      }
       break;
+    }
     case 'chat/draftChanged': {
       // A `Message`, not a string: `ChatState.draft` is the message
       // somebody is part-way through writing, model and all. Absent
@@ -1774,12 +1818,12 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * Nothing is echoed from here. The result goes back to the harness,
-     * the harness writes the tool result, and the session reports the
-     * completion to every client from that - the same path every other
-     * tool call takes. Relaying it here as well would draw the row
-     * finished twice, once from a client's word and once from what
-     * actually happened.
+     * The result goes back to the harness, the harness writes the tool
+     * result, and the session reports the completion to every client from
+     * that - the same path every other tool call takes, so the row is drawn
+     * finished once, from what actually happened. That completion is the
+     * answer to the client that gave the result: owed to it under the call,
+     * it goes out with that client's origin.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
@@ -1811,7 +1855,13 @@ export function chatAction(
         ok,
         text: ok ? text : (wrong || text || 'The tool failed'),
         content: content as ClientCallAnswer['content'],
-      })) no(`${toolCallId} is not a call ${clientId} is running here`);
+      })) {
+        no(`${toolCallId} is not a call ${clientId} is running here`);
+        break;
+      }
+      // Owed once the harness holds the result: a second result for the call
+      // is refused, and the completion still answers the result it took.
+      ctx.owe('chat/toolCallComplete', toolCallId);
       break;
     }
     /*

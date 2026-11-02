@@ -562,13 +562,6 @@ const HOST_REFUSED = [
  * so the difference is asserted rather than passed over: a case that starts
  * agreeing fails the test and has to come off this list.
  *
- * `272-chat-isarchivedchanged-archives-chat` names a peer chat and every chat
- * case here is driven on a session's default chat, where the protocol says
- * archiving is archiving the session - so what moves is the session's status
- * and the chat's own bit is left alone, which is a decision this host took
- * deliberately. The same action on a peer chat sets that chat's bit; the case
- * cannot be reached here because the driven session has no peer chat.
- *
  * A chat truncated whole starts over with no turn running, and this host
  * leaves `activeTurn` off such a chat where the two cases write `null`.
  */
@@ -586,14 +579,12 @@ const HOST_OWNS: Record<string, string[]> = {
   '066-session-truncated-clears-all-when-turnid-omitted': ['activeTurn'],
   '075-turnstarted-clears-isread': ['activeTurn'],
   '234-chat-truncated-clears-turns-next-cursor-when-clearing-all': ['activeTurn'],
-  // Driven on the default chat, where archiving is the session's; see above.
-  '272-chat-isarchivedchanged-archives-chat': ['status'],
 };
 
-/** The state the host serves for one channel, read by a connection of its own. */
-const stateOf = async (client: { handle(r: { method: string; params: unknown }): unknown }, channel: string): Promise<Record<string, unknown>> => {
-  const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: Record<string, unknown> } };
-  return opened.snapshot.state;
+/** The snapshot the host serves for one channel: its state, and the sequence it was taken at. */
+const stateOf = async (client: { handle(r: { method: string; params: unknown }): unknown }, channel: string): Promise<{ state: Record<string, unknown>; fromSeq: number }> => {
+  const opened = await client.handle({ method: 'subscribe', params: { channel } }) as { snapshot: { state: Record<string, unknown>; fromSeq: number } };
+  return opened.snapshot;
 };
 
 /** Whether two values are the same value: keys in any order, and `null` not read as absent. */
@@ -612,8 +603,27 @@ const sameValue = (a: unknown, b: unknown): boolean => {
 interface Driven {
   /** Whether the host refused one of the case's actions. */
   refused: boolean;
+  /**
+   * For each of the case's actions, how many envelopes carried its origin.
+   *
+   * A client holds what it dispatched until an envelope with its own origin
+   * answers it, an echo of any action type or a refusal, so each action is
+   * answered exactly once.
+   */
+  answers: number[];
   /** The keys the case moves whose starting value the host agreed with, which it then answered differently. */
   differs: string[];
+  /**
+   * The same keys, read from a client that subscribed before the case's
+   * actions and only watched: its snapshot with every action it was told of
+   * since, through the protocol's own reducer.
+   *
+   * Every subscriber reduces what it is told, and the case's expectation is
+   * what that reduction comes to, so a client that only watched holds what
+   * the case expects wherever the state does. An action the host applied but
+   * said to fewer than all of its subscribers shows here and not in the state.
+   */
+  watched: string[];
   after: Record<string, unknown>;
   expected: Record<string, unknown>;
 }
@@ -625,7 +635,8 @@ interface Driven {
  * the channel the case names, and the state is read back by a second
  * connection. A second one because the first has been watching every delta
  * since it opened, and what a delta-built view says is a different question
- * from what the state is.
+ * from what the state is. That question is put to a third client, which
+ * subscribes before the actions and sends nothing.
  *
  * What can be compared is a key the host and the case *start* agree on. A key
  * they already disagree on - a title this host took from its backend where
@@ -646,12 +657,21 @@ async function driven(one: HostCase, name: string): Promise<Driven> {
   const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { defaultChat: string } } };
   // Unread, which is where almost every case starts. A new session and its
   // chat start read here, and a session with one chat takes its chat with it.
-  await client.handle({ method: 'dispatchAction', params: { channel: uri, action: { type: 'session/isReadChanged', isRead: false } } });
+  await client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 1, action: { type: 'session/isReadChanged', isRead: false } } });
   await settle();
   const channel = one.reducer === 'root' ? 'ahp-root://' : one.reducer === 'session' ? uri : opened.snapshot.state.defaultChat;
   const before = await stateOf(client, channel);
-  for (const action of one.actions) {
-    await client.handle({ method: 'dispatchAction', params: { channel, action } });
+  const watched = peer();
+  const watcher = host.accept(watched);
+  await watcher.handle({
+    method: 'initialize',
+    params: { channel: 'ahp-root://', clientId: `cases-watch-${name}`, protocolVersions: ['0.9.0'] },
+  });
+  const watching = await stateOf(watcher, channel);
+  // Numbered as a client numbers what it sends, so each answer names its action.
+  const sent = one.actions.map((action, at) => ({ action, clientSeq: at + 2 }));
+  for (const { action, clientSeq } of sent) {
+    await client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
     await settle();
   }
   const reader = host.accept(peer());
@@ -662,12 +682,25 @@ async function driven(one: HostCase, name: string): Promise<Driven> {
   const after = await stateOf(reader, channel);
   const refused = asked.notes.some((note) => note.method === 'action'
     && (note.params as { rejectionReason?: string }).rejectionReason !== undefined);
+  const answers = sent.map(({ clientSeq }) => asked.notes.filter((note) => {
+    const origin = (note.params as { origin?: { clientId?: string; clientSeq?: number } }).origin;
+    return note.method === 'action' && origin?.clientId === `cases-${name}` && origin.clientSeq === clientSeq;
+  }).length);
   const named = Object.keys(one.expected);
-  const started = named.filter((key) => sameValue(one.initial[key], before[key]));
+  const started = named.filter((key) => sameValue(one.initial[key], before.state[key]));
   const differs = started.length === 0
-    ? named.filter((key) => !sameValue(one.initial[key], before[key]))
-    : started.filter((key) => !sameValue(after[key], one.expected[key]));
-  return { refused, differs, after, expected: one.expected };
+    ? named.filter((key) => !sameValue(one.initial[key], before.state[key]))
+    : started.filter((key) => !sameValue(after.state[key], one.expected[key]));
+  // A refused action changes nothing, and a client leaves it out.
+  const view = watched.notes
+    .filter((note) => note.method === 'action')
+    .map((note) => note.params as { channel: string; action: Record<string, unknown>; serverSeq: number; rejectionReason?: string })
+    .filter((envelope) => envelope.channel === channel && envelope.serverSeq > watching.fromSeq && envelope.rejectionReason === undefined)
+    .reduce((held, envelope) => REDUCERS[one.reducer]?.(held as never, envelope.action as never), watching.state as unknown) as Record<string, unknown>;
+  const seen = started.length === 0
+    ? differs
+    : started.filter((key) => !sameValue(view[key], one.expected[key]));
+  return { refused, answers, differs, watched: seen, after: after.state, expected: one.expected };
 }
 
 /** Whether every action a case names is one a client may send. */
@@ -683,6 +716,8 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
   for (const one of hostCases) {
     it(one.name, async () => {
       const outcome = await driven(one, one.name);
+      expect(outcome.answers, `${one.name}: each action answered once, echoed or refused`)
+        .toEqual(one.actions.map(() => 1));
       if (outcome.refused) {
         // Refused, and named for it. Which list it belongs in is the
         // protocol's answer to whether a client may send what it names: an
@@ -700,6 +735,8 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
       expect(NOT_REPLAYED, `${one.name}: ran, so it cannot be listed as refused`).not.toContain(one.name);
       expect(outcome.differs, `${one.name}: the fields the host answers differently`)
         .toEqual(HOST_OWNS[one.name] ?? []);
+      expect(outcome.watched, `${one.name}: what a client that only watched holds`)
+        .toEqual(HOST_OWNS[one.name] ?? []);
     });
   }
 
@@ -710,11 +747,11 @@ describe('the protocol’s root, session and chat cases, through ahpd', () => {
     // The rest of the refused cases are the ones a client may not send, and
     // each of those is checked against the protocol's own answer per case.
     expect(NOT_REPLAYED.length - HOST_REFUSED.length).toBe(146);
-    expect(Object.keys(HOST_OWNS)).toHaveLength(14);
-    // And 32 that ran and agreed, which need no entry in either list: they are
+    expect(Object.keys(HOST_OWNS)).toHaveLength(13);
+    // And 33 that ran and agreed, which need no entry in either list: they are
     // the coverage this suite is for, and a case joining or leaving them is
     // what moves this number.
-    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 32).toBe(hostCases.length);
+    expect(NOT_REPLAYED.length + Object.keys(HOST_OWNS).length + 33).toBe(hostCases.length);
   });
 });
 

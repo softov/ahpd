@@ -666,8 +666,8 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/outer', provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/outer' } });
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/outer' } });
-  const dispatch = (clientSeq: number, action: Bag): Promise<unknown> =>
-    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-chat:/outer', clientSeq, action } });
+  const dispatch = (clientSeq: number, action: Bag, channel = 'ahp-chat:/outer'): Promise<unknown> =>
+    client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
   const told = (type: string): Bag[] => peer.seen
     .filter(({ method, params }) => method === 'action' && params?.action?.type === type)
     .map(({ params }) => params);
@@ -694,6 +694,21 @@ it('gives a message queued on a nested session the origin of the client outside 
   await until(() => told('chat/pendingMessageSet').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
   expect(told('chat/pendingMessageSet')[0]?.origin).toEqual({ clientId: 'window', clientSeq: 5 });
+  await host.close();
+});
+
+/*
+ * A background request on a nested session is the host inside's to answer,
+ * whatever its backend makes of it, and that answer reaches the client outside
+ * under the clientSeq it sent.
+ */
+it('answers a background request on a nested session to the client outside that sent it', async () => {
+  const { host, dispatch, told } = await outside(innerHost(backend()));
+  await dispatch(9, { type: 'session/mcpServerBackgroundRequested', id: 'mcp:desk' }, 'ahp-session:/outer');
+  await until(() => told('session/mcpServerBackgroundRequested').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  expect(told('session/mcpServerBackgroundRequested').map((one) => [one.origin, one.rejectionReason]))
+    .toEqual([[{ clientId: 'window', clientSeq: 9 }, undefined]]);
   await host.close();
 });
 

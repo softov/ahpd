@@ -751,16 +751,17 @@ export function createHost(options: HostOptions): Host {
   /**
    * The echoes a backend still owes, by the chat, the action and what it names.
    *
-   * A turn begun or stopped, and a message queued, are said back by the
-   * backend, and a backend says it when it is ready: once a policy check or a
-   * machine has answered, once Claude has switched models, once pi, cofold or
-   * ACP has let the cancelled prompt go, once the host inside a machine has
-   * answered the proxy. The turn id, or the queued message's own id, is the
-   * one thing that action carries that names the client's dispatch, the way
-   * `senders` follows a turn by its id. A client names its own turns and
-   * messages, so two chats can each hold one of the same id, and the chat is
-   * part of the key. Let go of once said, once refused, and once the turn has
-   * ended.
+   * A turn begun or stopped, a message queued, and a client's result for a
+   * tool call it runs are said back by the backend, and a backend says it when
+   * it is ready: once a policy check or a machine has answered, once Claude
+   * has switched models, once pi, cofold or ACP has let the cancelled prompt
+   * go, once the host inside a machine has answered the proxy, once the
+   * harness has written the tool's result. The turn id, the queued message's
+   * own id, or the tool call's, is the one thing that action carries that
+   * names the client's dispatch, the way `senders` follows a turn by its id.
+   * A client names its own turns and messages, so two chats can each hold one
+   * of the same id, and the chat is part of the key. Let go of once said, once
+   * refused, and once the turn has ended.
    */
   const owed = new Map<string, Dispatched>();
   const owedKey = (chat: string, type: string, name: string): string => `${chat}\n${type}\n${name}`;
@@ -776,7 +777,8 @@ export function createHost(options: HostOptions): Host {
   };
   /**
    * Where the dispatch an action says back is owed: under the chat it is about,
-   * the action's kind, and the queued message it is or the turn it names.
+   * the action's kind, and the queued message it is, the tool call it
+   * completes, or the turn it names.
    *
    * A queued message is also what a client's turn of the same id became. A
    * command sent as a turn while another turn runs waits behind it as a queued
@@ -786,7 +788,9 @@ export function createHost(options: HostOptions): Host {
    */
   const owedUnder = (channel: string, action: Record<string, unknown>): string | undefined => {
     const queued = action.type === 'chat/pendingMessageSet';
-    const named = queued ? action.id : action.turnId;
+    const named = queued ? action.id
+      : action.type === 'chat/toolCallComplete' ? action.toolCallId
+        : action.turnId;
     if (typeof named !== 'string' || named === '') return undefined;
     const chat = chatAbout(channel);
     const own = owedKey(chat, String(action.type ?? ''), named);
@@ -817,11 +821,20 @@ export function createHost(options: HostOptions): Host {
     owed.delete(owedUnder(channel, action) ?? '');
     return answered.origin;
   };
-  /** The dispatch being applied, answered by `origin` on a road that says so itself. */
+  /**
+   * The dispatch being applied, answered by `origin` on a road that says so
+   * itself, and the answer owed to that dispatch let go of.
+   *
+   * Only an answer owed to `origin`'s own dispatch: a client that sends a
+   * call's result twice is refused the second, under the key the first is
+   * still owed its answer by.
+   */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;
     if (applying?.origin === origin) applying.answered = true;
-    owed.delete(owedUnder(channel, action) ?? '');
+    const key = owedUnder(channel, action) ?? '';
+    const held = owed.get(key)?.origin;
+    if (held?.clientId === origin.clientId && held.clientSeq === origin.clientSeq) owed.delete(key);
   };
   /**
    * One state action, to everyone watching that channel.
@@ -901,6 +914,9 @@ export function createHost(options: HostOptions): Host {
       const chat = chatAbout(channel);
       owed.delete(owedKey(chat, 'chat/turnStarted', turnId));
       owed.delete(owedKey(chat, 'chat/turnCancelled', turnId));
+      for (const [key, held] of owed) {
+        if (held.action.type === 'chat/toolCallComplete' && held.action.turnId === turnId && chatAbout(held.channel) === chat) owed.delete(key);
+      }
     }
     /*
      * A session's customizations are two halves, and one action carries both.
@@ -1219,7 +1235,7 @@ export function createHost(options: HostOptions): Host {
       broadcast(ROOT, RESTART_NEEDED, { channel: ROOT });
     },
     dispatch,
-    owe: (type: string, name: string) => { if (applying !== undefined) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
+    owe: (type: string, name: string) => { if (applying !== undefined && !applying.answered) owed.set(owedKey(chatAbout(applying.channel), type, name), applying); },
     answering,
     flushDeltas: deltas.flush,
   } as HostContext;

@@ -1523,6 +1523,71 @@ describe('tools a client contributes', () => {
     expect(((await watched(client, uri)).inputNeeded ?? []).some((one) => one.id === entry?.id)).toBe(false);
   });
 
+  it('answers a client\'s result with the completion the session reports, under the client\'s origin', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq: 9,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } },
+      },
+    });
+    await answering;
+    // The CLI writes the tool's result, which is what the session reports the
+    // call complete from.
+    await emit({
+      type: 'user',
+      uuid: 'u1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'opened /a.txt' }] },
+    });
+    await settle();
+
+    // The client holds its result until an envelope with its origin answers
+    // it, and the completion the session reports is that answer: said once,
+    // from what the harness did.
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 9);
+    expect(answered.map((e) => [e.action.type, e.action.toolCallId, e.rejectionReason]))
+      .toEqual([['chat/toolCallComplete', 'call-1', undefined]]);
+  });
+
+  it('answers the first of two results for one call with its completion, and refuses the second', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    const complete = (clientSeq: number, text: string) => client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        clientSeq,
+        action: { type: 'chat/toolCallComplete', turnId: 't1', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text }] } },
+      },
+    });
+    complete(9, 'opened /a.txt');
+    // The client sends its result again before the session says the call is
+    // complete. The harness took the first, so the second is refused.
+    complete(10, 'opened /a.txt again');
+    await answering;
+    await emit({
+      type: 'user',
+      uuid: 'u1',
+      parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'opened /a.txt' }] },
+    });
+    await settle();
+
+    const answers = (clientSeq: number) => actions(p, chatUri)
+      .filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === clientSeq)
+      .map((e) => [e.action.type, e.rejectionReason === undefined ? 'said' : 'refused']);
+    expect(answers(9)).toEqual([['chat/toolCallComplete', 'said']]);
+    expect(answers(10)).toEqual([['chat/toolCallComplete', 'refused']]);
+  });
+
   it('keeps an answer that arrives before the CLI runs the tool', async () => {
     const { client, chatUri } = await providing();
     await calling(client, chatUri);
