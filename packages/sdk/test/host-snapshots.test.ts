@@ -472,17 +472,25 @@ describe('the fields a client reads by name', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat://default/Y2xhdWRlOi9ub2JvZHk',
+        channel: 'ahp-chat:/later',
+        clientSeq: 9,
         action: { type: 'chat/draftChanged', draft: { text: 'x', origin: { kind: 'user' } } },
       },
     });
-    await settle();
-    // A chat URI is a client's to spell, so a draft kept for every one that
-    // arrived would be a map that only grows.
-    const refused = p.notes
-      .map((one) => (one.params as { rejectionReason?: string }).rejectionReason)
-      .filter((one): one is string => typeof one === 'string');
-    expect(refused.some((one) => one.includes('not a session this host knows'))).toBe(true);
+    await settle(8);
+    // Taken as the reference host takes an action on a chat it does not know,
+    // and said only to the clients that watch that chat, which this one does
+    // not.
+    // https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12490
+    expect(actions(p)).toEqual([]);
+    // And not kept: a chat URI is a client's to spell, so a draft kept for
+    // every one that arrived would be a map that only grows. The session it
+    // names, made later, opens its chat with no draft.
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
+    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/later' } }) as {
+      snapshot: { state: { draft?: unknown } };
+    };
+    expect(opened.snapshot.state.draft).toBeUndefined();
   });
 
   it('advertises automations only where there are any', async () => {
