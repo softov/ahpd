@@ -1,6 +1,6 @@
 ---
 title: A sign-in shows a code and waits
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -68,3 +68,12 @@ The host writes the connector only after the approval, refuses another account u
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built: the `SignIn` union with `DeviceSignIn`, and the adapter row's `flow`. The registration check takes the device shape and the account rule. The host's device start, poll and finish are in `x-ahpd/connectors/signin` and `x-ahpd/connectors/signin-finish`. The suites hold the pasted-code cases, seven device cases in `connectors-signin.test.ts`, and the two registration cases in `plugin-validate.test.ts`. `PLUGINS.md` has the device flow in the `signIn` bullet, the adapter row, the two method rows and the sign-in paragraphs.
+
+Departures:
+- The `SignIn` union makes `adapter.signIn` a `CodeSignIn | DeviceSignIn`, so `packages/agent-claude/test/agent-claude-login-adapter.test.ts` and `packages/server/test/openrouter-signin.test.ts` narrow it through a `signInOf` helper. Neither file is in Files, and neither test's subject changed.
+- A device finish's wait has its own timer at the code's expiry. An expiry does not cut off a put that is already writing the values. The steps name the expiry and one outcome per entry. This keeps a vendor poll that never returns from leaving the caller without an answer, and from answering `expired` beside a written row.
+- `packages/sdk/test/fixtures/wire.jsonl` is rewritten by the runs and could not be restored: `git checkout --` is denied in this mode. It is not committed, and the restore is `git checkout -- packages/sdk/test/fixtures/wire.jsonl` once the file can be restored.
+
+Gates: `pnpm -s build` pass, `pnpm exec tsc -p tsconfig.json --noEmit` pass, `pnpm -s boundary` pass. `packages/sdk/test/connectors-signin.test.ts` 22 pass, `packages/sdk/test/plugin-validate.test.ts` 30 pass.
