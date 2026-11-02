@@ -1,7 +1,7 @@
 ---
 title: The root counts the sessions with a turn running
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -75,7 +75,7 @@ root subscribe -> rootSeed -> activeCount
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The count is the sessions with a turn running](task-01-the-count-is-the-sessions-with-a-turn-running.md) | todo | - |
+| [01 - The count is the sessions with a turn running](task-01-the-count-is-the-sessions-with-a-turn-running.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -84,13 +84,13 @@ root subscribe -> rootSeed -> activeCount
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-the-count-is-the-sessions-with-a-turn-running.md](task-01-the-count-is-the-sessions-with-a-turn-running.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a chat's reducer clears `activeTurn` to `null` at a turn's end, so a turn runs while the field holds an object.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

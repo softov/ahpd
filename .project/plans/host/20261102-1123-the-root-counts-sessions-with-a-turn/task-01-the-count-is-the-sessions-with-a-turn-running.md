@@ -1,6 +1,6 @@
 ---
 title: The count is the sessions with a turn running
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -45,4 +45,14 @@ refs:
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `9a23b4a6`.
+
+- `activeCount` reads each running session's held chats and its workers' chats, and counts the sessions with an active turn.
+- `activeSessionsMoved` compares with the root's held state, so the first call at a session's creation says nothing.
+- The presence case reads the count after the turn's end and again after the disposal.
+- The base's count also says 1, then 0, across a creation and a disposal.
+- So the read at the turn's end is the one that tells the two counts apart.
+- In `session-sleep.test.ts`, four cases read a session kept awake by `awake()`, the agents running.
+- One case there drops its count, and keeps the session list it already reads.
+- The sleeping session's case reads a count of 0, since a session asleep runs no turn.
+- `session-wakeup-tool.test.ts` waits on a wake by `awake()`, and `plugin-live.test.ts` reads an unload by the session's `root/sessionRemoved`.
