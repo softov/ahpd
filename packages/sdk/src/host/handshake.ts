@@ -473,8 +473,8 @@ export function createHandshake(ctx: HostContext, conn: ConnectionContext): Hand
     /**
      * A client that dropped, coming back.
      *
-     * `serverSeq` is what makes this answerable: it advances with state
-     * and never with messages, so "everything after the last one I saw"
+     * `serverSeq` is what makes this answerable: every envelope carries a
+     * greater one than the last, so "everything after the last one I saw"
      * is a well-formed question. The subscriptions come from the client
      * because they were its own - this host forgot them when the
      * connection went.

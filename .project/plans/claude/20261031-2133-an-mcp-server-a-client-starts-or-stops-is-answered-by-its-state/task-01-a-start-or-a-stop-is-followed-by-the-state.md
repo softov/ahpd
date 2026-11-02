@@ -11,7 +11,9 @@ refs:
 
 ## Objective
 
-A start or a stop said with the client's origin gives the session's own entry the reducer's effect, so the refresh after the CLI call follows with the state the CLI reports; a CLI call that throws is answered by that state too.
+A start or a stop said with the client's origin gives the session's own entry the reducer's effect.
+The refresh after the CLI call then follows with the state the CLI reports.
+A CLI call that throws is answered by that state too.
 
 ## Files
 

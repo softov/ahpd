@@ -11,7 +11,8 @@ refs:
 
 ## Objective
 
-A cancel the store takes is answered to its sender with its own action and origin; the run's lifecycle change follows to everyone; a cancel of a run unknown or over stays a refusal.
+A cancel the store takes is answered to its sender with its own action and origin.
+The run's lifecycle change follows to everyone, and a cancel of a run unknown or over stays a refusal.
 
 ## Files
 

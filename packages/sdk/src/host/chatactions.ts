@@ -147,7 +147,7 @@ export function chatAction(
   no: (reason: string) => void,
 ): Promise<void> | undefined {
   const { connection } = conn;
-  const { refuse, echoTo } = ctx;
+  const { refuse } = ctx;
   const {
     admitted, beginOrRun, beginTurn, beside, byChat, charge, charged, chatAgent, chatConfig, connections,
     contributedDefaults, decided,
@@ -229,15 +229,18 @@ export function chatAction(
     if (bitOf === Status.IsArchived && sessions.get(flagSession)?.defaultChat === channel) {
       const moved = chatFlag(ctx, flagSession, channel, Status.IsArchived, on, action);
       sessionFlag(ctx, flagSession, Status.IsArchived, on, { type: 'session/isArchivedChanged', isArchived: on });
-      // A chat already archived or not as asked is answered to its sender.
-      if (!moved) echoTo(connection.peer, channel, action, origin);
+      // A chat already archived or not as asked is the client's action all
+      // the same, said to every client of the chat as any accepted action is.
+      if (!moved) dispatch(channel, action, origin);
       return;
     }
-    // Said again, a bit that did not move is not a change: it would move the
-    // catalogue and wake every client for a message that said nothing. Its
-    // sender is holding it all the same, so it is answered, to it alone.
+    /*
+     * Said again, a bit that did not move keeps the catalogue as it is. The
+     * action is still accepted, and goes to every client of the chat.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+     */
     if (!chatFlag(ctx, flagSession, channel, bitOf, on, action)) {
-      echoTo(connection.peer, channel, action, origin);
+      dispatch(channel, action, origin);
       return;
     }
     /*
@@ -437,10 +440,10 @@ export function chatAction(
       const next = typeof action.draft === 'object' && action.draft !== null
         ? action.draft as Bag
         : undefined;
-      // The draft this host holds already moves nothing, and is answered to
-      // its sender alone, as a flag that did not move is.
+      // The draft this host holds already moves nothing kept, and goes to
+      // every client of the chat, as a flag that did not move does.
       if (JSON.stringify(next) === JSON.stringify(drafts.get(channel))) {
-        echoTo(connection.peer, channel, action, origin);
+        dispatch(channel, action, origin);
         return;
       }
       if (next === undefined) drafts.delete(channel);
@@ -649,8 +652,9 @@ export function chatAction(
      * The SDK takes its directories when the CLI starts, so a change starts the
      * backend again, resumed: the same conversation in the folders it now has.
      * Not while a turn is running, since a CLI replaced mid-answer is an answer
-     * that stops halfway. An action that changes nothing is answered to its
-     * sender alone, and one that names no folder is refused.
+     * that stops halfway. An action that changes nothing starts nothing and
+     * goes to every client of the session, and one that names no folder is
+     * refused.
      */
     case 'session/workingDirectorySet':
     case 'session/workingDirectoryRemoved':
@@ -701,7 +705,7 @@ export function chatAction(
           : was.filter((_, index) => index !== at);
       }
       if (next.length === was.length && next.every((entry, index) => entry === was[index])) {
-        echoTo(connection.peer, channel, action, origin);
+        dispatch(channel, action, origin);
         break;
       }
       /*
@@ -1159,8 +1163,8 @@ export function chatAction(
       let next = had;
       /*
        * A folder the chat holds already, the first one included, or one it
-       * does not hold to take out, changes nothing, and the client that sent
-       * it is answered alone.
+       * does not hold to take out, changes nothing and starts nothing again,
+       * and goes to every client of the chat.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts
        */
       if (type === 'chat/workingDirectorySet') {
@@ -1169,7 +1173,7 @@ export function chatAction(
           break;
         }
         if (one === held.workingDirectory || had.includes(one)) {
-          echoTo(connection.peer, channel, action, origin);
+          dispatch(channel, action, origin);
           break;
         }
         next = [...had, one];
@@ -1180,7 +1184,7 @@ export function chatAction(
           break;
         }
         if (!had.includes(one)) {
-          echoTo(connection.peer, channel, action, origin);
+          dispatch(channel, action, origin);
           break;
         }
         next = had.filter((other) => other !== one);
@@ -1252,7 +1256,8 @@ export function chatAction(
          * A stop that names a turn other than the running one stops nothing:
          * the protocol's reducer ends a turn only when the id it names is the
          * active turn's, so a client that names another, one it saw end,
-         * holds a stop that changed nothing, and it alone is answered.
+         * sent a stop that changes nothing, and it goes to every client of
+         * the chat as the client's action.
          * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
          *
          * A stop that names no turn means the running one, the one turn a
@@ -1264,7 +1269,7 @@ export function chatAction(
         const named = String(action.turnId ?? '');
         const turn = String(activeHeld.id ?? '');
         if (named !== '' && named !== turn) {
-          echoTo(connection.peer, channel, action, origin);
+          dispatch(channel, action, origin);
           break;
         }
         stopped(activeHeld, turn, action.duration);
@@ -1549,8 +1554,8 @@ export function chatAction(
      * one: the host "MAY restore `blocking: true` via
      * `session/mcpServerStateChanged` to reject the request"
      * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
-     * On any other server the reducer changes nothing, and the request is
-     * answered to its sender. The server is found where the reducer's
+     * On any other server the reducer changes nothing, and the request goes
+     * out alone. The server is found where the reducer's
      * `updateMcpServerCustomization` finds it: at the top of the list, or in
      * the `children` of an entry that is not a server, a plugin's.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts
@@ -1562,12 +1567,10 @@ export function chatAction(
         const found = listed.find((one) => one.id === id)
           ?? listed.flatMap((one) => one.type === 'mcpServer' ? [] : (one.children as Bag[] | undefined) ?? []).find((one) => one.id === id);
         const state = found?.type === 'mcpServer' ? found.state as Bag | undefined : undefined;
-        if (state?.kind !== 'starting' || state.blocking !== true) {
-          echoTo(connection.peer, channel, action, origin);
-          return;
-        }
         dispatch(channel, action, origin);
-        dispatch(channel, { type: 'session/mcpServerStateChanged', id, state });
+        if (state?.kind === 'starting' && state.blocking === true) {
+          dispatch(channel, { type: 'session/mcpServerStateChanged', id, state });
+        }
       };
       if (session.backgroundMcpServerStartup === undefined) declined();
       else {
@@ -1585,13 +1588,14 @@ export function chatAction(
         ? action.draft as Bag
         : undefined;
       /*
-       * The draft the chat holds already moves nothing, and is answered to
-       * its sender alone, as a flag that did not move is. Read from the
-       * chat's held state, which is what every client was told it holds; a
-       * client that never synced a draft clears it once its message is sent.
+       * The draft the chat holds already moves nothing, and the backend is
+       * not told it again; the action goes to every client of the chat, as a
+       * flag that did not move does. Read from the chat's held state, which is
+       * what every client was told it holds; a client that never synced a
+       * draft clears it once its message is sent.
        */
       if (JSON.stringify(next) === JSON.stringify(chatHeld.draft)) {
-        echoTo(connection.peer, channel, action, origin);
+        dispatch(channel, action, origin);
         break;
       }
       session.setDraft(next);

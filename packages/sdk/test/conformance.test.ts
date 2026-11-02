@@ -959,6 +959,37 @@ it('answers a client\'s mode with the permission mode it moved, which every clie
 });
 
 /*
+ * The other name a client sends for the same axis, `autoApprove`, answered the
+ * same way, and a value neither name has refused in the backend's words.
+ *
+ * VS Code sends both keys whatever a host advertises, and `permissionFor` maps
+ * each value; this is that mapping as a client meets it through the host.
+ */
+it('answers a client\'s approval level with the permission mode it moved, and refuses a mode it has no name for', async () => {
+  const { client, peer: p, uri } = await running();
+  /** The permission mode a client subscribing now is served. */
+  const served = async (): Promise<unknown> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    snapshot: { state: { config: { values: Record<string, unknown> } } };
+  }).snapshot.state.config.values.permissionMode;
+
+  dispatch(client, uri, { type: 'session/configChanged', config: { autoApprove: 'assisted' } });
+  await settle();
+  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged').map((one) => one.config))
+    .toEqual([{ permissionMode: 'acceptEdits' }]);
+  expect(await served()).toBe('acceptEdits');
+
+  dispatch(client, uri, { type: 'session/configChanged', config: { autoApprove: 'autopilot' } });
+  await settle();
+  expect(await served()).toBe('bypassPermissions');
+
+  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'yolo' } });
+  await settle();
+  // A key this backend takes, so the refusal names the value, and nothing moved.
+  expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
+  expect(await served()).toBe('bypassPermissions');
+});
+
+/*
  * A session's row and its state, told the same list of chats.
  *
  * The protocol package reduces the root *actions* and ships no reducer for

@@ -840,6 +840,78 @@ it('refuses to the client outside an action the host inside refused, and changes
 }, 30_000);
 
 /*
+ * A steering message a client outside takes back is carried inside as the
+ * steering message the inner chat holds, and the host inside's answer reaches
+ * the client outside under the clientSeq it sent. The backend inside holds the
+ * message until it is taken back.
+ */
+it('takes back a steering message on a nested session through the host inside', async () => {
+  const { agent } = scriptedAgent(() => {});
+  let held: Bag | undefined;
+  const holding = {
+    ...agent,
+    create: (session: Start) => {
+      const made = agent.create(session) as unknown as Bag & { chatState: () => Bag };
+      return {
+        ...made,
+        chatState: () => ({ ...made.chatState(), ...(held === undefined ? {} : { steeringMessage: held }) }),
+        steer: (id: string, text: string) => {
+          held = { id, message: { text } };
+          session.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } });
+          return true;
+        },
+        unqueue: (id: string) => {
+          if (held?.id !== id) return;
+          held = undefined;
+          session.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+        },
+      };
+    },
+  } as unknown as Agent;
+  const { host, dispatch, told } = await outside(innerHost(holding));
+  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on' } });
+  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { text: 'shorter' } });
+  await until(() => told('chat/pendingMessageSet').length > 0);
+  await dispatch(8, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
+  await until(() => told('chat/pendingMessageRemoved').length > 0);
+  expect(told('chat/pendingMessageRemoved').map((one) => [one.action, one.origin, one.rejectionReason]))
+    .toEqual([[{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }, { clientId: 'window', clientSeq: 8 }, undefined]]);
+  expect(held).toBeUndefined();
+  await host.close();
+}, 30_000);
+
+/*
+ * A switch the host outside says itself once the session took it, said to its
+ * clients once. The session hands the switch to the host inside, whose echo
+ * moves the session's mirror and goes no further.
+ */
+it('says a customization switch on a nested session to the clients outside once', async () => {
+  const plugin = { type: 'plugin', id: 'plugin-a', name: 'a' };
+  const { agent } = scriptedAgent((session) => {
+    session.emit('session', { type: 'session/customizationsChanged', customizations: [plugin] });
+  }, { customizations: [plugin] });
+  const switching = {
+    ...agent,
+    create: (session: Start) => ({ ...(agent.create(session) as unknown as Bag), setCustomizationEnabled: async () => true }),
+  } as unknown as Agent;
+  const { host, dispatch, told } = await outside(innerHost(switching));
+  // The switch is the session's once the session inside has published the plugin.
+  await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go on' } });
+  await until(() => told('session/customizationsChanged').some((one) => JSON.stringify(one.action).includes('plugin-a'))
+    || told('session/creationFailed').length > 0);
+  await dispatch(9, { type: 'session/customizationToggled', id: 'plugin-a', enablement: [{ kind: 'session', enabled: false }] }, 'ahp-session:/outer');
+  await until(() => told('session/customizationToggled').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  // Long enough for the host inside to echo it back.
+  await new Promise((resolve) => { setTimeout(resolve, 200); });
+  expect(told('session/customizationToggled').map((one) => [one.origin, one.rejectionReason]))
+    .toEqual([[{ clientId: 'window', clientSeq: 9 }, undefined]]);
+  await host.close();
+}, 30_000);
+
+/*
  * A turn reaches the session in a machine once the host outside has set the
  * machine where its branch is, after the dispatch outside was applied, and the
  * host inside refusing it is still that client's refusal.

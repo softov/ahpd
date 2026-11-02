@@ -597,7 +597,7 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(await isRead(client, second)).toBe(false);
     expect(actions(p).map((e) => e.action.type)).toEqual(['session/isReadChanged']);
 
-    // Said again, nothing moved: the sender alone is answered.
+    // Said again, nothing moved: the action goes out, and no row with it.
     const said = p.notes.length;
     await send(client, uri, sessionRead(true));
     expect(p.notes.slice(said).map((one) => one.method)).toEqual(['action']);

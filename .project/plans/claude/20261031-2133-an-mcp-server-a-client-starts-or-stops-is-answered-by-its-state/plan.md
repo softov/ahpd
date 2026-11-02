@@ -20,7 +20,11 @@ refs:
 
 ## Goal
 
-A client's `session/mcpServerStartRequested` and `session/mcpServerStopRequested` on a Claude session are each answered once, by the request said with the client's origin, and followed by the state the CLI reports for the server, whether or not it moved; a stop leaves the server's enablement as it was, and a start of a server a stop switched off switches it back on before it reconnects.
+A client's `session/mcpServerStartRequested` and `session/mcpServerStopRequested` on a Claude session are each answered once.
+The answer is the request said with the client's origin.
+The state the CLI reports for the server follows it, whether or not the server moved.
+A stop leaves the server's enablement as it was.
+A start of a server a stop switched off switches it back on before it reconnects.
 
 ## Reconnaissance
 
@@ -28,7 +32,8 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- `rg "startMcpServer|stopMcpServer" packages/*/src` - the Claude backend is the one that serves both; every other backend answers false before saying anything, and the nested proxy hands the request to the host inside.
+- `rg "startMcpServer|stopMcpServer" packages/*/src` - the Claude backend is the one that serves both.
+  Every other backend answers false before saying anything, and the nested proxy hands the request to the host inside.
 - `rg "toggleMcpServer|reconnectMcpServer" packages/agent-claude/node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts` - the SDK's two calls, both "Throws on failure"; a stop is `toggleMcpServer(name, false)`, the CLI's own disabled flag.
 - `rg "mcpServerStartRequested" packages/sdk/test` - `host-harness.test.ts` drives the dedicated start and stop through the host and the fake SDK.
 
@@ -50,8 +55,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Proposed architecture
 
-- **Event flow** - a client's start or stop reaches the Claude session, which says the request with the client's origin and gives its own entry the request's effect; the CLI call follows, and the refresh says whatever the CLI then reports for the server.
-- **Layer responsibilities** - the Claude backend: the request's effect, the CLI calls and the state after them; the host keeps refusing a request the backend answers false, which is now one that named no server.
+- **Event flow** - a client's start or stop reaches the Claude session.
+  The session says the request with the client's origin and gives its own entry the request's effect.
+  The CLI call follows, and the refresh says whatever the CLI then reports for the server.
+- **Layer responsibilities** - the Claude backend: the request's effect, the CLI calls and the state after them.
+  The host refuses a request the backend answers false, which is one that named no server.
 - **Source-of-truth files** - [`code://packages/agent-claude/src/session/servers.ts`](../../../../packages/agent-claude/src/session/servers.ts), [`code://packages/agent-claude/src/session/customizations.ts`](../../../../packages/agent-claude/src/session/customizations.ts)
 
 ## Tasks

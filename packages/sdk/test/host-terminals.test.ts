@@ -728,9 +728,10 @@ describe('a shell on this machine', () => {
   /*
    * Every terminal action a client sends is answered, its echo or its refusal.
    * Input is side-effect only, so the protocol's reducer changes nothing on it,
-   * and a title set to the one it has changes nothing either: each is answered
-   * to the client that sent it, and to nobody else.
-   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md
+   * and a title set to the one it has changes nothing either. A title goes to
+   * every client of the terminal as the sender's own action; input is answered
+   * to the client that typed it, and to nobody else.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
    */
   const watched = async (uri: string) => {
     const opened_ = await opened();
@@ -748,7 +749,7 @@ describe('a shell on this machine', () => {
     return { ...opened_, other, send };
   };
 
-  it('answers what it is sent to the client that sent it, and to nobody else', async () => {
+  it('answers input to the client that typed it, and to nobody else', async () => {
     const uri = 'ahp-terminal:/answered';
     const { peer: p, other, send } = await watched(uri);
     await send(3, { type: 'terminal/input', data: 'echo answered-input\n' });
@@ -757,6 +758,9 @@ describe('a shell on this machine', () => {
     const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/input');
     expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
     expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
+    // Every envelope takes its own number, the echo too.
+    const seqs = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as { serverSeq: number }).serverSeq);
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 
   it('refuses what it is sent once the shell has gone', async () => {
@@ -774,16 +778,17 @@ describe('a shell on this machine', () => {
     expect(late?.rejectionReason).toBeDefined();
   });
 
-  it('answers a title it already has to its sender alone, and tells everyone a new one', async () => {
+  it('says a new title and a title it already has to every client of the terminal', async () => {
     const uri = 'ahp-terminal:/titled';
     const { peer: p, other, send } = await watched(uri);
     await send(6, { type: 'terminal/titleChanged', title: 'build' });
     await send(7, { type: 'terminal/titleChanged', title: 'build' });
     await settle();
 
-    const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/titleChanged');
-    expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[6, undefined], [7, undefined]]);
-    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/titleChanged')).toHaveLength(1);
+    for (const q of [p, other]) {
+      const said = actions(q, uri).filter((e) => e.action.type === 'terminal/titleChanged');
+      expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[6, undefined], [7, undefined]]);
+    }
   });
 
   it('refuses a claim that names nobody', async () => {

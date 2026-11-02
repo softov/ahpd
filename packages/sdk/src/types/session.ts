@@ -668,7 +668,16 @@ export interface Session {
    * are the ones true then rather than the ones true now.
    */
   queue(id: string, text: string, model?: Chosen, from?: MessageFrom, attachments?: MessageAttachment[], options?: TurnOptions): void;
-  /** Take one back, while it is still waiting. */
+  /**
+   * Take one back, while it is still waiting, and say it gone with
+   * `chat/pendingMessageRemoved`.
+   *
+   * A queued message, or a steering message the agent has not been handed or
+   * has handed back. One the agent holds stays with it and nothing is said:
+   * the host refuses the removal while a turn runs, as the protocol has a host
+   * reject a removal it can no longer honor after the handoff.
+   * https://github.com/microsoft/agent-host-protocol/blob/ff7d6a1c7b4f5e47925d3ce1c3bcf685266a6d49/docs/specification/chat-channel.md#steering-messages
+   */
   unqueue(id: string): void;
   /**
    * What somebody is part-way through typing.
@@ -835,7 +844,7 @@ export interface Session {
    * state the server has. A server starting with `blocking: true` keeps it, so
    * the request goes to every client and that state follows it, which is how
    * the protocol has a host decline one; on any other server the request moves
-   * nothing, and its sender alone hears it back.
+   * nothing, and goes to every client alone.
    */
   backgroundMcpServerStartup?(id: string): Promise<boolean>;
 

@@ -9,7 +9,8 @@ refs:
 
 ## Objective
 
-The protocol case driver numbers each dispatch as a client does and requires, for every action a case sends, exactly one envelope carrying its origin: an echo of any type, or a refusal.
+The protocol case driver numbers each dispatch as a client does.
+For every action a case sends, it requires exactly one envelope carrying its origin: an echo of any type, or a refusal.
 
 ## Files
 
@@ -22,5 +23,5 @@ The protocol case driver numbers each dispatch as a client does and requires, fo
 
 ## Validation
 
-- On `08b1d57a`, the cases that go unanswered are listed and each is one of this plan's gaps.
+- On `08b1d57a`, the driver lists the cases that go unanswered, and each is one of this plan's gaps.
 - After tasks 02 and 03, every case passes.

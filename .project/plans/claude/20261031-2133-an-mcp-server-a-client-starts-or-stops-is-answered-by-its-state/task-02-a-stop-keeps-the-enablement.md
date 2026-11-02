@@ -10,7 +10,9 @@ refs:
 
 ## Objective
 
-A server the session switched off to serve a client's stop keeps the enablement it had and reads `stopped`; a start of it lifts the CLI's disabled flag before it reconnects; a client's switch of it is the client's decision.
+A server the session switched off to serve a client's stop keeps the enablement it had and reads `stopped`.
+A start of it lifts the CLI's disabled flag before it reconnects.
+A client's switch of it is the client's decision.
 
 ## Files
 

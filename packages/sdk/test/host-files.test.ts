@@ -773,8 +773,8 @@ describe('more than one directory', () => {
    * Each action as the protocol's reducers apply it: a set adds a folder the
    * set lacks, a removal takes out one it holds, and a replacement swaps the
    * entry `directory` names for the folder `replacement` carries. An action
-   * that would change nothing is answered to the client that sent it, and to
-   * nobody else.
+   * that would change nothing starts nothing, and goes to every client of
+   * the channel as the sender's own.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/actions.ts
    */
@@ -793,7 +793,7 @@ describe('more than one directory', () => {
     (await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { workingDirectories: string[] } } })
       .snapshot.state.workingDirectories;
 
-  it('answers a folder set again, one removed that is not there, and a replacement of one that is not there, to the sender alone', async () => {
+  it('says a folder set again, one removed that is not there, and a replacement of one that is not there, to every client, starting nothing', async () => {
     const { host, client, peer: p, uri } = await watched();
     await client.handle({ method: 'subscribe', params: { channel: uri } });
     const other = peer();
@@ -806,14 +806,16 @@ describe('more than one directory', () => {
     await send(client, uri, 6, { type: 'session/workingDirectoryReplaced', directory: uriOf(ELSEWHERE), replacement: uriOf(EXTRA) });
     await settle(8);
 
-    const answered = actions(p, uri).filter((one) => String(one.action.type).startsWith('session/workingDirectory'));
-    expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
-      ['session/workingDirectorySet', 4, undefined],
-      ['session/workingDirectoryRemoved', 5, undefined],
-      ['session/workingDirectoryReplaced', 6, undefined],
-    ]);
-    // Nothing changed for anybody else, so nobody else is told.
-    expect(actions(other, uri).filter((one) => String(one.action.type).startsWith('session/workingDirectory'))).toEqual([]);
+    // Each is the sender's own action, and each goes to every client of the
+    // session as the sender's: none of them restarts anything.
+    for (const q of [p, other]) {
+      const answered = actions(q, uri).filter((one) => String(one.action.type).startsWith('session/workingDirectory'));
+      expect(answered.map((one) => [one.action.type, one.origin?.clientSeq, one.rejectionReason])).toEqual([
+        ['session/workingDirectorySet', 4, undefined],
+        ['session/workingDirectoryRemoved', 5, undefined],
+        ['session/workingDirectoryReplaced', 6, undefined],
+      ]);
+    }
     expect(sessionQueries().length).toBe(before);
     expect(await foldersOf(client, uri)).toEqual([uriOf(ONE), uriOf(TWO), uriOf(THREE)]);
   });
@@ -872,7 +874,7 @@ describe('more than one directory', () => {
     ]);
   });
 
-  it('answers a chat adding a folder it holds, or removing one it does not, to the sender alone', async () => {
+  it('says a chat adding a folder it holds, or removing one it does not, starting nothing', async () => {
     const { client, peer: p, uri } = await wide();
     const chat = 'ahp-chat:/narrow';
     await client.handle({

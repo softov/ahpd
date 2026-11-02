@@ -90,6 +90,10 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
   const movers = new Set<(session: string) => void>();
   /** Each chat with a turn open, and how many tool calls that turn has run. */
   const open = new Map<string, number>();
+  /** The turn each chat with a turn open is running. */
+  const running = new Map<string, string>();
+  /** The turn each chat ended last. */
+  const ended = new Map<string, string>();
   /** The messages waiting behind each chat's running turn, by the id each was queued under. */
   const waiting = new Map<string, Set<string>>();
   /** What each running tool call was called and with what, by chat and call. */
@@ -200,11 +204,25 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
        * actions this stream otherwise has nothing to do with.
        */
       if (MOVES.has(String(action.type))) offer(movers, session, String(action.type));
+      /*
+       * An end or a call's result about a turn the chat is not running says
+       * nothing. A client's stop of another turn is accepted and moves nothing,
+       * and a stop or a result the backend never took is said back after its
+       * turn ended: the session went quiet once, and does not again.
+       */
+      if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled' || action.type === 'chat/error'
+        || action.type === 'chat/toolCallComplete') {
+        const turnId = action.turnId === undefined ? undefined : String(action.turnId);
+        const now = running.get(channel);
+        if (turnId !== undefined && (ended.get(channel) === turnId || (now !== undefined && now !== turnId))) return;
+      }
       const queued = queuedIn(channel);
       const turn = open.get(channel);
       switch (action.type) {
         case 'chat/turnStarted': {
           open.set(channel, 0);
+          running.set(channel, String(action.turnId ?? ''));
+          ended.delete(channel);
           /*
            * A turn nothing will say anything about until it ends, which is what
            * a rule about a turn that has run too long is measured from. Said for
@@ -275,6 +293,8 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
         case 'chat/turnCancelled':
         case 'chat/error': {
           open.delete(channel);
+          running.delete(channel);
+          if (action.turnId !== undefined) ended.set(channel, String(action.turnId));
           const kind: SessionEventKind = action.type === 'chat/turnComplete' ? 'turnCompleted'
             : action.type === 'chat/turnCancelled' ? 'turnCancelled' : 'turnFailed';
           // A worker chat's turn ending is the worker finishing, said on the
@@ -336,6 +356,8 @@ export function createSessionEvents(ctx: HostContext): SessionEvents {
      */
     forget(chat) {
       open.delete(chat);
+      running.delete(chat);
+      ended.delete(chat);
       waiting.delete(chat);
       for (const key of [...calls.keys()]) {
         if (key.startsWith(`${chat}\u0000`)) calls.delete(key);
