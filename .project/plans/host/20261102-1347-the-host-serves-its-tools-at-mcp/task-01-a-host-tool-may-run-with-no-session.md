@@ -1,6 +1,6 @@
 ---
 title: A host tool may run with no session
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -74,3 +74,13 @@ The host answers `sessionlessTools(caller)`: those tools bound to a caller, and 
 - `pnpm typecheck` and `pnpm boundary` pass.
 
 ## Resume
+
+Built. `HostTool` is now `SessionHostTool | SessionlessHostTool`, the second carrying `sessionless: true` and the first `sessionless?: false`, with `grant?: Grant` on the shared half. Only the sessionless branch types `run`'s second argument as `SessionlessToolCall`, which drops `session` and `chat` from `ToolCall` and adds them back optional. `ToolCaller` sits beside it, and `host.ts` serves `Host.sessionlessTools(caller)`.
+
+In `tooling.ts`, `ownerOfCaller`, `callerMay` and `callerPerson` answer the caller's owner, grants and id. `sessionlessContext` mirrors `toolContext`: `turn` is absent, `sessions` is cut by `session:read`, `send` and `create` spend no tree budget, and `setWorkspace`, `scheduleWake`, `cancelWake`, `artifacts`, `setArtifacts`, `terminals` and `read` throw `This needs a session`. `sessionlessTools` keeps the `sessionless: true` tools that are not `optIn`, drops the ones whose `grant` the caller lacks, applies `forSession` with the default strategy as a session's list does, binds each with a frozen definition, and fires `tool_call` with `person` and neither `session` nor `chat`.
+
+The seven session tools carry `sessionless` and their `grant`. `create_session` refuses `currentSession` with no calling session, and `create_chat`, `rename_chat`, `send_message` and `get_session_context` refuse a call with no session to fall back on. `delegated` gives `origin: { kind: 'agent' }` with no delegation `_meta` when there is no session. `docs/sdk/TOOLS.md` has a `Tools that need no session` section.
+
+Departures. `SessionlessToolCall` keeps `session?: string` and `chat?: string` rather than typing them `undefined`, because the same seven tools are also called from a real session and read `at.session` there; a sessionless call simply has neither at runtime. `sessionlessContext` was added to the internal `Tooling` interface, and `chatsOf`, `modelsKnown` and `contextOf` were factored out of `toolContext` so both contexts share them. A `tool_call` with a caller that names nobody leaves `person` off the event. The prose lint on `docs/sdk/TOOLS.md` reports only the page's existing sentence-length findings, in the new paragraphs as in the rest of the page.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm -s boundary` and `pnpm -s schema` pass; `packages/sdk/test/sessiontools.test.ts` passes 38 of 38, the seven new cases included.

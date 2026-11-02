@@ -181,13 +181,22 @@ export interface MessageEvent {
   text: string;
 }
 
-/** A host tool that was called, and whether it answered. */
+/**
+ * A host tool that was called, and whether it answered.
+ *
+ * A call made in a session carries the session and chat it was made from; one
+ * made by a person with no session behind it carries `person` instead, and
+ * neither `session` nor `chat`. Exactly one of the two is named, so a listener
+ * that wants to know where the call came from asks what is there.
+ */
 export interface ToolCallEvent {
   type: 'tool_call';
-  /** The session the call was made from. */
-  session: string;
-  /** The chat the call was made from. */
-  chat: string;
+  /** The session the call was made from, where one was. */
+  session?: string;
+  /** The chat the call was made from, where one was. */
+  chat?: string;
+  /** The person behind a call made with no session, where one was. */
+  person?: string;
   /** The tool's `definition.name`. */
   tool: string;
   /** Whether it returned rather than threw. */

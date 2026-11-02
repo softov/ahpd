@@ -14,8 +14,13 @@ import { directory, hello, root, signIn } from './users-gate-helpers.js';
 import { claude, echo, machine, peer, resetSdk, sdk, sessionQueries, settle } from './support/host.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Summary } from '../src/types/catalog.js';
-import type { HostOptions, HostTool } from '../src/types/host.js';
-import type { Grant } from '../src/types/users.js';
+import { foldHostOptions, pluginHost } from '../src/plugins/plugins.js';
+import { sdkVersion } from '../src/version.js';
+import type { BoundTool } from '../src/types/agent.js';
+import type { HostEvent } from '../src/types/events.js';
+import type { HostOptions, HostTool, ToolCaller } from '../src/types/host.js';
+import type { Contribution, LoaderContext } from '../src/types/plugin.js';
+import type { Grant, Principal, Users } from '../src/types/users.js';
 
 vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/claude-sdk.js')).fake);
 
@@ -864,5 +869,152 @@ describe('a chat opened on a backend of its own', () => {
     // Nothing was announced and nothing was started: the session has the chats
     // it had.
     expect((await state(client)).chats).toHaveLength(before);
+  });
+});
+
+/*
+ * A tool a person calls with no session behind it.
+ *
+ * The other place a host tool runs: a window asks the host what a person may do
+ * before any chat exists, so a tool that says `sessionless` is bound to a caller
+ * instead of to a session. What these cases check is the list one caller is
+ * offered, and that a tool called from it acts as that caller - the session it
+ * makes is theirs, the turn it begins is theirs, and the event says so.
+ */
+describe('a tool a person calls with no session', () => {
+  type Tool = { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[]; isError?: boolean }> };
+
+  /** The read half of sessions and the write half, as the cases above hold them. */
+  const MEMBER: Grant[] = ['session:read', 'session:write'];
+  /** The read half alone, which is all a guest holds. */
+  const GUEST: Grant[] = ['session:read'];
+
+  /** A loader context for the probe plugin, which reads no files. */
+  const loader = (): LoaderContext => ({
+    path: root, paths: [root], version: sdkVersion(), hostName: 'test', configDir: root, log: () => {}, say: () => {},
+  });
+
+  /**
+   * A host with a written store, so ownership can be read back from it, and the
+   * two people these cases name. `contribution` adds a plugin's read of the
+   * host's events, which is how a case watches `tool_call`.
+   */
+  const hosting = (more: HostTool[] = [], contribution?: Contribution) => {
+    const users = directory({ member: MEMBER, guest: GUEST });
+    const store = fileSessions({ dir: join(root, 'sessions') });
+    const base: HostOptions = {
+      path: root, agents: [claude({ paths: [root] })], ...machine(),
+      users, sessions: store, tools: [...hostTools(), ...more], sleepAfterMinutes: 0,
+    };
+    return { host: createHost(contribution === undefined ? base : foldHostOptions(base, [contribution]).options), users, store };
+  };
+
+  /** One person, as the directory answers them. */
+  const principal = async (users: Users, token: string): Promise<Principal> => {
+    const person = await users.verify(token);
+    if (person === undefined) throw new Error(`the directory does not know ${token}`);
+    return person;
+  };
+
+  /** The tools bound for one caller, by name. */
+  const offered = (host: ReturnType<typeof createHost>, caller: ToolCaller): Record<string, BoundTool> =>
+    Object.fromEntries(host.sessionlessTools(caller).map((one) => [one.definition.name, one]));
+
+  /** One call, as a door that serves this list would make it. */
+  const run = async (
+    host: ReturnType<typeof createHost>, caller: ToolCaller, name: string, input: Record<string, unknown>,
+  ): Promise<string> => {
+    const tool = offered(host, caller)[name];
+    if (tool?.run === undefined) throw new Error(`no ${name} for this caller`);
+    return await tool.run(input);
+  };
+
+  it('offers a member the seven session tools, and a guest only the two it may read', async () => {
+    const { host, users } = hosting();
+    const seven = [
+      'list_sessions', 'create_session', 'create_chat', 'rename_chat', 'send_message', 'get_session_context', 'delete_session',
+    ];
+    expect(Object.keys(offered(host, { principal: await principal(users, 'member') }))).toEqual(seven);
+    expect(Object.keys(offered(host, { principal: await principal(users, 'guest') })))
+      .toEqual(['list_sessions', 'get_session_context']);
+    // This host's own connection is refused nothing it asks about, either.
+    expect(Object.keys(offered(host, { root: true }))).toEqual(seven);
+  });
+
+  it('leaves out a tool that says nothing, and an advanced one while the host forbids them', async () => {
+    const plain: HostTool = {
+      definition: { name: 'plain_tool', title: 'Plain', description: 'Not offered to a person.', inputSchema: { type: 'object', properties: {} } },
+      run: () => 'plain',
+    };
+    const advanced: HostTool = {
+      definition: { name: 'advanced_tool', title: 'Advanced', description: 'Advanced, and sessionless.', inputSchema: { type: 'object', properties: {} } },
+      sessionless: true,
+      advancedPermission: true,
+      run: () => 'advanced',
+    };
+    const { host, users } = hosting([plain, advanced]);
+    const names = Object.keys(offered(host, { principal: await principal(users, 'member') }));
+    expect(names).not.toContain('plain_tool');
+    expect(names).not.toContain('advanced_tool');
+    expect(names).toHaveLength(7);
+  });
+
+  it('makes a session the caller owns, with no parent, when it is independent', async () => {
+    const { host, users, store } = hosting();
+    const said = await run(host, { principal: await principal(users, 'member') }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Made by a person',
+      workspace: uriOf(root), worktree: false,
+    });
+    const id = /^New session created \(agent-host-session:\/\/claude\/([^)]+)\)\.$/.exec(said)?.[1];
+    expect(id).toBeDefined();
+    expect(store.owner(id as string)).toBe('user:member');
+    expect(store.parent?.(id as string)).toBeUndefined();
+  });
+
+  it('refuses a chat in the calling session when the call has none', async () => {
+    const { host, users } = hosting();
+    await expect(run(host, { principal: await principal(users, 'member') }, 'create_session', {
+      relationship: 'currentSession', prompt: 'say hi', title: 'Nowhere',
+    })).rejects.toThrow('currentSession needs a calling session; use independent');
+  });
+
+  it('refuses a chat in a session the call did not name', async () => {
+    const { host, users } = hosting();
+    await expect(run(host, { principal: await principal(users, 'member') }, 'create_chat', { prompt: 'say hi' }))
+      .rejects.toThrow('Invalid create_chat input: session is required when there is no calling session.');
+  });
+
+  it('begins a turn as the caller for a message a person sends', async () => {
+    const { host, users } = hosting();
+    const member = await principal(users, 'member');
+    // One session, opened by the member the ordinary way, so the turn the
+    // message begins carries a person this host met when they signed in.
+    const client = host.accept(peer());
+    await hello(client, 'member');
+    await signIn(client, 'member');
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/inbox', provider: 'claude' } });
+    await settle(8);
+    await run(host, { principal: member }, 'send_message', { session: 'ahp-session:/inbox', message: 'take a look' });
+    await settle(8);
+    // The session's own tools run in the turn that message began, so a write
+    // through them is allowed only where the turn's sender is the member.
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
+    const rename = servers?.ahp?.tools.find((one) => one.name === 'rename_chat');
+    if (rename === undefined) throw new Error('no rename_chat');
+    const answered = await rename.handler({ title: 'Woken by a person' });
+    expect(answered.isError).toBeFalsy();
+  });
+
+  it('says who made the call, and that no session did', async () => {
+    const seen: HostEvent[] = [];
+    const { host: plugin, contribution } = pluginHost('probe', loader());
+    plugin.on('tool_call', (event) => { seen.push(event); });
+    const { host, users } = hosting([], contribution);
+    await run(host, { principal: await principal(users, 'member') }, 'list_sessions', {});
+    await settle(8);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: 'tool_call', person: 'member', tool: 'list_sessions', ok: true });
+    expect(seen[0]).not.toHaveProperty('session');
+    expect(seen[0]).not.toHaveProperty('chat');
   });
 });
