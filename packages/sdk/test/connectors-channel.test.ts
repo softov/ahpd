@@ -812,6 +812,19 @@ it('answers a put with the check its adapter ran', async () => {
   await close();
 });
 
+it('is unauthorized while its last check was denied, and ready again once one passes', async () => {
+  const { host, users, probe, close } = await served();
+  probe.answer = async () => ({ result: 'denied', message: 'HTTP 401' });
+  const cy = await as(host, users, 'cy');
+
+  expect(await cy.call('x-ahpd/connectors/put', {
+    id: 'ci', adapter: 'webhook', owner: 'user:cy', config: { target: 'a' },
+  })).toMatchObject({ result: { state: 'unauthorized', health: { check: { result: 'denied' } } } });
+  probe.answer = async () => ({ result: 'unreachable' });
+  expect(await cy.call('x-ahpd/connectors/check', { id: 'ci' })).toMatchObject({ result: { state: 'ready', health: { check: { result: 'unreachable' } } } });
+  await close();
+});
+
 it('keeps a check that throws as failed, with the message the adapter gave', async () => {
   const { host, users, probe, close } = await served();
   probe.answer = async () => { throw new Error('the service said no'); };
@@ -965,7 +978,29 @@ it('writes the record\'s reference when a secret field had none', async () => {
   await close();
 });
 
-it('refuses a secret from another plugin, a person\'s connector and a closed connector', async () => {
+it('lets the adapter\'s own plugin write with no grant, for the host\'s connector and a person\'s', async () => {
+  const { host, users, connectors, vault, close } = await served();
+  const cy = await as(host, users, 'cy');
+  const ha = await as(host, users, 'ha');
+  await ha.call('x-ahpd/connectors/put', { id: 'shared', adapter: 'webhook', owner: 'host', config: { target: 'a', secret: 'old-value' } });
+  await cy.call('x-ahpd/connectors/put', { id: 'mine', adapter: 'webhook', owner: 'user:cy', config: { target: 'a', secret: 'old-value' } });
+  const bare: Principal = { id: 'plugin:webhook', plugin: 'webhook', roles: [], can: () => false };
+  const method = connectors.methods['x-ahpd/connectors/secret']!;
+
+  for (const id of ['shared', 'mine']) {
+    expect(await method.authorize!({ id }, bare)).toBe(true);
+    await method.handle({ id, values: { secret: 'new-value' } }, bare, 'webhook');
+  }
+  expect(await vault.get('host:connector/shared/secret')).toBe('new-value');
+  expect(await vault.get('user:cy/connector/mine/secret')).toBe('new-value');
+  expect(await connectors.methods['x-ahpd/connectors/note']!.authorize!({ id: 'mine' }, bare)).toBe(true);
+  expect(await connectors.methods['x-ahpd/connectors/check']!.authorize!({ id: 'mine' }, bare)).toBe(true);
+  // Another plugin with no grant is not let in.
+  expect(await method.authorize!({ id: 'shared' }, { ...bare, id: 'plugin:other', plugin: 'other' })).toBe(false);
+  await close();
+});
+
+it('refuses a secret from another plugin and a closed connector', async () => {
   const { host, users, connectors, adapters, collection, close } = await served();
   const cy = await as(host, users, 'cy');
   const ha = await as(host, users, 'ha');
@@ -979,7 +1014,6 @@ it('refuses a secret from another plugin, a person\'s connector and a closed con
     await connectors.methods['x-ahpd/connectors/secret']!.handle({ id, values: { secret: 'x-value' } }, reader, reader.plugin ?? id);
 
   await expect(secret('shared', other)).rejects.toThrow("shared's secrets are written by the plugin of webhook");
-  await expect(secret('mine', plugin)).rejects.toThrow("user:cy is not plugin:webhook's to secret");
   await expect(connectors.methods['x-ahpd/connectors/secret']!
     .handle({ id: 'never', values: { secret: 'x-value' } }, plugin, 'webhook'))
     .rejects.toThrow('holds no never');

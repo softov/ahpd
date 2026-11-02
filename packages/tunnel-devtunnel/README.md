@@ -49,13 +49,13 @@ No option holds a credential. A connector keeps its tokens in the vault, and the
 
 ## Signing in with a connector
 
-A `devtunnel` connector is one GitHub account, signed in with a code instead of the CLI. In a client, make a connector of the `devtunnel` adapter and press **Sign in with GitHub**. The host shows a code and a URL, and you approve on `github.com` from any device. The connector's row is `ready` once the host holds the token. Each GitHub account gets its own connector, so one host may hold several.
+A `devtunnel` connector is one GitHub account, signed in with a code instead of the CLI. In a client, make a connector of the `devtunnel` adapter and press **Sign in with GitHub**. The host shows a code and a URL, and you approve on `github.com` from any device. The connector's row is `ready` once the host holds the token, and `unauthorized` while the service refuses it, until you sign in again. Each GitHub account gets its own connector, so one host may hold several.
 
 A second sign-in on an existing connector from the same account keeps it. From another account it is refused, because a connector is one account. Set `allowAccountChange` to `true` to let a sign-in replace the account instead.
 
 The token lasts eight hours. The plugin refreshes it when the connector opens and every seven hours after. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered.
 
-The plugin's own connection needs `connector:put` and `connector:host` for that. `connector:put` writes a refreshed secret and asks for the check, and `connector:host` covers a connector that is the host's own. A connector owned by a person or a team needs that owner's grants as well.
+The plugin needs no grant for that: the host lets the plugin that registered an adapter write the secrets of that adapter's connectors and ask for their check, whoever owns them.
 
 The tunnels themselves still come from the `devtunnel` CLI's login, which hosts the tunnel this version stands up. The connector's token is kept for the tunnel kind that signs in with it.
 

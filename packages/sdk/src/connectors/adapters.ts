@@ -63,11 +63,16 @@ const rowOf = (adapter: ServedAdapter, pluginIcons: Icon[] | undefined): Record<
     schema: adapter.schema,
     capabilities: adapter.capabilities,
     plugin: adapter.by,
-    // What a client needs to draw the sign-in button, and which flow it is.
-    // The two halves of the flow stay here, so a row never carries a function
-    // or a key.
+    // What a client needs to draw the sign-in button, which flow it is, and
+    // the field a device sign-in writes the account to. The two halves of the
+    // flow stay here, so a row never carries a function or a key.
     ...(adapter.signIn === undefined ? {} : {
-      signIn: { title: adapter.signIn.title, field: adapter.signIn.field, flow: adapter.signIn.flow ?? 'code' },
+      signIn: {
+        title: adapter.signIn.title,
+        field: adapter.signIn.field,
+        flow: adapter.signIn.flow ?? 'code',
+        ...(adapter.signIn.flow === 'device' && adapter.signIn.account !== undefined ? { account: adapter.signIn.account } : {}),
+      },
     }),
     // An icon is decoration, so an adapter with none carries no key rather than
     // an empty list a client would have to test.

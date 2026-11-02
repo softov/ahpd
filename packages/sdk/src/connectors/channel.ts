@@ -2,9 +2,10 @@
  * `x-ahpd-connectors`: the connectors made from the adapters a host serves.
  *
  * One row for each stored connector, keyed by the connector's id, holding the
- * record as it is kept and a `state`: `ready`, `invalid` when its config no
- * longer fits the adapter's schema or its adapter refused to open it, or
- * `unavailable` when no plugin registers its adapter any more. The adapters
+ * record as it is kept and a `state`: `ready`, `unauthorized` when it is open
+ * and its last check was denied, `invalid` when its config no longer fits the
+ * adapter's schema or its adapter refused to open it, or `unavailable` when no
+ * plugin registers its adapter any more. The adapters
  * themselves are listed on `x-ahpd-adapters`.
  *
  * A row also carries a `health`, when the host knows one: the last check the
@@ -30,7 +31,8 @@
  * of the vault and takes the record out. Both answer the row a client now
  * holds. `x-ahpd/connectors/check` takes `{ id }`, runs the adapter's `check`
  * again and answers the row, so a person who fixed the service side sees the
- * connector work without saving it again.
+ * connector work without saving it again. The plugin that registered the
+ * connector's adapter may ask for it with no grant.
  *
  * An adapter may also declare a `signIn`, and then two more commands are
  * served. `x-ahpd/connectors/signin` takes what a put takes, checks it the same
@@ -51,13 +53,13 @@
  * `x-ahpd/connectors/note` takes `{ id, ok, status?, error? }`, one call an open
  * connector made, and keeps it in the connector's health as a host part's
  * outcome is kept. Only the plugin that registered the connector's adapter
- * notes, since it makes the connector's calls outside `run`, and it needs what
- * a check needs besides. It answers the row.
+ * notes, since it makes the connector's calls outside `run`. It needs no grant
+ * and no owner's rule for a connector of its own adapter. It answers the row.
  *
  * `x-ahpd/connectors/secret` takes `{ id, values }`, the secret fields a plugin
  * refreshed for one open connector, and writes each value to the vault under
  * `connector/<id>/<field>` in the owner's scope. Only the plugin that registered
- * the connector's adapter sends it, as only that plugin notes. A field whose
+ * the connector's adapter sends it, as only that plugin notes, with no grant. A field whose
  * record does not point at its vault name yet is written to point at it, and the
  * connector is not reopened, because the plugin holds the new value already. It
  * answers the row, and no answer, error or log carries a value.
@@ -135,7 +137,7 @@ const HEALTH_MESSAGE_LIMIT = 500;
 const NOTE_REFRESH_MS = 1000;
 
 /** The three states a connector row can be in. */
-export type ConnectorState = 'ready' | 'invalid' | 'unavailable';
+export type ConnectorState = 'ready' | 'unauthorized' | 'invalid' | 'unavailable';
 
 /** How a connectors channel reads its store, and who it writes a secret for. */
 export interface ConnectorsChannelOptions {
@@ -349,8 +351,20 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const adapter = options.adapters()[String(record.adapter)];
     if (adapter === undefined) return 'unavailable';
     if (!fits(configOf(record), adapter.schema)) return 'invalid';
-    return open.has(record.id) ? 'ready' : 'invalid';
+    if (!open.has(record.id)) return 'invalid';
+    // An open connector whose provider refused its credential is not one that answers.
+    return healths.get(record.id)?.check?.result === 'denied' ? 'unauthorized' : 'ready';
   };
+
+  /**
+   * Whether the reader is the plugin that registered the record's adapter.
+   *
+   * That plugin holds the connector's credential from the open, so it notes its
+   * calls, asks for its check and writes its refreshed secrets with no grant
+   * and whoever owns it.
+   */
+  const ownPlugin = (record: StoredRecord, reader: Principal | undefined): boolean =>
+    reader?.plugin !== undefined && options.adapters()[String(record.adapter)]?.by === reader.plugin;
 
   /**
    * One stored connector as a client is shown it: its record, its state, and
@@ -1242,7 +1256,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   /*
    * The check command takes what a put takes: who may change a connector may
    * test it. The owner's rule is asked here, as a put asks it, because a grant
-   * that reads the channel says nothing about another person's connector.
+   * that reads the channel says nothing about another person's connector. The
+   * plugin of the connector's adapter asks with no grant, as `ownPlugin` says.
    */
   const check: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -1251,14 +1266,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
-      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
     },
     handle: async (params, reader) => {
       const id = idParam(CHECK, params);
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('connector', 'check', owner, reader, 'put');
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'check', owner, reader, 'put');
       const entry = open.get(id);
       if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
       const adapter = options.adapters()[entry.connector.adapter];
@@ -1276,8 +1291,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
    *
    * Only the plugin whose adapter the connector is notes: it is the one that
    * makes the connector's calls outside `run`, as the model proxy makes a
-   * provider's. A reader of nothing is the daemon itself. It takes what a check
-   * takes besides, because who may test a connector may say how its calls went.
+   * provider's. A reader of nothing is the daemon itself. That plugin needs no
+   * grant, as for a check and a secret.
    */
   const noteCall: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -1286,7 +1301,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
-      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
     },
     handle: async (params, reader) => {
       const id = idParam(NOTE, params);
@@ -1301,7 +1316,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('connector', 'note', owner, reader, 'put');
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'note', owner, reader, 'put');
       const entry = open.get(id);
       if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
       const by = options.adapters()[entry.connector.adapter]?.by;
@@ -1334,7 +1349,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
-      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
     },
     handle: async (params, reader) => {
       const id = idParam(SECRET, params);
@@ -1351,7 +1366,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('connector', 'secret', owner, reader, 'put');
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'secret', owner, reader, 'put');
       const entry = open.get(id);
       if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
       const adapter = options.adapters()[entry.connector.adapter];

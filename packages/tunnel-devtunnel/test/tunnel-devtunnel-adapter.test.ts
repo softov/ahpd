@@ -175,6 +175,17 @@ describe('the check', () => {
     expect(await adapter.check!(connectorOf('ana', { token: 'gho_made-up' })))
       .toEqual({ result: 'denied', message: 'HTTP 401' });
   });
+
+  it('uses the token an open connector holds, which a refresh made newer than the record\'s', async () => {
+    const probe = fake();
+    probe.on(TUNNELS_URL, { body: { tunnels: [] } });
+    const tunnels = new OpenTunnels();
+    tunnels.hold('ana', { owner: 'host', token: 'gho_refreshed' });
+    const adapter = devtunnelAdapter(tunnels, { fetch: probe.fetch });
+
+    await adapter.check!(connectorOf('ana', { token: 'gho_stored' }));
+    expect(headersOf(probe.calls[0]!.init).get('authorization')).toBe('github gho_refreshed');
+  });
 });
 
 describe('an open connector', () => {

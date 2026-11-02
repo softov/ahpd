@@ -313,10 +313,12 @@ export function devtunnelAdapter(tunnels: OpenTunnels, options: DevtunnelAdapter
      * A token with no tunnel listing behind it is a token the service does not
      * take, so one list of the account's tunnels is the whole check. The
      * service reads a GitHub token under its own `github` scheme, not `Bearer`.
+     * An open connector is checked with the token it holds, which a refresh
+     * may have made newer than the one the vault answered at the open.
      */
     check: async (connector): Promise<CheckResult> => probe(
       TUNNELS_URL,
-      { accept: 'application/json', authorization: `github ${tokenOf(connector)}` },
+      { accept: 'application/json', authorization: `github ${tunnels.held(connector.id)?.token ?? tokenOf(connector)}` },
       fetcher,
     ),
     signIn: {

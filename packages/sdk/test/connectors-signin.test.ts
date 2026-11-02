@@ -363,7 +363,7 @@ it('sends an adapter its signIn as its title and field, and never its halves', a
 
   const rows = await cy.rows(ADAPTERS);
   expect(rows['vendor']?.['signIn']).toEqual({ title: 'Sign in with Vendor', field: 'secret', flow: 'code' });
-  expect(rows['device']?.['signIn']).toEqual({ title: 'Sign in with Device', field: 'token', flow: 'device' });
+  expect(rows['device']?.['signIn']).toEqual({ title: 'Sign in with Device', field: 'token', flow: 'device', account: 'account' });
   expect(rows['plain']).not.toHaveProperty('signIn');
   // A row carries no function.
   expect(JSON.stringify(rows)).not.toContain('vendor.test');

@@ -1478,7 +1478,8 @@ nothing and sends nothing. A refused command marks nothing.
 A read-only channel. One row for each adapter the loaded plugins register, keyed
 by the adapter's name, holding `name`, `title`, `description`, `schema`,
 `capabilities` and the `plugin` that registered it, and a `signIn` holding its
-`title`, its `field` and its `flow` when the adapter declares one. Nothing on it
+`title`, its `field` and its `flow` when the adapter declares one, and the
+`account` field of a device sign-in that names one. Nothing on it
 is an instance of anything: the connectors made from an adapter are on
 `x-ahpd-connectors`.
 A row shows as soon as the plugin registers the adapter, before any connector of
@@ -1492,7 +1493,8 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 
 | `state` | What it says |
 | --- | --- |
-| `ready` | The adapter was called and is answering |
+| `ready` | The adapter opened it, and its last check was not denied |
+| `unauthorized` | The adapter opened it, and its last check was denied: the service refused its credential. A check that passes, or a sign-in, makes it `ready` again |
 | `invalid` | Its config no longer fits its adapter's schema, or the adapter refused to open it |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
@@ -1506,9 +1508,9 @@ Six commands serve a connector:
 | --- | --- | --- |
 | `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/connectors/check` | `connector:put`, and the owner's | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
-| `x-ahpd/connectors/note` | `connector:put`, and the owner's | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
-| `x-ahpd/connectors/secret` | `connector:put`, and the owner's | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
+| `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
+| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
+| `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
 | `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
 | `x-ahpd/connectors/models` | `connector:list` for a connector the caller reads, or `connector:all` | Answers `{ models, at }` for the open provider connector `{ id }`: each model as the provider lists it, with `model`, the name a caller sends to the proxy, and `callable`, whether this caller may call it now. `at` is when the list was last read. It refuses a connector whose adapter serves no models |
