@@ -10,14 +10,14 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 beforeEach(resetSdk);
 
 /*
- * The other spelling of a chat URI.
+ * A session's default chat, by the one URI it has.
  *
- * This host mints `ahp-chat:/<id>` because that is the form the specification
- * documents, and it says in as many words that the owning session is *not*
- * encoded in a chat URI. VS Code derives `ahp-chat://default/<base64url>` from
- * the session instead of reading `chats`, so against a conformant host it
- * subscribes to a channel that does not exist and draws the pane from that one.
- * Both are answered; only one is published.
+ * `ahp-chat://default/<base64url(session)>`, the shape the reference host
+ * builds and an older VS Code window computes from the session. It is the only
+ * name the chat answers to: `ahp-chat:/<id>` is a chat of its own URI, never
+ * the default chat of session `<id>`, as the reference host keys a chat by the
+ * URI a client sends.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L11472-L11490
  */
 describe('a chat asked for by the name a client computed', () => {
   const derived = (session: string) =>
@@ -65,6 +65,15 @@ describe('a chat asked for by the name a client computed', () => {
     const { client } = await running();
     // Not base64, and not a chat id anybody can compute.
     await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat://peer/not-base64!' } }))
+      .rejects.toMatchObject({ code: -32001 });
+  });
+
+  it('answers ahp-chat:/<id> as no chat of session <id>', async () => {
+    const { client, uri, chatUri } = await running();
+    // `ahp-session:/live`, whose default chat is the derived one alone.
+    expect(uri).toBe('ahp-session:/live');
+    expect(chatUri).toBe(derived(uri));
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }))
       .rejects.toMatchObject({ code: -32001 });
   });
 });
@@ -136,7 +145,13 @@ describe('a session a client names', () => {
     expect(listed.items.map((one) => one.resource)).toEqual([`claude:/${id}`]);
   });
 
-  it('holds a session created on another provider\'s scheme under the protocol\'s URI', async () => {
+  /*
+   * Whatever scheme the client named, the session is held under that URI and
+   * answered under it alone, as the reference host holds a client's session
+   * under the channel it named.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2213-L2221
+   */
+  it('holds a session created on another provider\'s scheme under that URI, and answers no other', async () => {
     const id = '4e8d2f6a-1b3c-4d5e-8f7a-9b0c1d2e3f4a';
     const client = serving('/home/softov').accept(peer());
     await client.handle(hello(['0.9.0']));
@@ -145,12 +160,15 @@ describe('a session a client names', () => {
     const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { resource: string }[];
     };
-    expect(listed.items.map((one) => one.resource)).toEqual([`ahp-session:/${id}`]);
-    // The client's own spelling still reaches the session.
+    expect(listed.items.map((one) => one.resource)).toEqual([`pi:/${id}`]);
     const opened = await client.handle({ method: 'subscribe', params: { channel: `pi:/${id}` } }) as {
-      snapshot: { resource: string };
+      snapshot: { resource: string; state: { defaultChat: string } };
     };
     expect(opened.snapshot.resource).toBe(`pi:/${id}`);
+    expect(opened.snapshot.state.defaultChat).toBe(`ahp-chat://default/${Buffer.from(`pi:/${id}`, 'utf8').toString('base64url')}`);
+    // Another spelling of the same id is no session here.
+    await expect(client.handle({ method: 'subscribe', params: { channel: `ahp-session:/${id}` } }))
+      .rejects.toMatchObject({ code: -32001 });
   });
 
   it('keeps the name each new session is held under in its row', async () => {
@@ -171,7 +189,7 @@ describe('a session a client names', () => {
     expect(ids.map((id) => store.uri?.(id))).toEqual([
       `ahp-session:/${ids[0]}`,
       `claude:/${ids[1]}`,
-      `ahp-session:/${ids[2]}`,
+      `pi:/${ids[2]}`,
     ]);
   });
 
@@ -239,17 +257,18 @@ describe('a session a client names', () => {
 });
 
 /*
- * A session asked for by the name its client computed.
+ * A listed session, by the one URI it is listed under.
  *
- * A session URI is the client's to name, and VS Code names one after the
- * session's *provider* - `claude:/<uuid>` - for a row this host listed as
- * `ahp-session:/<uuid>`. The id is the same and only the id is read, so both
- * arrive at the same session; what differed was everything this host then said
- * back, because a chat URI is built from a session URI and every key here is a
- * session URI.
+ * A row this host never made is listed as `ahp-session:/<id>`, and that URI is
+ * the only one it answers to: the same id in a provider's scheme is no session
+ * here, as the reference host finds no session under a URI it was not created
+ * with. Everything about the row - its chat, its flags, its marks, its resume -
+ * goes by that URI.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
  */
 describe('a session asked for by the name a client computed', () => {
   const listed = { sessionId: 'row', summary: 'A real title', lastModified: 1_700_000_000_000, cwd: '/home/softov' };
+  const ROW = 'ahp-session:/row';
   const derived = (session: string) =>
     `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
 
@@ -265,20 +284,14 @@ describe('a session asked for by the name a client computed', () => {
     return client;
   };
 
-  it('names its chat after the name it was asked under', async () => {
+  it('names its chat after the URI it is listed under', async () => {
     const client = await browsing();
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
       snapshot: { resource: string; state: { defaultChat: string; chats: { resource: string }[] } };
     };
-
-    // Everything that names this session, spelled the one way the client can
-    // pair up: the chat it computes from `claude:/row` is the chat the session
-    // says it has. Told otherwise, it subscribes to one string, is handed
-    // another, and renders nothing at all. The snapshot names the session,
-    // and the session's state names its chats.
-    expect(opened.snapshot.resource).toBe('claude:/row');
-    expect(opened.snapshot.state.defaultChat).toBe(derived('claude:/row'));
-    expect(opened.snapshot.state.chats[0]?.resource).toBe(derived('claude:/row'));
+    expect(opened.snapshot.resource).toBe(ROW);
+    expect(opened.snapshot.state.defaultChat).toBe(derived(ROW));
+    expect(opened.snapshot.state.chats[0]?.resource).toBe(derived(ROW));
   });
 
   it('names a listed session nobody here made as the protocol\'s URI', async () => {
@@ -295,28 +308,76 @@ describe('a session asked for by the name a client computed', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/row');
   });
 
-  it('still answers to the provider\'s scheme, the name it used to publish', async () => {
+  it('answers the provider\'s scheme of its id as no session, nor that session\'s chat or marks', async () => {
     const client = await browsing();
     await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
-    // Only the id inside a session URI is ever read, so the older spelling is
-    // still the same session - and anything holding one is not broken by this.
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+    for (const channel of ['claude:/row', derived('claude:/row'), 'claude:/row/annotations']) {
+      await expect(client.handle({ method: 'subscribe', params: { channel } })).rejects.toMatchObject({ code: -32001 });
+    }
+    const opened = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
       snapshot: { resource: string; state: { title: string } };
     };
-    expect(opened.snapshot.resource).toBe('claude:/row');
+    expect(opened.snapshot.resource).toBe(ROW);
     expect(opened.snapshot.state.title).toBe('A real title');
+  });
+
+  it('applies nothing sent under the provider\'s scheme of its id to the session', async () => {
+    const p = peer();
+    const client = await browsing(p);
+    const other = 'claude:/row';
+    for (const [channel, action] of [
+      [other, { type: 'session/isReadChanged', isRead: true }],
+      [other, { type: 'session/configChanged', config: { permissionMode: 'plan' } }],
+      [`${other}/annotations`, {
+        type: 'annotations/set',
+        annotation: { id: 'a1', origin: { session: other }, resource: 'file:///x', resolved: false, entries: [{ id: 'e1', text: 'mark' }] },
+      }],
+      [derived(other), { type: 'chat/draftChanged', draft: { text: 'typed' } }],
+      [derived(other), { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } }],
+    ] as [string, Record<string, unknown>][]) {
+      client.handle({ method: 'dispatchAction', params: { channel, action } });
+      await settle(6);
+    }
+
+    // The flag and the mark are dropped with nothing said, as the protocol has
+    // a server ignore an action naming a session that does not exist, and the
+    // config change is refused as one for a session nobody has. Nothing is
+    // said on the session under its own name, its chat or its marks.
+    const said = actions(p).filter((e) => e.channel !== 'ahp-root://');
+    expect(said.filter((e) => e.channel === other || e.channel === `${other}/annotations`)
+      .map((e) => `${e.channel}: ${e.rejectionReason}`)).toEqual([`${other}: ${other} is not a session here`]);
+    expect(said.filter((e) => [ROW, derived(ROW), `${ROW}/annotations`].includes(e.channel))).toEqual([]);
+    // And the session keeps its flags, its config, its marks and its chat's
+    // draft, and is not woken.
+    expect(sessionQueries()).toHaveLength(0);
+    const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; status: number }[];
+    };
+    expect(rows.items.find((one) => one.resource === ROW)?.status).toBe(1);
+    const session = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
+      snapshot: { state: { config?: { values?: Record<string, unknown> } } };
+    };
+    expect(session.snapshot.state.config?.values?.permissionMode).not.toBe('plan');
+    const marks = await client.handle({ method: 'subscribe', params: { channel: `${ROW}/annotations` } }) as {
+      snapshot: { state: { annotations: unknown[] } };
+    };
+    expect(marks.snapshot.state.annotations).toEqual([]);
+    const chat = await client.handle({ method: 'subscribe', params: { channel: derived(ROW) } }) as {
+      snapshot: { state: { draft?: unknown } };
+    };
+    expect(chat.snapshot.state.draft).toBeUndefined();
   });
 
   it('says a person started the chat', async () => {
     const client = await browsing();
-    const opened = await client.handle({ method: 'subscribe', params: { channel: derived('claude:/row') } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: derived(ROW) } }) as {
       snapshot: { state: { origin?: { kind: string } } };
     };
     // `ChatOrigin`'s four kinds are `user`, `fork`, `sideChat` and `tool`.
     // A transcript is a conversation somebody typed, so it is the first.
     expect(opened.snapshot.state.origin).toEqual({ kind: 'user' });
 
-    const session = await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+    const session = await client.handle({ method: 'subscribe', params: { channel: ROW } }) as {
       snapshot: { state: { chats: { origin?: { kind: string } }[] } };
     };
     // And the row in the session's catalogue says the same, because a client
@@ -326,7 +387,7 @@ describe('a session asked for by the name a client computed', () => {
 
   it('serves that chat the transcript', async () => {
     const client = await browsing();
-    const chat = await client.handle({ method: 'subscribe', params: { channel: derived('claude:/row') } }) as {
+    const chat = await client.handle({ method: 'subscribe', params: { channel: derived(ROW) } }) as {
       snapshot: { state: { turns: unknown[] } };
     };
     expect(chat.snapshot.state.turns.length).toBeGreaterThan(0);
@@ -336,24 +397,23 @@ describe('a session asked for by the name a client computed', () => {
     const client = await browsing();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'claude:/row', action: { type: 'session/isReadChanged', isRead: true } },
+      params: { channel: ROW, action: { type: 'session/isReadChanged', isRead: true } },
     });
     await settle();
 
-    // Idle, and read. Kept under the client's spelling it would have been
-    // written to a key nothing ever reads, and the row would come back unread.
+    // Idle, and read: kept by the row's id, which is what a listing reads.
     const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
       items: { status: number }[];
     };
     expect(rows.items[0]?.status).toBe(33);
   });
 
-  it('resumes the session that name belongs to', async () => {
+  it('resumes the session that URI belongs to', async () => {
     const client = await browsing();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: derived('claude:/row'),
+        channel: derived(ROW),
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
       },
     });
@@ -366,11 +426,11 @@ describe('a session asked for by the name a client computed', () => {
     expect(sdk.said).toEqual(['and now?']);
   });
 
-  it('sends the chat it resumes on under the name it was watched by', async () => {
+  it('sends the chat it resumes on to the client that watched it asleep', async () => {
     const p = peer();
     const client = await browsing(p);
-    const chat = derived('claude:/row');
-    await client.handle({ method: 'subscribe', params: { channel: 'claude:/row' } });
+    const chat = derived(ROW);
+    await client.handle({ method: 'subscribe', params: { channel: ROW } });
     await client.handle({ method: 'subscribe', params: { channel: chat } });
     client.handle({
       method: 'dispatchAction',
@@ -378,18 +438,17 @@ describe('a session asked for by the name a client computed', () => {
     });
     await settle(6);
 
-    // Watched while it slept, under a name the host does not hold it by. The
-    // session wakes as `ahp-session:/row`, and its chat is that one's: keyed
-    // by the client's own spelling, the subscription heard nothing of it.
+    // Watched while it slept: the session wakes under the URI it is listed by,
+    // and its chat is the one the client watched.
     expect(sdk.said).toEqual(['and now?']);
     expect(actions(p, chat).map((e) => e.action.type)).toContain('chat/turnStarted');
   });
 
-  it('serves its annotations under that name too', async () => {
+  it('serves its annotations under that URI', async () => {
     const client = await browsing();
     const opened = await client.handle({
       method: 'subscribe',
-      params: { channel: 'claude:/row/annotations' },
+      params: { channel: `${ROW}/annotations` },
     }) as { snapshot: { state: { annotations: unknown[] } } };
     expect(opened.snapshot.state.annotations).toEqual([]);
   });
@@ -620,5 +679,143 @@ describe('a session asked for by the name its creator used', () => {
     // Told under the held name, which is where everybody else is watching.
     const gone = actions(watcher, held).filter((one) => one.action.type === 'session/activeClientRemoved');
     expect(gone.map((one) => one.action.clientId)).toEqual(['creator']);
+  });
+});
+
+/*
+ * An older VS Code window, told as the reference host tells one: a client that
+ * names itself `vscode-editor-window` or `vscode-agents-window` and does not
+ * declare `vscode.ahpSessionUris` cannot address an `ahp-session:` session, and
+ * one that does not declare `vscode.ahpChatUris` cannot address an opaque chat.
+ * Such a window is shown neither, anywhere a session or a chat goes out.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4326-L4355
+ */
+describe('an older VS Code window', () => {
+  const older = { clientInfo: { name: 'vscode-editor-window', title: 'VS Code' } };
+  const current = { ...older, _meta: { 'vscode.ahpSessionUris': true, 'vscode.ahpChatUris': true } };
+  const AHP = 'ahp-session:/7a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+  const NAMED = 'claude:/8b2e3d4c-5f6a-4b7c-9d8e-0f1a2b3c4d5e';
+  const derived = (session: string) => `ahp-chat://default/${Buffer.from(session, 'utf8').toString('base64url')}`;
+  const shaped = (session: string, id: string) => `ahp-chat://${id}/${Buffer.from(session, 'utf8').toString('base64url')}`;
+
+  /** A host with a session in each scheme, made by a client that can address both. */
+  const both = async () => {
+    const host = serving('/home/softov');
+    const maker = host.accept(peer());
+    await maker.handle(hello(['1.0.0'], { clientId: 'maker', initialSubscriptions: ['ahp-root://'] }));
+    await maker.handle({ method: 'createSession', params: { channel: AHP, provider: 'claude' } });
+    await maker.handle({ method: 'createSession', params: { channel: NAMED, provider: 'claude' } });
+    return { host, maker };
+  };
+  const listed = async (client: { handle(r: { method: string; params: Record<string, unknown> }): Promise<unknown> }) =>
+    ((await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as { items: { resource: string }[] })
+      .items.map((one) => one.resource).sort();
+
+  it('lists no ahp-session: session to it, and refuses one as a subscription', async () => {
+    const { host } = await both();
+    const window = host.accept(peer());
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
+    expect(await listed(window)).toEqual([NAMED]);
+    await expect(window.handle({ method: 'subscribe', params: { channel: AHP } })).rejects.toMatchObject({
+      code: -32001, message: `Resource not available to this client: ${AHP}`,
+    });
+    await expect(window.handle({ method: 'subscribe', params: { channel: derived(AHP) } })).rejects.toMatchObject({ code: -32001 });
+    const opened = await window.handle({ method: 'subscribe', params: { channel: NAMED } }) as { snapshot: { resource: string } };
+    expect(opened.snapshot.resource).toBe(NAMED);
+  });
+
+  it('shows a window that declares it can address them every session', async () => {
+    const { host } = await both();
+    const window = host.accept(peer());
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...current }));
+    expect(await listed(window)).toEqual([AHP, NAMED].sort());
+    // And any other client, which is no VS Code window at all.
+    const other = host.accept(peer());
+    await other.handle(hello(['1.0.0'], { clientId: 'other' }));
+    expect(await listed(other)).toEqual([AHP, NAMED].sort());
+  });
+
+  it('leaves an ahp-session: session out of its first subscriptions, and reports it missing at reconnect', async () => {
+    const { host } = await both();
+    const window = host.accept(peer());
+    const result = await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://', AHP, NAMED] })) as {
+      snapshots: { resource: string }[];
+    };
+    expect(result.snapshots.map((one) => one.resource)).toEqual(['ahp-root://', NAMED]);
+    // The name it gave at `initialize` is read again, with no `clientInfo` here.
+    const again = host.accept(peer());
+    const back = await again.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED] },
+    }) as { type: string; missing: string[] };
+    expect(back.type).toBe('replay');
+    expect(back.missing).toEqual([AHP]);
+    // A reconnect that declares it can address them is shown every session.
+    const declared = host.accept(peer());
+    const whole = await declared.handle({
+      method: 'reconnect',
+      params: { channel: 'ahp-root://', clientId: 'window', lastSeenServerSeq: 0, subscriptions: [AHP, NAMED], _meta: current._meta },
+    }) as { missing: string[] };
+    expect(whole.missing).toEqual([]);
+  });
+
+  it('tells it nothing about an ahp-session: session in the root, and all of one in a provider\'s scheme', async () => {
+    const { host, maker } = await both();
+    const p = peer();
+    const window = host.accept(p);
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...older, initialSubscriptions: ['ahp-root://'] }));
+    await maker.handle({ method: 'createSession', params: { channel: 'ahp-session:/later', provider: 'claude' } });
+    await maker.handle({ method: 'createSession', params: { channel: 'claude:/latest', provider: 'claude' } });
+    await settle();
+    await maker.handle({ method: 'disposeSession', params: { channel: AHP } });
+    await settle();
+    const said = (method: string) => p.notes.filter((n) => n.method === method).map((n) => {
+      const params = n.params as { session?: string; summary?: { resource: string } };
+      return params.summary?.resource ?? params.session;
+    });
+    expect(said('root/sessionAdded')).toEqual(['claude:/latest']);
+    expect(said('root/sessionRemoved')).toEqual([]);
+    expect(said('root/sessionSummaryChanged').every((one) => one?.startsWith('claude:') === true)).toBe(true);
+  });
+
+  it('shows a window that cannot address opaque chats only the shaped chats that name their session', async () => {
+    const { host, maker } = await both();
+    const OPAQUE = 'ahp-chat:/3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f';
+    const SHAPED = shaped(NAMED, '4d5e6f7a-8b9c-4d0e-9f1a-2b3c4d5e6f7a');
+    await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: OPAQUE } });
+    const p = peer();
+    const window = host.accept(p);
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
+    const opened = await window.handle({ method: 'subscribe', params: { channel: NAMED } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(opened.snapshot.state.chats.map((one) => one.resource)).toEqual([derived(NAMED)]);
+    await expect(window.handle({ method: 'subscribe', params: { channel: OPAQUE } })).rejects.toMatchObject({ code: -32001 });
+    // A chat made while it watches is said to it only when it can address it.
+    await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: 'ahp-chat:/5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b' } });
+    await maker.handle({ method: 'createChat', params: { channel: NAMED, chat: SHAPED } });
+    await settle();
+    const added = actions(p, NAMED).filter((one) => one.action.type === 'session/chatAdded')
+      .map((one) => (one.action.summary as { resource: string }).resource);
+    expect(added).toEqual([SHAPED]);
+    const rows = ((await window.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } })) as {
+      items: { resource: string; chats?: { resource: string }[] }[];
+    }).items;
+    expect(rows.find((one) => one.resource === NAMED)?.chats?.map((one) => one.resource)).toEqual([derived(NAMED), SHAPED]);
+  });
+
+  it('holds a session it creates under the URI it named, for every client', async () => {
+    const host = serving('/home/softov');
+    const window = host.accept(peer());
+    await window.handle(hello(['1.0.0'], { clientId: 'window', ...older }));
+    const made = 'claude:/9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f';
+    await window.handle({ method: 'createSession', params: { channel: made, provider: 'claude' } });
+    const other = host.accept(peer());
+    await other.handle(hello(['1.0.0'], { clientId: 'other' }));
+    expect(await listed(window)).toEqual([made]);
+    expect(await listed(other)).toEqual([made]);
+    await expect(other.handle({ method: 'subscribe', params: { channel: `ahp-session:/${made.slice('claude:/'.length)}` } }))
+      .rejects.toMatchObject({ code: -32001 });
   });
 });

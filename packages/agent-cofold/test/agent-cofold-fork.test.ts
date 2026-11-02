@@ -9,6 +9,7 @@ import type { ModelAdapter, Policy } from '@cofold/agents';
 import type { Agent, Bag, Session, Start } from '@ahpd/sdk';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { cofoldAgent } from '../src/index.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 
@@ -341,7 +342,7 @@ async function throughHost(root: string) {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'cofold' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });

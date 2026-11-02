@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { computersFor } from '../../sdk/src/machines/computers.js';
 import { createHost, ROOT } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { memoryPolicies } from '../../sdk/src/access/policies.js';
 import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { fileUsers } from '../../sdk/src/access/users.js';
@@ -146,7 +147,7 @@ async function probe(options: {
     const secret = await options.users.mint('ana');
     await client.handle({ method: 'authenticate', params: { channel: ROOT, resource: 'ahpd://users', token: secret } });
   }
-  return { host, client, peer: p, sessions, uri: 'ahp-session:/in', chatUri: 'ahp-chat:/in' };
+  return { host, client, peer: p, sessions, uri: 'ahp-session:/in', chatUri: chatUriFor('ahp-session:/in') };
 }
 
 /** `probe`, with the session made on the machine its settings named. */

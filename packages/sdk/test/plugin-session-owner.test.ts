@@ -101,10 +101,10 @@ it('answers the owner of a session on a backend\'s disk', async () => {
   });
   sessions.setOwner('kept', 'user:soft');
 
+  // By the URI the row is listed under: a row this host keeps a record for
+  // keeps its provider's scheme, and that is the one name it is answered by.
+  expect(await plugin.sessionOwner('ahp-session:/kept')).toBeUndefined();
   expect(await plugin.sessionOwner('claude:/kept')).toBe('user:soft');
-  // By the id inside the URI, as the store is keyed: any spelling of the
-  // session is the same question.
-  expect(await plugin.sessionOwner('ahp-session:/kept')).toBe('user:soft');
 });
 
 it('answers nothing for a session with no row at all', async () => {

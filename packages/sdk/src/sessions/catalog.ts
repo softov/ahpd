@@ -84,19 +84,21 @@ export const activityOf = (emit: Emit): Activity => {
 /**
  * `ahp-session:/<id>`, the protocol's own spelling of a session URI.
  *
- * What the host names an id no backend has named, and the name of every new
- * session it makes. A session made before that keeps its `<provider>:/<id>`
- * name, and a client may use any scheme for it - see {@link idOf}.
+ * What the host names an id no backend has named, and a session it makes for
+ * any client but an older VS Code window. A session keeps the URI it was
+ * created with - a provider's scheme included - and is answered under that
+ * URI alone.
  */
 export const uriFor = (sessionId: string): string => `ahp-session:/${sessionId}`;
 
 /**
  * The id inside a channel URI, whatever its scheme.
  *
- * A client may name a channel under any scheme: VS Code names a session after
- * its provider, `claude:/<uuid>`, and its terminals `agenthost-terminal:/<uuid>`,
- * and the id is what identifies it. Everything after the scheme, without its
- * leading slashes: an opaque key, not something to parse further.
+ * A client may name a channel under any scheme: an older VS Code window names
+ * a session after its provider, `claude:/<uuid>`, and its terminals
+ * `agenthost-terminal:/<uuid>`. The id is what the store keeps a session's
+ * record by. Everything after the scheme, without its leading slashes: an
+ * opaque key, not something to parse further.
  */
 export const idOf = (uri: string): string => {
   const colon = uri.indexOf(':');

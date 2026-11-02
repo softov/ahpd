@@ -51,7 +51,7 @@ import { bag, ownerFilter, ownerOfPrincipal } from './utils/values.js';
 import { reason } from './host/common.js';
 import { clientQueueBytes, replayBytes } from './host/limits.js';
 import {
-  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, URI_KEYS, named,
+  ROOT, RESTART_NEEDED, isRootChannel, AUTOMATIONS, AUTOMATIONS_ME, MARKS, spaceOf, servedIn, methodIn, baseOf, named,
   chatUriFor, subagentChatUri, WORKER_ACTIONS, toolCallOfSubagentChat, isAutomations, automationOwner,
 } from './host/channels.js';
 import type { Space } from './host/channels.js';
@@ -421,6 +421,8 @@ export function createHost(options: HostOptions): Host {
   const holders = new Map<string, string>();
   /** The last locale each client sent, by client id. */
   const locales = new Map<string, string>();
+  /** The name each client gave in `clientInfo` at `initialize`, by client id. */
+  const clientNames = new Map<string, string>();
   const learned = new Map<string, Learned>();
   const about = (provider: string): Learned => {
     const held = learned.get(provider);
@@ -505,9 +507,8 @@ export function createHost(options: HostOptions): Host {
    * Kept, not computed. Annotations are the one channel whose state is
    * entirely a client's: nothing here produces a mark, and what this host
    * contributes is that a mark one client made is a mark every other client
-   * in the session can see. Keyed by id rather than by URI for the reason the
-   * flags are - a session is addressable under more than one spelling and
-   * there is only one set of marks.
+   * in the session can see. Keyed by the session's id, as the flags are: the
+   * id is what the store keeps everything of a session under.
    */
   const marks = new Map<string, AnnotationsState>();
 
@@ -596,19 +597,51 @@ export function createHost(options: HostOptions): Host {
   const marksOf = (id: string): AnnotationsState => marks.get(id) ?? { annotations: [] };
 
   /**
+   * A root notification about a session, as one connection receives it.
+   *
+   * An older VS Code window is told nothing about a session it may not see,
+   * and of one it may see only the chats it may see, as the reference host
+   * filters each notification for it. Every other notification, and every
+   * other connection, gets it as it is.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4412-L4443
+   */
+  const noticeFor = (connection: Connection, method: string, params: unknown): unknown => {
+    if (connection.legacySessionUris !== true && connection.legacyChatUris !== true) return params;
+    const notice = bag(params);
+    if (method === 'root/sessionAdded') {
+      const summary = bag(notice.summary);
+      const session = String(summary.resource ?? '');
+      if (!sessionVisible(connection, session, typeof summary.defaultChat === 'string' ? summary.defaultChat : undefined)) return undefined;
+      return Array.isArray(summary.chats)
+        ? { ...notice, summary: { ...summary, chats: (summary.chats as Bag[]).filter((chat) => chatShown(connection, chat.resource, session)) } }
+        : params;
+    }
+    if (method === 'root/sessionSummaryChanged') {
+      const session = String(notice.session ?? '');
+      if (!sessionVisible(connection, session)) return undefined;
+      const changes = bag(notice.changes);
+      return Array.isArray(changes.chats)
+        ? { ...notice, changes: { ...changes, chats: (changes.chats as Bag[]).filter((chat) => chatShown(connection, chat.resource, session)) } }
+        : params;
+    }
+    if (method === 'root/sessionRemoved') return sessionVisible(connection, String(notice.session ?? '')) ? params : undefined;
+    return params;
+  };
+  /**
    * One message, to everyone watching that channel.
    *
    * Addressed to each connection the way that connection asked: a client
-   * watching an alias of this channel is sent the same payload under the name
-   * it used, because its subscription is keyed by that name and it would drop
-   * anything else.
+   * watching a host channel under another spelling is sent the same payload
+   * under the name it used, because its subscription is keyed by that name and
+   * it would drop anything else. A root notification about a session goes
+   * through `noticeFor`.
    */
   const broadcast = (channel: string, method: string, params: unknown, per?: (connection: Connection) => unknown): void => {
     for (const connection of connections) {
       const alias = connection.aliases.get(channel);
       const aliased = alias !== undefined && connection.watching.has(alias);
       if (!connection.watching.has(channel) && !aliased) continue;
-      const said = per === undefined ? params : per(connection);
+      const said = per === undefined ? noticeFor(connection, method, params) : per(connection);
       // Nothing for this connection: a plugin's action it may not see.
       if (said === undefined) continue;
       if (connection.watching.has(channel)) connection.peer.notify(method, said);
@@ -637,10 +670,12 @@ export function createHost(options: HostOptions): Host {
    * `root/agentsChanged` carries
    * the root agent list, whose sign-in resource says `required: true` for a
    * connection that must sign in and `false` for one the host already treats
-   * as somebody. An action on a session, chat or annotations channel this
-   * connection knows the session by another name for carries the session's
-   * URIs in that name, the same as its snapshot. Every other envelope is
+   * as somebody. An older VS Code window is sent nothing on a channel it may
+   * not see, and a session's chat list actions only about the chats it may
+   * see, as the reference host projects each for it. Every other envelope is
    * delivered as it is.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4362-L4401
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4547-L4553
    *
    * A plugin's action carries its `audience`, and is nothing for a
    * connection the audience leaves out: one `to` does not name, or one
@@ -690,10 +725,17 @@ export function createHost(options: HostOptions): Host {
       && PROTOCOL_ACTIONS.has(String(action.type))
       && !isActionKnownToVersion(action as unknown as StateAction, connection.protocolVersion)) return undefined;
     if (!isRootChannel(envelope.channel)) {
-      const spelling = spellingOf(connection, envelope.channel);
-      return spelling === undefined
-        ? envelope
-        : { ...envelope, action: respelledIn(action, spelling.held, spelling.asked) };
+      if (!visible(connection, envelope.channel)) return undefined;
+      if (connection.legacyChatUris !== true) return envelope;
+      const session = envelope.channel;
+      if (action.type === 'session/chatAdded') return chatShown(connection, bag(action.summary).resource, session) ? envelope : undefined;
+      if (action.type === 'session/chatUpdated' || action.type === 'session/chatRemoved') {
+        return chatShown(connection, action.chat, session) ? envelope : undefined;
+      }
+      if (action.type === 'session/chatsReordered' && Array.isArray(action.chats)) {
+        return { ...envelope, action: { ...action, chats: action.chats.filter((chat) => chatShown(connection, chat, session)) } };
+      }
+      return envelope;
     }
     if (action.type === 'root/agentsChanged') {
       return { ...envelope, action: { ...action, agents: agentsFor(connection, action.agents) } };
@@ -1147,9 +1189,9 @@ export function createHost(options: HostOptions): Host {
   /**
    * The name one connection watches a channel by, or the channel itself.
    *
-   * A client that subscribed under a spelling of its own is sent everything
-   * under that name - its subscription is keyed by it and it would drop
-   * anything else - and one that uses the held name is sent the held name.
+   * A client that subscribed to a host channel under another spelling is sent
+   * everything under that name - its subscription is keyed by it and it would
+   * drop anything else - and every other client is sent the channel's name.
    */
   const watchedAs = (peer: Peer, channel: string): string =>
     [...connections].find((one) => one.peer === peer)?.aliases.get(channel) ?? channel;
@@ -1250,10 +1292,7 @@ export function createHost(options: HostOptions): Host {
       .filter(([one, held]) => one === session || (held.kind === 'chat' && sessionFor(one) === session))
       .map(([one]) => one);
     for (const connection of connections) {
-      for (const one of its) {
-        const alias = connection.aliases.get(one);
-        if (connection.watching.has(one) || (alias !== undefined && connection.watching.has(alias))) return;
-      }
+      if (its.some((one) => connection.watching.has(one))) return;
     }
     for (const one of its) {
       for (const client of states.get(one)?.baselines ?? []) {
@@ -1275,16 +1314,13 @@ export function createHost(options: HostOptions): Host {
    * same condition seen from three places: no connection with that client id
    * is watching that session any more. Checked rather than assumed, because
    * one person can have two windows open on one session and closing the first
-   * must not remove them from it. Any spelling of the session counts, and
-   * the removal is said under the name it is held by.
+   * must not remove them from it.
    */
-  const leaves = (asked: string, clientId: string): void => {
-    const uri = heldAs(asked);
+  const leaves = (uri: string, clientId: string): void => {
     const held = presence.get(idOf(uri));
     if (!held?.has(clientId)) return;
     for (const connection of connections) {
-      if (connection.clientId !== clientId) continue;
-      if ([...connection.watching].some((channel) => heldAs(channel) === uri)) return;
+      if (connection.clientId === clientId && connection.watching.has(uri)) return;
     }
     // The entry it announced, under the client id that entry carries.
     const named = held.get(clientId)?.clientId;
@@ -1324,7 +1360,7 @@ export function createHost(options: HostOptions): Host {
    * session itself, and either one means the client is here for both.
    */
   const waitingOver = (channel: string, clientId: string): void => {
-    const key = waitKey(heldAs(channel), clientId);
+    const key = waitKey(channel, clientId);
     const timer = graces.get(key);
     if (timer === undefined) return;
     clearTimeout(timer);
@@ -1342,8 +1378,7 @@ export function createHost(options: HostOptions): Host {
    * running: what is being measured is how long this client has been gone, and
    * a second window closing is a client that is still here until it does.
    */
-  const waitsOut = (channel: string, clientId: string): void => {
-    const uri = heldAs(channel);
+  const waitsOut = (uri: string, clientId: string): void => {
     if (!presence.get(idOf(uri))?.has(clientId)) return;
     waitingOver(uri, clientId);
     graces.set(waitKey(uri, clientId), setTimeout(() => {
@@ -1385,7 +1420,7 @@ export function createHost(options: HostOptions): Host {
    * and the helpers declared above it.
    */
   const ctx = {
-    options, dir, known, locales, localeOf: (clientId: string) => locales.get(clientId),
+    options, dir, known, locales, clientNames, localeOf: (clientId: string) => locales.get(clientId),
     catalogsOf: (key: string, provider: string): readonly (Catalogs | undefined)[] => [
       options.sessionConfig !== undefined && Object.hasOwn(options.sessionConfig, key)
         ? options.catalogs?.sessionConfig?.[key]
@@ -1498,9 +1533,9 @@ export function createHost(options: HostOptions): Host {
     return halves.length === 0 ? undefined : halves;
   };
   const {
-    spaceHere, heldAs, nameOf, ownName, sessionOfChat, sessionFor, chatOf, meantBy,
-    sessionHolding, channelKind, sessionChannel, homeOf, spelledFor, respell, respelledIn,
-    spellingOf, answeredAs, claimable, unheld, ownId, ownerOf, elsewhere, relayed, clients,
+    spaceHere, nameOf, sessionOfChat, sessionFor, meantBy,
+    sessionHolding, channelKind, sessionChannel, homeOf,
+    answeredAs, visible, sessionVisible, chatShown, claimable, unheld, ownId, ownerOf, elsewhere, relayed, clients,
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
     changesetsOf, operationContext, opKey, inFlight, lastError, shown,
     describes, setArtifacts, captureBaseline, recordPullRequest, metaMoved, dirOfFile, wroteThrough,

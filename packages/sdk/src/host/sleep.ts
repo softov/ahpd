@@ -266,9 +266,13 @@ export function createSleep(ctx: HostContext): Sleep {
     /*
      * Named again, because `past` is what learned whose session this is - and
      * what this host will call it. Asking with the name computed beforehand
-     * found nothing for a row no listing had reached yet.
+     * found nothing for a row no listing had reached yet. The session wakes
+     * under that one name, and a waker that asked under any other spelling of
+     * the id is told it is no session here, as a subscribe to it is.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
      */
     const named = nameOf(id);
+    if (named !== asked) throw new Error(`${chat ?? asked} is not a session this host knows`);
     const live = sessions.get(named);
     if (live !== undefined) return { uri: named, chat: picked(named, chat) as Session };
     const owner = owners.get(named);
@@ -403,6 +407,10 @@ export function createSleep(ctx: HostContext): Sleep {
     if (lead !== undefined) return Promise.resolve({ uri, chat: lead });
     if (ctx.closed) return Promise.reject(new Error(CLOSING));
     const id = idOf(uri);
+    // A spelling of an id this host publishes under another name is refused
+    // before it can join that session's resume.
+    const published = ctx.names.get(id) ?? kept.uri?.(id);
+    if (published !== undefined && published !== uri) return Promise.reject(new Error(`${chat ?? uri} is not a session this host knows`));
     const already = waking.get(id);
     if (already !== undefined) {
       return already.then((woken) => ({ uri: woken.uri, chat: picked(woken.uri, chat) ?? woken.chat }));

@@ -76,7 +76,7 @@ export interface VscodeMethods {
 export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): VscodeMethods {
   const { connection } = conn;
   const {
-    agents, byChat, chatOf, detached, dirOf, kept, leadOf, log, logs, options, ownerFor, owners,
+    agents, byChat, detached, dirOf, kept, leadOf, log, logs, options, ownerFor, owners,
     sessionFor, sessions, setArtifacts, worktreeOf, worktrees,
   } = ctx;
 
@@ -95,7 +95,7 @@ export function createVscodeMethods(ctx: HostContext, conn: ConnectionContext): 
     const held = sessions.get(uri);
     const agent = held?.agent ?? owners.get(uri);
     const dir = dirOf(uri);
-    const chosen = chat === undefined ? undefined : byChat.get(chatOf(chat));
+    const chosen = chat === undefined ? undefined : byChat.get(chat);
     if (chat !== undefined && chosen?.uri !== uri) throw new RpcError(INVALID_PARAMS, 'chat must belong to the requested Agent Session');
     if (agent?.stateFile === undefined || dir === undefined) return undefined;
     const live = chosen?.chat ?? (held ? leadOf(held) : undefined);

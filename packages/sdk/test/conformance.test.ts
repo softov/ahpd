@@ -120,7 +120,7 @@ async function running(over: Partial<HostOptions> = {}) {
     params: { channel: 'ahp-root://', clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/live';
-  const chatUri = 'ahp-chat:/live';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
   const root = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as { snapshot: { state: unknown } };
   const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: unknown } };
@@ -480,11 +480,7 @@ it('reduces a chat reordered inside its session', async () => {
   await settle();
   await said({ type: 'system', subtype: 'init', session_id: 'sdk-2' });
   await said({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
-  /*
-   * The chat the session hands out, read from the list rather than assumed:
-   * `ahp-chat:/live` is this client's name for it, and the name a client holds
-   * it under is the one the session lists it by.
-   */
+  // The chat the session hands out, read from the list.
   const before = held(p, opened)[uri] as Session;
   const lead = before.chats?.[0]?.resource as string;
   expect(before.chats?.map((one) => one.resource)).toEqual([lead, other]);
@@ -496,13 +492,9 @@ it('reduces a chat reordered inside its session', async () => {
   await settle();
 
   /*
-   * The order the client ends on is the one the action named, in the client's
-   * own spelling of the session.
-   *
-   * The reducer replaces the order only when the action names every chat the
-   * client holds exactly once, so a reorder sent in the name this host holds
-   * the session by would leave a client that asked with another one showing
-   * the old order for ever - and no error anywhere to say why.
+   * The order the client ends on is the one the action named. The reducer
+   * replaces the order only when the action names every chat the client holds
+   * exactly once.
    */
   const after = held(p, opened)[uri] as Session;
   expect(after.chats?.map((one) => one.resource)).toEqual([other, lead]);
@@ -620,7 +612,7 @@ it('reduces a changeset, through an operation and a turn', async () => {
   // A turn disables every operation while it runs, and an operation moves
   // through `running` and back. Both are `changeset/operationStatusChanged`
   // and `changeset/operationsChanged`, and both go through the reducer here.
-  dispatch(client, 'ahp-chat:/one', started('t1', 'hello'));
+  dispatch(client, chatUriFor(uri), started('t1', 'hello'));
   await settle(12);
   await client.handle({ method: 'invokeChangesetOperation', params: { channel: changeset, operationId: 'commit' } });
   await settle(12);

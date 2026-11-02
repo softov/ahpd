@@ -87,8 +87,8 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
       }
       /*
        * What the channel is spelt as and what it resolves to, both: the
-       * snapshot is taken of the resolved channel, so a spelling that
-       * reads as something else cannot reach a session.
+       * snapshot is taken of the resolved channel, so the root under another
+       * spelling is asked for what the root needs.
        */
       return [...new Set([readOf(channel), readOf(ctx.meantBy(channel))])];
     }
@@ -140,10 +140,10 @@ export function createAdmission(ctx: HostContext, conn: ConnectionContext): Admi
      * session naming a machine is a `computer:write` on top of it: the
      * destination does not exist, so there is nothing else to ask it for.
      *
-     * Compared as sessions rather than as strings, because a client may know
-     * the destination under another spelling of the same session - and one this
-     * host cannot resolve is not the chat's own, so it is asked for rather than
-     * waved through.
+     * Compared as sessions, because the chat's channel is a chat and the
+     * destination a session: the chat's session is the one the store records
+     * it under or its URI was built for, and a destination that is any other
+     * session is asked for.
      */
     if (method === 'moveChat') {
       const destination = (typeof params.destination === 'object' && params.destination !== null

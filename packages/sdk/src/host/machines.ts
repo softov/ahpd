@@ -204,8 +204,7 @@ export function createMachines(ctx: HostContext): Machines {
    * line and nothing more: the message is worth sending either way, and the
    * file it names is on this host whatever the machine has.
    */
-  const putIn = async (uri: string, paths: string[]): Promise<void> => {
-    const named = ctx.heldAs(uri);
+  const putIn = async (named: string, paths: string[]): Promise<void> => {
     const id = enteredIn.get(named);
     if (id === undefined || paths.length === 0) return;
     try {
@@ -275,15 +274,10 @@ export function createMachines(ctx: HostContext): Machines {
   };
 
   /**
-   * The machine a session is in, asked for what it committed.
-   *
-   * The name is normalised first, because a caller holds whichever spelling of
-   * the session it was handed - a client's `ahp-session:/<id>`, a changeset
-   * URI's owner - and the machines a session entered are kept under the one
-   * name this host holds it by.
+   * The machine a session is in, asked for what it committed, by the one URI
+   * the session is held by: the machines a session entered are kept under it.
    */
-  const bringBackOf = async (uri: string): Promise<BroughtBack | undefined> => {
-    const named = ctx.heldAs(uri);
+  const bringBackOf = async (named: string): Promise<BroughtBack | undefined> => {
     const id = enteredIn.get(named);
     return id === undefined || closing ? undefined : await waited(askedOf(id, named));
   };
@@ -309,8 +303,7 @@ export function createMachines(ctx: HostContext): Machines {
    * waits for a machine that is still being read. A host that is closing
    * starts no new one.
    */
-  const followOf = async (uri: string): Promise<void> => {
-    const named = ctx.heldAs(uri);
+  const followOf = async (named: string): Promise<void> => {
     const id = enteredIn.get(named);
     if (id === undefined || closing) return;
     await waited((async () => {

@@ -1017,8 +1017,7 @@ export function createAutomations(ctx: HostContext): Automations {
    * `createChat` take - so a chat started here is one nobody could tell apart
    * from one started at the door.
    */
-  const beginPluginChat = async (session: string, wanted: ChatRequest): Promise<string> => {
-    const at = ctx.heldAs(session);
+  const beginPluginChat = async (at: string, wanted: ChatRequest): Promise<string> => {
     const owner = kept.owner(idOf(at));
     if (options.users !== undefined && owner?.startsWith('user:') === true) {
       const person = principalFor(owner);
@@ -1045,11 +1044,11 @@ export function createAutomations(ctx: HostContext): Automations {
    * can be asked about one id as well as for a listing already held, and it
    * keeps a transcript it read. Nothing is asked of the store: the row that
    * outlived the session is exactly the thing this question does not trust.
+   * The URI has to be the one the session is published under, which is the
+   * only one it opens by, and is read once `past` has named the row.
    */
-  const opensSession = async (uri: string): Promise<boolean> => {
-    const named = ctx.heldAs(uri);
-    return sessions.has(named) || (await ctx.past(idOf(named))) !== undefined;
-  };
+  const opensSession = async (uri: string): Promise<boolean> =>
+    sessions.has(uri) || ((await ctx.past(idOf(uri))) !== undefined && ctx.nameOf(idOf(uri)) === uri);
 
   /**
    * Every automation this host is watching, by resource.

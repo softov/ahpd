@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { memoryAutomations, RUN_HISTORY_LIMIT } from '../src/automations/automations.js';
 import { memorySessions } from '../src/sessions/sessions.js';
 import { clientPluginsIn } from '../src/plugins/clientplugins.js';
@@ -1010,7 +1011,7 @@ it('starts a session and says the first message, which is the whole point', asyn
 
   // A session created and never spoken to does nothing, and nobody is at the
   // keyboard to speak to it - so the turn has to have been started here.
-  const chat = `ahp-chat:/${idOf(state.primarySession ?? '')}`;
+  const chat = chatUriFor(state.primarySession ?? '');
   const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
     snapshot: { state: { turns?: { message?: { text?: string; origin?: { kind?: string } } }[] } };
   };
@@ -1154,7 +1155,7 @@ it('stops a running run, and keeps the session it was running in', async () => {
 
   // And the turn is really over in the session, rather than only in the run.
   const chat = await client.handle({
-    method: 'subscribe', params: { channel: `ahp-chat:/${idOf(session)}` },
+    method: 'subscribe', params: { channel: chatUriFor(session) },
   }) as { snapshot: { state: { activeTurn?: unknown; turns?: { state?: string }[] } } };
   expect(chat.snapshot.state.activeTurn).toBeUndefined();
   expect(chat.snapshot.state.turns?.at(-1)?.state).toBe('cancelled');
