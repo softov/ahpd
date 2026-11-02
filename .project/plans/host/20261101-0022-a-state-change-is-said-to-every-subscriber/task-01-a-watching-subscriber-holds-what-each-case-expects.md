@@ -9,7 +9,9 @@ refs:
 
 ## Objective
 
-The protocol case driver holds a client that subscribes before a case's actions and sends nothing to the case's expectation: its snapshot with every action it is told of, through the protocol's reducer, on the keys the driver compares. Case 272 is driven as the protocol writes it.
+The protocol case driver holds a client that subscribes before a case's actions and sends nothing to the case's expectation.
+What it holds is its snapshot with every action it is told of, through the protocol's reducer, on the keys the driver compares.
+Case 272 is driven as the protocol writes it.
 
 ## Files
 
@@ -17,7 +19,8 @@ The protocol case driver holds a client that subscribes before a case's actions 
 
 ## Steps
 
-1. Add the subscriber and run every case on `5da31824`: 272 is the one case it finds, its `status` short of the archived bit.
+1. Add the subscriber and run every case on `5da31824`.
+   272 is the one case it finds, its `status` short of the archived bit.
 2. Take 272 off `HOST_OWNS`.
 
 ## Validation

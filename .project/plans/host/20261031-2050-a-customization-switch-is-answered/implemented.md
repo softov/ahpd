@@ -5,14 +5,20 @@ refs:
   - "[code://packages/sdk/src/host/chatactions.ts](../../../../packages/sdk/src/host/chatactions.ts) - `session/customizationToggled`"
 ---
 
-A client's switch of a customization is said back to every client of the session with its sender's origin once it is made, by the backend or by this host for a client's plugin.
-It carries the enablement this host applied, and the list or the plugin's entry it is read from follows it; a switch the backend cannot make stays a refusal.
+A client's switch of a customization is said back to every client of the session with its sender's origin once it is made.
+The backend makes it, or this host does for a client's plugin.
+It carries the enablement this host applied, and the list or the plugin's entry it is read from follows it.
+A switch the backend cannot make stays a refusal.
 
 ## What was built
 
-- [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts) - the enablement this host applies is computed once, the switch is said back with it and the client's origin after a client plugin's entry, and after the backend took the switch, before the list.
+- [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts) - the enablement this host applies is computed once.
+  The switch is said back with it and the client's origin after a client plugin's entry.
+  For a backend's customization it is said once the backend took the switch, before the list.
 - [`code://docs/sdk/AHP.md`](../../../../docs/sdk/AHP.md), the `session/customizationToggled` row.
-- One case in `host-harness.test.ts` (an MCP server the Claude backend switches off) and one in `client-plugins-session.test.ts` (a client plugin this host switches off): the switch is the one envelope with the client's origin, and no rejection.
+- One case in `host-harness.test.ts`: an MCP server the Claude backend switches off.
+- One in `client-plugins-session.test.ts`: a client plugin this host switches off.
+- In each the switch is the one envelope with the client's origin, and no rejection.
 
 ## Verified
 

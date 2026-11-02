@@ -10,7 +10,10 @@ refs:
 
 ## Objective
 
-A `session/mcpServerBackgroundRequested` no backend takes, naming a server that is starting with `blocking: true`, is said to every subscriber of the session with its sender's origin, then `session/mcpServerStateChanged` restores the server's state with `blocking: true` for every subscriber. On any other server the request reduces to nothing and is answered to its sender alone.
+A `session/mcpServerBackgroundRequested` no backend takes can name a server that is starting with `blocking: true`.
+It is said to every subscriber of the session with its sender's origin.
+Then `session/mcpServerStateChanged` restores the server's state with `blocking: true` for every subscriber.
+On any other server the request reduces to nothing and is answered to its sender alone.
 
 ## Files
 
@@ -20,7 +23,8 @@ A `session/mcpServerBackgroundRequested` no backend takes, naming a server that 
 
 ## Steps
 
-1. Write the cases and see them fail on `5da31824`: the second client hears nothing, and the sender's state holds `blocking` false.
+1. Write the cases and see them fail on `5da31824`.
+   The second client hears nothing, and the sender's state holds `blocking` false.
 2. Say the request and restore the state.
 
 ## Validation

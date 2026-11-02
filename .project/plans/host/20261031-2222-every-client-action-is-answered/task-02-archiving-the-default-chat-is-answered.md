@@ -10,7 +10,8 @@ refs:
 
 ## Objective
 
-A client's `chat/isArchivedChanged` on a session's default chat archives the session as before, and is answered to its sender on the chat channel with its own action and origin.
+A client's `chat/isArchivedChanged` on a session's default chat archives the session as before.
+It is answered to its sender on the chat channel with its own action and origin.
 
 ## Files
 
