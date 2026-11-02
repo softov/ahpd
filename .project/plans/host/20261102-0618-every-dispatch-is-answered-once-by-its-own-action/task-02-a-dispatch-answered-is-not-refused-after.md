@@ -1,6 +1,6 @@
 ---
 title: A dispatch answered is not refused after
-status: planned
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -14,7 +14,7 @@ A dispatch whose apply answered it and then threw is logged, never refused.
 ## Files
 
 - `UPDATE: packages/sdk/src/host.ts` - the origins answered are held; `refuseFailed` refuses only an unanswered one.
-- `UPDATE: packages/sdk/test/host-turn.test.ts` - a draft the backend says and then throws on is answered once.
+- `UPDATE: packages/sdk/test/echo-origin.test.ts` - a draft the backend says and then throws on is answered once.
 
 ## Steps
 
@@ -23,4 +23,4 @@ A dispatch whose apply answered it and then threw is logged, never refused.
 
 ## Validation
 
-- `pnpm exec vitest run packages/sdk/test/host-turn.test.ts` - passes; the new case fails on e4694965.
+- `pnpm exec vitest run packages/sdk/test/echo-origin.test.ts` - passes; the new case fails on e4694965.

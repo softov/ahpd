@@ -1,6 +1,6 @@
 ---
 title: An automation request is answered by itself
-status: planned
+status: done
 depends: []
 layer: "sdk host"
 refs:

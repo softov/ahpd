@@ -1,6 +1,6 @@
 ---
 title: The answers a turn owes are given at its end
-status: planned
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -15,7 +15,7 @@ An owed start goes out before the end; an owed stop or client result goes out af
 ## Files
 
 - `UPDATE: packages/sdk/src/host.ts` - the turn end in `dispatch` says the owed answers.
-- `UPDATE: packages/sdk/test/host-turn.test.ts` - a stop the backend never says, because the turn completes first, is answered after the end.
+- `UPDATE: packages/sdk/test/echo-origin.test.ts` - a stop the backend never says, because the turn completes first, is answered after the end.
 
 ## Steps
 
@@ -25,4 +25,4 @@ An owed start goes out before the end; an owed stop or client result goes out af
 
 ## Validation
 
-- `pnpm exec vitest run packages/sdk/test/host-turn.test.ts` - passes; the new case fails on e4694965.
+- `pnpm exec vitest run packages/sdk/test/echo-origin.test.ts` - passes; the new case fails on e4694965.

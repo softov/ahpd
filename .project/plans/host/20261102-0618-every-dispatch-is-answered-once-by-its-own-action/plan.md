@@ -1,7 +1,7 @@
 ---
 title: Every dispatch is answered once, by its own action
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -74,9 +74,9 @@ client automation/createRequested -> store.create -> automation/set, no origin
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the answers a turn owes are given at its end](task-01-the-answers-a-turn-owes-are-given-at-its-end.md) | planned | - |
-| [02 - a dispatch answered is not refused after](task-02-a-dispatch-answered-is-not-refused-after.md) | planned | - |
-| [03 - an automation request is answered by itself](task-03-an-automation-request-is-answered-by-itself.md) | planned | - |
+| [01 - the answers a turn owes are given at its end](task-01-the-answers-a-turn-owes-are-given-at-its-end.md) | done | - |
+| [02 - a dispatch answered is not refused after](task-02-a-dispatch-answered-is-not-refused-after.md) | done | - |
+| [03 - an automation request is answered by itself](task-03-an-automation-request-is-answered-by-itself.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -85,12 +85,12 @@ client automation/createRequested -> store.create -> automation/set, no origin
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** task 01.
+- **Done so far:** tasks 01 to 03, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none in this plan.
 - **Open questions:** none for these tasks. C12, a client set's `clientId` rewritten to the connection's, stays open in the ledger.
 - **Watch out for:** an owed start said after its turn's end would start a turn nothing ends.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on e4694965 and passes after the change.
-- [ ] `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` report no errors.
+- [x] Each new case fails on e4694965 and passes after the change.
+- [x] `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` report no errors.
