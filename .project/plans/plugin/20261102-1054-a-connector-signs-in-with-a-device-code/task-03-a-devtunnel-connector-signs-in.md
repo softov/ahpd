@@ -1,6 +1,6 @@
 ---
 title: A devtunnel connector signs in
-status: implemented
+status: done
 depends:
   - task-01-a-sign-in-shows-a-code-and-waits.md
   - task-02-a-plugin-stores-a-refreshed-secret.md

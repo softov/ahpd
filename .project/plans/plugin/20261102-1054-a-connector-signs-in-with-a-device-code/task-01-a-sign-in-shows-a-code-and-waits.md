@@ -1,6 +1,6 @@
 ---
 title: A sign-in shows a code and waits
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:

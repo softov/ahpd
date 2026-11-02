@@ -1,6 +1,6 @@
 ---
 title: A plugin stores a refreshed secret
-status: implemented
+status: done
 depends: []
 layer: sdk
 refs:
