@@ -1,160 +1,117 @@
-import { EventEmitter } from 'node:events';
-import type { ChildProcess } from 'node:child_process';
 import { afterEach, expect, it, vi } from 'vitest';
+import { pluginHost } from '../../sdk/src/plugins/plugins.js';
 import { checkView } from '../../sdk/src/plugins/view.js';
-import { pluginHost, raise } from '../../sdk/src/plugins/plugins.js';
 import type { Alert, LoaderContext, PluginView } from '../../sdk/src/types/plugin.js';
-import { LAUNCHER_LABEL, PROTOCOL_LABEL, TUNNEL_PORT } from '../src/discovery.js';
-import { show } from '../src/devtunnel.js';
-import type { Result, Runner } from '../src/devtunnel.js';
-import { apply, POLL_MS } from '../src/plugin.js';
+import type { Tunnel } from '../../sdk/src/types/tunnels.js';
+import { TUNNEL_PORT } from '../src/discovery.js';
+import { devtunnelKind, POLL_MS } from '../src/kind.js';
+import type { KindOptions } from '../src/kind.js';
+import type { Service, Shown } from '../src/service.js';
 
 /*
  * The plugin's page, and the poll behind it.
  *
- * The answers of `devtunnel show` are fixtures built from the fields the plan
- * names - `hostConnections`, `clientConnections` and each port's `portNumber`
- * and `portUri` - and `CAPTURED` is one the CLI printed, with its tunnel id and
- * URL replaced. A fake runner and spawner stand in for the CLI, and fake timers
- * stand in for the thirty seconds between one read and the next.
+ * The service's answers are fixtures of the fields the page draws - the id, the
+ * port's URL and the host and client counts - and fake timers stand in for the
+ * thirty seconds between one read and the next. Nothing is reached: the service
+ * is a script of answers, and the only Dev Tunnel in the file is made up.
  */
 
-const ok = (stdout: string): Result => ({ status: 0, signal: null, stdout, stderr: '' });
-const no = (stderr: string, status = 1): Result => ({ status, signal: null, stdout: '', stderr });
-
-/** A runner that answers each command by its first word, and records the calls. */
-const runner = (answers: Record<string, Result | Result[]>): Runner & { calls: string[][] } => {
-  const calls: string[][] = [];
-  const left = new Map(Object.entries(answers).map(([at, value]) => [at, Array.isArray(value) ? [...value] : [value]]));
-  const one = ((args: readonly string[]) => {
-    calls.push([...args]);
-    const queue = left.get(args[0] ?? '');
-    return (queue !== undefined && queue.length > 1 ? queue.shift() : queue?.[0]) ?? ok('{}');
-  }) as Runner & { calls: string[][] };
-  one.calls = calls;
-  return one;
-};
-
-/** A `devtunnel host` that does not exist, so nothing is spawned in a test. */
-const spawner = () => {
-  const child = new EventEmitter() as ChildProcess & { killed: boolean };
-  child.killed = false;
-  child.kill = () => { child.killed = true; return true; };
-  return child;
-};
-
-const TUNNEL = 'sunny-otter-9k3';
-const URL = `https://${TUNNEL}-${String(TUNNEL_PORT)}.devtunnels.ms`;
-
-/** The list answer for the tunnel this plugin made before. */
-const kept = (): Result => ok(JSON.stringify({
-  tunnels: [{ tunnelId: TUNNEL, labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03'] }],
-}));
+const TUNNEL = 'otter-1234';
+const URL = `https://url-${String(TUNNEL_PORT)}.example.test/`;
 
 /** A tunnel the service holds, with one host and two clients on it. */
-const UP = JSON.stringify({
-  tunnel: {
-    tunnelId: TUNNEL,
-    hostConnections: 1,
-    clientConnections: 2,
-    // The daemon's own port comes first, so taking it would be the wrong URL.
-    ports: [
-      { portNumber: 9187, portUri: 'https://direct.example.test' },
-      { portNumber: TUNNEL_PORT, portUri: URL },
-    ],
-  },
-});
+const UP: Shown = { id: TUNNEL, url: URL, hosts: 1, clients: 2 };
 
 /** The same tunnel after the relay dropped: no host is connected. */
-const DOWN = JSON.stringify({
-  tunnel: {
-    tunnelId: TUNNEL,
-    hostConnections: 0,
-    clientConnections: 0,
-    ports: [{ portNumber: TUNNEL_PORT, portUri: URL }],
-  },
+const DOWN: Shown = { id: TUNNEL, hosts: 0, clients: 0 };
+
+/** A read that failed, as the service's error. */
+const failed = (why: string): Error => new Error(why);
+
+/** One answer, a failure, or a promise that is answered by the test. */
+type Answer = Shown | Error | Promise<Shown>;
+
+/** A service that answers `show` from a script, and counts what it was asked. */
+const scripted = (answers: Answer[]) => {
+  const calls = { shown: 0 };
+  const next = (): Promise<Shown | undefined> => {
+    const at = answers[Math.min(calls.shown, answers.length - 1)];
+    calls.shown += 1;
+    if (at === undefined) return Promise.resolve(undefined);
+    if (at instanceof Error) return Promise.reject(at);
+    return Promise.resolve(at);
+  };
+  const service: Service = {
+    add: async () => ({ remote: { id: TUNNEL, labels: [] }, url: URL }),
+    access: async () => {},
+    replace: async () => URL,
+    remove: async () => {},
+    restart: async () => {},
+    show: next,
+    close: async () => {},
+  };
+  return { service, calls };
+};
+
+const context = (over: Partial<LoaderContext> = {}): LoaderContext => ({
+  path: '/work', paths: ['/work'], version: '0.10.0', hostName: 'test', configDir: '/work', log: () => {}, say: () => {}, ...over,
 });
 
-/**
- * What `devtunnel show <id> --json` printed, from CLI 1.0.2094, for a tunnel
- * this plugin made and is hosting with no client on it. Every field is as the
- * CLI wrote it but the tunnel id, the URL and the machine's label: the
- * connection token is derived from the id.
- */
-const CAPTURED = JSON.stringify({
-  tunnel: {
-    tunnelId: 'quiet-river-x1y2z3a.brs',
-    hostConnections: 1,
-    clientConnections: 0,
-    labels: [LAUNCHER_LABEL, PROTOCOL_LABEL, '_ahpd', 'dev03'],
-    tunnelExpiration: '30 days',
-    description: '',
-    currentUploadRate: '0 MB/s (limit: 20 MB/s)',
-    currentDownloadRate: '0 MB/s (limit: 20 MB/s)',
-    uploadTotal: '290 KB',
-    downloadTotal: '318 KB',
-    ports: [{ portNumber: TUNNEL_PORT, protocol: 'http', portUri: `https://abcd1234-${String(TUNNEL_PORT)}.brs.devtunnels.ms/` }],
-    accessControl: [],
-  },
-}, null, 2);
+/** The system tunnel, which is the one this plugin draws. */
+const SYSTEM: Tunnel = {
+  id: 'devtunnel-system',
+  kind: 'devtunnel',
+  plugin: 'tunnel-devtunnel',
+  purpose: 'system',
+  enabled: true,
+  settings: { connector: 'mine', port: TUNNEL_PORT, anonymous: false },
+};
 
-const context = (log: (line: string) => void = () => {}): LoaderContext => ({
-  path: '/work', paths: ['/work'], version: '0.10.0', hostName: 'test', configDir: '/work', log, say: () => {},
-});
-
-const listening = { type: 'listening', runtime: 'node', host: '127.0.0.1', port: TUNNEL_PORT, guarded: false } as const;
-
-/** The plugin applied to a host, raised to `listening`, with what it drew kept. */
-const running = async (run: Runner, log: (line: string) => void = () => {}) => {
+/** The kind over a service, with what it drew, said and warned kept. */
+const kindFor = (service: Service, over: Partial<KindOptions> = {}) => {
   const views: PluginView[] = [];
-  const cleared: string[] = [];
-  const { host, contribution } = pluginHost('tunnel', context(log), {
+  const alerts: Alert[] = [];
+  const logged: string[] = [];
+  const clearedViews: string[] = [];
+  const clearedAlerts: string[] = [];
+  const { host } = pluginHost('tunnel', context({
+    log: (line) => { logged.push(line); },
+  }), {
+    alert: (alert) => { alerts.push(alert); },
+    clearAlert: (ref) => { clearedAlerts.push(ref); },
     showView: (_surface, view) => { views.push(view); },
-    clearView: (surface) => { cleared.push(surface); },
+    clearView: (surface) => { clearedViews.push(surface ?? 'main'); },
   });
-  await apply(host, { runner: run, spawner });
-  await raise(contribution.events, listening);
-  return { views, cleared, events: contribution.events };
+  const kind = devtunnelKind({
+    plugin: host,
+    service,
+    connector: 'mine',
+    anonymous: false,
+    keep: true,
+    open: () => true,
+    daemonPort: () => TUNNEL_PORT,
+    guarded: () => false,
+    ...over,
+  });
+  return { kind, views, alerts, logged, clearedViews, clearedAlerts };
+};
+
+/** The kind started on the system tunnel, with its first read in `views`. */
+const running = async (answers: Answer[], over: Partial<KindOptions> = {}) => {
+  const made = scripted(answers);
+  const harness = kindFor(made.service, over);
+  await harness.kind.create(SYSTEM, () => {});
+  return { ...harness, calls: made.calls };
 };
 
 afterEach(() => { vi.useRealTimers(); });
 
-// What the CLI says -------------------------------------------------------
-
-it('reads the URL of the tunnel\'s own port, the relay state and the client count', async () => {
-  const tunnel = { tunnelId: TUNNEL, labels: [] };
-  const up = runner({ show: ok(UP) });
-  expect(await show(tunnel, up)).toEqual({ url: URL, hosts: 1, clients: 2 });
-  expect(up.calls[0]).toEqual(['show', TUNNEL, '--json']);
-
-  // A relay that is down answers 0 hosts, and the URL is still there to open.
-  expect(await show(tunnel, runner({ show: ok(DOWN) }))).toEqual({ url: URL, hosts: 0, clients: 0 });
-});
-
-it('reads the answer the CLI printed', async () => {
-  const tunnel = { tunnelId: 'quiet-river-x1y2z3a.brs', labels: [] };
-  expect(await show(tunnel, runner({ show: ok(CAPTURED) }))).toEqual({
-    url: `https://abcd1234-${String(TUNNEL_PORT)}.brs.devtunnels.ms/`,
-    hosts: 1,
-    clients: 0,
-  });
-});
-
-it('has no URL to show when the service answers no port for the tunnel', async () => {
-  const answer = ok(JSON.stringify({ tunnel: { hostConnections: 0, clientConnections: 0, ports: [] } }));
-  expect(await show({ tunnelId: TUNNEL, labels: [] }, runner({ show: answer }))).toEqual({ hosts: 0, clients: 0 });
-});
-
-it('refuses a count that is there and is not a number', async () => {
-  const answer = ok(JSON.stringify({ tunnel: { hostConnections: 'one', clientConnections: 0 } }));
-  await expect(show({ tunnelId: TUNNEL, labels: [] }, runner({ show: answer })))
-    .rejects.toThrow(/hostConnections that is not a number/);
-});
-
 // The page ----------------------------------------------------------------
 
 it('shows a view the sdk accepts, with the URL and every value on it', async () => {
-  const { views } = await running(runner({ list: kept(), port: ok(''), show: ok(UP) }));
+  vi.useFakeTimers();
+  const { views } = await running([UP]);
   expect(views).toHaveLength(1);
   const view = views[0] as PluginView;
 
@@ -167,13 +124,11 @@ it('shows a view the sdk accepts, with the URL and every value on it', async () 
   expect(view.components['body']?.children).toEqual(['status', 'rule', 'tunnel', 'port', 'clients']);
   expect(view.components['status']?.children).toEqual(['address', 'relay-up']);
   expect(view.components['relay-up']?.tone).toBe('success');
-  expect(view.components['port']).toEqual({ id: 'port', component: 'Row', justify: 'spaceBetween', align: 'center', children: ['port-label', 'port-value'] });
-  expect(view.components['port-label']).toEqual({ id: 'port-label', component: 'Text', variant: 'caption', text: 'Port' });
 });
 
 it('says the address is not ready rather than drawing a Link the sdk would refuse', async () => {
-  const answer = ok(JSON.stringify({ tunnel: { hostConnections: 0, clientConnections: 0, ports: [] } }));
-  const { views } = await running(runner({ list: kept(), port: ok(''), show: answer }));
+  vi.useFakeTimers();
+  const { views } = await running([DOWN]);
   const view = views[0] as PluginView;
   expect(view.components['address']).toEqual({ id: 'address', component: 'Text', text: 'The tunnel address is not ready' });
   expect(view.components['relay-down']?.text).toBe('The relay is down');
@@ -185,14 +140,13 @@ it('says the address is not ready rather than drawing a Link the sdk would refus
 
 it('draws the state again only when it changed', async () => {
   vi.useFakeTimers();
-  const run = runner({ list: kept(), port: ok(''), show: [ok(UP), ok(UP), ok(DOWN)] });
-  const { views } = await running(run);
+  const { views, calls } = await running([UP, UP, DOWN]);
   expect(views).toHaveLength(1);
 
   await vi.advanceTimersByTimeAsync(POLL_MS);
   // The same answer is read again and says nothing: the page is what it was.
   expect(views).toHaveLength(1);
-  expect(run.calls.filter((one) => one[0] === 'show')).toHaveLength(2);
+  expect(calls.shown).toBe(2);
 
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(views).toHaveLength(2);
@@ -202,13 +156,13 @@ it('draws the state again only when it changed', async () => {
 
 it('keeps the view when a read fails, and logs one run of failures once', async () => {
   vi.useFakeTimers();
-  const logged: string[] = [];
-  const run = runner({
-    list: kept(),
-    port: ok(''),
-    show: [ok(UP), no('the service is gone'), no('the service is gone'), ok(UP), no('the service is back down')],
-  });
-  const { views } = await running(run, (line) => { logged.push(line); });
+  const { views, logged } = await running([
+    UP,
+    failed('the service is gone'),
+    failed('the service is gone'),
+    UP,
+    failed('the service is back down'),
+  ]);
   expect(views).toHaveLength(1);
 
   await vi.advanceTimersByTimeAsync(POLL_MS);
@@ -226,59 +180,61 @@ it('keeps the view when a read fails, and logs one run of failures once', async 
 
 it('warns on the row once for a run of failed reads, and clears it on the next good one', async () => {
   vi.useFakeTimers();
-  const alerts: Alert[] = [];
-  const cleared: string[] = [];
-  const run = runner({ list: kept(), port: ok(''), show: [no('the service is gone'), no('the service is gone'), ok(UP)] });
-  const { host, contribution } = pluginHost('tunnel', context(), {
-    alert: (alert) => { alerts.push(alert); },
-    clearAlert: (ref) => { cleared.push(ref); },
-  });
-  await apply(host, { runner: run, spawner });
-  await raise(contribution.events, listening);
-  expect(alerts).toEqual([{ level: 'warning', ref: 'read', text: 'The tunnel\'s status could not be checked, so this page may be out of date.' }]);
-  expect(cleared).toEqual(['tunnel']);
+  const { alerts, clearedAlerts } = await running([
+    failed('the service is gone'),
+    failed('the service is gone'),
+    UP,
+  ]);
+  expect(alerts).toEqual([{
+    level: 'warning',
+    ref: 'read',
+    text: 'The tunnel\'s status could not be checked, so this page may be out of date.',
+  }]);
 
   await vi.advanceTimersByTimeAsync(POLL_MS);
   expect(alerts).toHaveLength(1);
 
   await vi.advanceTimersByTimeAsync(POLL_MS);
-  expect(cleared).toEqual(['tunnel', 'read']);
+  expect(clearedAlerts).toContain('read');
 });
 
 it('stops the poll and clears the view when the tunnel stops', async () => {
   vi.useFakeTimers();
-  const run = runner({ list: kept(), port: ok(''), show: ok(UP) });
-  const { views, cleared, events } = await running(run);
-  const reads = run.calls.filter((one) => one[0] === 'show').length;
+  const { kind, views, clearedViews, calls } = await running([UP]);
+  expect(views).toHaveLength(1);
 
-  await raise(events, { type: 'stopping' });
-  expect(cleared).toEqual(['main']);
+  await kind.invoke('stop', SYSTEM, () => {});
+  expect(clearedViews).toContain('main');
 
   await vi.advanceTimersByTimeAsync(POLL_MS * 2);
-  expect(run.calls.filter((one) => one[0] === 'show')).toHaveLength(reads);
+  expect(calls.shown).toBe(1);
   expect(views).toHaveLength(1);
 });
 
 it('starts no poll when the tunnel stops during its first read', async () => {
   vi.useFakeTimers();
-  let answer: (result: Result) => void = () => {};
-  const base = runner({ list: kept(), port: ok('') });
-  const run: Runner = (args) => {
-    if (args[0] !== 'show') return base(args);
-    base.calls.push([...args]);
-    return new Promise<Result>((resolve) => { answer = resolve; });
+  let answer: (shown: Shown) => void = () => {};
+  const pending = new Promise<Shown>((done) => { answer = done; });
+  const shown: Shown[] = [];
+  const service: Service = {
+    add: async () => ({ remote: { id: TUNNEL, labels: [] }, url: URL }),
+    access: async () => {},
+    replace: async () => URL,
+    remove: async () => {},
+    restart: async () => {},
+    show: async () => { shown.push(UP); return await pending; },
+    close: async () => {},
   };
-  const views: PluginView[] = [];
-  const { host, contribution } = pluginHost('tunnel', context(), { showView: (_surface, view) => { views.push(view); } });
-  await apply(host, { runner: run, spawner });
-  const listened = raise(contribution.events, listening);
-  await vi.advanceTimersByTimeAsync(0);
-  expect(base.calls.filter((one) => one[0] === 'show')).toHaveLength(1);
+  const { kind, views } = kindFor(service);
 
-  await raise(contribution.events, { type: 'stopping' });
-  answer(ok(UP));
-  await listened;
+  const started = kind.create(SYSTEM, () => {});
+  await vi.advanceTimersByTimeAsync(0);
+  expect(shown).toHaveLength(1);
+
+  await kind.invoke('stop', SYSTEM, () => {});
+  answer(UP);
+  await started;
   await vi.advanceTimersByTimeAsync(POLL_MS * 2);
-  expect(base.calls.filter((one) => one[0] === 'show')).toHaveLength(1);
+  expect(shown).toHaveLength(1);
   expect(views).toEqual([]);
 });

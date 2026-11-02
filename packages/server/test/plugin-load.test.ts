@@ -335,7 +335,7 @@ describe('a first-party plugin', () => {
     ]],
     ['push', ['title', 'accessToken', 'webPushHosts', 'contact']],
     ['tasks', ['requireApproval', 'sweepAfterDays']],
-    ['tunnel-devtunnel', ['name', 'keep', 'anonymous', 'allowAccountChange']],
+    ['tunnel-devtunnel', ['connector', 'name', 'keep', 'anonymous', 'allowAccountChange']],
     ['webhook', ['syncTimeoutSeconds', 'maxBodyBytes']],
   ];
 
