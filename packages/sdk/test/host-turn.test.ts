@@ -236,6 +236,42 @@ describe('driving a turn', () => {
       expect(after).toEqual(ended);
     });
 
+    /*
+     * The worker's link, through every progress line. The host writes the
+     * `subagent` content onto the running call when the worker's chat opens,
+     * and `chat/toolCallContentChanged` replaces a call's whole content, so a
+     * progress line carries the link along with the line.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L162
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L719-L729
+     */
+    it('keeps a running worker\'s link through its progress line', async () => {
+      const { client, peer: p, uri, chatUri } = await running();
+      client.handle({
+        method: 'dispatchAction',
+        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      });
+      await settle();
+      const held = async () => (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+        snapshot: { state: { activeTurn: { responseParts: { toolCall?: { content?: unknown[]; _meta?: Record<string, unknown> } }[] } } };
+      }).snapshot.state.activeTurn.responseParts[0]?.toolCall;
+      await emit(
+        { type: 'assistant', message: { id: 'm1', content: [{ type: 'tool_use', id: 'tc1', name: 'Task', input: { description: 'look', prompt: 'Look around' } }] } },
+        // The worker's first words, which open its chat.
+        { type: 'assistant', parent_tool_use_id: 'tc1', message: { id: 'w1', content: [{ type: 'text', text: 'Looking.' }] } },
+      );
+      const linked = (await held())?.content;
+      expect(linked).toEqual([{
+        type: 'subagent', resource: expect.stringMatching(/^ahp-chat:\/\/subagent\/[^/]+\/tc1$/), title: 'look', description: 'look',
+      }]);
+      await emit({
+        type: 'system', subtype: 'task_progress', task_id: 'task-1', tool_use_id: 'tc1', description: 'look', summary: 'Reading the tests',
+      });
+      const progress = actions(p, chatUri).filter((e) => e.action.type === 'chat/toolCallContentChanged').at(-1)?.action;
+      expect(progress?._meta).toMatchObject({ progressMessage: 'Reading the tests' });
+      expect(progress?.content).toEqual(linked);
+      expect((await held())?.content).toEqual(linked);
+    });
+
     it('says nothing for a tool it has no kind for', async () => {
       const { started, held } = await kinds([{
         type: 'assistant',
