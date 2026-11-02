@@ -44,7 +44,7 @@ The plugin keeps each open connector's token in memory by id, for the tunnel kin
 11. On a failed refresh, log one line and ask the host to `check` the connector.
 12. Keep each open connector's token in a map by id, and export a reader for it.
 13. Keep the CLI path of the plugin as it is.
-14. Write the doc section, with the `connector:put` and `connector:host` grants the plugin's connection needs.
+14. Write the doc section. The plugin's own connection needs no grant to send `secret`, as `ownPlugin` allows it.
 
 ## Validation
 

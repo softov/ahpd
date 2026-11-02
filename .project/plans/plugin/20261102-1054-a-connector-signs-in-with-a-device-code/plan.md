@@ -107,7 +107,6 @@ devtunnel open -> refresh now and every 7 hours -> x-ahpd/connectors/secret { id
 - A refresh makes the old refresh token stop working. The adapter sends `secret` before it uses the new token, and logs a failed send. A connector whose stored refresh token is dead answers `denied`, and the person signs in again.
 - `signin-finish` holds a request open up to 15 minutes. The host keeps polling when the caller goes away, so a dropped request loses nothing.
 - Polling calls the network every few seconds. The host stops polling at the expiry, at a refusal, and when the entry is dropped for being the oldest of a caller's 10.
-- The devtunnel plugin's own connection needs `connector:put` and `connector:host` to send `secret` for a host connector. Its doc says so, and a refused send is one log line.
 
 ## Resume state
 
