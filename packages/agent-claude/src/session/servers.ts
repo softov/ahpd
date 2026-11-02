@@ -552,9 +552,11 @@ export function createServers(ctx: SessionContext): Servers {
      *
      * The guide has a stop manage the server's process and leave the
      * customization's enabled intent as it was, so a server that was on when
-     * it stopped is kept in `stopRequested` and reads on. Once the request
-     * is said it is answered, and what follows it is the state the CLI
-     * reports, a call that threw included.
+     * it stopped is kept in `stopRequested` and reads on. It is kept from
+     * before the CLI is asked, so a start that arrives while the CLI is still
+     * stopping it lifts the flag, and given back when the CLI refuses the
+     * stop. Once the request is said it is answered, and what follows it is
+     * the state the CLI reports, a call that threw included.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md#L48-L51
      */
     stopMcpServer: async (id) => {
@@ -563,12 +565,13 @@ export function createServers(ctx: SessionContext): Servers {
         return false;
       const on = bag(list(ctx.customizations.find((entry) => str(entry.id) === id)?.enablement)[0]).enabled !== false;
       request(id, 'session/mcpServerStopRequested');
+      if (on) stopRequested.add(server);
       try {
         await ctx.handle.toggleMcpServer(server, false);
-        if (on) stopRequested.add(server);
       }
       catch {
         // Said by the refresh below, which reads what the CLI made of it.
+        stopRequested.delete(server);
       }
       await refreshMcp();
       return true;

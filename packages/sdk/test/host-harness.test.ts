@@ -842,6 +842,23 @@ describe('turning a customization on and off', () => {
     expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
   });
 
+  it('switches a server back on for a start that arrives while its stop is still being made', async () => {
+    const { client, uri } = await withServers('connected');
+    let made = (): void => {};
+    sdk.mcpHeld = new Promise<void>((done) => { made = done; });
+    ask(client, 'session/mcpServerStopRequested', 11);
+    await settle(8);
+    ask(client, 'session/mcpServerStartRequested', 12);
+    await settle(8);
+    made();
+    await settle(8);
+
+    // The start is the last request, so the disabled flag the stop set is lifted.
+    expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: false }, { name: 'desk', enabled: true }]);
+    expect(sdk.mcpReconnected).toEqual(['desk']);
+    expect(await desk(client, uri)).toMatchObject({ enablement: [{ kind: 'session', enabled: true }], state: { kind: 'ready' } });
+  });
+
   it('follows a stop that fails with the state the server still has', async () => {
     const { client, peer: p, uri } = await withServers('connected');
     sdk.mcpFails = 'desk would not stop';
