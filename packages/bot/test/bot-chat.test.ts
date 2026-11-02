@@ -744,6 +744,33 @@ it('holds a begin behind the open turn rather than taking its place', async () =
   ]);
 });
 
+/*
+ * A call its turn left unfinished reads as the reducer leaves it.
+ *
+ * The back session never answered a turn that ended with a notice, so its
+ * call is not a call that worked: the turn's end forces it to cancelled,
+ * `skipped`, which the reference host's chat draws as skipped
+ * (stateToProgressAdapter.ts L548 at a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
+ */
+it('leaves the back session\'s call unfinished when its turn ends with a notice', async () => {
+  const { host } = made();
+  const notes: Notes = [];
+  const client = await anyone(host, notes);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const back = `ahp-chat://default/${Buffer.from('bot:/backer/ana/work', 'utf8').toString('base64url')}`;
+  chat.onMessage = () => { chat.working?.(back, 'Backer'); };
+
+  await said(client, 't1', 'hello');
+  chat.notice('The back session would not take it');
+
+  expect(actions(notes, CHAT).some((one) => one['type'] === 'chat/toolCallComplete')).toBe(false);
+  const state = await stateOf(client);
+  const call = ((state['turns'] as Bag[])[0]?.['responseParts'] as Bag[])[0];
+  expect(call).toMatchObject({ kind: 'toolCall', toolCall: { status: 'cancelled', reason: 'skipped' } });
+});
+
 it('shows the back session as a subagent call on each turn', async () => {
   const { host, configDir } = made();
   const notes: Notes = [];
@@ -766,20 +793,17 @@ it('shows the back session as a subagent call on each turn', async () => {
   });
 
   /*
-   * The interrupted turn is over, and the call it showed with it: completed,
-   * with the chat a client opens. The steered turn is open and waiting on the
-   * same chat, by a call of its own.
+   * The interrupted turn is over, and the call it showed with it: left
+   * unfinished, since the back session never answered it, so its turn's end
+   * makes it cancelled and `skipped`, with the chat a client opens. The steered
+   * turn is open and waiting on the same chat, by a call of its own.
    */
   const running = await stateOf(client);
   const first = (running['turns'] as Bag[])[0] as Bag;
   expect(first).toMatchObject({ id: 't1', state: 'complete' });
   expect((first['responseParts'] as Bag[])[0]).toMatchObject({
     kind: 'toolCall',
-    toolCall: {
-      status: 'completed',
-      success: true,
-      content: [{ type: 'subagent', resource: back, title: 'Backer' }],
-    },
+    toolCall: { status: 'cancelled', reason: 'skipped', displayName: 'Backer' },
   });
   const active = running['activeTurn'] as Bag;
   expect(active['message']).toMatchObject({ text: 'and this' });

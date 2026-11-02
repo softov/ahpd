@@ -1,6 +1,6 @@
 ---
 title: A call its turn left ends skipped
-status: todo
+status: done
 depends: []
 layer: bot, agent-pi
 refs:
@@ -36,3 +36,12 @@ Each such call ends cancelled, `skipped`, in the backend's record as in every cl
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- A stop was already masked: the host ends the turn on a client's stop.
+- It then drops a backend's result for a call it no longer holds running.
+- So the new case ends the turn with a notice, which the bot ends itself.
+- `bot-chat.test.ts`'s subagent case moved with the behavior: the steered turn's call read as worked.
+- `agent-pi-asking.test.ts` moved too: its stop read a denial for the waiting call.
+- On `89ebe4d5`'s sources the three cases fail: a call read as worked, and a denial was said.

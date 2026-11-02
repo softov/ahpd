@@ -360,27 +360,22 @@ export function piSession(
   /**
    * Cancel every question still waiting, so pi does not wait for ever.
    *
-   * Each one is said back as an answer nobody gave and taken off the input
-   * list, and its row is moved to `cancelled`, which is what a client watching
-   * the actions sees too.
+   * Nobody answered them, so nothing is said in anybody's name: the turn's
+   * end forces each call to cancelled, `skipped`, in every client's state, as
+   * it does here, and the reference host's chat draws a call its turn left
+   * behind as skipped rather than as one a person turned down.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L211
    */
   const releasePending = (why: string): void => {
     for (const [id, held] of [...pending.entries()]) {
       pending.delete(id);
       const part = mapping === undefined ? undefined : callPartOf(mapping, id);
       if (part !== undefined) {
-        bag(part.toolCall).status = 'cancelled';
+        Object.assign(bag(part.toolCall), { status: 'cancelled', reason: 'skipped' });
         // The question was cancelled, so the call never ran: the start
         // `tool_execution_start` stamped is taken off with it.
         untime(bag(part.toolCall));
       }
-      emit('chat', {
-        type: 'chat/toolCallConfirmed',
-        turnId: String(held.entry.turnId ?? (active === undefined ? '' : active.id)),
-        toolCallId: id,
-        approved: false,
-        reason: 'denied' as const,
-      });
       emit('session', { type: 'session/inputNeededRemoved', id });
       held.settle({ block: true, reason: why });
     }
