@@ -1,6 +1,6 @@
 ---
 title: An invalid row owes an open connection
-status: todo
+status: done
 depends: []
 layer: "sdk test"
 refs:
@@ -29,4 +29,4 @@ An invalid offer owes `-32602` and a connection still open, stated in the case r
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `47f20a35`; [implemented.md](implemented.md) says what was verified.

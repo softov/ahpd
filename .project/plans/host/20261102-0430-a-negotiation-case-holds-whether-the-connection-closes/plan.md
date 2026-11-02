@@ -1,7 +1,7 @@
 ---
 title: A negotiation case holds whether the connection closes
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -54,7 +54,7 @@ owed = { code: -32602, closed: asked.closed } -> equal whatever the host did to 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an invalid row owes an open connection](task-01-an-invalid-row-owes-an-open-connection.md) | todo | - |
+| [01 - an invalid row owes an open connection](task-01-an-invalid-row-owes-an-open-connection.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -62,12 +62,12 @@ owed = { code: -32602, closed: asked.closed } -> equal whatever the host did to 
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** row 1 is a listed divergence that leaves the connection open after `-32005`; it keeps its entry.
 
 ## Final verification checklist
 
-- [ ] Rows 12 to 22 hold the host to an open connection.
-- [ ] A host that closes on a malformed offer fails those rows, and passed them before.
+- [x] Rows 12 to 22 hold the host to an open connection.
+- [x] A host that closes on a malformed offer fails those rows, and passed them before.
