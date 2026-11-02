@@ -1412,8 +1412,10 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         },
       });
     },
+    /* Under the kind the inner chat holds the message as, which the host inside matches it on. */
     unqueue: (queueId: string): void => {
-      carry('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: queueId });
+      const kind = chat?.steeringMessage?.id === queueId ? 'steering' : 'queued';
+      carry('chat', { type: 'chat/pendingMessageRemoved', kind, id: queueId });
     },
     reorder: (order: string[]): void => {
       carry('chat', { type: 'chat/queuedMessagesReordered', order });

@@ -784,7 +784,22 @@ export const createTurns = (
     startNext();
   };
 
+  /*
+   * A queued message, or a steering message the run handed back, which waits
+   * in `untaken` to be a turn of its own. A steer cofold's submit still holds
+   * is the run's: `RunHandle.submit` takes approve, deny, answer, steer and
+   * cancel, and none of them gives a steer back, so nothing is said here and
+   * the host answers the client.
+   */
   const unqueue: Session['unqueue'] = (id) => {
+    const left = ctx.untaken.findIndex((held) => held.id === id);
+    if (left >= 0) {
+      ctx.untaken.splice(left, 1);
+      if (ctx.steering?.id === id) ctx.steering = undefined;
+      start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
+      ctx.touch();
+      return;
+    }
     const at = queued.findIndex((held) => held.id === id);
     if (at < 0) return;
     queued.splice(at, 1);
