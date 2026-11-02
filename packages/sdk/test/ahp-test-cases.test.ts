@@ -424,7 +424,6 @@ const DIVERGES: Record<string, (Differs & Broken)[]> = {
 };
 
 const THINKING = 'types/channels-chat/actions.ts, chat/activityChanged: "Dispatched by the server to indicate what the chat is currently doing (e.g. running a tool, thinking)."';
-const CONSUMED = 'chat-channel.md: "When a queued message is added while the chat is idle (no active turn), the server SHOULD immediately consume it using the same two-step sequence."';
 const CUSTOMIZED = 'types/channels-session/actions.ts, session/customizationsChanged: "The session\'s customizations have changed. Full-replacement semantics: the `customizations` array replaces the previous `customizations` entirely."';
 const READY = 'types/channels-session/actions.ts, session/ready: "Session backend initialized successfully."';
 const RETAINED = 'types/common/commands.ts, SubscribeView.turns: "When omitted, the host MUST return all retained turns."; types/channels-chat/state.ts, turnsNextCursor: "Absence means the state contains all retained turns."';
@@ -439,10 +438,10 @@ const ALLOWED: Record<string, (Differs & { because: string })[]> = {
   '007-turnstarted-with-queuedmessageid-removes-last-queued-message': [{ reduced: ['activity'], because: THINKING }],
   '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activity'], because: THINKING }],
   '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': [{ reduced: ['activity'], because: THINKING }],
-  '045-set-a-new-queued-message': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '046-append-queued-message-when-id-is-new': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
-  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activeTurn', 'activity', 'modifiedAt', 'queuedMessages', 'status'], because: CONSUMED }],
+  '045-set-a-new-queued-message': [{ reduced: ['activity'], because: THINKING }],
+  '046-append-queued-message-when-id-is-new': [{ reduced: ['activity'], because: THINKING }],
+  '047-update-queued-message-in-place-when-id-already-exists': [{ reduced: ['activity'], because: THINKING }],
+  '052-steering-and-queued-messages-are-independent': [{ reduced: ['activity'], because: THINKING }],
   '070-full-turn-flow-with-tool-calls-and-re-confirmation': [{ reduced: ['activity'], because: THINKING }],
   '075-turnstarted-clears-isread': [{ reduced: ['activity'], because: THINKING }],
   '105-session-input-full-draft-and-complete-flow': [{ reduced: ['activity'], because: THINKING }],
@@ -642,9 +641,10 @@ interface Driven {
   /** What a client that only watched holds: its snapshot, and every action it was told of since. */
   view: Record<string, unknown>;
   /**
-   * What the protocol's reducer makes of that start and the actions the host
-   * did not refuse: the case's `expected` when the start is its `initial` and
-   * the host refused nothing.
+   * What the protocol's reducer makes of that start, the actions the host did
+   * not refuse, and the actions the protocol has the host say for them on its
+   * own: the case's `expected` when the start is its `initial`, the host
+   * refused nothing and the protocol has it say nothing.
    */
   reduced: Record<string, unknown>;
   /** The state a client that subscribes after the actions is served. */
@@ -720,17 +720,41 @@ async function driven(one: HostCase): Promise<Driven & { channel: string; sessio
       .map((note) => note.params as { origin?: { clientId?: string; clientSeq?: number }; rejectionReason?: string })
       .filter((envelope) => envelope.origin?.clientId === `cases-${one.name}` && envelope.origin.clientSeq === clientSeq));
     // A refused envelope reaches only its sender, and a client applies none.
-    const view = reduced(one.reducer, watching.state, watched.notes
+    const told = watched.notes
       .filter((note) => note.method === 'action')
       .map((note) => note.params as { channel: string; action: Record<string, unknown>; serverSeq: number; rejectionReason?: string })
       .filter((envelope) => envelope.channel === channel && envelope.serverSeq > watching.fromSeq && envelope.rejectionReason === undefined)
-      .map((envelope) => envelope.action));
+      .map((envelope) => envelope.action);
+    const view = reduced(one.reducer, watching.state, told);
     const accepted = sent
       .filter((_, at) => (answers[at] ?? []).every((envelope) => envelope.rejectionReason === undefined))
       .map(({ action }) => action);
-    const goal = accepted.length === one.actions.length && parted(watching.state, one.initial).length === 0
+    /*
+     * A queued message a chat takes while it is idle is taken up at once, in
+     * the two actions the protocol has the host say: the message taken out,
+     * and the turn that takes it up naming it. The turn's id and its start are
+     * the host's own, read off the turn it said naming the message.
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L365-L372
+     */
+    const due: Record<string, unknown>[] = [];
+    let held = watching.state;
+    for (const action of accepted) {
+      const taken = [action];
+      held = reduced(one.reducer, held, [action]);
+      if (one.reducer === 'chat' && action.type === 'chat/pendingMessageSet' && (action.kind ?? 'queued') === 'queued' && held.activeTurn === undefined) {
+        const turn = told.find((said) => said.type === 'chat/turnStarted' && said.queuedMessageId === action.id);
+        const consumed = [
+          { type: 'chat/pendingMessageRemoved', kind: 'queued', id: action.id },
+          { type: 'chat/turnStarted', turnId: turn?.turnId, startedAt: turn?.startedAt, message: action.message, queuedMessageId: action.id },
+        ];
+        held = reduced(one.reducer, held, consumed);
+        taken.push(...consumed);
+      }
+      due.push(...taken);
+    }
+    const goal = accepted.length === one.actions.length && due.length === accepted.length && parted(watching.state, one.initial).length === 0
       ? one.expected
-      : reduced(one.reducer, watching.state, accepted);
+      : reduced(one.reducer, watching.state, due);
     return { answers, start: watching.state, view, reduced: goal, served: served.state, channel, session: uri };
   }
   finally {
