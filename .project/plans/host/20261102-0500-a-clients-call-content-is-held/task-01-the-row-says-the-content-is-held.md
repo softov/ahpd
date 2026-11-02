@@ -1,6 +1,6 @@
 ---
 title: The row says the content is held
-status: todo
+status: done
 depends: []
 layer: "docs, sdk host"
 refs:
@@ -31,4 +31,4 @@ The test holds the claim: a later subscriber is served the call's content.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `c72061cd`; [implemented.md](implemented.md) says what was verified.

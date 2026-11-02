@@ -1,7 +1,7 @@
 ---
 title: A client's call content is held
 domain: host
-status: planned
+status: built
 priority: low
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -56,7 +56,7 @@ client: chat/toolCallContentChanged {turnId, toolCallId, content}
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the row says the content is held](task-01-the-row-says-the-content-is-held.md) | todo | - |
+| [01 - the row says the content is held](task-01-the-row-says-the-content-is-held.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -64,12 +64,12 @@ client: chat/toolCallContentChanged {turnId, toolCallId, content}
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** none.
 
 ## Final verification checklist
 
-- [ ] The row and both comments say the content is held.
-- [ ] The test sends `turnId` and reads the content back from a later subscribe.
+- [x] The row and both comments say the content is held.
+- [x] The test sends `turnId` and reads the content back from a later subscribe.
