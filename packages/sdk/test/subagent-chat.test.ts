@@ -511,6 +511,18 @@ async function waiting(as = 'ahp-session:/ask', stoppable = false) {
   return { ask, lead, worker, send, refusals };
 }
 
+/*
+ * A draft of the answer to a worker's question, taken on the worker's chat,
+ * where the question is: the reducer keeps it on the request, and the
+ * reference host takes one on any chat.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L355-L356
+ */
+it('takes a draft answer on a worker chat', async () => {
+  const { worker, send, refusals } = await waiting();
+  await send(worker, { type: 'chat/inputAnswerChanged', requestId: 'toolu_ask', questionId: 'q1', answer: { state: 'skipped' } });
+  expect(refusals()).toEqual([]);
+});
+
 it('takes an approval given on a worker chat to the session\'s backend', async () => {
   const { worker, send, refusals } = await waiting();
   await send(worker, { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_bash', approved: true, confirmed: 'user-action' });

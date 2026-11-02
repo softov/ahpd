@@ -37,7 +37,7 @@ const settle = async (times = 20): Promise<void> => {
 };
 
 /** The example, with its emitter handed to the case. */
-function forgetful(): { agent: Agent; held: () => Start } {
+function forgetful(drafts: boolean): { agent: Agent; held: () => Start } {
   const base = echo({ path: DIR, pace: 0 });
   let start: Start | undefined;
   return {
@@ -45,15 +45,15 @@ function forgetful(): { agent: Agent; held: () => Start } {
       ...base,
       provider: 'forgetful',
       displayName: 'Forgetful',
-      // A backend that keeps a draft answer, so the host's own checks are what meet one.
-      create: (given) => { start = given; return { ...base.create(given), setAnswer: () => true }; },
+      // A backend that keeps a draft answer or none, as the case asks.
+      create: (given) => { start = given; return drafts ? { ...base.create(given), setAnswer: () => true } : base.create(given); },
     },
     held: () => start as Start,
   };
 }
 
-async function opened() {
-  const { agent, held } = forgetful();
+async function opened(drafts = true) {
+  const { agent, held } = forgetful(drafts);
   const host = createHost({ path: DIR, agents: [agent] });
   const p = peer();
   const client = host.accept(p);
@@ -79,8 +79,34 @@ async function opened() {
       .map((one) => one.params as { origin?: { clientSeq: number }; rejectionReason?: string })
       .find((one) => one.origin?.clientSeq === clientSeq)?.rejectionReason;
   };
-  return { start, entries, sent };
+  /** Every action said on the chat, in order. */
+  const said = (): Bag[] => p.notes
+    .filter((one) => one.method === 'action')
+    .map((one) => one.params as { channel: string; action: Bag })
+    .filter((one) => one.channel === chat)
+    .map((one) => one.action);
+  return { start, entries, sent, said };
 }
+
+/*
+ * A draft answer is the request's synced answer state, which the reducer
+ * keeps on the request whatever the backend keeps; the reference host takes
+ * one for every agent.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L355-L356
+ */
+it('takes a draft answer for a backend that keeps no drafts, and says it to the chat', async () => {
+  const { start, sent, said } = await opened(false);
+  start.emit('chat', {
+    type: 'chat/inputRequested',
+    request: { id: 'q1', message: 'Who?', questions: [{ id: 'name', kind: 'text', message: 'Your name' }] },
+  });
+  await settle();
+  const answer = { state: 'draft', value: { kind: 'text', value: 'An' } };
+  expect(await sent(1, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer })).toBeUndefined();
+  expect(said().filter((one) => one.type === 'chat/inputAnswerChanged')).toEqual([
+    { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer },
+  ]);
+});
 
 /** A question with one required field, held open in the running turn. */
 const asked = (start: Start): void => {

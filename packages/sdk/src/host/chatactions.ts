@@ -1998,13 +1998,13 @@ export function chatAction(
      * request this host is already holding open - the protocol calls
      * the result the request's synced answer state, and says a
      * `chat/inputCompleted` may carry no answers because this is where
-     * they are.
+     * they are. Taken on any chat holding the question, a worker's
+     * included, whether or not its backend keeps drafts: the reducer
+     * keeps the draft on the request, and the reference host takes it
+     * for every agent.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L355-L356
      */
     case 'chat/inputAnswerChanged': {
-      if (!session.setAnswer) {
-        no('This backend keeps no draft answers');
-        break;
-      }
       const requestId = String(action.requestId ?? '');
       const questionId = String(action.questionId ?? '');
       // Absent clears that question's draft, which is what the action
@@ -2038,9 +2038,9 @@ export function chatAction(
           break;
         }
       }
-      session.setAnswer(requestId, questionId, answer);
-      // A backend holding no such question says nothing, and the host says
-      // the draft every client is to hold.
+      session.setAnswer?.(requestId, questionId, answer);
+      // A backend that keeps no draft, or holds no such question, says
+      // nothing, and the host says the draft every client is to hold.
       if (ctx.unanswered()) dispatch(worker ? channel : session.chatUri, action, origin);
       break;
     }

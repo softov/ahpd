@@ -1,6 +1,6 @@
 ---
 title: A draft answer is taken on any chat
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -17,7 +17,9 @@ It is taken on a worker's chat, and for a backend with no `setAnswer`.
 
 - `UPDATE: packages/sdk/src/host/chatactions.ts:1976-2000` - the host says the draft when the backend keeps none.
 - `UPDATE: packages/sdk/src/host/channels.ts:169-170` - a worker's chat takes `chat/inputAnswerChanged`.
-- `UPDATE: packages/sdk/test` - a draft on a backend that keeps none, and on a worker's chat.
+- `UPDATE: packages/sdk/test/host-input-needed.test.ts` - a draft on a backend that keeps none.
+- `UPDATE: packages/sdk/test/subagent-chat.test.ts` - a draft on a worker's chat.
+- `UPDATE: docs/sdk/AHP.md:291` - the `chat/inputAnswerChanged` row.
 
 ## Steps
 
@@ -33,3 +35,10 @@ It is taken on a worker's chat, and for a backend with no `setAnswer`.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- No test read the refusal for a backend that keeps no drafts, nor the worker chat's refusal of a draft.
+- The new cases are in `host-input-needed.test.ts` and `subagent-chat.test.ts`.
+- `AHP.md`'s `chat/inputAnswerChanged` row now names both refusals of task 02 as well.
+- On task 02's sources both cases fail: one refused for the backend, the other as a read-only subagent chat.
