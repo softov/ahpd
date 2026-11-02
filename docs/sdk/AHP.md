@@ -187,14 +187,14 @@ which is a different complaint from an action nobody has served.
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
 | `root/activeSessionsChanged` | host | ✅ | A count, not a list: the sessions this host holds open, a running one and one put to sleep alike, as the protocol counts its "active (non-disposed) sessions". Moves when a session is created, opened from the catalogue or disposed. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
-| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Five keys are the connection's own and are kept on it rather than on the host: `defaultShell`, `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)), and `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, which need a sign-in and no grant except that a `/.../` key in `terminalAutoApproveRules` that VS Code's default table does not carry needs `config:change`. |
+| `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes its window's keys at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Each key is one value for the whole host, which the last push from any window sets and every client reads, as [VS Code's host](https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostConfigurationSync.ts#L47-L55) keeps one root config for every window: the window's own five among them, `defaultShell`, `workspaceTrust`, `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`. A push needs `config:change`, and a push of `workspaceTrust` alone `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)). |
 
 The schema a client draws its controls from holds three kinds of key: the ones VS Code's client pushes, this host's own, and the daemon's.
 `packages/sdk/src/vscoderootconfig.ts` holds the first, one property per key as VS Code's agent host declares it at `7516b04bc94`, out of `common/agentHostSchema.ts`, `common/agentMerge.ts` and `common/automationConfig.ts`.
 Two entries resolve a constant from `src/vs/platform/chat/common/chatSettings.ts` and write the literal it holds, naming the file by URL.
-This host acts on `defaultShell`, on `workspaceTrust` through the connection that pushed it, on `globalAutoApproveEnabled`, on `eligibleForAutoApproval`, on `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns` through the connection that owns the session, and on three of its own: `changeWords`, which says where a commit message and a pull request's words come from, `clientQueueBytes` and `replayBytes`, which bound what the host holds for a client that is not reading ([A client that stops reading](#a-client-that-stops-reading)); nothing else it declares changes what it does.
+This host acts on `defaultShell`, which a client's terminal opens, on `workspaceTrust`, on `globalAutoApproveEnabled`, on `eligibleForAutoApproval`, on `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, and on three of its own: `changeWords`, which says where a commit message and a pull request's words come from, `clientQueueBytes` and `replayBytes`, which bound what the host holds for a client that is not reading ([A client that stops reading](#a-client-that-stops-reading)); nothing else it declares changes what it does.
 `eligibleForAutoApproval` is VS Code's map of tool name to boolean, where `false` means the tool asks every time.
-It is the host's own key, kept for every connection rather than one, and setting it needs `config:change`.
+It is one value for every connection, and setting it needs `config:change`.
 A key names one tool exactly, or every tool of a server through `<server>/*`.
 A tool this host offers is `ahp/<name>` in every backend.
 A backend's own tool keeps its own name, such as Claude's `Bash` or pi's `bash`.
@@ -203,15 +203,15 @@ A `dontAsk` session refuses the call instead of asking.
 The question offers no "always" option, so an answer applies to that call alone.
 cofold may still hold an approval it remembered before the rule was set, and the host cannot revoke that memory.
 An ACP agent decides itself whether to ask about its own tools, so the rule reaches only the MCP tools this host serves it.
-The three terminal keys are the window's, and the rules a session runs under are its owner's connection's.
-That is the connection whose turn started or restarted the backend, and the connection `workspaceTrust` is read from.
+The three terminal keys are the host's one value each, which the last push from any window set, and every session runs under them.
+On a host with people, they answer only the turns the session's owner sends, as `workspaceTrust` does.
 A shell command runs without a question when the rules allow every sub-command and deny none.
 A deny rule makes the call ask rather than refusing it.
 A rule is `true` to approve, `false` to deny, `null` for no rule, or `{ approve, matchCommandLine }`.
 A key written `/.../flags` is a regular expression where any other is a prefix of a sub-command.
 A line the rules cannot read asks as well, which is what `unanalyzable` says.
 A write redirect is allowed only inside the session's working folder and when `editAutoApprovePatterns` matches the target; any other redirect asks.
-A window that pushed no `terminalAutoApproveRules` gets the daemon's `terminalAutoApproveDefaults`.
+Where no window pushed `terminalAutoApproveRules`, the daemon's `terminalAutoApproveDefaults` applies.
 Under `vscode`, the default, that is VS Code's table; under `none` it is no rule at all.
 An empty table that a window pushed approves nothing and is not replaced by either.
 Only an approved command is said with `confirmed: not-needed`, and `terminalAutoApproveEnabled: false` turns the check off.

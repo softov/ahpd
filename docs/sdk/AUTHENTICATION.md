@@ -250,13 +250,13 @@ The value has two fields. `enabled: false` means the window has workspace trust 
 
 Pushing the key needs `trust:push`, which the `trust:write` group covers and the built-in `member` role holds. Trust decides what a session loads from its project. A folder this host was not told to trust loads none of the project's own settings, hooks or MCP servers. What loads them anyway is the agent's own question: see `honoursTrust` in [PLUGINS.md](../plugins/PLUGINS.md).
 
-The key is kept on the connection that pushed it, like `defaultShell` beside it. Two windows on one daemon each answer for their own sessions. Each answer covers every folder at once, which is why the grant is one.
+The key is one value for the whole host, like `defaultShell` beside it: the last push from any window sets it, and every session on the host is answered by it, as [VS Code's host](https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162) reads it. On a host with people it answers only the turns the session's owner sends. Each push covers every folder at once, which is why the grant is one.
 
-When a session moves to a folder the window has not vouched for, the host asks the window itself, with `vscode/requestWorkspaceTrust`. A window that says no, or that does not serve the method, means the move is refused with `Workspace trust was not granted for '<folder>'`. A yes is kept on that connection, so the next move into that folder is not asked again.
+When a session moves to a folder the host's trust does not cover, the host asks the window itself, with `vscode/requestWorkspaceTrust`. A window that says no, or that does not serve the method, means the move is refused with `Workspace trust was not granted for '<folder>'`. A yes is kept on that connection, so the next move into that folder is not asked again.
 
 A worktree is trusted exactly when the repository it was cut from is, since the window has never opened it.
 
-`globalAutoApproveEnabled` is the neighbouring key and the host's rather than a window's. It is a boolean, off by default, and turning it on runs every tool call in every session on this host without asking. It is not a per-connection key, so pushing it needs `config:write`, which only `admin` holds among the built-in roles.
+`globalAutoApproveEnabled` is the neighbouring key. It is a boolean, off by default, and turning it on runs every tool call in every session on this host without asking. Pushing it needs `config:write`, which only `admin` holds among the built-in roles.
 
 ## Agent accounts
 
