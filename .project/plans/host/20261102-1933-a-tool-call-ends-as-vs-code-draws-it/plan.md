@@ -1,7 +1,7 @@
 ---
 title: A tool call ends as VS Code draws it
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -79,12 +79,12 @@ chat/toolCallConfirmed approved false -> the backend -> the refusal said back wi
 ## Resume state
 
 - **Done so far:** tasks 01 and 02, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a backend's own record of a cancelled call keeps what the reducer keeps, so a read back matches.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
