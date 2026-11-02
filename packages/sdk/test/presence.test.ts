@@ -620,17 +620,20 @@ it('takes the creator into the session it created, without a second round trip',
   expect(seen[0]?.tools.map((one) => one.name)).toEqual(['openBrowserPage']);
 });
 
-it('takes the creator in under its own name, not the one it typed', async () => {
+/*
+ * The protocol says the creator's `clientId` MUST match the connection's, and
+ * VS Code's host refuses a request whose entry names another, before the
+ * session is made.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
+ */
+it('refuses a creator that names another client, and makes nothing', async () => {
   const held = host();
   const a = await joins(held, 'creator');
-  await a.client.handle({
+  await expect(a.client.handle({
     method: 'createSession',
     params: { channel: URI, provider: 'echo', activeClient: { clientId: 'somebody-else', tools: [] } },
-  });
-  // The protocol says the two MUST match. Honouring the payload instead would
-  // let a client announce a presence that is not theirs - and the dispatch
-  // path already forces this for the same reason.
-  expect(await clientsIn(a.client, URI)).toEqual(['creator']);
+  })).rejects.toMatchObject({ code: -32602, message: 'createSession.activeClient.clientId must match the connection\'s clientId' });
+  await expect(a.client.handle({ method: 'subscribe', params: { channel: URI } })).rejects.toThrow();
 });
 
 it('leaves a session nobody claimed empty', async () => {
