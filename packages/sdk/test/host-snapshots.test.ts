@@ -547,6 +547,22 @@ describe('the fields a client reads by name', () => {
     expect(actions(benPeer, MINE).some((one) => one.action.type === 'automation/removed')).toBe(true);
   });
 
+  it('says a request on the filtered catalogue to its sender and owner, and to no other owner', async () => {
+    const { ana, anaPeer, benPeer } = await twoAutomationOwners();
+    anaPeer.notes.length = 0;
+    benPeer.notes.length = 0;
+    const send = (clientSeq: number, action: Record<string, unknown>) =>
+      ana.handle({ method: 'dispatchAction', params: { channel: MINE, clientSeq, action } });
+    await send(1, { type: 'automation/createRequested', resource: 'ahp-automation:/ana-weekly', definition: AUTOMATION_DEFINITION });
+    await send(2, { type: 'automation/updateRequested', resource: 'ahp-automation:/ana-nightly', changes: { title: 'Secret' } });
+    await settle();
+    const requests = (p: ReturnType<typeof peer>) => actions(p, MINE)
+      .filter((one) => one.action.type === 'automation/createRequested' || one.action.type === 'automation/updateRequested')
+      .map((one) => one.origin?.clientSeq);
+    expect(requests(anaPeer)).toEqual([1, 2]);
+    expect(requests(benPeer)).toEqual([]);
+  });
+
   it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({

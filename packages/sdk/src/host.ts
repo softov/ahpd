@@ -1026,7 +1026,7 @@ export function createHost(options: HostOptions): Host {
     }
     ctx.stirred(channel, action);
     if (deltas.push(channel, action, origin)) return;
-    emit(channel, action, origin);
+    emit(channel, action, origin, requestAudience(channel, action, origin));
     // What the chat's state moved, said on its session: a streamed delta moves
     // nothing a session reads, which is why only this road says it.
     if (states.get(channel)?.kind === 'chat') {
@@ -1068,6 +1068,29 @@ export function createHost(options: HostOptions): Host {
         },
       });
     }
+  };
+  /**
+   * Who hears a client's request about one automation, said back on the
+   * catalogue narrowed to the caller's own.
+   *
+   * The request carries the definition or the patch, which is the owner's to
+   * read, and every client watching `?owner=me` is watching a channel of that
+   * name. So it goes to the client that sent it, and to the automation's owner
+   * on any connection, and to no other owner. A request on the plain catalogue,
+   * which every reader holds whole, goes to everyone.
+   */
+  const requestAudience = (channel: string, action: Record<string, unknown>, origin: Origin | undefined): PublishOptions | undefined => {
+    if (channel !== AUTOMATIONS_ME) return undefined;
+    if (action.type !== 'automation/createRequested' && action.type !== 'automation/updateRequested') return undefined;
+    const held = options.automations?.get(String(action.resource ?? ''));
+    const owner = held === undefined ? undefined : automationOwner(held);
+    return {
+      visible: (reader, client) => {
+        if (origin !== undefined && client === origin.clientId) return true;
+        const mine = ownerFilter('owner=me', reader);
+        return mine !== undefined && mine !== null && owner !== undefined && mine === owner;
+      },
+    };
   };
   /**
    * A session's customizations as a client reads them: a backend's, then its
