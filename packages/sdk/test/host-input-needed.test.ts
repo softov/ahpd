@@ -41,7 +41,13 @@ function forgetful(): { agent: Agent; held: () => Start } {
   const base = echo({ path: DIR, pace: 0 });
   let start: Start | undefined;
   return {
-    agent: { ...base, provider: 'forgetful', displayName: 'Forgetful', create: (given) => { start = given; return base.create(given); } },
+    agent: {
+      ...base,
+      provider: 'forgetful',
+      displayName: 'Forgetful',
+      // A backend that keeps a draft answer, so the host's own checks are what meet one.
+      create: (given) => { start = given; return { ...base.create(given), setAnswer: () => true }; },
+    },
     held: () => start as Start,
   };
 }
@@ -49,7 +55,8 @@ function forgetful(): { agent: Agent; held: () => Start } {
 async function opened() {
   const { agent, held } = forgetful();
   const host = createHost({ path: DIR, agents: [agent] });
-  const client = host.accept(peer());
+  const p = peer();
+  const client = host.accept(p);
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   const uri = 'ahp-session:/forgetful';
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'forgetful' } });
@@ -60,8 +67,58 @@ async function opened() {
   const entries = async (): Promise<Bag[]> => ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
     snapshot: { state: { inputNeeded?: Bag[] } };
   }).snapshot.state.inputNeeded ?? [];
-  return { start, entries };
+  const chat = ((await client.handle({ method: 'subscribe', params: { channel: uri } })) as { snapshot: { state: { defaultChat: string } } })
+    .snapshot.state.defaultChat;
+  await client.handle({ method: 'subscribe', params: { channel: chat } });
+  /** A client's action on the chat, and the refusal it met, if any. */
+  const sent = async (clientSeq: number, action: Bag): Promise<string | undefined> => {
+    await client.handle({ method: 'dispatchAction', params: { channel: chat, clientSeq, action } });
+    await settle();
+    return p.notes
+      .filter((one) => one.method === 'action')
+      .map((one) => one.params as { origin?: { clientSeq: number }; rejectionReason?: string })
+      .find((one) => one.origin?.clientSeq === clientSeq)?.rejectionReason;
+  };
+  return { start, entries, sent };
 }
+
+/** A question with one required field, held open in the running turn. */
+const asked = (start: Start): void => {
+  start.emit('chat', {
+    type: 'chat/inputRequested',
+    request: { id: 'q1', message: 'Who?', questions: [{ id: 'name', kind: 'text', message: 'Your name', required: true }] },
+  });
+};
+
+/*
+ * An answer held to the request it answers: "`response` is `'accept'` but
+ * required questions do not have submitted answers" and "`answer.state`
+ * requires a value but `answer.value` is absent" SHOULD each be rejected. No
+ * VS Code client can tell: its host hands answers on unchecked, and its clients
+ * send what their forms hold.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L356-L358
+ */
+it('refuses an acceptance that leaves a required question with no answer', async () => {
+  const { start, sent } = await opened();
+  asked(start);
+  await settle();
+  expect(await sent(1, { type: 'chat/inputCompleted', requestId: 'q1', response: 'accept' }))
+    .toBe('name is required and has no answer');
+  expect(await sent(2, {
+    type: 'chat/inputCompleted', requestId: 'q1', response: 'accept',
+    answers: { name: { state: 'submitted', value: { kind: 'text', value: 'Ana' } } },
+  })).toBeUndefined();
+});
+
+it('refuses a draft answer that carries no value of the kind it names', async () => {
+  const { start, sent } = await opened();
+  asked(start);
+  await settle();
+  expect(await sent(1, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'draft', value: { kind: 'text' } } }))
+    .toBe('The answer to name has no text value');
+  expect(await sent(2, { type: 'chat/inputAnswerChanged', requestId: 'q1', questionId: 'name', answer: { state: 'skipped' } }))
+    .toBeUndefined();
+});
 
 it('takes a chat\'s entries down with its turn', async () => {
   const { start, entries } = await opened();
