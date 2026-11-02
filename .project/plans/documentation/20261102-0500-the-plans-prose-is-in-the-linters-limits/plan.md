@@ -1,7 +1,7 @@
 ---
 title: The plans' prose is in the linter's limits
 domain: documentation
-status: planned
+status: built
 priority: low
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -45,7 +45,7 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - each hit is split where its clauses part](task-01-each-hit-is-split-where-its-clauses-part.md) | todo | - |
+| [01 - each hit is split where its clauses part](task-01-each-hit-is-split-where-its-clauses-part.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -53,11 +53,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a split that drops a clause; read each line before and after.
 
 ## Final verification checklist
 
-- [ ] The linter exits 0 over the 72 files #183 merged.
+- [x] The linter exits 0 over the 72 files #183 merged.

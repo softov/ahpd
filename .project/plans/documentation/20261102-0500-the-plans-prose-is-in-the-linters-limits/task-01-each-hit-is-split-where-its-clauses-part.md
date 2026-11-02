@@ -1,6 +1,6 @@
 ---
 title: Each hit is split where its clauses part
-status: todo
+status: done
 depends: []
 layer: "plans"
 refs:
@@ -32,4 +32,4 @@ Each of the 63 hits becomes sentences within the limits, saying what the long on
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `00752670`; [implemented.md](implemented.md) says what was verified.
