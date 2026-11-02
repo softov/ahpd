@@ -209,9 +209,20 @@ The change has five parts: the host's list, a kind of tunnel, the operations, a 
 
 - The host serves the list as a channel, `x-ahpd-tunnels://`, from the server package.
 - A plugin adds a tunnel when the host calls its kind, and when it finds one at `listening`.
-- The host saves each tunnel with its kind, its settings and `enabled`. It starts each enabled tunnel when the daemon starts.
+- The host saves each tunnel with its kind, its settings and `enabled`, in a collection of its `records` port. It starts each enabled tunnel when the daemon starts.
 - A plugin reads the list. The canvas example builds its URL from the tunnel that forwards its port.
 - The list feeds the routes' `Host` check, as announced names do today.
+- A setting lets the API's `Host` check read the list too. It is off by default.
+
+A kind's plugin config limits its tunnels by `purpose`:
+
+| Setting for each purpose | What it does |
+| --- | --- |
+| The most tunnels | The host refuses a `create` over the limit. System access has one tunnel |
+| Allowed | Whether the plugin opens tunnels for that purpose, such as a canvas |
+| Close at the end | Whether a tunnel closes when the last thing it was opened for ends |
+
+The host checks these settings, because it sets `purpose` and holds the list.
 
 Each tunnel in the list has:
 
@@ -222,9 +233,12 @@ Each tunnel in the list has:
 | `port` | The local port it forwards |
 | `url` | The address a remote client reaches |
 | `anonymous` | Whether a person reaches it with no sign-in |
-| `users` | Who asked for it: the daemon for its own port, a plugin for a canvas, a person from a page |
+| `plugin` | The plugin that opened it |
+| `purpose` | Why it was opened, such as system access to the daemon, or a canvas. The host sets it from what asked for the tunnel. It is not in the kind's form, and no person types it |
 | `enabled` | Whether the host starts it when the daemon starts. A disabled tunnel keeps its settings and forwards nothing |
 | `status` | `running`, `stopped` or `error`, with its `error` |
+| `operation` | The call that runs on this tunnel now: `{ id, status, error }` |
+| `owner` | Empty. Every record of the shared core has this field, and a tunnel belongs to the host |
 
 ### A kind of tunnel
 
@@ -266,10 +280,10 @@ host.registerTunnelKind({
       input: { type: 'object', properties: { on: { type: 'boolean', title: 'On' } }, required: ['on'] },
     },
   ],
-  create: async (input, owner) => {
+  create: async (input) => {
     const tunnel = await forward(Number(input.port), input.anonymous === true);
     host.updateViewData('/tunnels', mine());
-    return { ...tunnel, users: [owner] };
+    return tunnel;
   },
   update: async (tunnel, input) => {
     await allow(tunnel.id, input.anonymous === true);
@@ -307,7 +321,7 @@ host.registerTunnelKind({
     },
     required: ['port', 'host', 'user', 'key'],
   },
-  create: async (input, owner) => { /* ... */ },
+  create: async (input) => { /* ... */ },
   remove: async (tunnel) => { /* ... */ },
 });
 ```
@@ -324,7 +338,7 @@ Each operation id is `<kind>/<name>`, and the operations fall into four groups:
 
 | Group | Names | Who knows the name | The kind's code |
 | --- | --- | --- | --- |
-| A change to the list | `create`, `update`, `remove` | The host | `create(input, owner)`, `update(target, input)`, `remove(target)` |
+| A change to the list | `create`, `update`, `remove` | The host | `create(input)`, `update(target, input)`, `remove(target)` |
 | What runs now | `start`, `stop`, `restart` | The host, with a fixed meaning and no input | `invoke(name, target)` |
 | Whether it runs | `enable`, `disable` | The host alone, as the record's `enabled` | None: the host calls `start` or `stop` |
 | The kind's own | Such as devtunnel's `anonymous` | The kind | `invoke(name, target, input)` |
@@ -354,7 +368,9 @@ Whether it runs:
 - `enable` sets `enabled` to true and starts the record.
 - The host offers `enable` and `disable` on every record. The kind gives no code for them.
 
-The record's `status` is what runs now. The operation's `status` is a call in progress.
+The record's `status` is what runs now.
+An operation on one record sets the record's `operation` while it runs, so each row shows its own call.
+An operation on the list, such as `create`, keeps its `status` on the operation, as a changeset does.
 
 The grant for each operation:
 
@@ -370,7 +386,7 @@ The state of `x-ahpd-tunnels://` with the two kinds:
 ```json
 {
   "tunnels": [
-    { "id": "t1", "kind": "devtunnel", "port": 8443, "url": "https://example-8443.usw2.devtunnels.ms/", "anonymous": false, "users": ["daemon"], "enabled": true, "status": "running" }
+    { "id": "t1", "kind": "devtunnel", "port": 8443, "url": "https://example-8443.usw2.devtunnels.ms/", "anonymous": false, "plugin": "devtunnel", "purpose": "system access", "enabled": true, "status": "running" }
   ],
   "operations": [
     { "id": "devtunnel/create", "kind": "devtunnel", "label": "Dev Tunnel", "icon": "plug", "scopes": ["list"], "input": { "$ref": "the devtunnel schema" }, "status": "idle" },
@@ -497,6 +513,12 @@ The data and the store are two registrations in two places:
 | The host stores each record, with its kind, its settings and `enabled`, and starts the enabled ones | Softov, 2026-11-02: "The host stores them" |
 | The kind's `update` decides whether the change applies live or restarts the record | Softov, 2026-11-02: "The kind decides" |
 | One command, `x-ahpd/invokeOperation`, serves every channel with operations | Softov, 2026-11-02: "One shared command" |
+| The tunnels are built first. The first plan holds the shared core, the tunnel list and the devtunnel kind. A view's data, the ahpw forms and the canvas URL are later plans | Softov, 2026-11-02: "Tunnels first", "Core, tunnel list, devtunnel kind" |
+| A call on one record shows on the record's `operation`. A call on the list keeps its status on the operation | Softov, 2026-11-02: "On the record" |
+| The API's `Host` check reads the list only when a setting turns it on. The setting is off by default | Softov, 2026-11-02: "A setting, off by default" |
+| Each tunnel records the plugin that opened it and why it was opened, such as system access or a canvas | Softov, 2026-11-02: "I was referring from why the tunnels was openned... like was a tunnel for the system access. a tunnels for the canvas.. that thing." |
+| A kind's plugin config limits its tunnels by purpose: the most tunnels, whether it opens tunnels for that purpose, and whether a tunnel closes when its last use ends | Softov, 2026-11-02: "so we can enforce like in plugin config limit qtd tunnel by purpose.. like system tunnel only one... and if it can open tunnel for canvas, etc.. also if close the tunnel if last user." |
+| A record of the shared core has an optional `owner`, with the `?owner=me` filter. Computers fill it with the person who made the machine. Tunnels leave it empty, so a tunnel belongs to the host | Softov, 2026-11-02: "Optional owner" |
 | `remove` needs `<thing>:delete` and every other operation `<thing>:put`. A kind can name another grant for an operation, such as `<thing>:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
 
 ## Open points
@@ -505,11 +527,9 @@ The data and the store are two registrations in two places:
 2. ahpw keeps a followed channel at `$/ahp/hosts/<host>/channels/<uri>`. Does a source get its own namespace, such as `$/crm`, or a short name under that path? Not checked: whether scena lets a page register a namespace while it shows, and unregister it after.
 3. Is `?id=<plugin>` a query of the plugins channel, or does each plugin's row get its own URI?
 4. Does devtunnel's view list its tunnels from its own data, or read `x-ahpd-tunnels://` filtered by its kind? The second keeps one copy of each tunnel.
-5. An operation's `status` is kept for the operation, as a changeset keeps it. Two people who stop two tunnels at once share one `devtunnel/stop` status. Is it kept for each target too?
-6. Does a plugin's own method still get its title, icon and input in the manifest, now that the tunnel operations are the host's?
-7. When two kinds can forward a port, which kind does the canvas example ask for?
-8. Does a second user of a forwarded port share the tunnel, and does the tunnel stop when its last user goes?
-9. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
-10. Does the API's `Host` check read the list by default?
-11. Does `say` stay for `ahpd status`, beside the list?
-12. Not checked: whether a running `devtunnel host` serves a port added after it started.
+5. Does a plugin's own method still get its title, icon and input in the manifest, now that the tunnel operations are the host's?
+6. When two kinds can forward a port, which kind does the canvas example ask for?
+7. When a canvas and a person ask for the same port, is it one tunnel or two?
+8. Does the list hold addresses that are not tunnels, such as Softov's ahpw proxy?
+9. Does `say` stay for `ahpd status`, beside the list?
+10. Not checked: whether a running `devtunnel host` serves a port added after it started.

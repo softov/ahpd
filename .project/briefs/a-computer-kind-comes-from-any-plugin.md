@@ -140,7 +140,7 @@ The operations follow the four groups in the tunnels brief's *The operations*.
 - A kind can name another grant for any of its operations, such as `computer:restart`.
 - The kind's `update` gets the running machine, and applies the change live or restarts the machine itself.
 - The host starts each enabled machine when the daemon starts. A disabled machine keeps its settings, and the host offers it to no session.
-- Each machine has `enabled` and a `status`, beside the operation's `status`.
+- Each machine has `enabled`, a `status`, and the `operation` that runs on it now, as the tunnels brief's *The operations* says.
 - The host sets an operation's `status` to `running`, then to `idle` or to `error`, so every subscriber sees it.
 - ahpw and ahpapp draw the operations from the state, and a form from the `input`.
 
@@ -157,6 +157,8 @@ The operations follow the four groups in the tunnels brief's *The operations*.
 | The host stores each machine's record, so the catalogue moves to the host | Softov, 2026-11-02: "The host stores them" |
 | The kind's `update` decides whether the change applies live or restarts the machine | Softov, 2026-11-02: "The kind decides" |
 | One command, `x-ahpd/invokeOperation`, serves the computers and the tunnels | Softov, 2026-11-02: "One shared command" |
+| The tunnels are built first, with the shared core. The computers come after, on that core | Softov, 2026-11-02: "Tunnels first" |
+| A record of the shared core has an optional `owner`, with the `?owner=me` filter. Computers fill it with the person who made the machine. Tunnels leave it empty, so a tunnel belongs to the host | Softov, 2026-11-02: "Optional owner" |
 | `remove` needs `computer:delete` and every other operation `computer:put`. A kind can name another grant, such as `computer:restart` | Softov, 2026-11-02: "host by group, kind own may name one... like it if wanted could name <thing>:restart or <thing>:<action> if wanted otherwise will write <thing>:put" |
 
 ## Open points
@@ -166,4 +168,3 @@ The operations follow the four groups in the tunnels brief's *The operations*.
 3. Do the five `x-ahpd/computers/*` commands stay for a while beside the new command, so that ahpw and ahpapp keep working until they change?
 4. How does a machine's id name its kind? The id records its runtime today. Not checked: whether a second plugin's ids can clash with the format.
 5. Is a decision needed? The change reverses the 2026-09-22 answer, and its rejected option was a registry in the SDK. Here the registry is in the server, and only the kind's type is in the SDK.
-6. Which brief is built first, the tunnels or the computers?
