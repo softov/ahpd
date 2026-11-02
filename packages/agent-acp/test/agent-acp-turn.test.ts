@@ -746,6 +746,24 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
   expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
+it('ends the running turn on a cancel that names no turn, with the cancel reaching the server', async () => {
+  const { client, peer: p, chatUri } = await talking();
+  begin(client, chatUri, 't1', 'please wait');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+
+  // A client with no id to give means the running turn, and the host hands
+  // this backend that turn's own id.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  const said = types(p, chatUri);
+  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
+  expect(said.at(-1)).toBe('chat/turnCancelled');
+});
+
 it("runs a !command in the host's shell rather than asking the server", async () => {
   const { client, peer: p, chatUri } = await talking();
   begin(client, chatUri, 't1', '!echo acp-ran-it');

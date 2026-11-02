@@ -680,33 +680,32 @@ describe('a chat\'s read bit and its session\'s', () => {
   };
 
   /*
-   * A stop naming a turn that is not running applies to nothing, and this host
-   * used to hand it to the backend anyway - which cancels whatever it *is*
-   * running, whatever id it was handed. What the client holds meanwhile is its
-   * own action, pending until an echo carrying its `clientSeq` comes back: the
-   * same answer an unchanged announcement gets, and to the same one client.
+   * A stop with no turn running is one the protocol has the server refuse:
+   * "`chat/turnCancelled` | No active turn | Server MUST reject the action".
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+   * A refusal goes to its sender, who drops the stop it holds; no other client
+   * applied it, so no other client hears of it.
    */
-  it('echoes a cancel that stopped nothing to its sender alone', async () => {
+  it('refuses a cancel with no turn running, whatever turn it names, to its sender alone', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
-    // The sequence this host is at now, which the echo has to leave alone.
-    const at = Math.max(...actions(started.peer).map((e) => e.serverSeq));
     started.peer.notes.length = 0;
     two.notes.length = 0;
 
-    started.client.handle({
-      method: 'dispatchAction',
-      params: { channel: started.chatUri, clientSeq: 7, action: { type: 'chat/turnCancelled', turnId: 't1' } },
-    });
-    await settle();
+    for (const [clientSeq, turnId] of [[7, 't1'], [8, '']] as const) {
+      started.client.handle({
+        method: 'dispatchAction',
+        params: { channel: started.chatUri, clientSeq, action: { type: 'chat/turnCancelled', turnId } },
+      });
+      await settle();
+    }
 
     const said = actions(started.peer, started.chatUri);
-    expect(said).toHaveLength(1);
-    expect(said[0]?.action).toEqual({ type: 'chat/turnCancelled', turnId: 't1' });
-    expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
-    // Still where it was: no state moved, so no sequence did either.
-    expect(said[0]?.serverSeq).toBe(at);
-    // Nobody else applied it, so nobody else has anything to put back.
+    expect(said.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }, { clientId: 'probe', clientSeq: 8 }]);
+    expect(said.map((e) => e.rejectionReason)).toEqual([
+      `Nothing is running on ${started.chatUri} to stop`,
+      `Nothing is running on ${started.chatUri} to stop`,
+    ]);
     expect(actions(two)).toEqual([]);
   });
 
