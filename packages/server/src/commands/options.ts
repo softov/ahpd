@@ -190,6 +190,15 @@ export interface Options {
    */
   httpApi?: HttpSetting;
   /**
+   * What `/mcp` serves to a person's MCP client.
+   *
+   * `none`, the default, answers 404 there. `all` serves the tools that need no
+   * session and that the caller's grants allow. It is read when the run starts
+   * and has no flag, because it is the deployment's choice rather than one
+   * run's.
+   */
+  mcpTools: 'none' | 'all';
+  /**
    * Where the plugins' routes are served.
    *
    * Absent is the daemon's own listener. A `port` is a listener of the routes'
@@ -716,6 +725,12 @@ export const serverFields = {
     },
     description: "Serve the HTTP API: true under /api on the daemon's own listener, or an object whose port gives it a listener of its own and whose host binds that listener. Set in the configuration file only.",
   },
+  mcpTools: {
+    type: 'string',
+    enum: ['none', 'all'],
+    title: 'MCP tools',
+    description: "What /mcp serves to a person's MCP client: none, the default, answers 404 there; all serves every tool the caller's grants allow that needs no session. Needs httpApi. Set in the configuration file only.",
+  },
   routes: {
     type: 'object',
     title: 'Plugin routes',
@@ -757,7 +772,7 @@ export const serverFields = {
 } satisfies Record<string, Field>;
 
 /** The fields only the configuration file sets, which have no flag. */
-const FILE_ONLY = ['httpApi', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
+const FILE_ONLY = ['httpApi', 'mcpTools', 'routes', 'usage', 'modelProxy', 'policies', 'service', 'mcpServers', 'shellEnv', 'commandParser', 'tunnelHosts'] as const;
 
 /** The flags that mean something only when typed, which the file does not set. */
 const TYPED_ONLY = ['stdio', 'configFile', 'noPlugins', 'noCwd', 'pluginOptions'] as const;
@@ -1233,6 +1248,7 @@ const noCwd = input['noCwd'] === true;
   const usageZone = given('usage')?.timezone;
   const serviceName = given('service')?.name;
   const httpApi = httpOf(file.httpApi, source('httpApi'));
+  const mcpTools = given('mcpTools') ?? 'none';
   const routes = routesOf(file.routes, source('routes'));
   const modelProxy = proxyConfiguration(given('modelProxy'));
 
@@ -1281,6 +1297,7 @@ const noCwd = input['noCwd'] === true;
     ...(serviceName === undefined ? {} : { serviceName }),
     ...(wire === undefined ? {} : { wire }),
     ...(httpApi === undefined ? {} : { httpApi }),
+    mcpTools,
     ...(routes === undefined ? {} : { routes }),
     modelProxy,
     mcpServers: mcp.servers,

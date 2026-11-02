@@ -170,15 +170,40 @@ const failure = (id: unknown, code: number, message: string): Record<string, unk
 const json = (status: number, value: unknown): Response =>
   new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 
+/**
+ * What one tools answer serves, and how it runs what it serves.
+ *
+ * The list itself and the three things a call may need: the runner a client's
+ * tool goes to, how the list announces a change, and the question asked before
+ * a tool runs where the caller is out of the path. `streams` is where the open
+ * `GET` streams are kept, which a server that never notifies leaves out.
+ */
+export interface ToolsServing {
+  /** The tools `tools/list` answers, and `tools/call` looks in. */
+  tools: BoundTool[];
+  /** How a client's tools in that list are run, where the caller has a runner. */
+  runClient?: RunClientTool | undefined;
+  /** How the list announces a change, and whether a `GET` opens a stream. */
+  toolsChanged?: ToolsChanged | undefined;
+  /** Asked before a call is run, for a backend that cannot be in the path. */
+  mayRun?: MayRunTool | undefined;
+  /** The `GET` streams open for this serving, where it holds any. */
+  streams?: Set<ReadableStreamDefaultController<Uint8Array>> | undefined;
+}
+
+/** What `initialize` answers as this server's name and version. */
+export interface ToolsInfo {
+  name: string;
+  version: string;
+}
+
 /** One live session's endpoint: what it serves, who runs what, and who is listening. */
-interface Serving {
+interface Serving extends ToolsServing {
   token: string;
   tools: BoundTool[];
   runClient: RunClientTool | undefined;
   toolsChanged: ToolsChanged;
-  /** Asked before a call is run, for a backend that cannot be in the path. */
   mayRun: MayRunTool | undefined;
-  /** The `GET` streams open on this path, for a list change to go down. */
   streams: Set<ReadableStreamDefaultController<Uint8Array>>;
 }
 
@@ -189,11 +214,12 @@ interface Serving {
  * for whatever the server has to say, and the one thing this server has to say
  * is that the tools changed.
  */
-const streamed = (serving: Serving): Response => {
+const streamed = (serving: ToolsServing): Response => {
   let held: ReadableStreamDefaultController<Uint8Array> | undefined;
+  const streams = serving.streams;
   const body = new ReadableStream<Uint8Array>({
-    start: (controller) => { held = controller; serving.streams.add(controller); },
-    cancel: () => { if (held !== undefined) serving.streams.delete(held); },
+    start: (controller) => { held = controller; streams?.add(controller); },
+    cancel: () => { if (held !== undefined) streams?.delete(held); },
   });
   return new Response(body, {
     status: 200,
@@ -208,7 +234,7 @@ const listChanged = (serving: Serving): void => {
 };
 
 /** What one message asked for, answered against these tools. */
-const answered = async (serving: Serving, said: Message, info: { name: string; version: string }): Promise<Record<string, unknown>> => {
+const answered = async (serving: ToolsServing, said: Message, info: ToolsInfo): Promise<Record<string, unknown>> => {
   const params = (said.params ?? {}) as { name?: unknown; arguments?: unknown; _meta?: unknown };
   if (said.method === 'initialize') {
     const tools = serving.toolsChanged === 'notify' ? { listChanged: true } : {};
@@ -258,6 +284,40 @@ const answered = async (serving: Serving, said: Message, info: { name: string; v
       isError: true,
     });
   }
+};
+
+/**
+ * Answer one request against these tools, once the caller is known.
+ *
+ * What a session's `/ahp-mcp/<uuid>` and the host's `/mcp` have in common:
+ * the checks a request must pass - a `GET` is a stream or a refusal, a call is
+ * a `POST` of one JSON-RPC message - and the answer to the three methods a
+ * tools server serves. Who may ask is the caller's question, asked before this
+ * and not here: the token of a session's path, the grant on `/mcp`.
+ */
+export const answerTools = async (request: Request, serving: ToolsServing, info: ToolsInfo): Promise<Response> => {
+  if (request.method === 'GET') {
+    return serving.toolsChanged === 'notify'
+      ? streamed(serving)
+      : json(405, failure(null, -32000, 'This tools server opens no stream; a call is a POST of one message'));
+  }
+  if (request.method !== 'POST') {
+    return json(405, failure(null, -32000, `This tools server answers POST, not ${request.method}`));
+  }
+  let said: Message;
+  try {
+    said = await request.json() as Message;
+  }
+  catch {
+    return json(400, failure(null, -32700, 'A call to this tools server is one JSON-RPC message'));
+  }
+  if (typeof said !== 'object' || said === null || Array.isArray(said)) {
+    return json(400, failure(null, -32600, 'A call to this tools server is one JSON-RPC message, not a batch'));
+  }
+  // A notification is answered with the fact that it was heard, which is
+  // `notifications/initialized` and nothing else this server expects.
+  if (said.id === undefined) return new Response(null, { status: 202 });
+  return json(200, await answered(serving, said, info));
 };
 
 /**
@@ -338,28 +398,7 @@ export const toolServers = (options: ToolsServerOptions): ToolsServers => {
       if (!bearer(request.headers.get('authorization'), found.token)) {
         return json(401, failure(null, -32001, 'This tools server answers only its own session\'s token'));
       }
-      if (request.method === 'GET') {
-        return found.toolsChanged === 'notify'
-          ? streamed(found)
-          : json(405, failure(null, -32000, 'This tools server opens no stream; a call is a POST of one message'));
-      }
-      if (request.method !== 'POST') {
-        return json(405, failure(null, -32000, `This tools server answers POST, not ${request.method}`));
-      }
-      let said: Message;
-      try {
-        said = await request.json() as Message;
-      }
-      catch {
-        return json(400, failure(null, -32700, 'A call to this tools server is one JSON-RPC message'));
-      }
-      if (typeof said !== 'object' || said === null || Array.isArray(said)) {
-        return json(400, failure(null, -32600, 'A call to this tools server is one JSON-RPC message, not a batch'));
-      }
-      // A notification is answered with the fact that it was heard, which is
-      // `notifications/initialized` and nothing else this server expects.
-      if (said.id === undefined) return new Response(null, { status: 202 });
-      return json(200, await answered(found, said, info));
+      return answerTools(request, found, info);
     },
   };
 };

@@ -34,11 +34,13 @@ The nine session tools are the reference host's, by name and by schema, so a ski
 | `get_current_session` | Its own session, as `list_sessions` would describe it |
 | `get_session_context` | A chat's turns, its active turn, and whether there is history before them |
 | `send_message` | A message into any chat of any session this host runs: sent when the chat is free, queued when it is busy |
-| `create_session` | Start another session, owned by the owner of the one it was called from |
+| `create_session` | Start another session, owned by the owner of the one it was called from, or by the person calling with no session |
 | `create_chat` | A second conversation in a session |
 | `rename_chat` | Title a chat. The session's title is its first chat's |
 | `set_workspace` | Move the session to another directory, acted on when the turn ends rather than mid-turn |
 | `delete_session` | Delete a session this host runs, refused for the one it was called from |
+
+`create_session` takes two settings of its own. `agent` names the backend the new session runs, by provider id; absent, the choice is the provider of the `model` asked for, then the calling session's, then the first backend the host holds. A provider the host does not offer is refused, and the refusal names the providers it does. `config` is the new session's settings, as that backend's schema names them, checked the way `createChat` checks a chat's: a value the schema rules out is refused before anything starts, and the host's own `isolation` and `model` win over a key of the same name. With `relationship: currentSession`, both reach the new chat instead, so it runs on the named backend with those settings while the session keeps its own.
 
 `set_workspace` is the one that cannot act when it is called: the agent is restarted in the new directory, and a restart mid-turn is a turn that never finishes, so the request waits for the turn to end. `delete_session` acts as the person whose turn it was called in, and as the owner of the session it was called from where no turn is running: it is never the model, and never whichever connection started the session it names.
 
@@ -47,6 +49,16 @@ The three artifact tools write the session's `_meta['agentHost/sessionArtifacts'
 This host's own three come after them. Two are read-only, and answer what an agent cannot reach for itself. `ahp_resource` reads a resource by URI, including one a connected client publishes ([RESOURCES.md](RESOURCES.md)), and `ahp_terminals` lists the terminals this host has open, as `uri`, `title`, `cwd` and `running` on a line each - the list a person can see, which is not the same as a shell run from a tool.
 
 The third, `schedule_wakeup`, begins a new turn in the calling chat later. It takes `delaySeconds`, the seconds from now until the turn, from 60 to 2592000 (30 days), and `prompt`, the text the turn begins with, and answers when the wakeup is due. A chat holds one wakeup: a new call replaces it, and `stop: true` cancels it. The host keeps it on the chat's record in the session store, so it survives the session going to sleep and the daemon restarting. When it is due, the host wakes the session if it sleeps and begins the turn, or queues the prompt behind a turn that is running. A wakeup that fell due while the daemon was down begins once, when the daemon starts. The turn goes through the same checks as a client's message, and a wakeup whose turn is refused or whose session cannot resume stays stored and fires again when the daemon next starts. A pending wakeup does not keep the session awake - [SESSIONS.md](SESSIONS.md#sleep-and-wake).
+
+## Tools that need no session
+
+A tool with `sessionless: true` runs with no calling session. Its `run` is given a `ToolCall` whose `session` and `chat` may be absent, and `host.sessionlessTools(caller)` answers the tools a caller may see, each bound to that caller: the session a call reaches, the person it acts for, and the grants it asks are the caller's, not a turn's. A tool with no `sessionless` is never in that list, whichever grant it names.
+
+The caller is this host's root connection, `{ root: true }`, or a person, `{ principal }`. `grant` is the grant a caller needs to see a tool in that list: root sees every listed tool, a principal sees the ones whose `grant` it holds, and a host with no users directory sees all of them. A tool that names no grant is one every caller sees.
+
+Seven of the nine session tools are listed. `list_sessions` and `get_session_context` ask `session:read`, and `create_session`, `create_chat`, `rename_chat`, `send_message` and `delete_session` ask `session:write`, the same grants the table under Grants names for a turn. `get_current_session` and `set_workspace` are not listed, because each is about the session the call came from and about nothing else.
+
+A call with no session is the agent's own, with no delegation `_meta`, so no turn above it can be named. It refuses what needs one: `create_session` refuses `relationship: currentSession` with `currentSession needs a calling session; use independent`, and `create_chat`, `rename_chat`, `send_message` and `get_session_context` refuse a call that names no session. What it makes is the caller's: a session `create_session` opens with `independent` is owned by the caller and has no parent, so it is no link in any chain, and a message `send_message` sends is a turn recorded as the caller's. A call with no session also spends none of the tree budgets under Limits, since there is no tree to charge. A `tool_call` event for one names the person and no session.
 
 ## A client's tools
 

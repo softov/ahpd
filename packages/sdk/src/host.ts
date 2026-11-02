@@ -1805,6 +1805,11 @@ export function createHost(options: HostOptions): Host {
       for (const uri of sessions.keys())
         dispatch(uri, { type: 'session/serverToolsChanged', tools: toolDefinitions(uri) });
     },
+    /*
+     * Built per caller and not kept: the principal cuts the list and is the
+     * person each tool acts for, so two callers asking at once get two lists.
+     */
+    sessionlessTools: (caller) => ctx.sessionlessTools(caller),
     replace: (folded) => {
       /*
        * A port or a scheme the host was built over is not swapable while
