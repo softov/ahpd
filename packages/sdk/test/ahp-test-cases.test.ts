@@ -512,11 +512,6 @@ const REFUSALS: Record<string, {
       && (part.toolCall as { toolCallId?: unknown; status?: unknown }).toolCallId === action.toolCallId
       && (part.toolCall as { status?: unknown }).status === 'pending-confirmation'),
   }],
-  'chat/turnCancelled': [{
-    said: (_action, where) => `Nothing is running on ${where.channel} to stop`,
-    source: 'chat-channel.md: "chat/turnCancelled | No active turn | Server MUST reject the action"',
-    holds: (state) => state.activeTurn === undefined || state.activeTurn === null,
-  }],
   'chat/turnResume': [{
     said: () => 'A turn is running in this chat',
     source: RESUMED,

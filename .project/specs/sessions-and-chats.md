@@ -27,8 +27,8 @@ refs:
   - "[code://packages/sdk/src/host/spawn.ts#L166-L180](../../packages/sdk/src/host/spawn.ts#L166-L180) - `withWorkerUri`, which stamps `subagentChatUri` on a spawning call"
   - "[code://packages/sdk/src/host/spawn.ts#L1084-L1090](../../packages/sdk/src/host/spawn.ts#L1084-L1090) - `onTurnRecorded`, which copies a turn's sender to its transcript id"
   - "[code://packages/sdk/src/host/chatactions.ts#L799-L905](../../packages/sdk/src/host/chatactions.ts#L799-L905) - fixed keys: the restart before the first turn and the refusal after it"
-  - "[code://packages/sdk/src/host/chatactions.ts#L1177-L1239](../../packages/sdk/src/host/chatactions.ts#L1177-L1239) - a stop, refused with no turn running, and in a worker chat"
-  - "[code://packages/sdk/src/host/chatactions.ts#L481-L493](../../packages/sdk/src/host/chatactions.ts#L481-L493) - a stop on a session asleep in the catalogue, refused before a wake"
+  - "[code://packages/sdk/src/host/chatactions.ts#L1237-L1285](../../packages/sdk/src/host/chatactions.ts#L1237-L1285) - a stop, said back when it names no running turn, and in a worker chat"
+  - "[code://packages/sdk/src/host/chatactions.ts#L465-L477](../../packages/sdk/src/host/chatactions.ts#L465-L477) - a stop on a session asleep in the catalogue, said back with nothing woken"
   - "[code://packages/sdk/src/host/chatactions.ts#L284-L292](../../packages/sdk/src/host/chatactions.ts#L284-L292) - a message with attachments waits for its snapshot"
   - "[code://packages/sdk/src/host/chatrecord.ts#L188-L211](../../packages/sdk/src/host/chatrecord.ts#L188-L211) - `dropChat`, a closed chat hidden or deleted"
   - "[code://packages/sdk/src/host/lifecycle.ts#L435-L458](../../packages/sdk/src/host/lifecycle.ts#L435-L458) - `deleted`, the backend copy of a session"
@@ -84,19 +84,20 @@ AND it stamps the same value on the calls in a snapshot.
 The Claude backend also sets `subagentDescription` from the call's `description` and `subagentAgentName` from `subagent_type`.
 These are the names VS Code reads to draw a subagent call.
 
-### A stop with no turn running is refused
+### A stop of no running turn is said back
 
 WHEN a client sends `chat/turnCancelled` for a chat that runs no turn
-THEN the host refuses it with "Nothing is running on <chat> to stop"
+THEN the host says the client's own action to every client of the chat and stops nothing
 AND a session asleep in the catalogue stays asleep.
 
 WHEN the stop names another turn than the running one
-THEN the host answers its sender alone and stops nothing.
+THEN the host says it back the same way and stops nothing.
 
 WHEN the stop names the running turn, or no turn
 THEN the host hands the backend the running turn's id.
 
-The reason: the protocol's validation table has the server reject a stop with no active turn.
+The reason: VS Code's host takes a stop of an inactive turn as the client's action and aborts nothing.
+The chat reducer leaves the chat as it was.
 See [`code://packages/sdk/src/host/chatactions.ts`](../../packages/sdk/src/host/chatactions.ts).
 
 ### A stop in a worker chat stops that worker
@@ -109,8 +110,8 @@ WHEN the session has no `stopWorker`
 THEN the host cancels the lead chat's running turn
 AND with no running turn it refuses with "Nothing is running on ...".
 
-WHEN the worker has ended
-THEN the host refuses the stop, as for any chat with no turn running.
+WHEN the worker has ended, or the stop names another turn than the worker's
+THEN the host says the stop back and stops nothing, as for any chat with no turn running.
 
 The Claude backend stops the one task with `stopTask`.
 It cancels the whole turn when its `workerStop` option is `session` or when no task id is known yet.
