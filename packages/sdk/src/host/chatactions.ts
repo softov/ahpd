@@ -333,6 +333,30 @@ export function chatAction(
     );
   }
   /*
+   * A chat whose backend still runs a turn the chat has ended waits for the
+   * backend's end of that turn.
+   *
+   * A client's stop is said when it is taken and the backend lets the turn go
+   * after it, so between the two the chat is idle to every client and busy to
+   * its backend. An action sent then is applied once the backend has let the
+   * turn go, to the idle chat its clients see: a turn is begun, a queued
+   * message runs, and a steering message the run handed back is taken back.
+   * The reference host hands a client's turn to its agent while an abort may
+   * still be under way. The wait is returned, so this connection's later
+   * dispatches go behind it in `waiting`.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L167
+   */
+  const busy = held === undefined || worker ? undefined : (held.chatState().activeTurn as Bag | undefined)?.id;
+  const ended = ctx.stateOf(channel)?.turns;
+  if (busy !== undefined && Array.isArray(ended) && (ended as Bag[]).some((turn) => turn.id === busy)) {
+    return conn.bounded(ctx.letGo(channel), `${channel} letting its stopped turn go`).then(
+      () => (connections.has(connection) ? conn.applyNow(params, origin) : undefined),
+      (error: unknown) => {
+        refuse(connection.peer, channel, action, origin, error instanceof Error ? error.message : String(error));
+      },
+    );
+  }
+  /*
    * Config for a session with no agent yet: remembered, not refused.
    *
    * It is applied when the session is resumed, which is what makes the

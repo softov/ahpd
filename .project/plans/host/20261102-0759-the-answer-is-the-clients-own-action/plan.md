@@ -28,6 +28,7 @@ refs:
 A client's action is answered on the channel it was sent on, by the action it sent.
 A backend decides when a turn starts or a message is queued, and the answer then carries what the client sent.
 A stop and a client's tool result are said when the host takes them, before the backend acts on them.
+An action sent after a stop is applied once the backend has let the stopped turn go.
 A connection's answers go out in the order it sent its actions.
 A config change is answered once, and an active client's entry is taken as sent.
 
@@ -57,6 +58,8 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 - A stop and a client's result are said when the backend lets go.
 - Answers owed to a backend go out after later answers.
 - A command sent as a turn while a turn runs is answered by a queued message.
+- A turn sent after a stop is refused while the backend still lets the stopped turn go.
+- A message queued in that time waits for a turn end that never comes.
 - A config change is answered one key at a time, and one naming only unchanged keys is not answered.
 - An active client's `clientId` is rewritten to the connection's.
 
@@ -72,6 +75,7 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 | A client's tool result is said once the backend took it; the backend's result for that call is not said | VS Code agentService.ts L13625-L13650 | 03 |
 | A connection's next action waits until the action a backend answers later is answered | reconciliation.md L23-L24; no VS Code client can tell the order | 04 |
 | A turn asked for while one runs is refused, a command's too | commands.ts L573-L575; the chat holds one active turn; no VS Code client sends one | 05 |
+| A chat's action sent while its backend still runs a turn the chat has ended waits for the backend's end of that turn, and is then applied | VS Code agentHostTurnService.ts L126-L167; every backend leaves a turn before it says its end (cofold runs.ts L60-L70, pi session.ts L710-L716) | 08 |
 | A config change is answered once, with every key it took, or refused whole | session actions.ts L603-L608; VS Code agentService.ts L13548-L13588 | 06 |
 | An active client's entry is taken as sent; a field left out is the host's | VS Code agentService.ts L13625; no rule in the protocol | 07 |
 | The `tools` filled into an entry that names none stays; recorded open | plugin/04 task-03 names only this repository's code | 07 |
@@ -94,16 +98,18 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 | [05 - a turn asked while one runs is refused](task-05-a-turn-asked-while-one-runs-is-refused.md) | done | - |
 | [06 - a config change is answered once](task-06-a-config-change-is-answered-once.md) | done | 01 |
 | [07 - an active client set is taken as sent](task-07-an-active-client-set-is-taken-as-sent.md) | done | - |
+| [08 - an action after a stop waits for its end](task-08-an-action-after-a-stop-waits-for-its-end.md) | done | 03 |
 
 ## Risks and tradeoffs
 
 - A client that sends a `chat/*` action on a session channel is refused; ahpd's own tests and clients send them on the chat.
 - A backend that never answers a turn start holds its connection's next action for `WAIT_LIMIT` at most.
+- An action sent after a stop waits `WAIT_LIMIT` for a backend that never says the stopped turn's end, and is then refused.
 - A config change does not hold the next action: a backend may answer a key only as it is closed by a later start.
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 07, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Done so far:** tasks 01 to 08, 2026-11-02; [implemented.md](implemented.md) says what was verified.
 - **Next action:** none in this plan.
 - **Open questions:** the `tools` an entry that names none is given; [implemented.md](implemented.md) records what each source says.
 - **Watch out for:** a client's action without `startedAt` or a message origin; the backend's word fills them.
@@ -111,4 +117,5 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 ## Final verification checklist
 
 - [x] Each new case fails on c3c8c3e4 and passes after the change.
+- [x] Task 08's two cases fail on a70ec953 and pass after the change.
 - [x] `pnpm run typecheck` reports no errors.

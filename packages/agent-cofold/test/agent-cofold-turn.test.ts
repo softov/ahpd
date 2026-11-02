@@ -447,6 +447,59 @@ it('ends a cancelled turn as turnCancelled, once', async () => {
   expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
+/*
+ * A stop is said when it is taken, and the run lets its turn go after. What a
+ * client sends between the two is sent to an idle chat, and is applied to one
+ * once the run has let the stopped turn go.
+ */
+it('begins a turn sent after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  // The run holds the stopped turn until its model is released.
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'second' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 7)?.action).toMatchObject({ type: 'chat/turnStarted', turnId: 't2' });
+  expect(answer(p, chatUri, 7)?.rejectionReason).toBeUndefined();
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action.turnId);
+  expect(started).toEqual(['t1', 't2']);
+  expect(asked.at(-1)).toContain('second');
+});
+
+it('runs a message queued after a stop once the stopped run has let its turn go', async () => {
+  const { model, release, asked } = gatedModel();
+  const { client, peer: p, chatUri } = await talking(model);
+  begin(client, chatUri, 't1', 'first');
+  await until(() => types(p, chatUri).includes('chat/delta'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 8, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1', message: { text: 'later' } } },
+  });
+  release();
+  await until(() => types(p, chatUri).includes('chat/turnComplete'));
+  expect(answer(p, chatUri, 8)?.action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued', id: 'q1' });
+  const started = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnStarted').map((e) => e.action);
+  expect(started[1]).toMatchObject({ queuedMessageId: 'q1', message: { text: 'later' } });
+  expect(asked.at(-1)).toContain('later');
+});
+
 /** The envelope that answers the dispatch this client numbered `clientSeq`. */
 const answer = (p: ReturnType<typeof peer>, chatUri: string, clientSeq: number) => p.notes
   .filter((n) => n.method === 'action')
