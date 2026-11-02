@@ -64,7 +64,7 @@ client dispatchAction refused right after a subscribe
 | A refusal takes the next `serverSeq` | state.ts L357; actions.md L18 | 01 |
 | A refusal stays with its sender, unbuffered | reconciliation.md steps 2 and 3, and L81 | 01 |
 | A client that reconciles on every move sends its set once | VS Code's session handler L1237-L1253; the loop of cf90c9e4 kept as the acceptance | 01 |
-| Plan host/97's sender-only echo and its reused `serverSeq` go | Softov's choices of 2026-10-16 name no source; "spec wins more like always" | 01 |
+| Plan host/97's sender-only echo and its reused `serverSeq` go | the sources in the rows above settle both; plan host/97's rows for the two cite none | 01 |
 
 ## Proposed architecture
 
