@@ -43,29 +43,33 @@ describe('the catalogue', () => {
     expect(listed.items[0]?.resource).toBe('ahp-session:/new');
   });
 
-  it('counts the sessions it is running, not the transcripts beside them', async () => {
-    // The protocol asks for the active, non-disposed sessions *on the server*.
-    // A transcript on disk is a row somebody can open, not a session this host
-    // is holding - counting those meant a host running nothing claimed two.
+  /*
+   * The sessions running a turn, as the reference host counts its active
+   * sessions: a session counts while one of its chats has an active turn. A
+   * transcript on disk, and a session awake with nothing running, count
+   * nothing.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3250-L3262
+   */
+  it('counts the sessions running a turn, not the sessions it holds or the transcripts beside them', async () => {
     sdk.sessions.push({ sessionId: 'a', lastModified: 1, cwd: '/home/softov' });
     sdk.sessions.push({ sessionId: 'b', lastModified: 2, cwd: '/home/softov' });
-    const client = open();
-    const first = await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] })) as {
-      snapshots: { state: { activeSessions: number } }[];
-    };
-    expect(first.snapshots[0]?.state.activeSessions).toBe(0);
-
-    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    const again = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
+    const { client, peer: p, uri, chatUri } = await running();
+    const count = async (): Promise<number> => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
       snapshot: { state: { activeSessions: number } };
-    };
-    expect(again.snapshot.state.activeSessions).toBe(1);
+    }).snapshot.state.activeSessions;
+    expect(await count()).toBe(0);
 
-    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/live' } });
-    const after = await client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } }) as {
-      snapshot: { state: { activeSessions: number } };
-    };
-    expect(after.snapshot.state.activeSessions).toBe(0);
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } } });
+    await settle();
+    expect(await count()).toBe(1);
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    expect(await count()).toBe(0);
+    // Said as it moved, once each way, and never while the number stood still.
+    expect(actions(p, 'ahp-root://').filter((e) => e.action.type === 'root/activeSessionsChanged').map((e) => e.action.activeSessions))
+      .toEqual([1, 0]);
+
+    await client.handle({ method: 'disposeSession', params: { channel: uri } });
+    expect(await count()).toBe(0);
   });
 
   it('refuses a session channel it has no agent for', async () => {

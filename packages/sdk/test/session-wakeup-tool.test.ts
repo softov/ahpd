@@ -132,7 +132,7 @@ async function serving(world: { dir: string; kept: SessionStore; time: Clock; co
     ((await client.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
   /** The sessions whose agent runs now: every start less every close. */
   const awake = (): number => counts.starts.length - counts.closes;
-  /** The sessions the root says are open: running, and asleep until disposed. */
+  /** The sessions the root says are running a turn. */
   const active = async (): Promise<number> => Number((await read('ahp-root://')).activeSessions);
   const turnsOf = async (chat: string): Promise<Bag[]> => (await read(chat)).turns as Bag[];
   const textsOf = async (chat: string): Promise<string[]> => (await turnsOf(chat)).map((turn) => String((turn.message as Bag).text));
@@ -257,7 +257,7 @@ it('fires a stored wake after the host restarts', async () => {
   expect(await second.active()).toBe(0);
 
   w.time.pass(11);
-  await until(async () => await second.active() === 1, 'the wake');
+  await until(async () => second.awake() === 1, 'the wake');
   await until(async () => (await second.textsOf(one.chat)).length === 2, 'the woken turn');
   expect(await second.textsOf(one.chat)).toEqual(['hello one', 'check the build']);
   expect(w.counts.starts).toEqual([undefined, 'one']);
@@ -272,7 +272,7 @@ it('fires a wake that fell due while the host was down once', async () => {
   w.time.pass(60);
 
   const second = await serving(w);
-  await until(async () => await second.active() === 1, 'the wake at start');
+  await until(async () => second.awake() === 1, 'the wake at start');
   await until(async () => (await second.textsOf(one.chat)).length === 2, 'the woken turn');
   expect(second.stored(one.id, one.chat)).toBeUndefined();
 
