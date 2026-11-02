@@ -1,6 +1,6 @@
 ---
 title: A client is owed the state it lost
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -22,6 +22,7 @@ Its state came from an opening the host no longer holds, so the actions since ca
 - `UPDATE: packages/sdk/src/host/routing.ts:352-354` - a snapshot sent records its client, and clears what it was owed for the channel.
 - `UPDATE: packages/sdk/src/host/handshake.ts:596-603` - a reconnect owed a channel's state is answered with snapshots.
 - `UPDATE: packages/sdk/test/session-sleep.test.ts` - a client back from a drop, after its session slept, is sent the state read again.
+- `UPDATE: docs/sdk/AHP.md` - the `reconnect` row says when a channel is answered with its state.
 
 ## Steps
 
@@ -38,4 +39,5 @@ Its state came from an opening the host no longer holds, so the actions since ca
 
 ## Resume
 
-<Empty until started.>
+Done. Before the change the case was answered with a replay; after it, with snapshots carrying the record's turns.
+The handshake, sleep and reconnect suites pass.

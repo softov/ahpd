@@ -1,6 +1,6 @@
 ---
 title: A command's turn is kept as its clients hold it
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:
@@ -16,6 +16,7 @@ A `!` command's turn is kept for its chat as the chat's held state has it, which
 
 - `UPDATE: packages/sdk/src/host/spawn.ts:1467-1473` - the turn kept comes from the chat's held state.
 - `UPDATE: packages/sdk/test/host-local-turns.test.ts` - the test backend says its command's call by actions, and a case keeps a turn its record says otherwise.
+- `UPDATE: docs/sdk/TERMINALS.md` - a command's turn is kept as the chat's state holds it.
 
 ## Steps
 
@@ -32,4 +33,5 @@ A `!` command's turn is kept for its chat as the chat's held state has it, which
 
 ## Resume
 
-<Empty until started.>
+Done. Before the change the kept turn read `error`; after it, it equals the turn the chat holds.
+`host-local-turns.test.ts` passes, its command's terminal opening after a restart.

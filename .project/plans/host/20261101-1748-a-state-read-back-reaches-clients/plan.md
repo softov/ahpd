@@ -1,7 +1,7 @@
 ---
 title: A state read back reaches its clients whole
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-01
 revalidated: 2026-11-01
@@ -89,10 +89,10 @@ a session asleep, unwatched -> its states go -> a client reconnects
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a client is owed the state it lost](task-01-a-client-is-owed-the-state-it-lost.md) | todo | - |
-| [02 - a command's turn is kept as its clients hold it](task-02-a-commands-turn-is-kept-as-held.md) | todo | - |
-| [03 - a Claude turn reads back as the reference reads it](task-03-a-claude-turn-reads-back-as-the-reference.md) | todo | - |
-| [04 - pi and ACP turns read back the same way](task-04-pi-and-acp-turns-read-back-the-same.md) | todo | - |
+| [01 - a client is owed the state it lost](task-01-a-client-is-owed-the-state-it-lost.md) | done | - |
+| [02 - a command's turn is kept as its clients hold it](task-02-a-commands-turn-is-kept-as-held.md) | done | - |
+| [03 - a Claude turn reads back as the reference reads it](task-03-a-claude-turn-reads-back-as-the-reference.md) | done | - |
+| [04 - pi and ACP turns read back the same way](task-04-pi-and-acp-turns-read-back-the-same.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -101,13 +101,13 @@ a session asleep, unwatched -> its states go -> a client reconnects
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-client-is-owed-the-state-it-lost.md](task-01-a-client-is-owed-the-state-it-lost.md).
+- **Done so far:** tasks 01 to 04.
+- **Next action:** none; the plan is built.
 - **Open questions:** none.
 - **Watch out for:** a state is served through `answeredAs` whichever way a client asked for it.
 
 ## Final verification checklist
 
-- [ ] Each change has a case that fails before it, for the reason it names, and passes after it.
+- [x] Each change has a case that fails before it, for the reason it names, and passes after it.
 - [ ] `pnpm run test:unit --maxWorkers=2` passes, with each failure under load passing alone.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.
+- [x] `pnpm run typecheck` and `pnpm run boundary` exit 0, and the prose lint is clean.

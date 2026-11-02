@@ -1,6 +1,6 @@
 ---
 title: A Claude turn reads back as the reference reads it
-status: todo
+status: done
 depends: []
 layer: "agent-claude"
 refs:
@@ -17,6 +17,9 @@ The turn holding one reads back cancelled.
 - `UPDATE: packages/agent-claude/src/transcript.ts:286-575` - the calls a result was written for, and each other call cancelled with its turn.
 - `UPDATE: packages/agent-claude/test/agent-claude-transcript.test.ts` - a call with no result, and the turn that held it.
 - `UPDATE: packages/agent-claude/test/agent-claude-tool-input.test.ts` - the restored calls a case reads past tenses from have their results.
+- `UPDATE: docs/sdk/AGENT.md` - a backend's `transcript` answers a call with no result cancelled as skipped, and its turn cancelled.
+- `UPDATE: packages/sdk/src/host/history.ts` - a worker read back is linked from its call's content only where the call finished.
+- `UPDATE: packages/sdk/test/host-snapshots.test.ts` - a worker's call that never finished reads back cancelled with no content.
 
 ## Steps
 
@@ -31,4 +34,5 @@ The turn holding one reads back cancelled.
 
 ## Resume
 
-<Empty until started.>
+Done. Before the change the call read back `completed` with `success: true`, in a `complete` turn.
+The Claude suites pass.

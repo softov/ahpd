@@ -1,6 +1,6 @@
 ---
 title: pi and ACP turns read back the same way
-status: todo
+status: done
 depends: []
 layer: "agent-pi, agent-acp"
 refs:
@@ -36,4 +36,5 @@ A pi turn reads back what every answer in it used, summed as its live turn says 
 
 ## Resume
 
-<Empty until started.>
+Done. Before the change the pi turn read back one answer's usage and a running call, and the ACP turn read back complete.
+The pi and ACP suites pass.
