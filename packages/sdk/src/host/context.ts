@@ -143,8 +143,9 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    */
   bareSessions: Set<string>;
   /**
-   * The turns that run a `!` command, by turn id while they run, each with
-   * whether its chat was read when the turn started.
+   * The turns that run a `!` command, by chat and turn id while they run
+   * (`commandTurnKey`), each with whether its chat was read when the turn
+   * started.
    *
    * Held under the queued message's id while one waits, and moved to the turn
    * id when it starts. A command turn ran what the person typed, so its end
@@ -334,18 +335,19 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * is ready.
    *
    * `chat/turnStarted` and `chat/turnCancelled` under the turn they name, and
-   * `chat/pendingMessageSet` under the queued message's id, go out carrying
-   * the client's origin, however long the backend takes; nothing else does.
+   * `chat/pendingMessageSet` under the queued message's id, each in the chat
+   * the dispatch is about, go out carrying the client's origin, however long
+   * the backend takes; nothing else does.
    */
   owe: (type: 'chat/turnStarted' | 'chat/turnCancelled' | 'chat/pendingMessageSet', name: string) => void;
   /**
-   * The client's dispatch `action` says back: the one being applied, when
-   * `action` is of its kind and about its turn, or one owed under the turn or
-   * the queued message `action` names. Matched as an echo's origin is, and let
-   * go of only by the answer. A backend that answers later holds it through
-   * `Start.handed`.
+   * The client's dispatch `action`, said on `channel`, says back: the one
+   * being applied, when `action` is of its kind and about its turn, or one
+   * owed in the chat `channel` is about, under the turn or the queued message
+   * `action` names. Matched as an echo's origin is, and let go of only by the
+   * answer. A backend that answers later holds it through `Start.handed`.
    */
-  answering: (action: Record<string, unknown>) => Dispatched | undefined;
+  answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *
