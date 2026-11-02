@@ -1,6 +1,6 @@
 ---
 title: A row takes its busiest chat's status
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -34,4 +34,9 @@ refs:
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `ba28a312`.
+
+- `drivingOf` returns `InputNeeded` with the asking chat's activity, else `InProgress` with the running chat's, else the base chat's bits and activity.
+- The two `subagent-chat.test.ts` cases of an idle default chat beside a busy worker or second chat now read running, and their names say so.
+- The new `host-catalogue.test.ts` case runs a second chat to an error and reads the session's row idle and the chat's own row in error.
+- `SESSIONS.md` says the rule under the table of status bits.

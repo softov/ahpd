@@ -1,7 +1,7 @@
 ---
 title: A session's row takes a busy chat's status
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -71,7 +71,7 @@ chatMoved -> activityOf -> drivingOf -> session/activityChanged
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A row takes its busiest chat's status](task-01-a-row-takes-its-busiest-chats-status.md) | todo | - |
+| [01 - A row takes its busiest chat's status](task-01-a-row-takes-its-busiest-chats-status.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -80,13 +80,13 @@ chatMoved -> activityOf -> drivingOf -> session/activityChanged
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-a-row-takes-its-busiest-chats-status.md](task-01-a-row-takes-its-busiest-chats-status.md).
+- **Done so far:** task 01, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `InputNeeded` is 24 and carries `InProgress`, so a chat that runs alone is the one whose bits under `InputNeeded` are `InProgress`.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `6e6d1ca8` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
