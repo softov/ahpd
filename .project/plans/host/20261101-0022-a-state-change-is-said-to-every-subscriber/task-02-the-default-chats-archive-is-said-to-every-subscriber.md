@@ -10,7 +10,10 @@ refs:
 
 ## Objective
 
-A client's `chat/isArchivedChanged` on a session's default chat is applied to the chat for every subscriber, its sender's copy carrying the sender's origin, and archives the session; the default chat's archived bit follows the session's whichever action moves it, a client's `session/isArchivedChanged` and this host's own archive included.
+A client's `chat/isArchivedChanged` on a session's default chat is applied to the chat for every subscriber.
+Its sender's copy carries the sender's origin, and it archives the session.
+The default chat's archived bit follows the session's whichever action moves it.
+A client's `session/isArchivedChanged` and this host's own archive move it too.
 
 ## Files
 
@@ -20,7 +23,8 @@ A client's `chat/isArchivedChanged` on a session's default chat is applied to th
 
 ## Steps
 
-1. Write the case and see it fail on `5da31824`: the second client hears no archive on the chat, and the chat's entry carries no archived bit.
+1. Write the case and see it fail on `5da31824`.
+   The second client hears no archive on the chat, and the chat's entry carries no archived bit.
 2. Route the default chat's archive through `chatFlag` and bring its bit along in `sessionFlag`.
 
 ## Validation

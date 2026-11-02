@@ -11,7 +11,9 @@ refs:
 
 ## Objective
 
-A steering message is said back as the chat's steering message inside the dispatch, which answers the client that sent it, and taken out once the run has read it into its transcript. One the run never took in becomes a turn of its own once the chat is idle.
+A steering message is said back as the chat's steering message inside the dispatch, which answers the client that sent it.
+It is taken out once the run has read it into its transcript.
+One the run never took in becomes a turn of its own once the chat is idle.
 
 ## Files
 

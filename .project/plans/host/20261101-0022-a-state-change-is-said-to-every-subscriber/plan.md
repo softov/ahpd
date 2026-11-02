@@ -19,7 +19,9 @@ refs:
 
 ## Goal
 
-Every action that changes a channel's state, by the protocol's reducer, reaches every subscriber of that channel, so a client that only watched holds what the protocol's cases expect. An answer to its sender alone stays where the action changes nothing.
+Every action that changes a channel's state, by the protocol's reducer, reaches every subscriber of that channel.
+A client that only watched then holds what the protocol's cases expect.
+An answer to its sender alone stays where the action changes nothing.
 
 ## Reconnaissance
 
@@ -27,14 +29,23 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- `rg "echoTo\(" packages/sdk/src` - sixteen sites answer the sender alone. Fourteen echo an action that reduces to no change: a bit, draft, folder, title, claim or review already held, `automationRun/cancelRequested` and `terminal/input` whose reducers return the state as it was, and `chat/turnCancelled` for a turn that is not running. Two echo a change: the default chat's `chat/isArchivedChanged`, whose reducer sets the chat's archived bit, and `session/mcpServerBackgroundRequested` no backend takes, whose reducer clears `blocking` on a blocking starting server.
-- The case driver, given a client that subscribes before a case's actions and reduces what it is told with the protocol's reducer, held to each case's expectation on the keys the driver compares: on 5da31824 it finds case `272-chat-isarchivedchanged-archives-chat` alone, its `status` short of the archived bit, which the driver's `HOST_OWNS` entry for 272 had recorded as this host's own value.
+- `rg "echoTo\(" packages/sdk/src` - sixteen sites answer the sender alone.
+  Fourteen echo an action that reduces to no change: a bit, draft, folder, title, claim or review already held.
+  Among them are `automationRun/cancelRequested` and `terminal/input`, whose reducers return the state as it was.
+  The last of the fourteen is `chat/turnCancelled` for a turn that is not running.
+  Two echo a change: the default chat's `chat/isArchivedChanged`, whose reducer sets the chat's archived bit.
+  The other is `session/mcpServerBackgroundRequested` no backend takes, whose reducer clears `blocking` on a blocking starting server.
+- The case driver can hold a client that subscribes before a case's actions and reduces what it is told with the protocol's reducer.
+  Held to each case's expectation on the keys the driver compares, on 5da31824 it finds case `272-chat-isarchivedchanged-archives-chat` alone.
+  Its `status` is short of the archived bit, which the driver's `HOST_OWNS` entry for 272 had recorded as this host's own value.
 - No protocol case reaches a blocking starting server through this host's driver: its sessions list none, so cases 274, 275 and 276 compare no customization.
 
 ### Gaps
 
-- E14: the default chat's archive is said to its sender alone, so its sender's chat holds the bit, every other subscriber's does not, and the host's chat state does not either.
-- E19: a background request no backend takes is said to its sender alone, so on a blocking starting server its sender's state holds `blocking` false while every other subscriber's holds true.
+- E14: the default chat's archive is said to its sender alone, so its sender's chat holds the bit.
+  Every other subscriber's chat does not, and the host's chat state does not either.
+- E19: a background request no backend takes is said to its sender alone.
+  On a blocking starting server its sender's state holds `blocking` false while every other subscriber's holds true.
 - The driver holds the state the host serves to each case and nothing that a subscriber reduces.
 
 ## Answers
@@ -47,7 +58,9 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Proposed architecture
 
-- **Event flow** - a client's action reaches the host, which applies it to the channel and says it to every subscriber, its sender's copy carrying the sender's origin; an action that reduces to nothing is said to its sender alone. A change one action implies on another channel goes out there as the host's own action.
+- **Event flow** - a client's action reaches the host, which applies it to the channel and says it to every subscriber.
+  Its sender's copy carries the sender's origin, and an action that reduces to nothing is said to its sender alone.
+  A change one action implies on another channel goes out there as the host's own action.
 - **Layer responsibilities** - the host: applying and saying; the driver: holding a watching subscriber to the protocol's cases.
 - **Source-of-truth files** - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/test/ahp-test-cases.test.ts`](../../../../packages/sdk/test/ahp-test-cases.test.ts)
 
@@ -61,14 +74,16 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ## Risks and tradeoffs
 
-- A session archived before this change keeps its default chat's archived bit unset until its archive next moves: the bit is kept per chat, and nothing rewrites the bits already kept.
+- A session archived before this change keeps its default chat's archived bit unset until its archive next moves.
+  The bit is kept per chat, and nothing rewrites the bits already kept.
 
 ## Resume state
 
 - **Done so far:** planned and built 2026-11-01. See [implemented.md](implemented.md).
 - **Next action:** none.
 - **Open questions:** none.
-- **Watch out for:** a host action said inside a client's dispatch carries no origin when its type differs from the client's; one of the same type would take it.
+- **Watch out for:** a host action said inside a client's dispatch carries no origin when its type differs from the client's.
+  One of the same type would take it.
 
 ## Final verification checklist
 

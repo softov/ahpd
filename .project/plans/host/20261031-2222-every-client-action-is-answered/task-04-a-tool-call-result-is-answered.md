@@ -11,7 +11,8 @@ refs:
 
 ## Objective
 
-A client's `chat/toolCallComplete` for a call it runs is answered by the completion the session reports for that call, which carries the client's origin; a result the session will not take stays a refusal.
+A client's `chat/toolCallComplete` for a call it runs is answered by the completion the session reports for that call.
+That completion carries the client's origin, and a result the session will not take stays a refusal.
 
 ## Files
 
