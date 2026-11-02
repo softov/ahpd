@@ -1496,6 +1496,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       // Last, and once: the row's chat list and its default chat both just
       // moved, and one notification carries both rather than one per change.
       summaryMoved(found.uri);
+      // A chat closed while its turn ran leaves the root's count of sessions
+      // running a turn, as the reference host drops it there.
+      // https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L1881-L1887
+      activeSessionsMoved();
       // Nothing is holding this chat's answer any more, so nothing is holding
       // the chat.
       movableMoved(chatUri);
