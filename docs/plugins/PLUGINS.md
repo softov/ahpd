@@ -1508,6 +1508,7 @@ Six commands serve a connector:
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
 | `x-ahpd/connectors/check` | `connector:put`, and the owner's | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
 | `x-ahpd/connectors/note` | `connector:put`, and the owner's | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
+| `x-ahpd/connectors/secret` | `connector:put`, and the owner's | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
 | `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
 | `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
 | `x-ahpd/connectors/models` | `connector:list` for a connector the caller reads, or `connector:all` | Answers `{ models, at }` for the open provider connector `{ id }`: each model as the provider lists it, with `model`, the name a caller sends to the proxy, and `callable`, whether this caller may call it now. `at` is when the list was last read. It refuses a connector whose adapter serves no models |
@@ -1546,6 +1547,14 @@ most ten started sign-ins for one caller, and drops the oldest first. A failed
 exchange or poll is answered with the adapter's title and the vendor's
 `HTTP <status>` alone. No row, error, problem line or log carries the code, the
 verifier, the state, the handle or the key.
+
+A plugin that refreshes a secret without a new sign-in, as a rotating vendor
+token does, sends `x-ahpd/connectors/secret { id, values }` for an open
+connector. Only the plugin of that connector's adapter may send it, and every
+field is one the schema marks `secret`. Each value goes to the vault under the
+name a put would use, and the record is written to point at that name when it
+does not already. The connector is not reopened, because the plugin holds the
+new value. No answer, error or log carries a value.
 
 The owner narrows the grant. A `host` connector needs `connector:put` to be made
 and `connector:remove` to be removed, and `connector:host` beside either. A

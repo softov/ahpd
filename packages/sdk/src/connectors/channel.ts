@@ -34,19 +34,33 @@
  *
  * An adapter may also declare a `signIn`, and then two more commands are
  * served. `x-ahpd/connectors/signin` takes what a put takes, checks it the same
- * way except for the field the sign-in fills, keeps a PKCE verifier and the
- * put's own params in memory for ten minutes under a state, and answers
- * `{ url, state }`. `x-ahpd/connectors/signin-finish` takes `{ state, code }`,
- * runs the put's owner checks again, exchanges the code through the adapter,
- * and runs the put with the key in that field. A state is the caller's and is
- * used once. Neither answer, row, error nor log carries the code, the verifier
- * or the key.
+ * way except for the fields the sign-in fills, and answers `{ url, state }` for
+ * a pasted code or `{ state, code, url, expires }` for a device code. A pasted
+ * code's start keeps a PKCE verifier and the put's own params in memory for ten
+ * minutes under a state. A device code's start keeps the handle, the params and
+ * the starter's reader, and the host polls the adapter for as long as the code
+ * lasts. `x-ahpd/connectors/signin-finish` takes `{ state, code }` for the
+ * pasted code and `{ state }` alone for the device code. It runs the put's
+ * owner checks again, and answers the row: the pasted code exchanges through
+ * the adapter first, and the device code waits for the approval the host has
+ * been polling. A state is the caller's. A pasted state is used once, and a
+ * device one answers the same settled outcome until its code expires. No
+ * answer, row, error or log carries the code, the verifier, the handle or the
+ * key.
  *
  * `x-ahpd/connectors/note` takes `{ id, ok, status?, error? }`, one call an open
  * connector made, and keeps it in the connector's health as a host part's
  * outcome is kept. Only the plugin that registered the connector's adapter
  * notes, since it makes the connector's calls outside `run`, and it needs what
  * a check needs besides. It answers the row.
+ *
+ * `x-ahpd/connectors/secret` takes `{ id, values }`, the secret fields a plugin
+ * refreshed for one open connector, and writes each value to the vault under
+ * `connector/<id>/<field>` in the owner's scope. Only the plugin that registered
+ * the connector's adapter sends it, as only that plugin notes. A field whose
+ * record does not point at its vault name yet is written to point at it, and the
+ * connector is not reopened, because the plugin holds the new value already. It
+ * answers the row, and no answer, error or log carries a value.
  *
  * `x-ahpd/connectors/models` takes `{ id }` and answers the models one open
  * provider connector serves, as the model proxy's catalog last read them, with
@@ -64,7 +78,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { INVALID_PARAMS, INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { sameOwnerOrHost } from '../automations/automations.js';
-import { fromEnvRef, secretRef } from '../access/vault.js';
+import { fromEnvRef, scopeOf, secretRef } from '../access/vault.js';
 import {
   CONNECTOR_SECRETS,
   DENIED,
@@ -78,6 +92,7 @@ import {
   refuseOwner,
   resolved as resolvedRecord,
   secretFields,
+  secretNameOf,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
@@ -99,6 +114,7 @@ const SIGNIN = `${DOMAIN}/signin`;
 const SIGNIN_FINISH = `${DOMAIN}/signin-finish`;
 const MODELS = `${DOMAIN}/models`;
 const NOTE = `${DOMAIN}/note`;
+const SECRET = `${DOMAIN}/secret`;
 
 /** How long one sign-in waits for the code a person pastes, in milliseconds. */
 const SIGNIN_LIMIT_MS = 10 * 60 * 1000;
@@ -1301,6 +1317,82 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     },
   };
 
+  /*
+   * The secret command replaces the secret fields a plugin refreshed for one
+   * open connector, as a rotating vendor token does.
+   *
+   * Only the plugin whose adapter the connector is sends it, as only that
+   * plugin notes: the plugin already holds the new value, and no caller should
+   * be able to write a secret its adapter was never handed. The connector is
+   * not closed and reopened, because the plugin has the value already. The
+   * record is written only when a field does not point at its vault name yet.
+   */
+  const secretCall: PluginMethod = {
+    grant: 'connector:put' as Grant,
+    describe: () => ({ title: 'Keep a refreshed secret', description: 'Writes the secret fields a plugin refreshed to the vault of an open connector.' }),
+    authorize: async (params, reader) => {
+      const id = params.id;
+      if (typeof id !== 'string') return false;
+      const before = await options.collection.get(id);
+      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+    },
+    handle: async (params, reader) => {
+      const id = idParam(SECRET, params);
+      const values = params.values;
+      if (!isRecord(values) || Object.keys(values).length === 0) {
+        throw new RpcError(INVALID_PARAMS, `${SECRET} needs values, the secret fields the plugin refreshed`);
+      }
+      for (const [field, value] of Object.entries(values)) {
+        // The value is a secret, so the message names only the field.
+        if (typeof value !== 'string' || value === '') {
+          throw new RpcError(INVALID_PARAMS, `${SECRET} takes ${field} as a non-empty string`);
+        }
+      }
+      const before = await options.collection.get(id);
+      if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+      const owner = asOwner(before.owner);
+      if (owner !== undefined) refuseOwner('connector', 'secret', owner, reader, 'put');
+      const entry = open.get(id);
+      if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
+      const adapter = options.adapters()[entry.connector.adapter];
+      if (reader !== undefined && (adapter === undefined || reader.plugin !== adapter.by)) {
+        throw new RpcError(DENIED, `${id}'s secrets are written by the plugin of ${entry.connector.adapter}, not ${reader.id}`);
+      }
+      if (adapter === undefined) throw new RpcError(INVALID_PARAMS, `${id} names an adapter this host does not serve`);
+      const fields = secretFields(adapter.schema);
+      for (const field of Object.keys(values)) {
+        if (!fields.includes(field)) {
+          throw new RpcError(INVALID_PARAMS, `${SECRET} takes ${field} as a field the schema marks secret`);
+        }
+      }
+      const vault = options.vault();
+      if (vault === undefined) {
+        throw new RpcError(INTERNAL_ERROR, 'This host has no vault, so a secret cannot be kept');
+      }
+      const config = { ...configOf(before) };
+      let changed = false;
+      for (const [field, value] of Object.entries(values) as [string, string][]) {
+        const name = secretNameOf(CONNECTOR_SECRETS.subject, entry.connector.owner, id, field);
+        try {
+          scopeOf(name);
+        } catch (error) {
+          throw new RpcError(INVALID_PARAMS, reason(error));
+        }
+        await vault.set(name, value);
+        if (secretRef(config[field]) !== name) {
+          config[field] = { $secret: name };
+          changed = true;
+        }
+      }
+      const after: StoredRecord = changed ? { ...before, config } : before;
+      if (changed) {
+        await options.collection.put(after);
+        await channel.refresh();
+      }
+      return connectorRow(after);
+    },
+  };
+
   /** Every open connector whose adapter serves models, as `providers` answers them. */
   const providers = (): ProviderConnector[] => {
     const adapters = options.adapters();
@@ -1367,6 +1459,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     [REMOVE]: remove,
     [CHECK]: check,
     [NOTE]: noteCall,
+    [SECRET]: secretCall,
     [SIGNIN]: signin,
     [SIGNIN_FINISH]: signinFinish,
     ...(options.models === undefined ? {} : { [MODELS]: models }),

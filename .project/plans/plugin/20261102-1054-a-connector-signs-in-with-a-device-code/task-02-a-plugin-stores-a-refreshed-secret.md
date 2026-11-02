@@ -1,6 +1,6 @@
 ---
 title: A plugin stores a refreshed secret
-status: todo
+status: implemented
 depends: []
 layer: sdk
 refs:
@@ -47,3 +47,11 @@ Only the plugin that registered the connector's adapter sends it, so a refreshed
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built: `x-ahpd/connectors/secret` in the connectors channel. It copies `note`'s grant, owner refusal and plugin check. It takes the schema's secret fields and a non-empty string for each value, and writes each to the vault name a put would use. The record is written only when the field did not point at that name. The head comment and `PLUGINS.md` have the command, and `connectors-channel.test.ts` holds four cases.
+
+Departures:
+- The head comment's sign-in paragraph was rewritten for the device flow. Task 01's Files did not name the head comment, so it stayed as it was until this task's head-comment step.
+- A field whose record points at a different vault name is rewritten to the name this command writes, not only a field with no reference. The step says "had no `$secret` reference yet"; a stale reference would otherwise leave the record on a secret the adapter no longer holds.
+
+Gates: `pnpm -s build` pass, `pnpm exec tsc -p tsconfig.json --noEmit` pass, `pnpm -s boundary` pass. `packages/sdk/test/connectors-channel.test.ts` 51 pass.
