@@ -1,6 +1,6 @@
 ---
 title: The daemon keeps the tunnels
-status: todo
+status: implemented
 depends:
   - task-02-the-host-lists-tunnels-and-runs-ops.md
 layer: server
@@ -61,3 +61,17 @@ The routes answer to each tunnel's URL. The API does so only when `tunnelHosts` 
 - `pnpm typecheck` and `pnpm boundary` pass.
 
 ## Resume
+
+Built the daemon's half. The `tunnels` collection is opened as JSON, and `tunnelsChannel` serves it with the vault and the schema check. `x-ahpd/invokeOperation` is served over `x-ahpd-tunnels://` alone. The folded kinds are taken at each fold. After `listening` the host calls `startAll` with the bound port, and before the plugins hear `stopping` it calls `stopAll`. The routes' `Host` check reads `urls()`, and the API reads the same names only when `tunnelHosts` is on. `packages/server/test/tunnels.test.ts` runs a real daemon with a fake kind plugin, and its five cases pass.
+
+Departures from the steps:
+
+- `packages/server/src/commands/options.ts` gained the `tunnelHosts` field, its `Options` member and its default false, and `FILE_ONLY` names it. The Files list did not name this file, and the key cannot be read from `config.json` without it.
+- `docs/CONFIG.md` does not exist in this tree. The config prose is `docs/server/CONFIGURE.md`, which gained the key and a paragraph; `docs/server/REFERENCE.md` builds its tables from the declaration.
+- `startAll` is called inside the branch that raises `listening`, so a stdio host starts no tunnel: it has no address to forward to.
+- With `tunnelHosts` on, the API's authorities gain each URL's `host` and `hostname`, and its origins gain the URL's origin, which the API's `Origin` check needs. Step 11 named only the names.
+- A record whose kind no fold holds stays `stopped` and is not started, and `startOne` says so once in the log. That is how a plugin that is off keeps its tunnels on the list.
+- `packages/server/src/records.ts` needed no change: `tunnels` is not in `RESERVED_COLLECTIONS`.
+- The fixture plugin is a folder with a `package.json` manifest, because a plugin named by a bare module path has no manifest and is skipped.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit` and `pnpm -s boundary` pass. `packages/server/test/tunnels.test.ts` (5 tests), `packages/server/test/config-check.test.ts` (66) and `packages/server/test/schema-gaps.test.ts` (34) pass.
