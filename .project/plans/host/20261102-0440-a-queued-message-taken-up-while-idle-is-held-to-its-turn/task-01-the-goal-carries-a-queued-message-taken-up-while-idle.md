@@ -1,6 +1,6 @@
 ---
 title: The goal carries a queued message taken up while idle
-status: todo
+status: done
 depends: []
 layer: "sdk test"
 refs:
@@ -36,4 +36,4 @@ The four queued cases then exempt the host's activity alone.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `594c2fd5`; [implemented.md](implemented.md) says what was verified.

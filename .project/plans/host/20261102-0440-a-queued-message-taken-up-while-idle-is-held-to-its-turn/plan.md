@@ -1,7 +1,7 @@
 ---
 title: A queued message taken up while idle is held to its turn
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -66,7 +66,7 @@ goal = reducer(start, [pendingMessageSet]) -> pm-1 queued, no turn
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - the goal carries a queued message taken up while idle](task-01-the-goal-carries-a-queued-message-taken-up-while-idle.md) | todo | - |
+| [01 - the goal carries a queued message taken up while idle](task-01-the-goal-carries-a-queued-message-taken-up-while-idle.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -75,12 +75,12 @@ goal = reducer(start, [pendingMessageSet]) -> pm-1 queued, no turn
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** the goal is the case's `expected` only when the host refused nothing and said nothing of its own.
 
 ## Final verification checklist
 
-- [ ] 045, 046, 047 and 052 exempt `activity` alone, and pass.
-- [ ] A host whose queued turn carries another message fails the four cases, and passed them before.
+- [x] 045, 046, 047 and 052 exempt `activity` alone, and pass.
+- [x] A host whose queued turn carries another message fails the four cases, and passed them before.
