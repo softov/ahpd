@@ -1,7 +1,7 @@
 ---
 title: A session for another client is refused
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -71,12 +71,12 @@ createSession -> sessionmethods.ts -> the provider and its use checked -> the cr
 ## Resume state
 
 - **Done so far:** task 01, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a creator's entry with no `clientId`, which the cases send and which takes the connection's.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `89ebe4d5` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `89ebe4d5` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
