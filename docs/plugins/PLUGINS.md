@@ -653,7 +653,8 @@ host.registerAdapter({
   connector's id and a local server's models are `local/llama-3`. A list that
   cannot be read keeps the one it had, and one line is written to the log. An
   adapter with no `models` serves only the names a person writes in the file.
-- `signIn` is optional, and says how a person signs in to the provider in place of typing its key. `title` is the label a client prints. `field` is the `secret` field the exchange fills; a field the schema does not keep is refused at registration. `url(challenge, state)` is where a person signs in, and `exchange(code, verifier)` answers the value for `field`. The host makes the PKCE verifier and the S256 challenge, so a plugin never sees a verifier. An exchange that refuses with `HTTP <status>` alone is shown to the caller with that status, and any other message is hidden.
+- `signIn` is optional, and says how a person signs in to the provider in place of typing its key. `title` is the label a client prints. `field` is the `secret` field the sign-in fills; a field the schema does not keep is refused at registration. With no `flow`, or `flow: 'code'`, it is the pasted code: `url(challenge, state)` is where a person signs in, and `exchange(code, verifier)` answers the value for `field`. The host makes the PKCE verifier and the S256 challenge, so a plugin never sees a verifier. An exchange that refuses with `HTTP <status>` alone is shown to the caller with that status, and any other message is hidden.
+- With `flow: 'device'`, the host shows a code and waits for the approval on another device. `start()` answers `{ code, url, expires, interval, handle }`, with `expires` and `interval` in seconds, and `poll(handle)` answers `{ values }` with every field the approval fills, or `{ wait }` with the next interval in seconds. A refusal throws. The handle is a credential of the pending sign-in: the host keeps it and sends it to nothing else, so no answer, row, error or log line carries it. `account` names a plain field of the schema the account is written to, and a second sign-in that answers a different account is refused with `signed in as <new>, this connector is <old>` unless the adapter sets `switchAccount: true`. A `field` or an `account` the schema does not keep is refused at registration, and so is an `account` the schema marks secret. A device flow fills several fields: the secret ones go to the vault as a pasted code's does, and the rest stay in the record.
 - An adapter whose connectors serve models declares a `models` capability. The
   capability tells a client that the proxy may call a connector of it; the
   `provider` member says where. The host lists the open connectors whose adapter
@@ -1477,8 +1478,10 @@ nothing and sends nothing. A refused command marks nothing.
 A read-only channel. One row for each adapter the loaded plugins register, keyed
 by the adapter's name, holding `name`, `title`, `description`, `schema`,
 `capabilities` and the `plugin` that registered it, and a `signIn` holding its
-`title` and `field` when the adapter declares one. Nothing on it is an instance
-of anything: the connectors made from an adapter are on `x-ahpd-connectors`.
+`title`, its `field` and its `flow` when the adapter declares one, and the
+`account` field of a device sign-in that names one. Nothing on it
+is an instance of anything: the connectors made from an adapter are on
+`x-ahpd-connectors`.
 A row shows as soon as the plugin registers the adapter, before any connector of
 it exists. Reading the channel needs `connector:list`.
 
@@ -1490,7 +1493,8 @@ of, with `config` holding a reference where a secret was moved, and a `state`:
 
 | `state` | What it says |
 | --- | --- |
-| `ready` | The adapter was called and is answering |
+| `ready` | The adapter opened it, and its last check was not denied |
+| `unauthorized` | The adapter opened it, and its last check was denied: the service refused its credential. A check that passes, or a sign-in, makes it `ready` again |
 | `invalid` | Its config no longer fits its adapter's schema, or the adapter refused to open it |
 | `unavailable` | No loaded plugin registers its adapter, so it cannot be opened |
 
@@ -1504,15 +1508,55 @@ Six commands serve a connector:
 | --- | --- | --- |
 | `x-ahpd/connectors/put` | `connector:put`, and the owner's | Makes or changes `{ id, adapter, owner, title?, config }`, moves each `secret` value to the vault, writes the record and opens it. Answers the row, with the check it waited for |
 | `x-ahpd/connectors/remove` | `connector:remove`, and the owner's | Closes `{ id }`, takes its secrets out of the vault and takes the record out |
-| `x-ahpd/connectors/check` | `connector:put`, and the owner's | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
-| `x-ahpd/connectors/note` | `connector:put`, and the owner's | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
-| `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the field the adapter's `signIn` names, and answers `{ url, state }`. It refuses an adapter with no `signIn` |
-| `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }`, asks the put's owner checks again, exchanges the code through the adapter and runs the put with the key. Answers the row |
+| `x-ahpd/connectors/check` | `connector:put`, and the owner's, or none for the plugin of the connector's adapter | Runs the check of `{ id }` again and answers the row. It refuses a connector that is not ready, or one whose adapter has no `check` |
+| `x-ahpd/connectors/note` | None: only the plugin of the connector's adapter may send it | Keeps one call `{ id, ok, status?, error? }` the open connector made in its `health`, and answers the row. Only the plugin that registered the connector's adapter may note, since it makes the connector's calls outside `run` |
+| `x-ahpd/connectors/secret` | None: only the plugin of the connector's adapter may send it | Writes a refreshed secret `{ id, values }` to the vault of an open connector, under `connector/<id>/<field>` in its owner's scope, and answers the row. Only the plugin that registered the connector's adapter may send it, and each field is one the schema marks secret. The connector is not reopened. No answer, error or log carries a value |
+| `x-ahpd/connectors/signin` | `connector:put`, and the owner's | Starts a sign-in for `{ id, adapter, owner, title?, config }`, checks what a put checks except the fields the adapter's `signIn` fills, and answers `{ url, state }` for a pasted code or `{ state, code, url, expires }` for a device code. It refuses an adapter with no `signIn` |
+| `x-ahpd/connectors/signin-finish` | `connector:put`, and the owner's | Takes `{ state, code }` for a pasted code and `{ state }` alone for a device code, asks the put's owner checks again, and answers the row. A pasted code is exchanged through the adapter and runs the put with the key; a device code waits for the approval the host has been polling, then answers the row or the error |
 | `x-ahpd/connectors/models` | `connector:list` for a connector the caller reads, or `connector:all` | Answers `{ models, at }` for the open provider connector `{ id }`: each model as the provider lists it, with `model`, the name a caller sends to the proxy, and `callable`, whether this caller may call it now. `at` is when the list was last read. It refuses a connector whose adapter serves no models |
 
-A sign-in is served for an adapter that declares `signIn`, and it fills the one field that adapter names. The start makes a PKCE verifier and a state, and keeps both the verifier and the put's params in memory for ten minutes. It answers the URL the adapter builds from the S256 challenge and the state. The finish refuses a state this host never made, one that has expired, and one another caller started. It uses a state once, and only its starter can use it, so a stranger cannot burn it.
+A pasted-code sign-in is served for an adapter that declares `signIn` with no
+`flow`, and it fills the one field that adapter names. The start makes a PKCE
+verifier and a state, and keeps both the verifier and the put's params in memory
+for ten minutes. It answers the URL the adapter builds from the S256 challenge
+and the state. The finish refuses a state this host never made, one that has
+expired, and one another caller started. It uses a state once, and only its
+starter can use it, so a stranger cannot burn it.
 
-The put's grant and the owner's rule are asked again before the exchange, because ten minutes is long enough for both to change. The host keeps at most ten started sign-ins for one caller, and drops the oldest first. A failed exchange is answered with the adapter's title and the vendor's `HTTP <status>` alone. No row, error, problem line or log carries the code, the verifier, the state or the key.
+A device-code sign-in is served for an adapter with `flow: 'device'`, and it
+fills `field` and every other field the approval answers. The start runs
+`prepare` as a put does, calls `start()`, and keeps the handle, the params and
+the starter's reader for as long as the adapter's code lasts. It answers the
+code, the URL and the expiry a client shows, and never the handle. The host
+polls `poll(handle)` at the interval with an unref'd timer, and uses a `{ wait }`
+answer as the next interval. The poll stops at the expiry, at a refusal and when
+the host drops the entry. The person approves on another device, so the client
+that started the sign-in does not have to stay open: the host writes the
+connector when the values arrive, and a finish that comes later answers the same
+result until the code expires.
+
+A device approval runs the put's owner checks again with the reader that started
+the sign-in, then the account rule, then the put with every value in its schema
+field. A second sign-in that answers a different `account` is refused unless
+the adapter sets `switchAccount`, and a sign-in for the same account keeps the
+connector's id. A finish takes `{ state }` alone, and a code sent to a device
+sign-in is refused. The wait is bounded by the code's expiry, so a vendor poll
+that never returns still leaves the caller an answer.
+
+The put's grant and the owner's rule are asked again before the exchange or the
+approval, because a sign-in outlasts the call that started it. The host keeps at
+most ten started sign-ins for one caller, and drops the oldest first. A failed
+exchange or poll is answered with the adapter's title and the vendor's
+`HTTP <status>` alone. No row, error, problem line or log carries the code, the
+verifier, the state, the handle or the key.
+
+A plugin that refreshes a secret without a new sign-in, as a rotating vendor
+token does, sends `x-ahpd/connectors/secret { id, values }` for an open
+connector. Only the plugin of that connector's adapter may send it, and every
+field is one the schema marks `secret`. Each value goes to the vault under the
+name a put would use, and the record is written to point at that name when it
+does not already. The connector is not reopened, because the plugin holds the
+new value. No answer, error or log carries a value.
 
 The owner narrows the grant. A `host` connector needs `connector:put` to be made
 and `connector:remove` to be removed, and `connector:host` beside either. A

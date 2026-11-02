@@ -13,9 +13,11 @@
  * what the daemon announces and therefore into `ahpd status`.
  */
 
-import type { Plugin } from '@ahpd/sdk';
+import { reason } from '@ahpd/sdk';
+import type { Plugin, PluginHost, PluginPeer } from '@ahpd/sdk';
 import type { ChildProcess } from 'node:child_process';
 import { hostname as machineName } from 'node:os';
+import { devtunnelAdapter, OpenTunnels } from './adapter.js';
 import {
   deriveConnectionToken, displayLabel, IDENTITY_LABEL, nameLabel, TUNNEL_PORT,
 } from './discovery.js';
@@ -46,6 +48,7 @@ export const POLL_MS = 30_000;
 export const defaults = {
   keep: true,
   anonymous: false,
+  allowAccountChange: false,
 } as const;
 
 /** The options this plugin understands, after the defaults. */
@@ -73,6 +76,13 @@ export interface Options {
    * the thing actually deciding who may connect.
    */
   anonymous?: boolean;
+  /**
+   * Whether a second sign-in may replace a connector's GitHub account.
+   *
+   * Off by default: a connector is one person's one account, and a sign-in
+   * from another account on the same id is a mistake rather than an edit.
+   */
+  allowAccountChange?: boolean;
 }
 
 /** What was stood up, so `stopping` can take it back down. */
@@ -94,12 +104,80 @@ export interface Seams {
   spawner?: Spawner;
 }
 
+/**
+ * The client name this plugin's own connection to its host gives.
+ *
+ * The same id the daemon loads the plugin under, so a grant in its entry is
+ * the grant its connection holds.
+ */
+const CLIENT = name;
+
+/**
+ * The two calls the `devtunnel` adapter makes on its host's side.
+ *
+ * An adapter refreshes its token, and the vault is the host's: a plugin writes
+ * a secret back through `x-ahpd/connectors/secret`, and asks for a check
+ * through `x-ahpd/connectors/check`, as the Claude plugin does for its logins.
+ * The connection opens by the first of them and is kept for the load; the
+ * daemon closes it on `stopping`.
+ *
+ * `connect` is only answered from `listening` on, and a stored connector may
+ * open while the host is still being built. So the first call waits for that
+ * event rather than reporting a failure the next tick would have avoided.
+ */
+const throughHost = (host: PluginHost): {
+  secret: (id: string, values: Record<string, string>) => Promise<void>;
+  check: (id: string) => void;
+} => {
+  let listening!: () => void;
+  const started = new Promise<void>((resolve) => { listening = resolve; });
+  host.on('listening', () => { listening(); });
+  let opened: Promise<PluginPeer> | undefined;
+  const connection = async (): Promise<PluginPeer> => {
+    await started;
+    opened ??= (async () => {
+      const conn = host.connect();
+      await conn.request('initialize', { clientId: CLIENT, protocolVersions: ['0.9.0'] });
+      return conn;
+    })();
+    const failed = (): void => { opened = undefined; };
+    opened.catch(failed);
+    return await opened;
+  };
+  return {
+    secret: async (id, values) => {
+      const conn = await connection();
+      await conn.request('x-ahpd/connectors/secret', { id, values });
+    },
+    check: (id) => {
+      void connection()
+        .then((conn) => conn.request('x-ahpd/connectors/check', { id }))
+        .catch((error: unknown) => { host.log(`${name}: the host did not check connector ${id}: ${reason(error)}`); });
+    },
+  };
+};
+
 export const apply: Plugin['apply'] = (plugin, options) => {
   const asked: Options = options;
   const seams = options as Seams;
   const keep = asked.keep ?? defaults.keep;
   const anonymous = asked.anonymous ?? defaults.anonymous;
+  const allowAccountChange = asked.allowAccountChange ?? defaults.allowAccountChange;
   const wanted = asked.name;
+
+  /*
+   * The Dev Tunnels connector, and the tokens of the ones this load holds
+   * open. Signing one in is a device code the host polls; the CLI's own login
+   * still hosts the tunnel this version stands up.
+   */
+  const tunnels = new OpenTunnels();
+  const through = throughHost(plugin);
+  plugin.registerAdapter(devtunnelAdapter(tunnels, {
+    allowAccountChange,
+    log: (line) => { plugin.log(line); },
+    secret: through.secret,
+    check: through.check,
+  }));
 
   let held: Held | undefined;
   /** The state the page draws, so a poll that found nothing new says nothing. */

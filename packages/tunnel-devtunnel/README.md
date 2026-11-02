@@ -33,7 +33,7 @@ Update, remove and one-run flags such as `--plugin` are in [Plugins](https://git
 In the configuration file, with every option set:
 
 ```json
-{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "name": "dev03", "anonymous": true } }] }
+{ "plugins": [{ "name": "@ahpd/tunnel-devtunnel", "options": { "name": "dev03", "keep": true, "anonymous": true, "allowAccountChange": true } }] }
 ```
 
 | Option | Default | What it does |
@@ -41,10 +41,23 @@ In the configuration file, with every option set:
 | `name` | this machine's hostname | What the tunnel is called in a client's list |
 | `keep` | `true` | Whether the tunnel outlives the daemon |
 | `anonymous` | `false` | Whether somebody not signed in to this account may reach it |
+| `allowAccountChange` | `false` | Whether a second sign-in may replace a connector's GitHub account |
 
 Keep `keep` on: a client derives its connection token from the tunnel's id, so a new tunnel on every start is a new token on every start.
 
-No option holds a credential, so the plugin takes nothing from the vault. The tunnel signs in through the `devtunnel` CLI's own login.
+No option holds a credential. A connector keeps its tokens in the vault, and the tunnel this version hosts still signs in through the `devtunnel` CLI's own login.
+
+## Signing in with a connector
+
+A `devtunnel` connector is one GitHub account, signed in with a code instead of the CLI. In a client, make a connector of the `devtunnel` adapter and press **Sign in with GitHub**. The host shows a code and a URL, and you approve on `github.com` from any device. The connector's row is `ready` once the host holds the token, and `unauthorized` while the service refuses it, until you sign in again. Each GitHub account gets its own connector, so one host may hold several.
+
+A second sign-in on an existing connector from the same account keeps it. From another account it is refused, because a connector is one account. Set `allowAccountChange` to `true` to let a sign-in replace the account instead.
+
+The token lasts eight hours. The plugin refreshes it when the connector opens and every seven hours after. Each new pair is written to the vault through `x-ahpd/connectors/secret`. A refresh that fails logs one line and asks the host to check the connector, which then says on its row what the service answered.
+
+The plugin needs no grant for that: the host lets the plugin that registered an adapter write the secrets of that adapter's connectors and ask for their check, whoever owns them.
+
+The tunnels themselves still come from the `devtunnel` CLI's login, which hosts the tunnel this version stands up. The connector's token is kept for the tunnel kind that signs in with it.
 
 ## In your own host
 

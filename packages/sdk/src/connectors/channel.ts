@@ -2,9 +2,10 @@
  * `x-ahpd-connectors`: the connectors made from the adapters a host serves.
  *
  * One row for each stored connector, keyed by the connector's id, holding the
- * record as it is kept and a `state`: `ready`, `invalid` when its config no
- * longer fits the adapter's schema or its adapter refused to open it, or
- * `unavailable` when no plugin registers its adapter any more. The adapters
+ * record as it is kept and a `state`: `ready`, `unauthorized` when it is open
+ * and its last check was denied, `invalid` when its config no longer fits the
+ * adapter's schema or its adapter refused to open it, or `unavailable` when no
+ * plugin registers its adapter any more. The adapters
  * themselves are listed on `x-ahpd-adapters`.
  *
  * A row also carries a `health`, when the host knows one: the last check the
@@ -30,23 +31,38 @@
  * of the vault and takes the record out. Both answer the row a client now
  * holds. `x-ahpd/connectors/check` takes `{ id }`, runs the adapter's `check`
  * again and answers the row, so a person who fixed the service side sees the
- * connector work without saving it again.
+ * connector work without saving it again. The plugin that registered the
+ * connector's adapter may ask for it with no grant.
  *
  * An adapter may also declare a `signIn`, and then two more commands are
  * served. `x-ahpd/connectors/signin` takes what a put takes, checks it the same
- * way except for the field the sign-in fills, keeps a PKCE verifier and the
- * put's own params in memory for ten minutes under a state, and answers
- * `{ url, state }`. `x-ahpd/connectors/signin-finish` takes `{ state, code }`,
- * runs the put's owner checks again, exchanges the code through the adapter,
- * and runs the put with the key in that field. A state is the caller's and is
- * used once. Neither answer, row, error nor log carries the code, the verifier
- * or the key.
+ * way except for the fields the sign-in fills, and answers `{ url, state }` for
+ * a pasted code or `{ state, code, url, expires }` for a device code. A pasted
+ * code's start keeps a PKCE verifier and the put's own params in memory for ten
+ * minutes under a state. A device code's start keeps the handle, the params and
+ * the starter's reader, and the host polls the adapter for as long as the code
+ * lasts. `x-ahpd/connectors/signin-finish` takes `{ state, code }` for the
+ * pasted code and `{ state }` alone for the device code. It runs the put's
+ * owner checks again, and answers the row: the pasted code exchanges through
+ * the adapter first, and the device code waits for the approval the host has
+ * been polling. A state is the caller's. A pasted state is used once, and a
+ * device one answers the same settled outcome until its code expires. No
+ * answer, row, error or log carries the code, the verifier, the handle or the
+ * key.
  *
  * `x-ahpd/connectors/note` takes `{ id, ok, status?, error? }`, one call an open
  * connector made, and keeps it in the connector's health as a host part's
  * outcome is kept. Only the plugin that registered the connector's adapter
- * notes, since it makes the connector's calls outside `run`, and it needs what
- * a check needs besides. It answers the row.
+ * notes, since it makes the connector's calls outside `run`. It needs no grant
+ * and no owner's rule for a connector of its own adapter. It answers the row.
+ *
+ * `x-ahpd/connectors/secret` takes `{ id, values }`, the secret fields a plugin
+ * refreshed for one open connector, and writes each value to the vault under
+ * `connector/<id>/<field>` in the owner's scope. Only the plugin that registered
+ * the connector's adapter sends it, as only that plugin notes, with no grant. A field whose
+ * record does not point at its vault name yet is written to point at it, and the
+ * connector is not reopened, because the plugin holds the new value already. It
+ * answers the row, and no answer, error or log carries a value.
  *
  * `x-ahpd/connectors/models` takes `{ id }` and answers the models one open
  * provider connector serves, as the model proxy's catalog last read them, with
@@ -64,7 +80,7 @@ import { createHash, randomBytes } from 'node:crypto';
 
 import { INVALID_PARAMS, INTERNAL_ERROR, RpcError } from '../rpc.js';
 import { sameOwnerOrHost } from '../automations/automations.js';
-import { fromEnvRef, secretRef } from '../access/vault.js';
+import { fromEnvRef, scopeOf, secretRef } from '../access/vault.js';
 import {
   CONNECTOR_SECRETS,
   DENIED,
@@ -78,11 +94,12 @@ import {
   refuseOwner,
   resolved as resolvedRecord,
   secretFields,
+  secretNameOf,
 } from '../channels/owners.js';
 import { isRecordSlug } from '../resources/records.js';
 import { recordsChannel, type RecordsChannel } from '../resources/recordschannel.js';
 import { bag, isRecord, reason } from '../utils/values.js';
-import type { CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, ProviderConnector, ServedAdapter } from '../types/connectors.js';
+import type { CallOutcome, CheckResult, Connector, ConnectorHealth, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, ProviderConnector, ServedAdapter } from '../types/connectors.js';
 import type { PluginMethod } from '../types/plugin.js';
 import type { RecordCollection, StoredRecord } from '../types/records.js';
 import type { Grant, Principal } from '../types/users.js';
@@ -99,6 +116,7 @@ const SIGNIN = `${DOMAIN}/signin`;
 const SIGNIN_FINISH = `${DOMAIN}/signin-finish`;
 const MODELS = `${DOMAIN}/models`;
 const NOTE = `${DOMAIN}/note`;
+const SECRET = `${DOMAIN}/secret`;
 
 /** How long one sign-in waits for the code a person pastes, in milliseconds. */
 const SIGNIN_LIMIT_MS = 10 * 60 * 1000;
@@ -119,7 +137,7 @@ const HEALTH_MESSAGE_LIMIT = 500;
 const NOTE_REFRESH_MS = 1000;
 
 /** The three states a connector row can be in. */
-export type ConnectorState = 'ready' | 'invalid' | 'unavailable';
+export type ConnectorState = 'ready' | 'unauthorized' | 'invalid' | 'unavailable';
 
 /** How a connectors channel reads its store, and who it writes a secret for. */
 export interface ConnectorsChannelOptions {
@@ -169,22 +187,50 @@ interface Opened {
   stop?: () => void | Promise<void>;
 }
 
+/** The outcome a device sign-in settles on once, and a finish waits for. */
+type DeviceOutcome =
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; error: RpcError };
+
+/** The device half of a started sign-in: its poll, its outcome and who waits. */
+interface StartedDevice {
+  /** The adapter's sign-in, as it was declared when the sign-in started. */
+  signIn: DeviceSignIn;
+  /** The handle `poll` takes, sent to nothing but the adapter. */
+  handle: string;
+  /** The poll's next run, or the cleanup that forgets a settled sign-in. */
+  timer: ReturnType<typeof setTimeout> | undefined;
+  /** The finishes waiting for the outcome, told once it settles. */
+  waiting: ((outcome: DeviceOutcome) => void)[];
+  /** The row or the error, kept until the expiry so a late finish answers it. */
+  outcome: DeviceOutcome | undefined;
+  /** Whether the values are being written, which an expiry does not cut off. */
+  finishing?: boolean;
+}
+
 /**
  * One sign-in a caller started, kept in memory until its code arrives.
  *
  * The verifier is the PKCE secret the challenge was made from, and the params
  * are what the start was asked to make, with the sign-in's field left out so
- * only the exchange can fill it.
+ * only the exchange can fill it. A device sign-in keeps the adapter's handle
+ * and its poll instead of a verifier: the host asks the adapter, not a person.
  */
 interface StartedSignIn {
+  /** Which sign-in this is: the pasted code or the device flow. */
+  flow: 'code' | 'device';
   /** The PKCE verifier, sent to nothing but the adapter's exchange. */
   verifier: string;
   /** What the put is made with once the code is exchanged. */
   params: Record<string, unknown>;
   /** Who started it: the owner their connection works as, or nothing on a host with no users. */
   caller: Owner | undefined;
+  /** Who started it, as a reader the owner's rule is asked of again when it writes. */
+  reader: Principal | undefined;
   /** When it stops being finishable, in epoch milliseconds. */
   expires: number;
+  /** The device half, on a device sign-in. */
+  device?: StartedDevice;
 }
 
 /** What a put and a sign-in both check before anything is written. */
@@ -305,8 +351,20 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     const adapter = options.adapters()[String(record.adapter)];
     if (adapter === undefined) return 'unavailable';
     if (!fits(configOf(record), adapter.schema)) return 'invalid';
-    return open.has(record.id) ? 'ready' : 'invalid';
+    if (!open.has(record.id)) return 'invalid';
+    // An open connector whose provider refused its credential is not one that answers.
+    return healths.get(record.id)?.check?.result === 'denied' ? 'unauthorized' : 'ready';
   };
+
+  /**
+   * Whether the reader is the plugin that registered the record's adapter.
+   *
+   * That plugin holds the connector's credential from the open, so it notes its
+   * calls, asks for its check and writes its refreshed secrets with no grant
+   * and whoever owns it.
+   */
+  const ownPlugin = (record: StoredRecord, reader: Principal | undefined): boolean =>
+    reader?.plugin !== undefined && options.adapters()[String(record.adapter)]?.by === reader.plugin;
 
   /**
    * One stored connector as a client is shown it: its record, its state, and
@@ -639,14 +697,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   /**
    * Everything a put checks before the record is written.
    *
-   * `filled` names the field a sign-in is about to fill. The rules are asked of
-   * what a person filled in, and that one field is held as `HELD`, because the
-   * exchange answers it and never the client.
+   * `filled` names the fields a sign-in is about to fill. The rules are asked
+   * of what a person filled in, and those fields are held as `HELD`, because
+   * the exchange or the device flow answers them and never the client.
    */
   const prepare = async (
     params: Record<string, unknown>,
     reader: Principal | undefined,
-    asked: { command: string; filled?: string },
+    asked: { command: string; filled?: string | readonly string[] },
   ): Promise<Prepared> => {
     const id = idParam(asked.command, params);
     const adapterName = params.adapter;
@@ -677,14 +735,22 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
      * rules are asked of what a person filled in, and an empty field that
      * keeps a secret is not refused for being empty.
      */
+    const filled = asked.filled === undefined
+      ? []
+      : typeof asked.filled === 'string' ? [asked.filled] : [...asked.filled];
     const checked: Record<string, unknown> = { ...config };
     for (const field of secretFields(adapter.schema)) {
-      if (field === asked.filled) {
+      if (filled.includes(field)) {
         checked[field] = HELD;
         continue;
       }
       if (checked[field] === '' && secretRef(kept[field]) !== undefined) checked[field] = HELD;
       if (fromEnvRef(checked[field]) !== undefined) checked[field] = HELD;
+    }
+    // A device flow fills a plain field too, such as the account, which a
+    // client leaves out for the same reason.
+    for (const field of filled) {
+      if (checked[field] === undefined) checked[field] = HELD;
     }
     try {
       options.check(checked, adapter.schema, `connector ${id}`);
@@ -753,12 +819,278 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     handle: async (params, reader) => putOne(params, reader),
   };
 
+  /** A positive number of seconds an adapter answered, or nothing when it is not one. */
+  const secondsOf = (value: unknown): number | undefined =>
+    (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined);
+
+  /** The refusal a sign-in answers with: the vendor's status alone, or its title. */
+  const refusalOf = (signIn: { title: string }, error: unknown): RpcError => {
+    const status = statusOf(error);
+    return new RpcError(INTERNAL_ERROR, status === undefined
+      ? `${signIn.title} did not finish the sign-in`
+      : `${signIn.title} answered ${status}`);
+  };
+
+  /** Tell the finishes waiting on one device sign-in its outcome, once. */
+  const settleDevice = (device: StartedDevice, outcome: DeviceOutcome): void => {
+    if (device.outcome !== undefined) return;
+    device.outcome = outcome;
+    for (const done of device.waiting.splice(0)) done(outcome);
+  };
+
+  /** The outcome a sign-in answers once its code has expired. */
+  const expiredOutcome = (): DeviceOutcome => ({
+    ok: false,
+    error: new RpcError(INVALID_PARAMS, 'This sign-in has expired; start it again'),
+  });
+
+  /** Stop one started sign-in's poll and forget it, telling a finish that waits. */
+  const dropStarted = (state: string, outcome?: DeviceOutcome): void => {
+    const entry = started.get(state);
+    if (entry === undefined) return;
+    // The values arrived and are being written: the put's own result settles
+    // this entry, so an expiry or a full table does not answer in its place.
+    if (entry.device?.finishing === true) return;
+    started.delete(state);
+    const device = entry.device;
+    if (device === undefined) return;
+    if (device.timer !== undefined) {
+      clearTimeout(device.timer);
+      device.timer = undefined;
+    }
+    settleDevice(device, outcome ?? {
+      ok: false,
+      error: new RpcError(INVALID_PARAMS, 'This host has no such sign-in, or it has already finished'),
+    });
+  };
+
+  /**
+   * Settle one device sign-in on its one outcome.
+   *
+   * The poll stops, and the row or the error is kept until the expiry, so a
+   * finish that comes after the poll still answers it. At the expiry the entry
+   * is forgotten, after every waiter has been told.
+   */
+  const endDevice = (state: string, entry: StartedSignIn, outcome: DeviceOutcome): void => {
+    const device = entry.device;
+    if (device === undefined || device.outcome !== undefined) return;
+    if (device.timer !== undefined) {
+      clearTimeout(device.timer);
+      device.timer = undefined;
+    }
+    settleDevice(device, outcome);
+    const left = entry.expires - Date.now();
+    if (left <= 0) {
+      started.delete(state);
+      return;
+    }
+    device.timer = setTimeout(() => { started.delete(state); }, left);
+    device.timer.unref?.();
+  };
+
+  /** Schedule one poll, no later than the code's expiry. */
+  const scheduleDevice = (state: string, entry: StartedSignIn, waitMs: number): void => {
+    const device = entry.device;
+    if (device === undefined || device.outcome !== undefined) return;
+    if (device.timer !== undefined) clearTimeout(device.timer);
+    const left = Math.max(0, entry.expires - Date.now());
+    device.timer = setTimeout(() => { void pollDevice(state, entry); }, Math.min(waitMs, left));
+    device.timer.unref?.();
+  };
+
+  /** Run the put with the values a device sign-in answered, and settle on it. */
+  const finishDevice = async (state: string, entry: StartedSignIn, values: Record<string, string>): Promise<void> => {
+    const device = entry.device;
+    if (device === undefined || device.outcome !== undefined) return;
+    const signIn = device.signIn;
+    // An expiry may not answer in the put's place while it is writing.
+    device.finishing = true;
+    try {
+      const id = String(entry.params['id']);
+      const owner = asOwner(entry.params['owner']);
+      if (owner === undefined) throw new RpcError(INVALID_PARAMS, `${SIGNIN_FINISH} holds a sign-in with no owner`);
+      // The grant and the owner are asked again, as the pasted-code finish asks
+      // them, and with the reader that started the sign-in: the poll runs with
+      // no caller of its own.
+      const { before, was } = await ownerChecks(id, owner, entry.reader);
+      if (signIn.account !== undefined) {
+        const now = values[signIn.account];
+        const then = before !== undefined && was === owner ? bag(configOf(before))[signIn.account] : undefined;
+        if (typeof now === 'string' && typeof then === 'string' && now !== then && signIn.switchAccount !== true) {
+          throw new RpcError(INVALID_PARAMS, `signed in as ${now}, this connector is ${then}`);
+        }
+      }
+      const config = { ...bag(entry.params['config']), ...bag(values) };
+      const row = await putOne({ ...entry.params, config }, entry.reader);
+      endDevice(state, entry, { ok: true, row });
+    } catch (error) {
+      endDevice(state, entry, {
+        ok: false,
+        error: error instanceof RpcError ? error : new RpcError(INTERNAL_ERROR, reason(error)),
+      });
+    }
+  };
+
+  /** Ask one device sign-in's adapter once, and schedule the next ask. */
+  const pollDevice = async (state: string, entry: StartedSignIn): Promise<void> => {
+    const device = entry.device;
+    if (device === undefined || device.outcome !== undefined) return;
+    device.timer = undefined;
+    if (Date.now() >= entry.expires) {
+      dropStarted(state, expiredOutcome());
+      return;
+    }
+    let answer: DeviceSignInPoll;
+    try {
+      answer = await device.signIn.poll(device.handle);
+    } catch (error) {
+      endDevice(state, entry, { ok: false, error: refusalOf(device.signIn, error) });
+      return;
+    }
+    // The entry may have been dropped or settled while the adapter was answering.
+    if (started.get(state) !== entry || device.outcome !== undefined) return;
+    if ('values' in answer) {
+      await finishDevice(state, entry, bag(answer.values) as Record<string, string>);
+      return;
+    }
+    const wait = secondsOf(answer.wait);
+    if (wait === undefined) {
+      endDevice(state, entry, {
+        ok: false,
+        error: new RpcError(INTERNAL_ERROR, `${device.signIn.title} answered no wait`),
+      });
+      return;
+    }
+    scheduleDevice(state, entry, wait * 1000);
+  };
+
+  /**
+   * Wait for one device sign-in's outcome, which the poll settles.
+   *
+   * The wait never outlives the code: its own timer answers the expiry, so a
+   * vendor's poll that never returns still leaves the caller an answer.
+   */
+  const waitForDevice = async (state: string, entry: StartedSignIn): Promise<DeviceOutcome> => {
+    const device = entry.device;
+    if (device === undefined) {
+      return { ok: false, error: new RpcError(INVALID_PARAMS, 'This host has no such sign-in, or it has already finished') };
+    }
+    if (device.outcome !== undefined) return device.outcome;
+    const left = Math.max(0, entry.expires - Date.now());
+    return await new Promise<DeviceOutcome>((done) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = (outcome: DeviceOutcome): void => {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+          timer = undefined;
+        }
+        done(outcome);
+      };
+      device.waiting.push(settle);
+      timer = setTimeout(() => {
+        timer = undefined;
+        // While the values are being written, that put answers this wait.
+        if (device.finishing !== true) dropStarted(state, expiredOutcome());
+      }, left);
+      timer.unref?.();
+    });
+  };
+
+  /**
+   * Drop the expired sign-ins, and the oldest of one caller's when they hold
+   * ten, before another one takes its place.
+   */
+  const makeRoom = (caller: Owner | undefined): number => {
+    const now = Date.now();
+    for (const [key, one] of started) if (one.expires <= now) dropStarted(key);
+    let mine = 0;
+    for (const one of started.values()) if (one.caller === caller) mine += 1;
+    if (mine >= SIGNIN_KEPT) {
+      // A map keeps insertion order, so the oldest of this caller's goes.
+      for (const [key, one] of started) {
+        if (one.caller !== caller) continue;
+        dropStarted(key);
+        break;
+      }
+    }
+    return now;
+  };
+
+  /** Start one device-code sign-in, and answer what a client shows. */
+  const startDevice = async (
+    adapterName: string,
+    adapter: ServedAdapter,
+    signIn: DeviceSignIn,
+    params: Record<string, unknown>,
+    reader: Principal | undefined,
+    caller: Owner | undefined,
+  ): Promise<Record<string, unknown>> => {
+    // A plugin's adapter is checked when it registers, and a host adapter is
+    // not: a field the schema does not keep would leave the key in the record.
+    const secrets = secretFields(adapter.schema);
+    if (!secrets.includes(signIn.field)) {
+      throw new RpcError(INVALID_PARAMS, `${adapterName} signs in to a field its schema does not keep`);
+    }
+    // The device flow fills every secret, and the account field besides, so
+    // none of them is a client's to send.
+    const filled = signIn.account === undefined ? secrets : [...secrets, signIn.account];
+    const ready = await prepare(params, reader, { command: SIGNIN, filled });
+    let first;
+    try {
+      first = await signIn.start();
+    } catch (error) {
+      throw refusalOf(signIn, error);
+    }
+    const expires = secondsOf(first.expires);
+    const interval = secondsOf(first.interval);
+    if (typeof first.code !== 'string' || first.code === '' || typeof first.url !== 'string' || first.url === '') {
+      throw new RpcError(INTERNAL_ERROR, `${signIn.title} answered no code`);
+    }
+    if (typeof first.handle !== 'string' || first.handle === '') {
+      throw new RpcError(INTERNAL_ERROR, `${signIn.title} answered no handle`);
+    }
+    if (expires === undefined) throw new RpcError(INTERNAL_ERROR, `${signIn.title} answered no expiry`);
+    if (interval === undefined) throw new RpcError(INTERNAL_ERROR, `${signIn.title} answered no interval`);
+    const now = makeRoom(caller);
+    const state = random();
+    const config = { ...ready.config };
+    // Only the device flow may fill these, so nothing a client sent is kept.
+    for (const field of filled) delete config[field];
+    const entry: StartedSignIn = {
+      flow: 'device',
+      verifier: '',
+      params: {
+        id: ready.id,
+        adapter: adapterName,
+        owner: ready.owner,
+        ...(ready.title === undefined ? {} : { title: ready.title }),
+        config,
+      },
+      caller,
+      reader,
+      expires: now + expires * 1000,
+      device: {
+        signIn,
+        handle: first.handle,
+        timer: undefined,
+        waiting: [],
+        outcome: undefined,
+      },
+    };
+    started.set(state, entry);
+    scheduleDevice(state, entry, interval * 1000);
+    return { state, code: first.code, url: first.url, expires };
+  };
+
   /*
    * A sign-in start is a put that names an adapter with a `signIn`, and it
-   * checks everything a put checks except the field the exchange fills. What it
+   * checks everything a put checks except the fields the sign-in fills. What it
    * keeps is the id, the owner and the config: the grant and the owner are
-   * asked again when the code comes back, because ten minutes is long enough
-   * for both to change.
+   * asked again when the code comes back, because the sign-in lasts long
+   * enough for both to change.
+   *
+   * A device sign-in starts the vendor's flow and polls it here, so it needs no
+   * code from the caller and no caller to stay connected.
    */
   const signin: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -777,6 +1109,9 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       if (signIn === undefined) {
         throw new RpcError(INVALID_PARAMS, `${adapterName} has no sign-in`);
       }
+      if (signIn.flow === 'device') {
+        return await startDevice(adapterName, adapter, signIn, params, reader, caller);
+      }
       // A plugin's adapter is checked when it registers, and a host adapter is
       // not: a field the schema does not keep would leave the key in the record.
       if (!secretFields(adapter.schema).includes(signIn.field)) {
@@ -785,18 +1120,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const ready = await prepare(params, reader, { command: SIGNIN, filled: signIn.field });
       // An expired state is gone before a new one takes its place, so the map
       // holds no more than the sign-ins somebody may still finish.
-      const now = Date.now();
-      for (const [key, one] of started) if (one.expires <= now) started.delete(key);
-      let mine = 0;
-      for (const one of started.values()) if (one.caller === caller) mine += 1;
-      if (mine >= SIGNIN_KEPT) {
-        // A map keeps insertion order, so the oldest of this caller's goes.
-        for (const [key, one] of started) {
-          if (one.caller !== caller) continue;
-          started.delete(key);
-          break;
-        }
-      }
+      const now = makeRoom(caller);
       const verifier = random();
       const state = random();
       const url = signIn.url(challengeOf(verifier), state);
@@ -804,6 +1128,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       // Only the exchange may fill the field, so nothing a client sent is kept.
       delete config[signIn.field];
       started.set(state, {
+        flow: 'code',
         verifier,
         params: {
           id: ready.id,
@@ -813,6 +1138,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
           config,
         },
         caller,
+        reader,
         expires: now + SIGNIN_LIMIT_MS,
       });
       return { url, state };
@@ -820,9 +1146,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   };
 
   /*
-   * The finish takes the state and the code, and nothing else. The state is
+   * The finish takes the state and, for the pasted code, the code. The state is
    * used once, and only by the caller who started it; the put's owner checks
    * are asked again before the exchange, because a grant may be gone by now.
+   *
+   * A device sign-in's finish takes the state alone: the host has been polling
+   * since the start, so there is no code to exchange, and the call waits for
+   * the approval, a refusal or the expiry. A later finish answers the same
+   * settled outcome, until the code expires.
    */
   const signinFinish: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -832,16 +1163,13 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       if (typeof state !== 'string' || state === '') {
         throw new RpcError(INVALID_PARAMS, `${SIGNIN_FINISH} needs state, the value the start answered`);
       }
-      const code = params.code;
-      if (typeof code !== 'string' || code === '') {
-        throw new RpcError(INVALID_PARAMS, `${SIGNIN_FINISH} needs code, the code the provider showed`);
-      }
       const entry = started.get(state);
       if (entry === undefined) {
         throw new RpcError(INVALID_PARAMS, 'This host has no such sign-in, or it has already finished');
       }
-      if (entry.expires <= Date.now()) {
-        started.delete(state);
+      // An entry whose values are being written settles on that put instead.
+      if (entry.expires <= Date.now() && entry.device?.finishing !== true) {
+        dropStarted(state);
         throw new RpcError(INVALID_PARAMS, 'This sign-in has expired; start it again');
       }
       /*
@@ -851,12 +1179,25 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       if (entry.caller !== caller) {
         throw new RpcError(DENIED, 'This sign-in is not yours to finish');
       }
+      if (entry.flow === 'device') {
+        // The device flow takes no code, and a client that sends one is told so.
+        if (typeof params.code === 'string' && params.code !== '') {
+          throw new RpcError(INVALID_PARAMS, `${SIGNIN_FINISH} takes state alone for a device sign-in`);
+        }
+        const outcome = await waitForDevice(state, entry);
+        if (!outcome.ok) throw outcome.error;
+        return outcome.row;
+      }
+      const code = params.code;
+      if (typeof code !== 'string' || code === '') {
+        throw new RpcError(INVALID_PARAMS, `${SIGNIN_FINISH} needs code, the code the provider showed`);
+      }
       // From here the state is used once, even when the exchange refuses.
-      started.delete(state);
+      dropStarted(state);
       const adapterName = String(entry.params['adapter']);
       const adapter = options.adapters()[adapterName];
       const signIn = adapter?.signIn;
-      if (signIn === undefined) {
+      if (signIn === undefined || signIn.flow === 'device') {
         throw new RpcError(INVALID_PARAMS, `${adapterName} has no sign-in`);
       }
       const id = String(entry.params['id']);
@@ -915,7 +1256,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
   /*
    * The check command takes what a put takes: who may change a connector may
    * test it. The owner's rule is asked here, as a put asks it, because a grant
-   * that reads the channel says nothing about another person's connector.
+   * that reads the channel says nothing about another person's connector. The
+   * plugin of the connector's adapter asks with no grant, as `ownPlugin` says.
    */
   const check: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -924,14 +1266,14 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
-      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
     },
     handle: async (params, reader) => {
       const id = idParam(CHECK, params);
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('connector', 'check', owner, reader, 'put');
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'check', owner, reader, 'put');
       const entry = open.get(id);
       if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
       const adapter = options.adapters()[entry.connector.adapter];
@@ -949,8 +1291,8 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
    *
    * Only the plugin whose adapter the connector is notes: it is the one that
    * makes the connector's calls outside `run`, as the model proxy makes a
-   * provider's. A reader of nothing is the daemon itself. It takes what a check
-   * takes besides, because who may test a connector may say how its calls went.
+   * provider's. A reader of nothing is the daemon itself. That plugin needs no
+   * grant, as for a check and a secret.
    */
   const noteCall: PluginMethod = {
     grant: 'connector:put' as Grant,
@@ -959,7 +1301,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const id = params.id;
       if (typeof id !== 'string') return false;
       const before = await options.collection.get(id);
-      return before !== undefined && ownerAllows('connector', asOwner(before.owner), reader, 'put');
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
     },
     handle: async (params, reader) => {
       const id = idParam(NOTE, params);
@@ -974,7 +1316,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
       const before = await options.collection.get(id);
       if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
       const owner = asOwner(before.owner);
-      if (owner !== undefined) refuseOwner('connector', 'note', owner, reader, 'put');
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'note', owner, reader, 'put');
       const entry = open.get(id);
       if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
       const by = options.adapters()[entry.connector.adapter]?.by;
@@ -987,6 +1329,82 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
         ...(error === undefined ? {} : { error: error as string }),
       });
       return connectorRow(before);
+    },
+  };
+
+  /*
+   * The secret command replaces the secret fields a plugin refreshed for one
+   * open connector, as a rotating vendor token does.
+   *
+   * Only the plugin whose adapter the connector is sends it, as only that
+   * plugin notes: the plugin already holds the new value, and no caller should
+   * be able to write a secret its adapter was never handed. The connector is
+   * not closed and reopened, because the plugin has the value already. The
+   * record is written only when a field does not point at its vault name yet.
+   */
+  const secretCall: PluginMethod = {
+    grant: 'connector:put' as Grant,
+    describe: () => ({ title: 'Keep a refreshed secret', description: 'Writes the secret fields a plugin refreshed to the vault of an open connector.' }),
+    authorize: async (params, reader) => {
+      const id = params.id;
+      if (typeof id !== 'string') return false;
+      const before = await options.collection.get(id);
+      return before !== undefined && (ownPlugin(before, reader) || ownerAllows('connector', asOwner(before.owner), reader, 'put'));
+    },
+    handle: async (params, reader) => {
+      const id = idParam(SECRET, params);
+      const values = params.values;
+      if (!isRecord(values) || Object.keys(values).length === 0) {
+        throw new RpcError(INVALID_PARAMS, `${SECRET} needs values, the secret fields the plugin refreshed`);
+      }
+      for (const [field, value] of Object.entries(values)) {
+        // The value is a secret, so the message names only the field.
+        if (typeof value !== 'string' || value === '') {
+          throw new RpcError(INVALID_PARAMS, `${SECRET} takes ${field} as a non-empty string`);
+        }
+      }
+      const before = await options.collection.get(id);
+      if (before === undefined) throw new RpcError(INVALID_PARAMS, `${SCHEME} holds no ${id}`);
+      const owner = asOwner(before.owner);
+      if (owner !== undefined && !ownPlugin(before, reader)) refuseOwner('connector', 'secret', owner, reader, 'put');
+      const entry = open.get(id);
+      if (entry === undefined) throw new RpcError(INVALID_PARAMS, `${id} is not an open connector`);
+      const adapter = options.adapters()[entry.connector.adapter];
+      if (reader !== undefined && (adapter === undefined || reader.plugin !== adapter.by)) {
+        throw new RpcError(DENIED, `${id}'s secrets are written by the plugin of ${entry.connector.adapter}, not ${reader.id}`);
+      }
+      if (adapter === undefined) throw new RpcError(INVALID_PARAMS, `${id} names an adapter this host does not serve`);
+      const fields = secretFields(adapter.schema);
+      for (const field of Object.keys(values)) {
+        if (!fields.includes(field)) {
+          throw new RpcError(INVALID_PARAMS, `${SECRET} takes ${field} as a field the schema marks secret`);
+        }
+      }
+      const vault = options.vault();
+      if (vault === undefined) {
+        throw new RpcError(INTERNAL_ERROR, 'This host has no vault, so a secret cannot be kept');
+      }
+      const config = { ...configOf(before) };
+      let changed = false;
+      for (const [field, value] of Object.entries(values) as [string, string][]) {
+        const name = secretNameOf(CONNECTOR_SECRETS.subject, entry.connector.owner, id, field);
+        try {
+          scopeOf(name);
+        } catch (error) {
+          throw new RpcError(INVALID_PARAMS, reason(error));
+        }
+        await vault.set(name, value);
+        if (secretRef(config[field]) !== name) {
+          config[field] = { $secret: name };
+          changed = true;
+        }
+      }
+      const after: StoredRecord = changed ? { ...before, config } : before;
+      if (changed) {
+        await options.collection.put(after);
+        await channel.refresh();
+      }
+      return connectorRow(after);
     },
   };
 
@@ -1056,6 +1474,7 @@ export function connectorsChannel(options: ConnectorsChannelOptions): Connectors
     [REMOVE]: remove,
     [CHECK]: check,
     [NOTE]: noteCall,
+    [SECRET]: secretCall,
     [SIGNIN]: signin,
     [SIGNIN_FINISH]: signinFinish,
     ...(options.models === undefined ? {} : { [MODELS]: models }),

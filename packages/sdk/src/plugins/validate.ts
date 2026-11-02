@@ -21,7 +21,7 @@ import type { StartSession } from '../types/automations.js';
 import type { ChatRequest, PluginContracts, PortKey } from '../types/plugin.js';
 import type { Owner } from '../types/usage.js';
 import { SUBJECTS, isGrant } from '../access/users.js';
-import { secretFields } from '../channels/owners.js';
+import { isSecret, secretFields } from '../channels/owners.js';
 import { RECORD_SLUG, isRecordSlug } from '../resources/records.js';
 import { schemaGaps, type SchemaGap } from './schemagaps.js';
 
@@ -676,12 +676,14 @@ export const checkIcons = (value: unknown, by: string, method = 'registerAdapter
 };
 
 /**
- * Check a `signIn` against `SignIn`, and that its field is one the schema keeps.
+ * Check a `signIn` against `SignIn`, and that its fields are ones the schema keeps.
  *
  * A sign-in is served as commands of its own, so every member the host calls
  * has to be there and be the right kind. The field is checked against the
  * schema here: only a field the vault keeps is moved there, and a sign-in
- * filling any other would leave the key in the record a client reads.
+ * filling any other would leave the key in the record a client reads. A
+ * device-code sign-in fills several fields, so its `account` field is checked
+ * too: it is a field the schema describes, and one it does not mark `secret`.
  */
 const checkSignIn = (value: unknown, schema: Record<string, unknown>, by: string): void => {
   if (value === undefined) return;
@@ -692,14 +694,44 @@ const checkSignIn = (value: unknown, schema: Record<string, unknown>, by: string
   if (typeof signIn.field !== 'string' || signIn.field === '') {
     throw new Error(miss(by, 'registerAdapter', 'signIn.field', 'a non-empty string, naming a field the schema marks secret'));
   }
-  for (const member of ['url', 'exchange']) {
-    if (typeof signIn[member] !== 'function') {
-      throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a sign-in the host calls'));
+  if (signIn.flow !== undefined && signIn.flow !== 'code' && signIn.flow !== 'device') {
+    throw new Error(miss(by, 'registerAdapter', 'signIn.flow', 'code or device, or nothing for the pasted code'));
+  }
+  if (signIn.flow === 'device') {
+    for (const member of ['start', 'poll']) {
+      if (typeof signIn[member] !== 'function') {
+        throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a device sign-in the host calls'));
+      }
+    }
+    if (signIn.switchAccount !== undefined && typeof signIn.switchAccount !== 'boolean') {
+      throw new Error(miss(by, 'registerAdapter', 'signIn.switchAccount', 'true or false, or nothing'));
+    }
+    checkSignInAccount(signIn.account, schema, by);
+  } else {
+    for (const member of ['url', 'exchange']) {
+      if (typeof signIn[member] !== 'function') {
+        throw new Error(miss(by, 'registerAdapter', `signIn.${member}`, 'a function, the half of a sign-in the host calls'));
+      }
     }
   }
   const field = signIn.field;
   if (!secretFields(schema).includes(field)) {
     throw new Error(miss(by, 'registerAdapter', field, `a field the schema marks secret, so the exchanged value is kept in the vault`));
+  }
+};
+
+/** Check the plain field a device sign-in keeps its account in, when it names one. */
+const checkSignInAccount = (value: unknown, schema: Record<string, unknown>, by: string): void => {
+  if (value === undefined) return;
+  if (typeof value !== 'string' || value === '') {
+    throw new Error(miss(by, 'registerAdapter', 'signIn.account', 'a non-empty string, naming a field the schema describes'));
+  }
+  const properties = schema['properties'];
+  if (!right(properties, 'object') || !(value in (properties as Record<string, unknown>))) {
+    throw new Error(miss(by, 'registerAdapter', value, 'a field the schema describes, so the account is kept in the record'));
+  }
+  if (isSecret((properties as Record<string, unknown>)[value])) {
+    throw new Error(miss(by, 'registerAdapter', value, 'a field the schema does not mark secret, so the account is kept in the record'));
   }
 };
 

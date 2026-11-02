@@ -72,13 +72,14 @@
       { "src": "./icon.svg", "theme": "light" },
       { "src": "./icon-dark.svg", "theme": "dark" }
     ],
-    "contracts": {},
+    "contracts": { "adapters": ["devtunnel"] },
     "optionsSchema": {
       "type": "object",
       "properties": {
         "name": { "type": "string", "description": "What the tunnel is called in a client's list. This machine's hostname by default." },
         "keep": { "type": "boolean", "description": "Whether the tunnel outlives the daemon. true by default." },
-        "anonymous": { "type": "boolean", "description": "Whether somebody not signed in to this account may reach it. false by default." }
+        "anonymous": { "type": "boolean", "description": "Whether somebody not signed in to this account may reach it. false by default." },
+        "allowAccountChange": { "type": "boolean", "description": "Whether a second sign-in may replace a connector's GitHub account. false by default." }
       }
     }
   }

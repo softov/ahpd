@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Adapter } from '@ahpd/sdk';
+import type { Adapter, CodeSignIn } from '@ahpd/sdk';
 import { hostAdapters } from '../src/proxy/adapters.js';
 
 /*
@@ -32,6 +32,13 @@ const json = (value: unknown, status = 200): Response =>
 const openrouter = (fetcher?: typeof fetch): Adapter =>
   hostAdapters({ ...(fetcher === undefined ? {} : { fetch: fetcher }) })['openrouter']!;
 
+/** The pasted-code sign-in of an adapter, which is the one OpenRouter declares. */
+const signInOf = (adapter: Adapter): CodeSignIn => {
+  const signIn = adapter.signIn;
+  if (signIn === undefined || signIn.flow === 'device') throw new Error('openrouter has a pasted-code sign-in');
+  return signIn;
+};
+
 const HEADERS = (init: RequestInit | undefined): Headers => new Headers(init?.headers);
 
 describe('the OpenRouter sign-in', () => {
@@ -46,7 +53,7 @@ describe('the OpenRouter sign-in', () => {
 
   it('answers OpenRouter\'s own page with the challenge, the S256 method, the state and no callback', () => {
     const adapter = openrouter();
-    const url = new URL(adapter.signIn!.url('the-challenge', 'the-state'));
+    const url = new URL(signInOf(adapter).url('the-challenge', 'the-state'));
     expect(`${url.origin}${url.pathname}`).toBe('https://openrouter.ai/auth');
     expect(url.searchParams.get('code_challenge')).toBe('the-challenge');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
@@ -60,7 +67,7 @@ describe('the OpenRouter sign-in', () => {
     const probe = fake(json({ key: 'sk-or-new' }));
     const adapter = openrouter(probe.fetch);
 
-    expect(await adapter.signIn!.exchange('the-code', 'the-verifier')).toBe('sk-or-new');
+    expect(await signInOf(adapter).exchange('the-code', 'the-verifier')).toBe('sk-or-new');
     expect(probe.calls).toHaveLength(1);
     expect(probe.calls[0]!.url).toBe('https://openrouter.ai/api/v1/auth/keys');
     expect(probe.calls[0]!.init?.method).toBe('POST');
@@ -78,7 +85,7 @@ describe('the OpenRouter sign-in', () => {
     const probe = fake(json({ error: 'no', echo: 'the-code the-verifier' }, 400));
     const adapter = openrouter(probe.fetch);
 
-    const refusal = await adapter.signIn!.exchange('the-code', 'the-verifier').then(
+    const refusal = await signInOf(adapter).exchange('the-code', 'the-verifier').then(
       () => new Error('the exchange answered'),
       (error: unknown) => error,
     );
@@ -91,7 +98,7 @@ describe('the OpenRouter sign-in', () => {
   it('refuses an answer with no string key, and never the body', async () => {
     for (const answer of [{ error: 'the vendor body' }, { key: 42 }, { key: '' }]) {
       const adapter = openrouter(fake(json(answer)).fetch);
-      const refusal = await adapter.signIn!.exchange('the-code', 'the-verifier').then(
+      const refusal = await signInOf(adapter).exchange('the-code', 'the-verifier').then(
         () => new Error('the exchange answered'),
         (error: unknown) => error,
       );

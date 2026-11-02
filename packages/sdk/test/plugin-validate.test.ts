@@ -342,4 +342,52 @@ describe('pluginHost', () => {
     expect(problems).toEqual([]);
     expect(Object.keys(routes)).toEqual(['alpha', 'beta']);
   });
+
+  it('refuses a device sign-in with no poll, naming the plugin, the method and the member', () => {
+    const { host } = pluginHost('alpha', context());
+    const adapter = {
+      name: 'device',
+      title: 'Device',
+      description: 'An account that signs in on another device.',
+      schema: { type: 'object', properties: { token: { type: 'string', secret: true } } },
+      capabilities: [],
+      open: () => {},
+      signIn: {
+        flow: 'device',
+        title: 'Sign in with Device',
+        field: 'token',
+        start: async () => ({ code: 'the-code', url: 'https://vendor.test/device', expires: 900, interval: 5, handle: 'h' }),
+      },
+    };
+
+    expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*signIn\.poll/);
+  });
+
+  it('refuses an account field the schema marks secret, so the account stays in the record', () => {
+    const { host } = pluginHost('alpha', context());
+    const adapter = {
+      name: 'device',
+      title: 'Device',
+      description: 'An account that signs in on another device.',
+      schema: {
+        type: 'object',
+        properties: {
+          token: { type: 'string', secret: true },
+          account: { type: 'string', secret: true },
+        },
+      },
+      capabilities: [],
+      open: () => {},
+      signIn: {
+        flow: 'device',
+        title: 'Sign in with Device',
+        field: 'token',
+        account: 'account',
+        start: async () => ({ code: 'the-code', url: 'https://vendor.test/device', expires: 900, interval: 5, handle: 'h' }),
+        poll: async () => ({ wait: 5 }),
+      },
+    };
+
+    expect(() => host.registerAdapter(adapter as never)).toThrow(/alpha.*registerAdapter.*does not mark secret/);
+  });
 });

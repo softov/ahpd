@@ -2,7 +2,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Adapter, Connector } from '@ahpd/sdk';
+import type { Adapter, CodeSignIn, Connector } from '@ahpd/sdk';
 import { echo } from '../../../examples/echo/agent.js';
 import { loadPlugins } from '../../server/src/plugins.js';
 import { loginAdapter } from '../src/adapter.js';
@@ -43,6 +43,13 @@ const HEADERS = (init: RequestInit | undefined): Headers => new Headers(init?.he
 const adapterOf = (fetcher?: typeof fetch, logins = new OpenLogins()): Adapter =>
   loginAdapter(logins, fetcher === undefined ? {} : { fetch: fetcher });
 
+/** The pasted-code sign-in of an adapter, which is the one claude-login declares. */
+const signInOf = (adapter: Adapter): CodeSignIn => {
+  const signIn = adapter.signIn;
+  if (signIn === undefined || signIn.flow === 'device') throw new Error('claude-login has a pasted-code sign-in');
+  return signIn;
+};
+
 /** One connector of the adapter, as `open` is handed it: the token read back from the vault. */
 const connectorOf = (id: string, token: string, owner: Connector['owner'] = 'host'): Connector =>
   ({ id, adapter: 'claude-login', owner, config: { token } });
@@ -66,7 +73,7 @@ it('is registered by a load, with its token kept in the vault and a sign-in that
 
 describe('the sign-in', () => {
   it('opens the URL claude setup-token opens, with the host\'s challenge and state', () => {
-    const url = new URL(adapterOf().signIn!.url('the-challenge', 'the-state'));
+    const url = new URL(signInOf(adapterOf()).url('the-challenge', 'the-state'));
     expect(`${url.origin}${url.pathname}`).toBe('https://claude.com/cai/oauth/authorize');
     expect([...url.searchParams.entries()]).toEqual([
       ['code', 'true'],
@@ -83,7 +90,7 @@ describe('the sign-in', () => {
   it('exchanges the pasted code for a one-year token at Claude\'s token URL', async () => {
     const probe = fake(json({ access_token: 'sk-ant-oat01-made-up', token_type: 'Bearer', expires_in: 31536000 }));
     const adapter = adapterOf(probe.fetch);
-    expect(await adapter.signIn!.exchange(' the-code#the-state\n', 'the-verifier')).toBe('sk-ant-oat01-made-up');
+    expect(await signInOf(adapter).exchange(' the-code#the-state\n', 'the-verifier')).toBe('sk-ant-oat01-made-up');
     expect(probe.calls).toHaveLength(1);
     expect(probe.calls[0]!.url).toBe('https://platform.claude.com/v1/oauth/token');
     expect(probe.calls[0]!.init?.method).toBe('POST');
@@ -104,14 +111,14 @@ describe('the sign-in', () => {
   it('refuses a paste without its state, and asks nothing', async () => {
     const probe = fake(json({ access_token: 'unused' }));
     const adapter = adapterOf(probe.fetch);
-    await expect(adapter.signIn!.exchange('the-code', 'the-verifier')).rejects.toThrow('both are needed');
-    await expect(adapter.signIn!.exchange('#the-state', 'the-verifier')).rejects.toThrow('both are needed');
+    await expect(signInOf(adapter).exchange('the-code', 'the-verifier')).rejects.toThrow('both are needed');
+    await expect(signInOf(adapter).exchange('#the-state', 'the-verifier')).rejects.toThrow('both are needed');
     expect(probe.calls).toEqual([]);
   });
 
   it('refuses an exchange with its HTTP status alone, and never the answer', async () => {
     const probe = fake(json({ error: 'invalid_grant', echo: 'the-code the-verifier' }, 400));
-    const failure = await adapterOf(probe.fetch).signIn!.exchange('the-code#the-state', 'the-verifier').then(
+    const failure = await signInOf(adapterOf(probe.fetch)).exchange('the-code#the-state', 'the-verifier').then(
       () => undefined,
       (error: unknown) => error,
     );
@@ -120,7 +127,7 @@ describe('the sign-in', () => {
 
   it('refuses an answer that names no token', async () => {
     const probe = fake(json({ token_type: 'Bearer' }));
-    await expect(adapterOf(probe.fetch).signIn!.exchange('the-code#the-state', 'the-verifier')).rejects.toThrow('named no token');
+    await expect(signInOf(adapterOf(probe.fetch)).exchange('the-code#the-state', 'the-verifier')).rejects.toThrow('named no token');
   });
 });
 

@@ -70,7 +70,7 @@ export { partsOf, SNAPSHOT_TAG } from './resources/attachments.js';
 export type { Part, PartOptions, PartSource } from './resources/attachments.js';
 export { checkReferences, memoryAutomations, pluginTriggerTypes, RUN_HISTORY_LIMIT, sameOwnerOrHost } from './automations/automations.js';
 export type { AutomationsOptions } from './automations/automations.js';
-export type { CallOutcome, CheckResult, ConnectorHealth, ConnectorModel, ConnectorModels, ConnectorOwner, ConnectorRef, ModelDialect, ModelPricing, ModelProvider, ProviderConnector, ProviderModel, SignIn } from './types/connectors.js';
+export type { CallOutcome, CheckResult, CodeSignIn, ConnectorHealth, ConnectorModel, ConnectorModels, ConnectorOwner, ConnectorRef, DeviceSignIn, DeviceSignInPoll, DeviceSignInStart, ModelDialect, ModelPricing, ModelProvider, ProviderConnector, ProviderModel, SignIn } from './types/connectors.js';
 export { MODEL_DIALECTS } from './types/connectors.js';
 export { AGENT_RECORD_VARIABLE } from './types/computers.js';
 export { disableConditionsOf } from './automations/automations.js';
