@@ -404,7 +404,9 @@ nothing.
 Anything dispatched that this host will not act on is **refused**: an envelope
 carrying `rejectionReason` names the action and says what would not have it. A
 client applies an action before sending it, and the refusal is what tells it to
-put its own state back.
+put its own state back. The one action dropped is a session's read or archive
+toggle naming a session this host does not know, which no client holds pending:
+see [an action naming nothing here](#an-action-naming-nothing-here).
 
 A refusal is an action envelope like any other. It takes the next `serverSeq`,
 is held for replay, and goes to every client subscribed to the channel the
@@ -816,6 +818,33 @@ catalogue's row.
 | pull request | Published twice when the host was given `githubPullRequests()`: under `_meta.githubData[key]`, with the key named by `_meta.workingDirectoryKeys[workingDirectory]`, and beside it under `_meta.github`. The key is the working directory's own `file://` URI, which is what the row's `project.uri` already spells it, and publishing it is what makes it authoritative - a window that has no key for a working directory derives one, and one that does takes the host's. The state itself is `owner` and `repo` from the remote, and for the branch's newest pull request its `pullRequestUrls`, `pullRequestBranchName`, `pullRequestState` (`open`, `closed`, `merged`) and `pullRequestStateUrl` - the reference host's `ISessionGitHubState` keys, which is what draws the state beside the branch. `_meta.github` is still there for a client that reads that one, and is the same object. `_meta.git` is unchanged and is not per folder: a session here has one folder, and the window still reads `_meta.git` for it. Asked with the token a client lent for `https://api.github.com/repos`, advertised on every backend for that purpose, or with `gh` when nobody lent one; asked again when a turn ends |
 | what the agent recorded | `_meta['agentHost/sessionArtifacts']` on the session and its row: the artifacts and references the agent recorded with the reference host's `add_artifact_or_reference`, `remove_artifact_or_reference` and `list_artifacts_and_references`, offered under those names with its schemas and answers, and kept by the session store across a restart. The window draws them as pills beside the input, and takes one off with its own request, `vscode/removeSessionArtifact`, which `initialize` says it may make under `_meta['vscode.removeSessionArtifact']`. The reference host's instruction for when to record one goes into the agent's system prompt, since the CLI's prompt takes an `append` |
 | when it began | `createdAt` is an identity field and does not move: a resumed session takes the value its own backend's catalogue gives, and a session started here takes the moment it was started. `modifiedAt` is the one that changes |
+
+### An action naming nothing here
+
+A session this host knows is one it is running, one the catalogue lists, or one
+its store records as started here. A chat it knows is one a running session
+holds, one the store records a session for, or one whose URI names a session it
+knows. A target none of these knows is looked for in the catalogue before it is
+called unknown. An action on an unknown target is answered as
+[VS Code's host](https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12531)
+answers it:
+
+| Target | Action | Answer |
+| --- | --- | --- |
+| a session | `session/isReadChanged`, `session/isArchivedChanged` | dropped: nothing is kept for the session, and nothing is said to the sender or to anybody |
+| a session | any other | refused |
+| a chat, named in `ahp-chat:` | `chat/isReadChanged` | refused "Only a known chat can change its read state." |
+| a chat | `chat/isArchivedChanged` | refused "Only a known independently manageable non-default chat can be archived." |
+| a chat | any other | said back on the channel the client named, with its origin, to the clients that watch that channel; nothing is kept, reduced or run for it |
+
+The protocol's text has a server ignore every action naming a session or a chat
+that does not exist, with no echo
+([session channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166),
+[chat channel](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351)).
+VS Code's host refuses and accepts as the table says, and its client rolls a
+refused action back and keeps an accepted one. A session's toggle is the one it
+ignores, and a client keeps nothing pending for a session it watches no channel
+of.
 
 ### Changesets
 

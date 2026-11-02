@@ -2344,3 +2344,75 @@ describe('a chat of another backend', () => {
       .toEqual(['second', 'third']);
   });
 });
+
+/*
+ * An action naming a chat or a session this host does not know, answered as
+ * the reference host answers it: a session's read or archive toggle is dropped
+ * with nothing said or kept, any other session action is refused, a chat's read
+ * or archive is refused, and any other action on the chat is said back on its
+ * channel and runs nothing.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12531
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L13442-L13460
+ */
+describe('an action naming a chat or session nobody has', () => {
+  const NOBODY = 'ahp-session:/nobody';
+  const naming = (p: ReturnType<typeof peer>, word: string) => p.notes.filter((n) => JSON.stringify(n.params).includes(word));
+
+  it('drops a session\'s read and archive toggles for a session nobody has, saying and keeping nothing', async () => {
+    const store = memorySessions();
+    const { client, peer: p } = await running({ sessions: store });
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 1, action: { type: 'session/isReadChanged', isRead: true } } });
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 2, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+    await settle(8);
+    expect(naming(p, 'nobody')).toEqual([]);
+    expect(store.flags('nobody')).toBe(0);
+  });
+
+  it('refuses any other session action on a session nobody has', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 3, action: { type: 'session/titleChanged', title: 'Mine' } } });
+    await settle(8);
+    const said = actions(p, NOBODY);
+    expect(said).toHaveLength(1);
+    expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 3 });
+    expect(said[0]?.rejectionReason).toBeDefined();
+  });
+
+  it('refuses a read or an archive of a chat nobody has, in the reference host\'s words', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-chat:/nobody', clientSeq: 4, action: { type: 'chat/isReadChanged', isRead: true } } });
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-chat:/nobody', clientSeq: 5, action: { type: 'chat/isArchivedChanged', isArchived: true } } });
+    await settle(8);
+    expect(actions(p).map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([
+      [4, 'Only a known chat can change its read state.'],
+      [5, 'Only a known independently manageable non-default chat can be archived.'],
+    ]);
+  });
+
+  it('says any other action on a chat nobody has back on its channel, and runs nothing', async () => {
+    const { client, peer: p, uri } = await running();
+    const gone = 'ahp-chat:/gone';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: gone } });
+    await client.handle({ method: 'subscribe', params: { channel: gone } });
+    await client.handle({ method: 'disposeChat', params: { channel: gone } });
+    const before = sessionQueries().length;
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: gone, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 'g1', message: { text: 'still here?' } } } });
+    await settle(8);
+    expect(actions(p).map((e) => [e.channel, e.action.type, e.origin, e.rejectionReason])).toEqual([
+      [gone, 'chat/turnStarted', { clientId: 'probe', clientSeq: 6 }, undefined],
+    ]);
+    expect(sessionQueries().length).toBe(before);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(session.snapshot.state.chats.map((one) => one.resource)).not.toContain(gone);
+  });
+});

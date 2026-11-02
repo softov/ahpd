@@ -46,12 +46,18 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
    * read that took one would say so only by being wrong.
    */
   const {
-    agents, cancelRun, changed, changesetAt, channelKind, daemonKey, decided, declaresConfigKey,
-    dir, dispatch, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
+    agents, byChat, cancelRun, changed, changesetAt, channelKind, connections, daemonKey, decided, declaresConfigKey,
+    dir, dispatch, homeId, homeOf, kept, learned, log, marks, marksOf, meantBy, names, options,
     ownerFor, owners, past, permitted, presence, relayed, restart, retool,
-    rootConfig, served, sessionFor, sessions, shown, starting, summaryMoved, terminals, toolDefinitions,
+    rootConfig, served, sessionFor, sessions, shown, starting, subagents, summaryMoved, terminals, toolDefinitions,
     value, waitingFor,
   } = ctx;
+  /**
+   * Whether this host knows a session: running, listed in the catalogue, or
+   * recorded in the store as one it started. A session the catalogue finds
+   * when it is read is listed by that read.
+   */
+  const knownSession = (uri: string): boolean => sessions.has(uri) || owners.has(uri) || kept.provider(idOf(uri)) !== undefined;
 
   /**
    * One client action, applied.
@@ -757,6 +763,33 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       return;
     }
 
+    /*
+     * An action on a chat this host does not know: no running session holds
+     * it, the store records no session for it, and the session its URI names
+     * is not one `knownSession` knows, once the catalogue has been read for
+     * it. The reference host finds no owner for such a chat and takes the
+     * action all the same: it goes out on the channel the client named, with
+     * the client's origin, to the clients that watch that channel, and nothing
+     * is reduced, kept or run for it. A read or an archive of such a chat is
+     * refused, in the reference host's words.
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12490
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L13442-L13460
+     * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2988-L2992
+     */
+    const knownChat = (): boolean => byChat.has(channel) || subagents.has(channel) || homeId(channel) !== undefined
+      || knownSession(sessionFor(channel));
+    if (spaceOf(asked) === 'chat' && !knownChat()) {
+      return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+        if (!connections.has(connection)) return;
+        if (knownChat()) return conn.applyNow(params, origin);
+        const refusal = type === 'chat/isReadChanged' ? 'Only a known chat can change its read state.'
+          : type === 'chat/isArchivedChanged' ? 'Only a known independently manageable non-default chat can be archived.'
+          : undefined;
+        if (refusal !== undefined) refuse(connection.peer, asked, action, origin, refusal);
+        else dispatch(asked, action, origin);
+      });
+    }
+
     if (type === 'session/activeClientSet') {
       // `titles` is keyed by the bare id, so the URI has to come off before
       // it is asked. Under the whole channel this never matched, and every
@@ -841,6 +874,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     }
 
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
+      /*
+       * A session this host does not know, once the catalogue has been read
+       * for it, takes no bit: nothing is kept for it and nothing is said, to
+       * the sender or to anybody, as the reference host drops a toggle for a
+       * session it has no row for, and the protocol has a server ignore an
+       * action naming a session that does not exist, with no echo.
+       * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12507-L12531
+       * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12042-L12046
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166
+       */
+      if (!knownSession(sessionFor(channel))) {
+        return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
+          if (connections.has(connection) && knownSession(sessionFor(channel))) return conn.applyNow(params, origin);
+        });
+      }
       // The session's own bits, kept beside it and never seen by a backend.
       // One function, because `chat/isArchivedChanged` on a session's default
       // chat is this same act - see `sessionFlag`. A bit that did not move
