@@ -95,7 +95,7 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A key the schema does not mark mutable is fixed](task-01-a-key-not-marked-mutable-is-fixed.md) | done | - |
-| [02 - Claude takes only the keys it declares](task-02-claude-takes-only-declared-keys.md) | todo | - |
+| [02 - Claude takes only the keys it declares](task-02-claude-takes-only-declared-keys.md) | done | - |
 | [03 - A turn's thinking level moves no session config](task-03-a-turns-level-moves-no-config.md) | todo | - |
 | [04 - A cut pi refuses is logged](task-04-a-cut-pi-refuses-is-logged.md) | todo | - |
 
@@ -107,8 +107,8 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
-- **Next action:** [task-02-claude-takes-only-declared-keys.md](task-02-claude-takes-only-declared-keys.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** [task-03-a-turns-level-moves-no-config.md](task-03-a-turns-level-moves-no-config.md).
 - **Open questions:** none.
 - **Watch out for:** a key this host owns, such as `isolation`, keeps its own rule in `ours`.
 

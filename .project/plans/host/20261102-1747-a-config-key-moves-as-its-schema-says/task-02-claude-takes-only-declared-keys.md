@@ -1,6 +1,6 @@
 ---
 title: Claude takes only the keys it declares
-status: todo
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -35,3 +35,12 @@ Claude's `setConfig` takes the keys its schema declares and the model.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- `conformance.test.ts` moved with the behavior.
+- Its unit case of `permissionFor` went with the function.
+- Its case that sent `autoApprove` now reads two refusals and no change.
+- Its case that sent `mode` and read `permissionMode` back went too: the refusal case holds `mode`.
+- On `89ebe4d5`'s sources the refusal case fails: both keys were taken, and nothing was refused.
+- No backend in this repository answers a key under keys of its own any more; the host's `ConfigTaken` path stays for one.

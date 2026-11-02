@@ -853,17 +853,12 @@ it('still refuses something that is not a URI at all', async () => {
 });
 
 /*
- * Keys VS Code sends whatever a host advertises.
+ * The permission mode, under the one key this backend declares for it.
  *
- * `autoApprove` and `mode` are conventional names a client dispatches on its
- * own - this host advertises `permissionMode` and its own four values, as the
- * protocol asks a backend to, and VS Code's own hosts advertise different
- * properties for Copilot and for Claude. So the schema stays ours and the
- * mapping happens on the way in; this used to answer `autoApprove is not a
- * config key this backend takes` and leave the session where it was.
+ * This host advertises `permissionMode` and the CLI's values, as the protocol
+ * asks a backend to; VS Code's own hosts advertise different properties for
+ * Copilot and for Claude.
  */
-const { permissionFor } = await import('../../agent-claude/src/session.js');
-
 it('advertises the six modes the CLI has, under the name it has them', async () => {
   const { client } = await running();
   const cfg = await client.handle({ method: 'resolveSessionConfig', params: {} }) as {
@@ -880,22 +875,6 @@ it('advertises the six modes the CLI has, under the name it has them', async () 
   expect(Object.keys(cfg.schema.properties)).not.toContain('mode');
   expect(cfg.schema.properties.permissionMode?.enum)
     .toEqual(['default', 'acceptEdits', 'plan', 'auto', 'bypassPermissions', 'dontAsk']);
-});
-
-it('maps the keys a client sends onto the mode this harness takes', () => {
-  expect(permissionFor('autoApprove', 'default')).toBe('default');
-  // The inexact one: VS Code means "assess the risk first" and this harness
-  // has no risk model, so it gets the rung it does have.
-  expect(permissionFor('autoApprove', 'assisted')).toBe('acceptEdits');
-  expect(permissionFor('autoApprove', 'autoApprove')).toBe('bypassPermissions');
-  // The value VS Code's own migration moved onto the mode axis, still read.
-  expect(permissionFor('autoApprove', 'autopilot')).toBe('bypassPermissions');
-  expect(permissionFor('mode', 'interactive')).toBe('default');
-  expect(permissionFor('mode', 'plan')).toBe('plan');
-  expect(permissionFor('mode', 'autopilot')).toBe('bypassPermissions');
-  // Neither a key nor a value this means anything for.
-  expect(permissionFor('mode', 'yolo')).toBeUndefined();
-  expect(permissionFor('isolation', 'worktree')).toBeUndefined();
 });
 
 it('takes one on a running session, and leaves the advertised control saying what happened', async () => {
@@ -933,39 +912,16 @@ it('takes one on a running session, and leaves the advertised control saying wha
 });
 
 /*
- * A client's own name for the mode, answered as the mode it moved.
+ * A key the schema does not declare, refused in the backend's words.
  *
- * The session runs on `permissionMode`, and the state every client holds says
- * so: the sender is told the key the session holds, as the server's echo wins,
- * and a client that subscribes afterwards reads the same.
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/reconciliation.md#L60
+ * "Only properties with `sessionMutable: true` in the config schema may be
+ * changed", and this backend declares neither `autoApprove` nor `mode`. No VS
+ * Code client sends either to a host whose schema leaves it out: its clients
+ * filter a session's config by the schema (sessionConfigProperties.ts
+ * L131-L133, L159-L165 at a4e689ae).
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
  */
-it('answers a client\'s mode with the permission mode it moved, which every client holds', async () => {
-  const { client, peer: p, uri, opened } = await running();
-
-  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'plan' } });
-  await settle();
-  const said = actions(p, uri).filter((one) => one.type === 'session/configChanged');
-  expect(said.map((one) => one.config)).toEqual([{ permissionMode: 'plan' }]);
-
-  const watched = said.reduce((state, action) => sessionReducer(state as never, action as never) as unknown, (opened as Record<string, unknown>)[uri]) as {
-    config: { values: Record<string, unknown> };
-  };
-  const later = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
-    snapshot: { state: { config: { values: Record<string, unknown> } } };
-  };
-  expect(later.snapshot.state.config.values.permissionMode).toBe('plan');
-  expect(later.snapshot.state.config.values).toEqual(watched.config.values);
-});
-
-/*
- * The other name a client sends for the same axis, `autoApprove`, answered the
- * same way, and a value neither name has refused in the backend's words.
- *
- * VS Code sends both keys whatever a host advertises, and `permissionFor` maps
- * each value; this is that mapping as a client meets it through the host.
- */
-it('answers a client\'s approval level with the permission mode it moved, and refuses a mode it has no name for', async () => {
+it('refuses the approval and mode keys its schema does not declare, and the mode stays', async () => {
   const { client, peer: p, uri } = await running();
   /** The permission mode a client subscribing now is served. */
   const served = async (): Promise<unknown> => (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -974,19 +930,14 @@ it('answers a client\'s approval level with the permission mode it moved, and re
 
   dispatch(client, uri, { type: 'session/configChanged', config: { autoApprove: 'assisted' } });
   await settle();
-  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged').map((one) => one.config))
-    .toEqual([{ permissionMode: 'acceptEdits' }]);
-  expect(await served()).toBe('acceptEdits');
-
-  dispatch(client, uri, { type: 'session/configChanged', config: { autoApprove: 'autopilot' } });
+  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'plan' } });
   await settle();
-  expect(await served()).toBe('bypassPermissions');
-
-  dispatch(client, uri, { type: 'session/configChanged', config: { mode: 'yolo' } });
-  await settle();
-  // A key this backend takes, so the refusal names the value, and nothing moved.
-  expect(refusals(p, uri).some((why) => why.includes('yolo'))).toBe(true);
-  expect(await served()).toBe('bypassPermissions');
+  expect(refusals(p, uri)).toEqual([
+    'autoApprove is not a config key this backend takes',
+    'mode is not a config key this backend takes',
+  ]);
+  expect(actions(p, uri).filter((one) => one.type === 'session/configChanged')).toEqual([]);
+  expect(await served()).toBe('default');
 });
 
 /*
