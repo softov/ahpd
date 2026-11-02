@@ -1098,6 +1098,7 @@ export function createHost(options: HostOptions): Host {
     // action of another kind moves no chat state at all.
     if (states.get(channel)?.kind === 'chat' && String(action.type ?? '').startsWith('chat/')) {
       if (action.type === 'chat/inputAnswerChanged') ctx.answerMirrored(channel, String(action.requestId ?? ''));
+      ctx.askedLeft(channel);
       ctx.chatMoved(channel);
     }
     /*

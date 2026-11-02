@@ -212,7 +212,14 @@ it('sends a question answered in the main chat to the back session', async () =>
   }]);
 });
 
-it('leaves the main chat when the back session withdraws its question', async () => {
+/*
+ * A question the back session withdrew ends with the main chat's turn.
+ *
+ * No client answered it, and the reference host says no completion in nobody's
+ * name, so the copy stays in the open turn and the chat is told nothing.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L172-L239
+ */
+it('leaves the copy in the main chat when the back session withdraws its question, and says nothing', async () => {
   const { session, sent } = await sitting();
   const toBack: Bag[] = [];
   const entries = new Map([['ask-1', question()]]);
@@ -223,14 +230,8 @@ it('leaves the main chat when the back session withdraws its question', async ()
   ask.withdrawn('bot:/backer/ana/work', 'ask-1');
 
   const active = session.chatState().activeTurn as Bag;
-  expect(active['responseParts']).toEqual([]);
-  /*
-   * The protocol has no action that removes a part, so a live client is told
-   * the question is over instead: a cancelled completion on the copy.
-   */
-  expect(sent.filter((one) => one['type'] === 'chat/inputCompleted')).toMatchObject([{
-    requestId: 'ask-1', response: 'cancel',
-  }]);
+  expect((active['responseParts'] as Bag[]).map((one) => one['kind'])).toEqual(['inputRequest']);
+  expect(sent.filter((one) => one['type'] === 'chat/inputCompleted' || one['type'] === 'chat/toolCallConfirmed')).toEqual([]);
   // An answer after the withdrawal is no longer this turn's to take.
   expect(session.answer('ask-1', true, {}, 'accept')).toBe(false);
   expect(toBack).toEqual([]);

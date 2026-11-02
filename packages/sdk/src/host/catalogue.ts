@@ -56,6 +56,8 @@ export interface Catalogue {
   chatMoved(chat: string): void;
   /** An answer typed into a chat's question, carried into the session's entry for it. */
   answerMirrored(chat: string, requestId: string): void;
+  /** The session's entries for a chat that its running turn no longer holds open, taken down. */
+  askedLeft(chat: string): void;
   /** What a running session's state holds of its folder and its backend, said by action where it moved. */
   factsMoved(uri: string): void;
   activityOf(held: Held): string | undefined;
@@ -1523,9 +1525,52 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     if (JSON.stringify(request) !== JSON.stringify(entry)) ctx.dispatch(session, { type: 'session/inputNeededSet', request });
   };
 
+  /**
+   * The session's entries for one chat that no longer stand, taken down.
+   *
+   * An entry stands while the chat's running turn holds open what it names: a
+   * question with no response, a call not yet past its confirmation, a call a
+   * client has yet to finish, a call awaiting authentication. A call still
+   * being announced has not reached any of them yet, so it holds its entry.
+   * Read after each of the chat's actions, so an entry goes once its request
+   * resolves and every entry of the chat goes with its turn, as the reference
+   * host keeps the session's entries; "the host ... removes them with
+   * `session/inputNeededRemoved` once the underlying request resolves".
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/state.ts#L243-L245
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L40-L157
+   */
+  const askedLeft = (chat: string): void => {
+    const session = sessionHolding(chat);
+    const state = session === undefined ? undefined : ctx.stateOf(session);
+    const own = ctx.stateOf(chat);
+    if (session === undefined || state === undefined || own === undefined) return;
+    const turn = own.activeTurn as Bag | undefined;
+    const parts = Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [];
+    const call = (entry: Bag): Bag | undefined => (String(entry.turnId ?? '') === String(turn?.id ?? '')
+      ? parts.map((part) => part.toolCall as Bag | undefined)
+        .find((one) => one !== undefined && one.toolCallId === (entry.toolCall as Bag | undefined)?.toolCallId)
+      : undefined);
+    const stands = (entry: Bag): boolean => {
+      if (turn === undefined) return false;
+      if (entry.kind === 'chatInput') {
+        return parts.some((part) => part.kind === 'inputRequest' && part.response === undefined
+          && (part.request as Bag | undefined)?.id === (entry.request as Bag | undefined)?.id);
+      }
+      const status = String(call(entry)?.status ?? '');
+      if (entry.kind === 'toolConfirmation') return ['streaming', 'pending-confirmation', 'pending-result-confirmation'].includes(status);
+      if (entry.kind === 'toolClientExecution') return ['streaming', 'pending-confirmation', 'running'].includes(status);
+      if (entry.kind === 'toolAuthentication') return ['streaming', 'auth-required'].includes(status);
+      return true;
+    };
+    for (const entry of Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : []) {
+      if (entry.chat !== chat || stands(entry)) continue;
+      ctx.dispatch(session, { type: 'session/inputNeededRemoved', id: entry.id });
+    }
+  };
+
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf, chatMoved, answerMirrored, factsMoved, activeCount,
+    chatCatalogOf, chatMoved, answerMirrored, askedLeft, factsMoved, activeCount,
     activityOf, sessionComing, sessionAdded, summaryMoved, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
