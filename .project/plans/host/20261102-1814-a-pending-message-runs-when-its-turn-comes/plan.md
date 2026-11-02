@@ -1,7 +1,7 @@
 ---
 title: A pending message runs when its turn comes
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -103,12 +103,12 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 ## Resume state
 
 - **Done so far:** tasks 01 to 03, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the owed answer to a steering message is the backend's queued `chat/pendingMessageSet`, said as the client's own action.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
-- [ ] The touched test files pass, the protocol's cases among them.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
+- [x] The touched test files pass, the protocol's cases among them.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
