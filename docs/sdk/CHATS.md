@@ -7,7 +7,7 @@ Terms, one line each:
 | Term | |
 | --- | --- |
 | a chat | One conversation, and everything said in it |
-| the default chat | Whichever chat a client gets when it names none. `default` is a role, not an identity |
+| the default chat | The chat a client sends to when it means the session as a whole, read off the session's `defaultChat`. `default` is a role, not an identity |
 | a turn | One message and the answer to it. The running one is `activeTurn`, and the rest are the transcript |
 | a part | One piece of an answer: markdown, reasoning, a tool call, a notice |
 | a worker chat | The chat one tool call of an agent's runs in, when it spawns one - a subagent |

@@ -386,8 +386,10 @@ it('declares eligibleForAutoApproval as VS Code does, and keeps it for the whole
     expect.objectContaining({ rejectionReason: expect.stringContaining('config:change') }),
   ]);
 
+  // The admin heard the member's refusal, as every client of the root does,
+  // and then its own push taken.
   await push(admin.client);
-  expect(heardOnRoot(admin.heard)).toEqual([
+  expect(heardOnRoot(admin.heard).filter((one) => one.rejectionReason === undefined)).toEqual([
     expect.objectContaining({ action: { type: 'root/configChanged', config: { eligibleForAutoApproval: rules } } }),
   ]);
   // Kept in the host's half, so the member that could not push it reads it.

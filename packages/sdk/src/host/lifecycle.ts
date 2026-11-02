@@ -1361,17 +1361,19 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       /*
-       * One turn at a time in a chat, for the turns that ask the agent.
+       * One turn at a time in a chat.
        *
-       * A message asking for a turn while one is running is refused here, in
-       * the words the client shows, rather than handed to a backend that would
-       * have to drop it or lose the turn in front of it. A command is left
-       * out: it queues behind the running turn by its own road, and a message
-       * that waited its turn arrives under `queuedAs` and is begun by the
-       * backend when that turn ends.
+       * A turn asked for while one is running is refused here, in the words
+       * the client shows, a command's as much as a question's: a client's
+       * `chat/turnStarted` is answered by that action or by its refusal, and
+       * the chat holds one active turn, so a start taken now would end the
+       * one running in every client's state. What waits its turn is a queued
+       * message, which arrives under `queuedAs` and is begun by the backend
+       * when the turn in front of it ends.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L368
        */
-      if (queuedAs === undefined && (command === '' || !options.terminals)
-        && session.chatState().activeTurn !== undefined) return 'A turn is running in this chat';
+      if (queuedAs === undefined && session.chatState().activeTurn !== undefined) return 'A turn is running in this chat';
       if (who !== undefined) senders.set(queuedAs ?? turnId, who);
       // And the window itself, under the same id, for whatever has to ask it
       // something later - the move an agent asks for in this turn most of all.

@@ -444,13 +444,12 @@ it('wakes a sleeping session to rename it', async () => {
 });
 
 /*
- * A session asleep runs no turn, so a stop on its chat has nothing to stop, and
- * the protocol has the server refuse it: "`chat/turnCancelled` | No active turn
- * | Server MUST reject the action". Refused as it arrives, with no backend
- * started to find that out.
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+ * A session asleep runs no turn, so a stop on its chat has nothing to stop. It
+ * goes back as the client's own action, as the reference host takes a stop of
+ * no active turn, with no backend started to find that out.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
  */
-it('refuses a stop on a sleeping session without waking it', async () => {
+it('answers a stop on a sleeping session with the client\'s own action, without waking it', async () => {
   const counts: Counts = { starts: [], closes: 0 };
   const { client, open, sleep, read, awake, peer: p } = await serving(counts);
   const one = await open('one');
@@ -460,8 +459,8 @@ it('refuses a stop on a sleeping session without waking it', async () => {
 
   await client.handle({ method: 'dispatchAction', params: { channel: one.chat, clientSeq: 60, action: { type: 'chat/turnCancelled', turnId: '' } } });
   await settle(20);
-  expect(p.notes.filter((note) => note.method === 'action').map((note) => note.rejectionReason))
-    .toEqual([`Nothing is running on ${one.chat} to stop`]);
+  expect(p.notes.filter((note) => note.method === 'action').map((note) => [note.action, note.origin, note.rejectionReason]))
+    .toEqual([[{ type: 'chat/turnCancelled', turnId: '' }, { clientId: 'window', clientSeq: 60 }, undefined]]);
   expect(counts.starts).toEqual([undefined]);
   expect(await awake()).toBe(0);
 });

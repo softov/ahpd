@@ -232,8 +232,6 @@ interface Broken {
   by: string;
 }
 
-const ECHOED = '"the server echoes them back as an ActionEnvelope once accepted" (types/common/commands.ts, dispatchAction)';
-
 /** The rules the divergences in this file break. */
 const BROKEN = {
   baselines: {
@@ -246,21 +244,6 @@ const BROKEN = {
     row: 'E18',
     by: '10',
   },
-  echoRewritten: {
-    breaks: `${ECHOED}; the echo of chat/turnStarted carries the host's own startedAt and leaves queuedMessageId off`,
-    row: 'E8',
-    by: '3, the answer',
-  },
-  clientRewritten: {
-    breaks: `${ECHOED}; the echo of session/activeClientSet carries the connection's clientId in place of the one sent`,
-    row: 'C12',
-    by: '3, the answer',
-  },
-  reorderRewritten: {
-    breaks: `${ECHOED}; the echo of chat/queuedMessagesReordered carries the order the backend holds in place of the one sent`,
-    row: 'E8',
-    by: '3, the answer',
-  },
   rootPerConnection: {
     breaks: 'authentication.md: "Root state is global and visible to all subscribed clients."; the root a connection is served carries a `_meta` and config values of its own',
     row: 'E46',
@@ -270,6 +253,11 @@ const BROKEN = {
     breaks: 'chat-channel.md: "Steering messages added while idle are silently stored and consumed when a turn becomes active."',
     row: 'A10',
     by: '10',
+  },
+  otherClientRefused: {
+    breaks: 'types/channels-session/actions.ts: session/activeClientSet is @clientDispatchable and upserts the entry its clientId names; this host refuses an entry naming another client than the connection',
+    row: 'C12',
+    by: 'none, host policy: a client announces itself and no other',
   },
   removalUnserved: {
     breaks: 'types/channels-session/actions.ts: session/activeClientRemoved is @clientDispatchable and "a no-op when no entry matches"',
@@ -356,9 +344,6 @@ interface Differs {
   refused?: string[];
 }
 
-const turnStartRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt'], ...BROKEN.echoRewritten }];
-const queuedTurnRewritten: (Differs & Broken)[] = [{ reduced: ['activeTurn', 'modifiedAt', 'queuedMessages'], ...BROKEN.echoRewritten }];
-const reorderRewritten: (Differs & Broken)[] = [{ reduced: ['queuedMessages'], ...BROKEN.reorderRewritten }];
 const rootPerConnection: (Differs & Broken)[] = [{ start: ['_meta', 'config'], ...BROKEN.rootPerConnection }];
 const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROKEN.rootPerConnection }];
 
@@ -372,32 +357,20 @@ const rootMetaPerConnection: (Differs & Broken)[] = [{ start: ['_meta'], ...BROK
 const DIVERGES: Record<string, (Differs & Broken)[]> = {
   '001-root-agentschanged': rootPerConnection,
   '002-root-activesessionschanged': rootPerConnection,
-  '005-session-turnstarted': turnStartRewritten,
-  '006-turnstarted-with-queuedmessageid-removes-from-queuedmessages': queuedTurnRewritten,
-  '007-turnstarted-with-queuedmessageid-removes-last-queued-message': queuedTurnRewritten,
-  '008-turnstarted-with-queuedmessageid-removes-matching-steering-message': [{ reduced: ['activeTurn', 'modifiedAt', 'steeringMessage'], ...BROKEN.echoRewritten }],
-  '009-turnstarted-without-queuedmessageid-does-not-touch-pending-messages': turnStartRewritten,
-  '035-session-activeclientset-adds-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
-  '036-session-activeclientset-replaces-client': [{ reduced: ['activeClients'], ...BROKEN.clientRewritten }],
   '039-set-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '040-replace-existing-steering-message': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '041-update-steering-message-content-via-set-with-same-id': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
   '052-steering-and-queued-messages-are-independent': [{ refused: ['Nothing is running in this chat to steer'], ...BROKEN.idleSteering }],
-  '053-reorders-queued-messages': reorderRewritten,
-  '054-keeps-messages-not-in-order-at-end-in-original-order': reorderRewritten,
-  '055-ignores-unknown-ids-in-reorder': reorderRewritten,
   '060-session-customizationtoggled-toggles-by-id': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
   '061-session-customizationtoggled-is-no-op-for-unknown-id': [{ refused: ['plugin-unknown has no runtime switch'], ...BROKEN.toggleNoOp }],
   '062-session-customizationtoggled-is-no-op-when-customizations-undefined': [{ refused: ['plugin-a has no runtime switch'], ...BROKEN.toggleNoOp }],
-  '070-full-turn-flow-with-tool-calls-and-re-confirmation': turnStartRewritten,
   '071-root-terminalschanged': rootPerConnection,
-  '075-turnstarted-clears-isread': turnStartRewritten,
   '087-root-unknown-action-type-is-no-op': rootPerConnection,
-  '105-session-input-full-draft-and-complete-flow': turnStartRewritten,
   '127-root-configchanged-merges-into-config-values': rootMetaPerConnection,
   '128-root-configchanged-noops-when-config-undefined': rootPerConnection,
   '130-root-configchanged-replace-replaces-all-values': rootMetaPerConnection,
-  '161-chat-turn-lifecycle-on-chat': turnStartRewritten,
+  '035-session-activeclientset-adds-client': [{ refused: ['vscode-1 is another client; this connection is cases-035-session-activeclientset-adds-client'], ...BROKEN.otherClientRefused }],
+  '036-session-activeclientset-replaces-client': [{ refused: ['vscode-1 is another client; this connection is cases-036-session-activeclientset-replaces-client'], ...BROKEN.otherClientRefused }],
   '221-session-activeclientremoved-removes-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '222-session-activeclientremoved-no-op-unknown-client': [{ refused: ['session/activeClientRemoved is not served yet'], ...BROKEN.removalUnserved }],
   '225-session-customizationtoggled-toggles-child-by-id': [{ refused: ['skill-1 has no runtime switch'], ...BROKEN.toggleNoOp }],
@@ -511,11 +484,6 @@ const REFUSALS: Record<string, {
     holds: (state, action) => !runningParts(state).some((part) => part.kind === 'toolCall'
       && (part.toolCall as { toolCallId?: unknown; status?: unknown }).toolCallId === action.toolCallId
       && (part.toolCall as { status?: unknown }).status === 'pending-confirmation'),
-  }],
-  'chat/turnCancelled': [{
-    said: (_action, where) => `Nothing is running on ${where.channel} to stop`,
-    source: 'chat-channel.md: "chat/turnCancelled | No active turn | Server MUST reject the action"',
-    holds: (state) => state.activeTurn === undefined || state.activeTurn === null,
   }],
   'chat/turnResume': [{
     said: () => 'A turn is running in this chat',

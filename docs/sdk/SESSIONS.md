@@ -33,7 +33,7 @@ A live session holds an agent, its process or its memory, between turns. After `
 
 Quiet means no action moved in the session for that time and nothing is in hand. A session does not sleep while any of its chats has a turn running or a message queued, a tool call waiting for approval or a question waiting for an answer, or background work its backend reports through `Session.busy()`: a claude background task or a timer the CLI set, or an ACP terminal still running. It does not sleep while a client is subscribed to it or to one of its chats, and a session whose backend cannot resume it never sleeps, because closing it would lose the conversation.
 
-A sleep closes each chat's agent and keeps the backend's conversation. It keeps the chats, the terminals, the rule state, the automations and any wake the agent asked for. `root/activeSessionsChanged` goes out for a sleep and for a wake.
+A sleep closes each chat's agent and keeps the backend's conversation. It keeps the chats, the terminals, the rule state, the automations and any wake the agent asked for. A session sleeps with nothing running, so a sleep and a wake leave the root's `activeSessions` as it was: that number counts the sessions running a turn.
 
 A sleeping session **wakes** when something needs it, resumed in place with its earlier conversation and under the same URI. A prompt to one of its chats wakes it. So do a chat a client makes in it, a fork among them, any other client action the host takes on a live session, a `send_message` from another session, a run of a pinned automation, a child session's `childFinished`, and a wake its agent asked for with `schedule_wakeup` ([TOOLS.md](TOOLS.md#the-hosts-own-tools)). A config change and a draft are kept without a wake, as for a session after a restart. A session does not sleep while it is waking, or before the turn it was woken for has begun. Wakers that arrive together share one resume. A resume that fails fails what asked for it with the backend's error, so a prompt is refused and an automation run fails, and the session stays asleep for the next waker to try again.
 
@@ -57,6 +57,8 @@ A session's `status` is a bitset, and the low bits are what it is doing now:
 | `InputNeeded` | 24 | Waiting on somebody - and this value *carries* `InProgress`, so anything testing activity has to test it first |
 | `IsRead` | 32 | This host's own, shared by every client, and the reason a row marked read comes back read |
 | `IsArchived` | 64 | The same, and what gives a row with no agent running a status to report |
+
+A session of several chats reads as VS Code's host aggregates one: `InputNeeded` while any chat waits on somebody, else `InProgress` while any chat runs, a worker's chat included, else the default chat's bits. A chat that failed says so on its own row in the session's list of chats, and the session's `activity` is the activity of the chat that decided its status.
 
 `createdAt` is when the session was first started and never moves; a resumed session takes the catalogue's value rather than the moment it was resumed. `modifiedAt` is the last change, and `activity` is what the session is doing in one line, absent when it is idle.
 

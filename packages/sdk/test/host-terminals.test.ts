@@ -317,7 +317,7 @@ describe('a command typed into the conversation', () => {
     expect(listed()).toHaveLength(0);
   });
 
-  it('runs a command typed during a turn instead of handing it to the agent', async () => {
+  it('runs a command queued during a turn instead of handing it to the agent', async () => {
     const { client, peer: p, chatUri } = await shelled();
     // A turn that stays open: the fake CLI answers only when a result frame
     // arrives, which is what leaves the session busy enough to queue behind.
@@ -328,7 +328,7 @@ describe('a command typed into the conversation', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
+      params: { channel: chatUri, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo queued-command' } } },
     });
     await settle();
     // Waiting, and not run: a command that jumped the queue would run against
@@ -353,7 +353,13 @@ describe('a command typed into the conversation', () => {
     expect(sdk.said).toEqual(['first']);
   });
 
-  it('answers a command typed during a turn with the queued message it waits as', async () => {
+  /*
+   * A turn start is answered by itself or by its refusal, and a chat holds one
+   * active turn: a command sent as a turn while a turn runs is refused, as a
+   * question is, and one that waits its turn is a queued message.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+   */
+  it('refuses a command sent as a turn while a turn runs', async () => {
     const { client, peer: p, chatUri } = await shelled();
     client.handle({
       method: 'dispatchAction',
@@ -365,18 +371,10 @@ describe('a command typed into the conversation', () => {
       params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo queued-command' } } },
     });
     await settle();
-    // The client holds its turn until an action with its own origin answers
-    // it, and what became of the turn is the queued message it waits as.
-    const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
-    expect(answers().map((e) => e.action)).toEqual([
-      expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'queued', id: 't2' }),
-    ]);
-
-    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 5 });
-    const done = await ended(p, chatUri, 't2');
-    // Once: the turn the command runs as is the queued message's.
-    expect(done.some((one) => one.type === 'chat/turnStarted' && one.queuedMessageId === 't2')).toBe(true);
-    expect(answers()).toHaveLength(1);
+    const answers = actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
+    expect(answers).toHaveLength(1);
+    expect(answers[0]).toMatchObject({ action: { type: 'chat/turnStarted', turnId: 't2' }, rejectionReason: 'A turn is running in this chat' });
+    expect(actions(p, chatUri).some((e) => e.action.type === 'chat/pendingMessageSet')).toBe(false);
   });
 
   it('refuses a command when the backend cannot hold one, rather than asking it', async () => {
@@ -763,9 +761,9 @@ describe('a shell on this machine', () => {
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 
-  it('refuses what it is sent once the shell has gone', async () => {
+  it('refuses what it is sent once the shell has gone, to the client that typed it alone', async () => {
     const uri = 'ahp-terminal:/gone';
-    const { peer: p, send } = await watched(uri);
+    const { peer: p, other, send } = await watched(uri);
     await send(4, { type: 'terminal/input', data: 'exit 0\n' });
     for (const until = Date.now() + WAIT_MS; Date.now() < until;) {
       await new Promise((r) => { setTimeout(r, 50); });
@@ -776,6 +774,8 @@ describe('a shell on this machine', () => {
 
     const late = actions(p, uri).find((e) => e.action.type === 'terminal/input' && e.origin?.clientSeq === 5);
     expect(late?.rejectionReason).toBeDefined();
+    // Refused keystrokes stay with the client that typed them, as taken ones do.
+    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
   });
 
   it('says a new title and a title it already has to every client of the terminal', async () => {

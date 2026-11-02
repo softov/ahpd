@@ -334,20 +334,19 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * The dispatch being applied, handed to a backend that says it back when it
    * is ready.
    *
-   * `chat/turnStarted` and `chat/turnCancelled` under the turn they name,
-   * `chat/pendingMessageSet` under the queued message's id, and
-   * `chat/toolCallComplete` under the tool call's, each in the chat the
-   * dispatch is about, go out carrying the client's origin, however long the
-   * backend takes; nothing else does. A dispatch the backend already said
-   * back owes nothing.
+   * `chat/turnStarted` under the turn it names and `chat/pendingMessageSet`
+   * under the queued message's id, each on the channel the dispatch came on,
+   * go out carrying the client's origin, however long the backend takes;
+   * nothing else does. A dispatch the backend already said back owes nothing.
    */
-  owe: (type: 'chat/turnStarted' | 'chat/turnCancelled' | 'chat/pendingMessageSet' | 'chat/toolCallComplete', name: string) => void;
+  owe: (type: 'chat/turnStarted' | 'chat/pendingMessageSet', name: string) => void;
   /**
    * The client's dispatch `action`, said on `channel`, says back: the one
-   * being applied, when `action` is of its kind and about its turn, or one
-   * owed in the chat `channel` is about, under the turn or the queued message
-   * `action` names. Matched as an echo's origin is, and let go of only by the
-   * answer. A backend that answers later holds it through `Start.handed`.
+   * being applied, when `action` is on its channel, of its kind and names
+   * what it names, or one owed on `channel` under the turn or the queued
+   * message `action` names. Matched as an echo's origin is, and let go of only
+   * by the answer. A backend that answers later holds it through
+   * `Start.handed`.
    */
   answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
   /**
@@ -359,6 +358,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * said back by the host, and every client reduces it.
    */
   unanswered: () => boolean;
+  /**
+   * Settled once the backend of `chat` says its end of a turn the chat has
+   * ended. A client's stop is said when it is taken and the backend lets the
+   * turn go after it, and a dispatch sent between the two waits on this.
+   */
+  letGo: (chat: string) => Promise<void>;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *
@@ -411,9 +416,9 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * Answer one client's dispatch with the reason it was not applied, at the
    * next `serverSeq`.
    *
-   * Sent to that client alone: nobody else applied it optimistically, so
-   * nobody else has anything to put back, and a client that reduced a
-   * rejected envelope would apply the very change this host refused.
+   * Sent to every client the accepted action would reach, and held for
+   * replay; `alone`, to that client only and not held. No client's state
+   * takes it.
    */
   refuse: (
     peer: Peer,
@@ -421,6 +426,7 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     action: Record<string, unknown>,
     origin: Origin | undefined,
     reason: string,
+    alone?: boolean,
   ) => void;
   /**
    * Answer one client's terminal input, accepted, to that client alone, at

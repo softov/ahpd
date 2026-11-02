@@ -5,8 +5,8 @@ import { disableConditionsProblem } from '../automations/automations.js';
 import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn, PER_CONNECTION } from './gate.js';
-import { chatUriFor, isRootChannel, MARKS, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { chatAction, sessionFlag } from './chatactions.js';
+import { chatUriFor, isRootChannel, MARKS, ROOT, schemeOf, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
+import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
 import { RESTART_KEY } from './root.js';
@@ -78,8 +78,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       ? params.action
       : {}) as Record<string, unknown>;
     const type = String(action.type ?? '');
+    /** Whether the sender has passed the gate; until then a refusal is its alone. */
+    let gated = false;
     /** Refuse this dispatch, in the words of whatever would not have it. */
-    const no = (reason: string): void => refuse(connection.peer, channel, action, origin, reason);
+    const no = (reason: string, alone = !gated): void => refuse(connection.peer, channel, action, origin, reason, alone);
     /*
      * A plugin channel has one writer, its plugin, so a client's action on
      * one is refused before anything reads it - and on an `x-` scheme no
@@ -120,6 +122,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
     }
+    /*
+     * A chat's action on a chat's channel: "Actions travel on the channel
+     * named by their prefix". A client holds what it sent pending on the
+     * subscription it sent it on, and is answered there, so a chat's action
+     * sent on a session's channel is one this host could only answer on a
+     * chat where that client is not waiting. Input addressed to a session as a
+     * whole is the client's to send to the session's default chat.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/actions.md#L54
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L7-L11
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L82
+     */
+    if (type.startsWith('chat/') && schemeOf(asked) !== 'ahp-chat' && schemeOf(channel) !== 'ahp-chat') {
+      no(`${type} is a chat's action, and ${asked} is not a chat`);
+      return;
+    }
     if (options.users !== undefined && connection.root !== true) {
       /*
        * What the action is, what the channel is spelt as and what it
@@ -153,6 +170,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         return;
       }
     }
+    gated = true;
     /*
      * Whether a client is allowed to originate this at all, asked of the
      * protocol rather than answered here.
@@ -770,6 +788,22 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const carried = (typeof action.activeClient === 'object' && action.activeClient !== null
         ? action.activeClient
         : {}) as Bag;
+      /*
+       * A client announces itself, and no other client: an entry naming
+       * another `clientId` is refused, since its tools would be called on the
+       * client it names and its leaving would remove that client's entry.
+       */
+      if (typeof carried.clientId === 'string' && carried.clientId !== clientId) {
+        no(`${carried.clientId} is another client; this connection is ${clientId}`);
+        return;
+      }
+      /*
+       * The entry as the client sent it. A `clientId` or `tools` the client
+       * left out is this host's to fill, as any field of an answer a client
+       * left out is: the sender's own id, and no tools. Held under the
+       * connection that announced it, which is what leaves.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
+       */
       const activeClient: Bag = {
         ...carried,
         clientId,
@@ -812,14 +846,30 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       // chat is this same act - see `sessionFlag`. A bit that did not move
       // keeps the catalogue as it is, and the action goes to every client of
       // the session, as an unchanged announcement does above.
-      const moved = sessionFlag(
-        ctx,
-        sessionFor(channel),
-        type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived,
-        type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
-        action,
-      );
-      if (!moved) dispatch(channel, action, origin);
+      /*
+       * The read bit as the session's chats make it. A session marked read
+       * while one of two or more of its `readAggregate` chats is unread is
+       * said unread, the client's own action carrying the bit the session
+       * holds; a session of one such chat takes that chat to its new bit after
+       * its own action, whether or not its own bit moved.
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2869-L2878
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2912-L2918
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3101-L3103
+       */
+      const uri = sessionFor(channel);
+      const read = type === 'session/isReadChanged';
+      const chats = read ? readAggregate(ctx, uri) : [];
+      const on = read
+        ? action.isRead === true && !(chats.length > 1 && chats.some((one) => !one.read))
+        : action.isArchived === true;
+      const said = read && on !== (action.isRead === true) ? { ...action, isRead: on } : action;
+      const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said);
+      if (!moved) dispatch(channel, said, origin);
+      // Sent on another channel of the session, it is answered on that one:
+      // the bit moved on the session's own.
+      else if (ctx.unanswered()) dispatch(channel, said, origin);
+      const sole = chats.length === 1 ? chats[0] : undefined;
+      if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
       return;
     }
     const terminal = terminals.get(channel);
@@ -838,7 +888,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         case 'terminal/input': {
           const taken = terminal.write(String(action.data ?? ''));
           if (taken === true) echoTo(connection.peer, channel, action, origin);
-          else no(taken);
+          else no(taken, true);
           break;
         }
         case 'terminal/resized':

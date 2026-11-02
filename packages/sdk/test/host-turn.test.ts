@@ -42,10 +42,10 @@ describe('driving a turn', () => {
   });
 
   it('passes the client\'s turn to the agent', async () => {
-    const { client, uri } = await running();
+    const { client, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
     });
     await settle();
     expect(sdk.said).toEqual(['hello']);
@@ -55,7 +55,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -77,7 +77,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit(
@@ -140,7 +140,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       await emit(...frames);
@@ -186,7 +186,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       const progress = (extra: Record<string, unknown>) => ({
@@ -248,7 +248,7 @@ describe('driving a turn', () => {
       const { client, peer: p, uri, chatUri } = await running();
       client.handle({
         method: 'dispatchAction',
-        params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+        params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
       });
       await settle();
       const held = async () => (await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
@@ -289,7 +289,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -340,10 +340,10 @@ describe('driving a turn', () => {
    * without a word.
    */
   it('asks about two tools at once and answers each of them', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'weather?' } } },
     });
     await settle();
 
@@ -367,7 +367,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-a', approved: true, confirmed: 'user-action' },
       },
     });
@@ -387,7 +387,7 @@ describe('driving a turn', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: { type: 'chat/toolCallConfirmed', toolCallId: 'call-b', approved: false, reason: 'denied' },
       },
     });
@@ -399,7 +399,7 @@ describe('driving a turn', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
@@ -422,7 +422,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Working' }] } });
@@ -503,7 +503,7 @@ describe('driving a turn', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({
@@ -523,7 +523,7 @@ describe('driving a turn', () => {
     // stop saying the last one failed.
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: 'again' } } },
     });
     await settle();
     expect(await statusOf()).toBe(Status.InProgress);
@@ -538,7 +538,7 @@ describe('driving a turn', () => {
     const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     // A subtype that is not `success` and no `errors` at all - which happens,
@@ -571,7 +571,7 @@ describe('driving a turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     await emit({ type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'Done' }] } });
@@ -636,12 +636,13 @@ describe('a turn asked for while one is running', () => {
       .find((one) => one.rejectionReason !== undefined);
     expect(rejected?.rejectionReason).toBe('A turn is running in this chat');
     expect(rejected?.action?.turnId).toBe('t2');
-    // The refusal carries the action back rather than applying it, so what is
+    // The refusal carries the action back and applies nothing, so what is
     // counted here is everything else: nothing of `t2` reaches the chat, and
-    // the window that did not ask hears nothing of it at all.
+    // the window that did not ask hears only the same refusal.
     const applied = actions(p, chatUri).filter((e) => e.rejectionReason === undefined);
     expect(applied.some((e) => e.action.type === 'chat/turnStarted' && e.action.turnId === 't2')).toBe(false);
-    expect(actions(other, chatUri).some((e) => e.action.turnId === 't2')).toBe(false);
+    expect(actions(other, chatUri).filter((e) => e.action.turnId === 't2').map((e) => e.rejectionReason))
+      .toEqual(['A turn is running in this chat']);
     expect(sdk.said).toEqual(['first']);
 
     const still = await activeTurn(client, chatUri);
@@ -687,7 +688,7 @@ describe('what the client is told about its own turn', () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
     // Reducing it privately is not enough. A client applies what the host
@@ -791,7 +792,7 @@ describe('one tool call, one row', () => {
     await settle();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
     });
     await settle();
 
@@ -834,7 +835,7 @@ describe('one tool call, one row', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
+      params: { channel: chatUri, action: { type: 'chat/toolCallConfirmed', toolCallId: 'toolu_1', approved: true } },
     });
     await settle();
 

@@ -54,7 +54,7 @@ async function twoAutomationOwners() {
   await ben.handle(hello(['0.9.0'], { clientId: 'ben' }));
   await ana.handle({ method: 'subscribe', params: { channel: MINE } });
   await ben.handle({ method: 'subscribe', params: { channel: MINE } });
-  return { store, ana, ben, anaPeer, benPeer };
+  return { store, host, ana, ben, anaPeer, benPeer };
 }
 
 /** The catalogue as a snapshot answers it. */
@@ -314,10 +314,10 @@ describe('the fields a client reads by name', () => {
   });
 
   it('sends root/sessionSummaryChanged as a partial, without the identity fields', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 
@@ -563,12 +563,43 @@ describe('the fields a client reads by name', () => {
     expect(requests(benPeer)).toEqual([]);
   });
 
+  it('says a refused request on the filtered catalogue to its sender alone, live and on a reconnect', async () => {
+    const { ana, ben, anaPeer, benPeer, host } = await twoAutomationOwners();
+    const before = (await ben.handle({ method: 'subscribe', params: { channel: MINE } }) as {
+      snapshot: { fromSeq: number };
+    }).snapshot.fromSeq;
+    anaPeer.notes.length = 0;
+    benPeer.notes.length = 0;
+    const send = (clientSeq: number, action: Record<string, unknown>) =>
+      ana.handle({ method: 'dispatchAction', params: { channel: MINE, clientSeq, action } });
+    await send(1, {
+      type: 'automation/createRequested',
+      resource: 'ahp-automation:/ana-secret',
+      definition: { ...AUTOMATION_DEFINITION, message: { text: 'Secret' }, disableConditions: [{ kind: 'afterRuns', max: 2 }, { kind: 'afterRuns', max: 5 }] },
+    });
+    await send(2, { type: 'automation/updateRequested', resource: 'ahp-automation:/nobody', changes: { title: 'Secret' } });
+    await settle();
+    const refused = (p: ReturnType<typeof peer>) => actions(p, MINE)
+      .filter((one) => (one as { rejectionReason?: string }).rejectionReason !== undefined)
+      .map((one) => one.origin?.clientSeq);
+    expect(refused(anaPeer)).toEqual([1, 2]);
+    expect(refused(benPeer)).toEqual([]);
+    // Nor is it replayed to another owner who comes back.
+    const back = host.accept(peer(), person('ben'));
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'ben', subscriptions: [MINE], lastSeenServerSeq: before },
+    }) as { type: string; actions?: { action: { type: string } }[] };
+    expect(answer.type).toBe('replay');
+    expect(JSON.stringify(answer.actions)).not.toContain('Secret');
+  });
+
   it('echoes the clientSeq the dispatch carried, and nothing on its own actions', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 41,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } },
       },
@@ -593,11 +624,11 @@ describe('the fields a client reads by name', () => {
   });
 
   it('echoes the clientSeq of a turn that switched the model before it began', async () => {
-    const { client, peer: p, uri, chatUri } = await running();
+    const { client, peer: p, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         clientSeq: 42,
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi', model: { id: 'sonnet' } } },
       },
@@ -611,7 +642,7 @@ describe('the fields a client reads by name', () => {
     expect(started?.origin).toEqual({ clientId: 'probe', clientSeq: 42 });
   });
 
-  it('refuses a dispatch out loud, to the client that sent it and nobody else', async () => {
+  it('refuses a dispatch out loud, to every client watching its channel, and holds the refusal for a reconnect', async () => {
     const host = serving('/home/softov');
     const mine = peer();
     const theirs = peer();
@@ -621,21 +652,24 @@ describe('the fields a client reads by name', () => {
     await other.handle(hello(['0.9.0']));
     const uri = 'ahp-session:/live';
     await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
-    await client.handle({ method: 'subscribe', params: { channel: uri } });
-    await other.handle({ method: 'subscribe', params: { channel: uri } });
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    await other.handle({ method: 'subscribe', params: { channel: chat } });
     // Where the state stands before the refusal. A snapshot is taken *at* a
     // sequence number, so this is the one every later action must be above.
-    const at = (await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+    const at = (await client.handle({ method: 'subscribe', params: { channel: chat } }) as {
       snapshot: { fromSeq: number };
     }).snapshot.fromSeq;
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
+      params: { channel: chat, clientSeq: 7, action: { type: 'chat/truncated', turnId: 't1' } },
     });
     await settle();
 
-    const refused = actions(mine, uri)
+    const refused = actions(mine, chat)
       .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
     expect(refused).toHaveLength(1);
     // Which dispatch it answers, so the client knows what to put back.
@@ -650,15 +684,28 @@ describe('the fields a client reads by name', () => {
     // `serverSeq > fromSeq`".
     // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
     expect(refused[0]?.serverSeq).toBeGreaterThan(at);
-    // And the client watching alongside hears nothing: it never applied this,
-    // so it has nothing to put back - and reducing a refused envelope would
-    // apply the very change this host declined to make.
-    expect(actions(theirs, uri)
-      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined)).toHaveLength(0);
+    // And the client watching alongside hears the same envelope: an action
+    // goes to every client subscribed to its channel, a refused one among
+    // them, and that client holds nothing of it to put back.
+    const heard = actions(theirs, chat)
+      .filter((e) => (e as { rejectionReason?: string }).rejectionReason !== undefined);
+    expect(heard).toHaveLength(1);
+    expect(heard[0]?.serverSeq).toBe(refused[0]?.serverSeq);
+    expect(heard[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 7 });
+    // A client that comes back within the buffer is replayed it in its place
+    // in the order, as any action it missed.
+    const back = host.accept(peer());
+    const answer = await back.handle({
+      method: 'reconnect',
+      params: { clientId: 'probe', subscriptions: [chat], lastSeenServerSeq: at },
+    }) as { type: string; actions: { serverSeq: number; rejectionReason?: string }[] };
+    expect(answer.type).toBe('replay');
+    expect(answer.actions.find((one) => one.serverSeq === refused[0]?.serverSeq)?.rejectionReason)
+      .toContain('not a completed turn');
   });
 
   it('leaves createdAt where it was while the session goes on', async () => {
-    const { client, peer: p, uri } = await running();
+    const { client, peer: p, uri, chatUri } = await running();
     const added = catalogue(p).find((n) => n.method === 'root/sessionAdded');
     const born = (added?.params.summary as Record<string, unknown>).createdAt as string;
     expect(born).toEqual(expect.any(String));
@@ -667,7 +714,7 @@ describe('the fields a client reads by name', () => {
     await new Promise((r) => { setTimeout(r, 5); });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: uri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+      params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
     });
     await settle();
 

@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Status, idOf, uriOf } from '@ahpd/sdk';
-import type { Agent, Bag, Listed, MessageFrom, Session, Start } from '@ahpd/sdk';
+import type { Agent, Bag, Chosen, Listed, MessageAttachment, MessageFrom, Session, Start } from '@ahpd/sdk';
 import { BOTS_DIR, logsOf } from './names.js';
 import type { BotRecord } from './record.js';
 import type { BotStore } from './store.js';
@@ -115,6 +115,10 @@ interface Waiting {
   text: string;
   /** Who said it, where anybody was named. */
   from: MessageFrom | undefined;
+  /** The model it named, where it named one. */
+  model: Chosen | undefined;
+  /** What it carried beside its words. */
+  attachments: MessageAttachment[] | undefined;
 }
 
 /**
@@ -132,6 +136,12 @@ export interface ChatMessage {
   turnId: string;
   /** What was said. */
   text: string;
+  /** The model the message named, where it named one. */
+  model?: Chosen;
+  /** The agent the message picked, where it picked one. */
+  agent?: { uri: string };
+  /** What the message carried beside its words: files, images, other chats. */
+  attachments?: MessageAttachment[];
 }
 
 /**
@@ -250,11 +260,14 @@ const markIn = (said: Bag): Bag | undefined => {
   return typeof meta === 'object' && meta !== null && !Array.isArray(meta) ? meta as Bag : undefined;
 };
 
-/** The message a turn carries: what was said, and who said it. */
-const messageOf = (text: string, from?: MessageFrom): ChatTurn['message'] => ({
+/** The message a turn carries: what was said, who said it, and the model, agent and attachments it named. */
+const messageOf = (text: string, from?: MessageFrom, model?: Chosen, attachments?: MessageAttachment[]): ChatTurn['message'] => ({
   text,
   origin: from?.origin ?? { kind: 'user' },
   ...(from?._meta === undefined ? {} : { _meta: from._meta }),
+  ...(from?.agent === undefined ? {} : { agent: from.agent }),
+  ...(model === undefined ? {} : { model }),
+  ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
 });
 
 /**
@@ -786,9 +799,16 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
      * reducer takes that entry out of its queue on the turn naming it, which is
      * how the queue empties as its turns start.
      */
-    const beginTurn = (turnId: string, text: string, from?: MessageFrom, queuedMessageId?: string): void => {
+    const beginTurn = (
+      turnId: string,
+      text: string,
+      from?: MessageFrom,
+      queuedMessageId?: string,
+      model?: Chosen,
+      attachments?: MessageAttachment[],
+    ): void => {
       const startedAt = new Date().toISOString();
-      const message = messageOf(text, from);
+      const message = messageOf(text, from, model, attachments);
       const held: OpenTurn = { id: turnId, startedAt, message, responseParts: [], calls: [], asked: [] };
       open = held;
       // No state and no duration: this is the turn as it began, and the line
@@ -809,7 +829,16 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * host has just restarted and not answered again.
        */
       if (handle.onMessage === undefined) finish(held, 'complete', []);
-      else handle.onMessage({ session: start.uri, turnId, text });
+      else {
+        handle.onMessage({
+          session: start.uri,
+          turnId,
+          text,
+          ...(model === undefined ? {} : { model }),
+          ...(from?.agent === undefined ? {} : { agent: from.agent }),
+          ...(attachments === undefined || attachments.length === 0 ? {} : { attachments }),
+        });
+      }
     };
 
     /**
@@ -827,7 +856,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         type: 'chat/pendingMessageSet',
         kind: 'queued',
         id: entry.id,
-        message: messageOf(entry.text, entry.from),
+        message: messageOf(entry.text, entry.from, entry.model, entry.attachments),
       });
       touch();
     };
@@ -845,7 +874,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
       const next = waiting.shift();
       if (next === undefined) return;
       start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'queued', id: next.id });
-      beginTurn(next.turnId, next.text, next.from, next.id);
+      beginTurn(next.turnId, next.text, next.from, next.id, next.model, next.attachments);
     };
 
     return {
@@ -900,7 +929,7 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
         // What is waiting for the open turn to end, in the order it will start.
         // Read here rather than left to the client's own queue, so a client
         // that opens this chat while a message waits is told about it.
-        queuedMessages: waiting.map((held) => ({ id: held.id, message: messageOf(held.text, held.from) })),
+        queuedMessages: waiting.map((held) => ({ id: held.id, message: messageOf(held.text, held.from, held.model, held.attachments) })),
         // The turn that is running, in the protocol's own spelling for one:
         // no state and no duration, because it has neither until it ends. The
         // parts array is the live one, so a client that reads the state while
@@ -929,12 +958,12 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * one a client meets - and it is the difference between a lost turn and a
        * queued one if the two ever disagree.
        */
-      begin: (turnId, text, _model, from) => {
+      begin: (turnId, text, model, from, attachments) => {
         if (open === undefined) {
-          beginTurn(turnId, text, from);
+          beginTurn(turnId, text, from, undefined, model, attachments);
           return;
         }
-        enqueue({ turnId, id: turnId, text, from });
+        enqueue({ turnId, id: turnId, text, from, model, attachments });
       },
 
       /**
@@ -944,8 +973,8 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * in front of it ends. Its turn id is chosen here rather than when it
        * starts, so that the turn it becomes is the same one either way.
        */
-      queue: (id, text, _model, from) => {
-        enqueue({ turnId: crypto.randomUUID(), id, text, from });
+      queue: (id, text, model, from, attachments) => {
+        enqueue({ turnId: crypto.randomUUID(), id, text, from, model, attachments });
         startNext();
       },
 
@@ -1002,13 +1031,13 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * False where there is no open turn to steer, which is a message the host
        * refuses rather than one it quietly turns into a turn of its own.
        */
-      steer: (pendingId, text, _attachments, from) => {
+      steer: (pendingId, text, attachments, from) => {
         const held = open;
         if (held === undefined) return false;
-        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message: messageOf(text, from) });
+        start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id: pendingId, message: messageOf(text, from, undefined, attachments) });
         // Ended without the queue: the steered turn is in front of it.
         finish(held, 'complete', [], false);
-        beginTurn(crypto.randomUUID(), text, from, pendingId);
+        beginTurn(crypto.randomUUID(), text, from, pendingId, undefined, attachments);
         return true;
       },
 

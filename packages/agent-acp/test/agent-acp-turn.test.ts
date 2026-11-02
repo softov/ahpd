@@ -730,6 +730,7 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
   begin(client, chatUri, 't1', 'please wait');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
+  const before = types(p, chatUri).length;
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
@@ -737,13 +738,15 @@ it('ends a cancelled turn as turnCancelled, once, with the cancel reaching the s
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
 
   /*
-   * The fixture holds the prompt open until `session/cancel` arrives, so this
-   * turn ending at all is what proves the notification reached the server.
+   * The stop is said when it is taken. The fixture holds the prompt open
+   * until `session/cancel` arrives, so the backend letting its turn go - its
+   * activity cleared - is what proves the notification reached the server,
+   * and the turn it ended is not ended twice.
    */
+  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
   const said = types(p, chatUri);
   expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
   expect(said).not.toContain('chat/turnComplete');
-  expect(said.at(-1)).toBe('chat/turnCancelled');
 });
 
 it('ends the running turn on a cancel that names no turn, with the cancel reaching the server', async () => {
@@ -751,17 +754,18 @@ it('ends the running turn on a cancel that names no turn, with the cancel reachi
   begin(client, chatUri, 't1', 'please wait');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
-  // A client with no id to give means the running turn, and the host hands
-  // this backend that turn's own id.
+  // A client with no id to give means the running turn: the stop is said
+  // under that turn's own id, and the backend is handed the same.
+  const before = types(p, chatUri).length;
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  await until(() => types(p, chatUri).slice(before).includes('chat/activityChanged'));
 
-  const said = types(p, chatUri);
-  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
-  expect(said.at(-1)).toBe('chat/turnCancelled');
+  const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
+  expect(said.map((e) => e.action.turnId)).toEqual(['t1']);
 });
 
 it("runs a !command in the host's shell rather than asking the server", async () => {
@@ -790,17 +794,27 @@ it("runs a !command in the host's shell rather than asking the server", async ()
   expect(kept.at(-1)?.responseParts[0]?.toolCall?.status).toBe('completed');
 });
 
-it('answers a !command typed during a turn with the queued message it waits as', async () => {
+/*
+ * A command sent as a turn while a turn runs is refused, as a question is: a
+ * chat holds one active turn. A command that waits its turn is queued, and
+ * runs as the queued message's turn once the one in front of it ends.
+ */
+it('refuses a !command sent as a turn during a turn, and runs one queued behind it', async () => {
   const { client, peer: p, uri, chatUri } = await talking();
   begin(client, chatUri, 't1', 'hold it');
   await until(() => types(p, uri).includes('session/inputNeededSet'));
   client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-queued' } } },
+    params: { channel: chatUri, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 't2', message: { text: '!echo acp-queued' } } },
+  });
+  await until(() => actions(p, chatUri).some((e) => e.origin?.clientSeq === 6));
+  expect(actions(p, chatUri).filter((e) => e.origin?.clientSeq === 6).map((e) => (e as Note & { rejectionReason?: string }).rejectionReason))
+    .toEqual(['A turn is running in this chat']);
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, clientSeq: 7, action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 't2', message: { text: '!echo acp-queued' } } },
   });
   await until(() => types(p, chatUri).includes('chat/pendingMessageSet'));
-  // The client holds its turn until an action with its own origin answers it,
-  // and what became of the turn is the queued message it waits as.
   const answers = () => actions(p, chatUri).filter((e) => e.origin?.clientSeq === 7);
   expect(answers().map((e) => e.action)).toEqual([
     expect.objectContaining({ type: 'chat/pendingMessageSet', kind: 'queued', id: 't2' }),

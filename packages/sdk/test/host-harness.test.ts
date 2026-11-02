@@ -146,11 +146,11 @@ describe('what the harness offers', () => {
   });
 
   it('runs a turn on the model and the thinking level the client chose', async () => {
-    const { client, uri } = await running();
+    const { client, uri, chatUri } = await running();
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: uri,
+        channel: chatUri,
         action: {
           type: 'chat/turnStarted',
           turnId: 't1',

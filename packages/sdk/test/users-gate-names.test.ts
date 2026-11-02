@@ -48,6 +48,7 @@ it('reads a session spelt as a file or as a watch as what it is spelt as', async
   expect(await call(guest.client, 'subscribe', { channel: 'x:/one' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
   await guest.send('x:/one', { type: 'session/titleChanged', title: 'Taken' });
 
+  // Nothing taken, and nothing heard: a refusal at the gate is the guest's alone.
   const acted = admin.seen.seen.filter((one) => one.method === 'action'
     && ['session/titleChanged', 'chat/turnStarted'].includes(String(one.params.action?.type)));
   expect(acted).toEqual([]);

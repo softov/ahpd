@@ -313,7 +313,11 @@ it('shows one client to another, which is the whole reason a host keeps it', asy
   expect(await clientsIn(a.client, URI)).toEqual(['two']);
 });
 
-it('takes the client id from the connection, not from the action', async () => {
+/*
+ * A client announces itself and no other: an entry naming another client would
+ * have that client's tools called, and its leaving would remove that client.
+ */
+it('refuses an entry that names another client, and holds nothing of it', async () => {
   const held = host();
   const a = await joins(held, 'honest');
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
@@ -322,12 +326,15 @@ it('takes the client id from the connection, not from the action', async () => {
     method: 'dispatchAction',
     params: {
       channel: URI,
-      // A client naming somebody else is a client announcing a presence that
-      // is not theirs.
-      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [] } },
+      action: { type: 'session/activeClientSet', activeClient: { clientId: 'somebody-else', tools: [{ name: 'openFile' }] } },
     },
   });
-  expect(await clientsIn(a.client, URI)).toEqual(['honest']);
+  expect(await clientsIn(a.client, URI)).toEqual([]);
+  const refused = a.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: { type: string }; rejectionReason?: string })
+    .find((one) => one.action.type === 'session/activeClientSet');
+  expect(refused?.rejectionReason).toContain('somebody-else is another client');
 });
 
 it('replaces what a client contributes rather than merging it', async () => {
@@ -513,15 +520,29 @@ it('leaves no wait running when the host closes', async () => {
   a.client.close();
 });
 
-it('says how many sessions it is running when that changes', async () => {
+/*
+ * The sessions running a turn, said as a turn starts and ends: a session
+ * created with nothing running, and its disposal after its turn, move nothing.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3162-L3188
+ */
+it('says how many sessions are running a turn when that changes', async () => {
   const held = host();
   const a = await joins(held, 'one');
   await a.client.handle({ method: 'subscribe', params: { channel: 'ahp-root://' } });
   await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
-  await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
-  expect(actions(a.peer, 'ahp-root://')
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as { snapshot: { state: { defaultChat: string } } };
+  await a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: opened.snapshot.state.defaultChat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } } },
+  });
+  await settle();
+  const said = (): unknown[] => actions(a.peer, 'ahp-root://')
     .filter((one) => one.type === 'root/activeSessionsChanged')
-    .map((one) => one.activeSessions)).toEqual([1, 0]);
+    .map((one) => one.activeSessions);
+  // The turn's start and its end.
+  expect(said()).toEqual([1, 0]);
+  await a.client.handle({ method: 'disposeSession', params: { channel: URI } });
+  expect(said()).toEqual([1, 0]);
 });
 
 /*
