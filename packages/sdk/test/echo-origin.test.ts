@@ -254,3 +254,31 @@ it('gives a resume its origin when the backend says it reopened the turn', async
   expect(resumed.map((one) => one.origin)).toEqual([{ clientId: 'window', clientSeq: 9 }]);
   await host.close();
 });
+
+/*
+ * A stop the backend takes and never says, because the turn it stopped
+ * finished first, is still the client's dispatch: it is answered by the
+ * client's own action, after the end, where it reduces to nothing.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/commands.ts#L573-L575
+ */
+it('answers a stop its backend never says, once the turn it stopped has finished', async () => {
+  const base = echo({ path: dir, pace: 5 });
+  const finishing: Agent = {
+    ...base,
+    create: (start: Start): Session => ({ ...(base.create(start) as Session), cancel: () => {} }),
+  };
+  const { host, p, dispatch } = await serving(finishing);
+  p.heard.length = 0;
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnStarted'), 'the start');
+  await dispatch(2, { type: 'chat/turnCancelled', turnId: 't1' });
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn');
+  await settle();
+
+  const said = p.heard.map((one) => [one.action.type, one.origin?.clientSeq]);
+  const ended = said.findIndex(([type]) => type === 'chat/turnComplete');
+  const stopped = said.findIndex(([type, seq]) => type === 'chat/turnCancelled' && seq === 2);
+  expect(stopped).toBeGreaterThan(ended);
+  expect(said.filter(([, seq]) => seq === 2)).toHaveLength(1);
+  await host.close();
+});
