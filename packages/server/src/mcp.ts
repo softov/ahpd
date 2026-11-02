@@ -67,7 +67,8 @@ export function mcpHandler(options: McpOptions): RequestHandler {
   return guarded(async (request, path) => {
     if (!isUnder(path, MCP_PREFIX)) return options.otherwise(request);
     if (options.setting !== 'all') return refused(404, `No MCP server at ${path}`);
-    const called = await callerOf(request, options.caller, 'mcp:call');
+    // Nothing here is charged, so a person in no team is not refused.
+    const called = await callerOf(request, options.caller, 'mcp:call', { scoped: false });
     if ('refusal' in called) return refused(called.refusal.status, called.refusal.message);
     /*
      * A session has an endpoint of its own, which is where its tools live. One

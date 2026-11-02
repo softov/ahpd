@@ -135,6 +135,18 @@ it('refuses a caller without the operation\'s grant, and admits one with it', as
   expect(one.method.grant).toBe(OPERATION_GRANT);
 });
 
+it('refuses a caller with only the command\'s grant, in the handler as well', async () => {
+  const one = fake();
+  const params = { channel: URI, operationId: 'fake/restart', target: { id: 't1' } };
+  await expect(Promise.resolve(one.method.handle(params, holding([OPERATION_GRANT]), 'c1')))
+    .rejects.toMatchObject({ code: -32009, message: 'ana may not tunnel:restart here' });
+  expect(one.began).toEqual([]);
+  expect(one.ran).toEqual([]);
+
+  expect(await one.method.handle(params, holding(['tunnel:restart']), 'c1')).toEqual({ done: 'fake/restart' });
+  expect(one.ran).toEqual([{ id: 'fake/restart', target: 't1' }]);
+});
+
 it('sets the operation to error with its message when the work throws', async () => {
   const one = fake('the port is taken');
   await expect(call(one, 'fake/create', { input: { port: 8080 } })).rejects.toThrow('the port is taken');

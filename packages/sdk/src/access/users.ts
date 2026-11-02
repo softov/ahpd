@@ -34,10 +34,9 @@ const BUILT_IN: Record<string, Grant[]> = {
   // serves, and the trust a window answers a folder with. No automations.
   member: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write', 'proxy:read', 'proxy:write', 'mcp:call', 'trust:write'],
   // Looks and does not touch: what the sessions and the automations are, and
-  // neither a file nor a shell nor a session of their own. `mcp:call` is the
-  // door only; the tools behind it answer by the grants above it, so a guest
-  // reads its sessions through an MCP client and nothing more.
-  guest: ['session:read', 'automation:read', 'mcp:call'],
+  // neither a file nor a shell nor a session of their own, nor the tools at
+  // `/mcp`.
+  guest: ['session:read', 'automation:read'],
 };
 
 /**

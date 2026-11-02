@@ -37,10 +37,10 @@ beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), 'ahpd-mcp-'));
   users = fileUsers({ path: join(home, 'users.json') });
   await users.addTeam('backend');
-  // Work on this host is charged to a team, and a person in none is refused
-  // before any tool is read, as the proxy refuses one.
   await users.add('ana', ['member'], { memberships: ['backend'], primary: 'backend' });
-  await users.add('gus', ['guest'], { memberships: ['backend'], primary: 'backend' });
+  // A role that reads sessions and may knock, and no more.
+  await users.addRole('viewer', ['session:read', 'mcp:call']);
+  await users.add('gus', ['viewer'], { memberships: ['backend'], primary: 'backend' });
   ana = await users.mint('ana');
   gus = await users.mint('gus');
   host = createHost({
@@ -144,7 +144,7 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
     expect(listed((await ask(door(), 'tools/list', undefined, ana)).said)).toEqual(SEVEN);
   });
 
-  it('lists a guest the two it may read', async () => {
+  it('lists a viewer the two it may read', async () => {
     expect(listed((await ask(door(), 'tools/list', undefined, gus)).said)).toEqual(['list_sessions', 'get_session_context']);
   });
 
@@ -163,7 +163,7 @@ describe('/mcp serves the sessionless tools a caller may run', () => {
     expect(rows).toContain('create_session');
   });
 
-  it('refuses a guest\'s create_session, which is not a tool it is offered', async () => {
+  it('refuses a viewer\'s create_session, which is not a tool it is offered', async () => {
     const answered = await call(door(), 'create_session', {
       relationship: 'independent', prompt: 'Say hello.', title: 'Not mine', workspace: home, worktree: false,
     }, gus);
@@ -205,6 +205,20 @@ describe('/mcp asks who is calling before it reads the call', () => {
   it('does not read a token in the query string', async () => {
     const answered = await door()(new Request(`${ORIGIN}/mcp?tkn=${encodeURIComponent(ana)}`));
     expect(answered.status).toBe(401);
+  });
+
+  it('refuses a guest with 403: the built-in guest does not hold mcp:call', async () => {
+    await users.add('gil', ['guest']);
+    const gil = await users.mint('gil');
+    const answered = await ask(door(), 'tools/list', undefined, gil);
+    expect(answered.status).toBe(403);
+    expect((answered.said.error as { message: string }).message).toContain('mcp:call');
+  });
+
+  it('lists the tools for a member in no team: /mcp charges nothing', async () => {
+    await users.add('nia', ['member']);
+    const nia = await users.mint('nia');
+    expect(listed((await ask(door(), 'tools/list', undefined, nia)).said)).toEqual(SEVEN);
   });
 
   it('refuses a caller without mcp:call with 403, naming the grant', async () => {

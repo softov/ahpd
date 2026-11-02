@@ -25,6 +25,7 @@ A session's `/ahp-mcp/<uuid>` answers through the same code as `/mcp`.
 - [`code://packages/server/src/mcp.ts`](../../../../packages/server/src/mcp.ts) - the door: the setting, the caller and the list for each request.
 - [`code://packages/sdk/src/access/users.ts`](../../../../packages/sdk/src/access/users.ts) - the `mcp` subject and `mcp:call`.
 - [`code://docs/server/MCP.md`](../../../../docs/server/MCP.md) - how a person points a client at `/mcp`.
+- The branch `host/20261102-1347-grants-follow-the-answers` builds Softov's answers of 2026-11-02. `guest` does not hold `mcp:call`, as *Answers* said. `/mcp` passes `{ scoped: false }` to `callerOf`, so a person in no team is not refused.
 
 ## Verified
 
@@ -36,8 +37,7 @@ A session's `/ahp-mcp/<uuid>` answers through the same code as `/mcp`.
 
 ## Departures from the plan
 
-- The built-in `guest` role holds `mcp:call`, as `member` does. *Answers* named `member` only, and the Validation wanted a guest to list two tools. A guest lists `list_sessions` and `get_session_context`.
-- A guest's call to `create_session` gets the JSON-RPC error `No tool named create_session`, not a refusal in its result, because the tool is not in that caller's list.
+- A caller without `session:write` gets the JSON-RPC error `No tool named create_session`, not a refusal in its result. The tool is not in its list.
 - `ToolCall` has `providers()`, so `create_session` names an agent that has not reported a model yet.
 - `checkedConfig` refuses a value that a declared key rules out, and passes a key the schema does not declare, as `createChat` does.
 - `mcpTools` is read in `commands/options.ts` and checked by the config schema's `enum`.
@@ -46,7 +46,5 @@ A session's `/ahp-mcp/<uuid>` answers through the same code as `/mcp`.
 
 ## Left for later
 
-- A person in no team gets 403 at `/mcp`, because `callerOf` asks `scopeFor` for a charge scope that `/mcp` never uses. The fix to decide is an option on `callerOf` that skips the scope check.
-- Whether `guest` keeps `mcp:call`.
 - MCP elicitation, for the first tool that asks a person.
 - OAuth at `/mcp`, and connector actions as tools.

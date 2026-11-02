@@ -83,9 +83,9 @@ At a terminal `--user <id>` names whose tokens they are, and `--team <team>` nam
 | --- | --- |
 | `admin` | Everything |
 | `member` | Read and write files, sessions and terminals; use the proxy; run the host's tools at `/mcp`; trust a folder |
-| `guest` | Read sessions and automations, and read them through an MCP client at `/mcp` |
+| `guest` | Read sessions and automations |
 
-`mcp:call` is the door at `/mcp`, which serves the host's tools that need no session to a person's MCP client. `member` and `guest` hold it, and `admin` holds everything, which includes it. Each tool checks its own grants again, so a caller may list only what they may run. A team key cannot hold it. See [MCP](MCP.md).
+`mcp:call` is the door at `/mcp`, which serves the host's tools that need no session to a person's MCP client. `member` holds it, and `admin` holds everything, which includes it. Each tool checks its own grants again, so a caller may list only what they may run. A team key cannot hold it. See [MCP](MCP.md).
 
 You can define your own roles in the file. See [sdk/USERS.md](../sdk/USERS.md).
 
