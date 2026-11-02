@@ -481,6 +481,16 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
    * one the client outside is owed for its own action.
    */
   const answering = new Map<number, Handed>();
+  /**
+   * The actions the host outside says itself once this session took them, by
+   * the `clientSeq` this session's client sent each with: a setting, a switch
+   * and an answer.
+   *
+   * The host inside answers each with its echo, which moves the mirror and goes
+   * no further: the host outside has said the action to its own clients, and a
+   * second copy would tell them of one change twice.
+   */
+  const saidOutside = new Set<number>();
   /** The actions clients outside sent that wait, with `waiting`, for the host inside. */
   const unsent = new Set<Handed>();
   /** The inner host's own last lines, for a failure's sentence. */
@@ -505,9 +515,10 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   /**
    * One action for the host inside, and the client action outside it carries
    * out, when a client sent one: held until the host inside answers it, and
-   * refused when nothing will.
+   * refused when nothing will. One the host outside says itself is marked so,
+   * and its echo goes no further than the mirror.
    */
-  const deliver = (channel: 'session' | 'chat', action: Bag, handed?: Handed): void => {
+  const deliver = (channel: 'session' | 'chat', action: Bag, handed?: Handed, said = false): void => {
     if (closed || ended !== undefined) {
       handed?.refuse(ended ?? `${provider}'s session in computer://${id} has closed`);
       return;
@@ -519,6 +530,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       try {
         const sent = client?.dispatch(channel === 'chat' ? innerChat : innerSession, action as unknown as StateAction);
         if (sent !== undefined && handed !== undefined) answering.set(sent.clientSeq, handed);
+        if (sent !== undefined && said) saidOutside.add(sent.clientSeq);
       }
       catch (error) {
         log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`);
@@ -933,6 +945,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         const sentAs = origin?.clientId === clientId ? origin.clientSeq : undefined;
         const handed = sentAs === undefined ? undefined : answering.get(sentAs);
         if (sentAs !== undefined) answering.delete(sentAs);
+        const saidAlready = sentAs !== undefined && saidOutside.delete(sentAs);
         /*
          * A rejection changes nothing, inside or out: the client that sent the
          * action is refused with the reason the host inside gave, and the
@@ -979,6 +992,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
             if (turn === action.turnId) turn = undefined;
           }
         }
+        // Said out here already, by the host outside to its own clients.
+        if (saidAlready) continue;
         const shown = served(channel, action as unknown as Bag);
         if (shown !== undefined) start.emit(channel, shown, handed);
       }
@@ -1361,7 +1376,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     answer: (requestId: string, accepted: boolean, answers: Bag): boolean => {
       const open = (session?.inputNeeded ?? []).some((entry) => entry.id === requestId) || asking(requestId);
       if (!open) return false;
-      deliver('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });
+      deliver('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers }, undefined, true);
       return true;
     },
     /* Taken only for an input request the running inner turn has open. */
@@ -1379,7 +1394,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       const property = declared(key);
       if (property === undefined) return `${provider} in computer://${id} has no setting called ${key}`;
       if (property.sessionMutable === false) return `${key} is fixed once the session has started`;
-      deliver('session', { type: 'session/configChanged', config: { [key]: value } });
+      deliver('session', { type: 'session/configChanged', config: { [key]: value } }, undefined, true);
       return true;
     },
     setCustomizationEnabled: async (customizationId: string, enabled: boolean): Promise<boolean> => {
@@ -1388,7 +1403,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         type: 'session/customizationToggled',
         id: customizationId,
         enablement: [{ kind: 'session', enabled }],
-      });
+      }, undefined, true);
       return true;
     },
     startMcpServer: async (serverId: string): Promise<boolean> => {
