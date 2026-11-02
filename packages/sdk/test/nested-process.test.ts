@@ -240,6 +240,9 @@ it('a real inner host killed mid-turn ends the turn and the session, naming the 
   await until(() => has('session/creationFailed') && has('chat/error'));
   expect(String(of('session/creationFailed')?.error?.message)).toMatch(/SIGKILL/);
   expect(of('chat/error')?.turnId).toBe('t1');
+  // How long the turn ran, which VS Code's chat draws as its elapsed time
+  // (stateToProgressAdapter.ts L1343-L1346 at a4e689ae), and not a placeholder.
+  expect(Number(of('chat/error')?.duration)).toBeGreaterThan(0);
   session.close();
 }, 40_000);
 

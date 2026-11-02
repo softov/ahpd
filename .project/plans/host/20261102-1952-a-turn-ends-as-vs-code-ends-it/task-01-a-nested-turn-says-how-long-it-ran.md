@@ -1,6 +1,6 @@
 ---
 title: A nested turn says how long it ran
-status: todo
+status: done
 depends: []
 layer: sdk
 refs:
@@ -29,3 +29,8 @@ A turn the nested proxy ends because the inner host failed carries the time it r
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- The case is a process case, which `test:processes` runs.
+- On `89ebe4d5`'s sources it fails: the turn's duration read 0.
