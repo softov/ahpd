@@ -1422,17 +1422,24 @@ describe('tools a client contributes', () => {
         clientSeq: 4,
         action: {
           type: 'chat/toolCallContentChanged',
+          turnId: 't1',
           toolCallId: 'call-1',
           content: [{ type: 'text', text: 'reading…' }],
         },
       },
     });
     await settle();
-    // Passed through rather than reduced: what a tool is printing as it runs
-    // is the running client's to say, and this host holds none of it.
+    // Said to every client of the chat as the running client's own, and held
+    // as the chat's reducer folds it, so a client subscribing afterwards is
+    // served the call with what its tool printed.
     const said = actions(watching, chatUri).find((e) => e.action.type === 'chat/toolCallContentChanged');
     expect(said?.action.toolCallId).toBe('call-1');
     expect(said?.origin).toEqual({ clientId: 'probe', clientSeq: 4 });
+    const later = await other.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
+      snapshot: { state: { activeTurn?: { responseParts: { toolCall?: { toolCallId?: string; content?: unknown } }[] } } };
+    };
+    const call = later.snapshot.state.activeTurn?.responseParts.find((part) => part.toolCall?.toolCallId === 'call-1')?.toolCall;
+    expect(call?.content).toEqual([{ type: 'text', text: 'reading…' }]);
   });
 
   it('fails the calls of a client that goes, rather than leaving the turn hanging', async () => {
