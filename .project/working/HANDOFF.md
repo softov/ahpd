@@ -37,23 +37,28 @@ Current progress and pending items only, as of 2026-11-01.
   - #178: the Dev Tunnel plugin is tested against a captured `devtunnel show` answer. A test only.
   - #179: MayCXC's host/20261031-1634 and host/20261031-2013. A `!` command sent during a turn is answered by its queued message, and a pi or bot steering message is answered and taken out.
   - #180: the Dev Tunnel page puts each label and its value on one row, and shows the tunnel's full URL as its link.
-- The last code merge on main is #180 (`33bab1d9`). The branch `host/20261031-1634-commands-and-steering-answered` is still on origin. The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
+- On 2026-11-01, three PRs merged on green CI, Windows included:
+  - #182: the usage-pools test records its usage in the current month. #183 then took the usage plan's version, which holds the clock.
+  - #181: plugin/20261101-1803, a plugin that fails says so.
+  - #183: MayCXC's `union` at `fe077882`, ten plans, with two Windows test fixes of ours.
+- The last code merge on main is #183 (`79294d20`). The branch `host/20261031-1634-commands-and-steering-answered` is still on origin. The branch `host/20261031-1306-drafts-and-turns-answered` is still on origin. The branch `host/20261031-0804-actions-answered` is still on origin.
 - #158 was based on the #157 branch, so its merge went into that branch and never reached main. #159 took the same head into main. Check `baseRefName` before you merge a stacked fork PR.
 - Disposing a session that this process does not hold leaves its disposable machine behind. The `held === undefined` branch in `lifecycle.ts` never calls `leaveForgotten`. It is on main from before p8: [problems/a-disposed-session-not-held-leaves-its-machine.md](../problems/a-disposed-session-not-held-leaves-its-machine.md).
 - The README is rewritten for people who run ahpd (`a22c1934`). The brief it came from is `ahp-review/ahpd-review/ahpd-readme-2026-10-27/`.
-- `/github/ahpd` is on main at `205c5ed6`, clean. Its briefs, the plain-text brief's *Plugin text* and the plugin/20261031-1200 Answers row are committed.
+- `/github/ahpd` is on main, clean, and `pnpm build` ran after #183.
 - Fetch, and check the base before you cut a build worktree.
-- Softov's dev daemon runs from source on port 37537. He restarted it after #180, on 2026-11-01, so it runs #176 to #180.
+- Softov's dev daemon runs from source on port 37537. It runs `packages/server/src/main.ts` through `scripts/dev.mjs` with `--config-file ~/.config/ahpd/config-dev.json`, so a restart in his terminal picks up main with no build. A restart is due for #183.
 - Code goes through a PR on `softov/ahpd`. Plan-only commits go to main. The ruleset restricts updates to main, so a PR merges with `gh pr merge --admin --merge`, only on Softov's word. Run `gh pr checks` with `-R softov/ahpd` outside a repo.
 - `packages/sdk/test/fixtures/wire.jsonl` is rewritten by every test run. Restore it with `git checkout --` and never print it.
 - On Windows CI, `agent-acp-ports` (the pseudoterminal test) fails at times, also before #169. Rerun the failed jobs once; a second failure needs a look.
 - On this machine, two Docker tests time out: `computer-devcontainer` and `computer-disposable`. They time out on main too, and CI passes them.
 - The worktrees in `/github/ahpd.worktrees/` are `briefs-commit` (detached, for plan-only commits) and `release-prerelease`. The merged ones were removed on Softov's word, 2026-11-01. Check `ss -ltnp` before you start a test daemon, and stop it by pid.
-- The local branch `fork/maycxc-1248-1303-1334` is merged.
+- Local branches with no worktree: `fork/host-124-shell-integration`, `fork/maycxc-1248-1303-1334` (merged), `host/20261031-0804-actions-answered`, and `host/20261101-0329-maycxc-union` (the old union at `5af4418d`). Delete them only on his word.
+- Many ACP servers at once: each read of the session list starts one server per ACP preset that has `session/list` (8 on his box), kept 60 s after the last read (`IDLE_MS` in `packages/agent-acp/src/catalog.ts`). Each woken session keeps its own server for 30 min of quiet, up to 10 sessions (`sleepAfterMinutes`, `sessionResidencyLimit`). A transcript read starts one more for its read. Softov saw 15+ dsh while he tested with ahpc. A proper fix would answer the list from the record and ask the servers only on a refresh; no brief yet.
 
 ## Waiting for Softov
 
-- MayCXC's union merged in #183 as `79294d20`: `fe077882` (ten plans, 1556 out) with main merged in, and two test commits (`c213917d`, `53a8f017`) that make the case driver read a directory as the host does on Windows; MayCXC should take both on `union`. The review's *Notes* in [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md) were not checked again. `restartNeeded` stays a read-only root config value (Softov, 2026-11-01, asked again after the rebuild); ahpw and ahpapp read it there next, in their own repositories. A daemon restart picks up #176 to #183.
+- MayCXC's union merged in #183 as `79294d20`: `fe077882` (ten plans, 1556 out) with main merged in, and two test commits (`c213917d`, `53a8f017`) that make the case driver read a directory as the host does on Windows; MayCXC should take both on `union`. MayCXC's later `union`, `940c91fc`, is the same ten plans rebuilt on `4bf5c9d3`: main holds all of it, and it lacks only those two fixes, so nothing there needs a merge. The review's *Notes* in [maycxc-union-20261101-review.md](maycxc-union-20261101-review.md) were not checked again. `restartNeeded` stays a read-only root config value (Softov, 2026-11-01, asked again after the rebuild); ahpw and ahpapp read it there next, in their own repositories. A daemon restart picks up #176 to #183.
 - Softov, 2026-11-01: the read-state plan follows the specification, and a session marked read leaves its chats' bits alone; this replaces host/89's answer. The restart flag becomes a read-only root config value; ahpw and ahpapp follow in their repositories.
 - plugin/20261101-1803, a plugin that fails says so: merged in #181 as aa48d47f, `implemented` until his review. Checks by hand after a daemon restart: [pending/plugin-fails-says-so-checks.md](../pending/plugin-fails-says-so-checks.md). #182 fixed the usage-pools test that made main red from 2026-11-01.
 - claude/20261031-0228: [pending/claude-skill-file-checks.md](../pending/claude-skill-file-checks.md).
