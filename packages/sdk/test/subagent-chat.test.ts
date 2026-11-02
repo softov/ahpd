@@ -629,28 +629,43 @@ it('says an answer given on a worker chat back on that chat, once', async () => 
 });
 
 it('cancels the lead turn when a worker chat is stopped', async () => {
-  const { lead, worker, send, refusals } = await waiting();
-  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  const { ask, lead, worker, send, refusals } = await waiting();
+  // The worker's running turn, as a client of its chat names it.
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  await send(worker, { type: 'chat/turnCancelled', turnId: String(opened.snapshot.state.activeTurn?.id), duration: 0 });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'cancel', id: 't1' }]);
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled' && one.turnId === 't1')).toBe(true);
 });
 
 it('asks a backend that can stop one worker to stop that worker, and leaves the lead turn running', async () => {
-  const { lead, worker, send, refusals } = await waiting('ahp-session:/ask', true);
-  await send(worker, { type: 'chat/turnCancelled', turnId: 'the-worker-turn', duration: 0 });
+  const { ask, lead, worker, send, refusals } = await waiting('ahp-session:/ask', true);
+  const opened = await ask('subscribe', { channel: worker }) as { snapshot: { state: { activeTurn?: { id?: string } } } };
+  await send(worker, { type: 'chat/turnCancelled', turnId: String(opened.snapshot.state.activeTurn?.id), duration: 0 });
   expect(refusals()).toEqual([]);
   expect(told).toEqual([{ what: 'stop', id: 'toolu_agent' }]);
   expect(on(lead).some((one) => one.type === 'chat/turnCancelled')).toBe(false);
 });
 
+/** The stops said on a chat under the busy client's origin, each as the client's own action. */
+const saidBack = (chat: string): { turnId: unknown; clientSeq: unknown; rejectionReason: unknown }[] => wire
+  .filter((one) => one.method === 'action' && one.params.channel === chat && (one.params.action as Bag | undefined)?.type === 'chat/turnCancelled'
+    && (one.params.origin as Bag | undefined)?.clientId === 'busy')
+  .map((one) => ({
+    turnId: (one.params.action as Bag).turnId,
+    clientSeq: (one.params.origin as Bag).clientSeq,
+    rejectionReason: one.params.rejectionReason,
+  }));
+
 /*
- * A worker chat runs a turn of its own, the worker's, and once the worker has
- * ended a stop there has no turn to stop: "`chat/turnCancelled` | No active
- * turn | Server MUST reject the action".
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+ * A worker chat runs a turn of its own, the worker's, and a stop there that
+ * names no running turn of it stops nothing: once the worker has ended, or
+ * when it names another turn. The reference host says such a stop back as the
+ * client's own action and aborts nothing, "Ignoring cancellation of an inactive
+ * turn", so the lead's conversation runs on.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
  */
-it('stops a worker that runs on after its lead turn, and refuses a stop once it has ended', async () => {
+it('stops a worker that runs on after its lead turn, and says a stop back once it has ended, stopping nothing', async () => {
   const { ask, uri, lead } = await busyHost(true);
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
@@ -670,8 +685,24 @@ it('stops a worker that runs on after its lead turn, and refuses a stop once it 
   told.length = 0;
   await ask('dispatchAction', { channel: worker, clientSeq: 2, action: { type: 'chat/turnCancelled', turnId: '' } });
   await settle();
-  expect(refusals()).toEqual([`Nothing is running on ${worker} to stop`]);
+  expect(refusals()).toEqual([]);
+  expect(saidBack(worker).filter((one) => one.clientSeq === 2)).toEqual([{ turnId: '', clientSeq: 2, rejectionReason: undefined }]);
   expect(told).toEqual([]);
+});
+
+it('stops nothing when a stop on a running worker\'s chat names another turn, and says it back', async () => {
+  const { ask, uri, lead } = await busyHost(true);
+  const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
+  await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
+  await ask('subscribe', { channel: worker });
+  await settle();
+
+  await ask('dispatchAction', { channel: worker, clientSeq: 3, action: { type: 'chat/turnCancelled', turnId: 'not-the-workers' } });
+  await settle();
+  expect(saidBack(worker)).toEqual([{ turnId: 'not-the-workers', clientSeq: 3, rejectionReason: undefined }]);
+  expect(told).toEqual([]);
+  finishWorker();
+  await settle();
 });
 
 it('refuses anything else on a worker chat as read-only', async () => {

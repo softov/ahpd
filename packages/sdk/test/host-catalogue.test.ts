@@ -754,13 +754,13 @@ describe('a chat\'s read bit and its session\'s', () => {
   };
 
   /*
-   * A stop with no turn running is one the protocol has the server refuse:
-   * "`chat/turnCancelled` | No active turn | Server MUST reject the action".
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
-   * A refusal goes to every client of the chat, as any action does: its sender
-   * drops the stop it holds, and no client's state takes it.
+   * A stop with no turn running stops nothing, and the reference host takes
+   * it as the client's own action, said to every client of the chat: "Ignoring
+   * cancellation of an inactive turn". The chat's reducer leaves the chat as
+   * it was, and no backend is asked to stop anything.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
    */
-  it('refuses a cancel with no turn running, whatever turn it names, to every client of the chat', async () => {
+  it('says a cancel with no turn running to every client, whatever turn it names, and stops nothing', async () => {
     const started = await running();
     const { peer: two } = await alsoWatching(started);
     started.peer.notes.length = 0;
@@ -774,13 +774,14 @@ describe('a chat\'s read bit and its session\'s', () => {
       await settle();
     }
 
-    const said = actions(started.peer, started.chatUri);
-    expect(said.map((e) => e.origin)).toEqual([{ clientId: 'probe', clientSeq: 7 }, { clientId: 'probe', clientSeq: 8 }]);
-    expect(said.map((e) => e.rejectionReason)).toEqual([
-      `Nothing is running on ${started.chatUri} to stop`,
-      `Nothing is running on ${started.chatUri} to stop`,
-    ]);
-    expect(actions(two, started.chatUri)).toEqual(said);
+    for (const p of [started.peer, two]) {
+      const said = actions(p, started.chatUri);
+      expect(said.map((e) => [e.action, e.origin, e.rejectionReason])).toEqual([
+        [{ type: 'chat/turnCancelled', turnId: 't1' }, { clientId: 'probe', clientSeq: 7 }, undefined],
+        [{ type: 'chat/turnCancelled', turnId: '' }, { clientId: 'probe', clientSeq: 8 }, undefined],
+      ]);
+    }
+    expect(sdk.interrupted).toBe(0);
   });
 
   it('stops the running turn when the cancel names it, and tells every client', async () => {

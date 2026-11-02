@@ -545,13 +545,14 @@ export function chatAction(
   /*
    * A stop on a session asleep in the catalogue.
    *
-   * A session with no backend runs no turn, so the stop has nothing to stop
-   * and is refused, as the protocol has a server refuse a stop with no turn
-   * running, before anything is woken to find that out.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
+   * A session with no backend runs no turn, so the stop has nothing to stop.
+   * It goes to every client of the chat as the client's own action, as the
+   * reference host answers a stop of no active turn, and the chat's reducer
+   * leaves the chat as it was. Nothing is woken to find that out.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
    */
   if (asleep && type === 'chat/turnCancelled') {
-    no(`Nothing is running on ${channel} to stop`);
+    dispatch(channel, action, origin);
     return;
   }
   /*
@@ -1329,39 +1330,31 @@ export function chatAction(
     /*
      * A stop, checked against the turn the chat it names is running.
      *
-     * A chat with no turn running has nothing to stop, and the protocol has
-     * the server refuse the action: "`chat/turnCancelled` | No active turn |
-     * Server MUST reject the action".
-     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L353
-     *
      * The running turn is the one the chat's held state has, the one every
      * client of the chat was told of: a worker's chat holds the worker's turn,
      * which this host opened and reduces itself, and every other chat the turn
-     * its backend said.
+     * its backend said. A stop that names no turn means the running one, the
+     * one turn a client with no id to give can mean.
+     *
+     * A stop of no running turn stops nothing: a chat with no turn running, or
+     * a turn other than the running one, one the client saw end. It goes to
+     * every client of the chat as the client's own action, as the reference
+     * host takes it, and the protocol's reducer ends a turn only when the id it
+     * names is the active turn's, so every client's chat stays as it was.
+     * Nothing is asked of a backend for it.
+     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
+     * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
      */
     case 'chat/turnCancelled': {
-      if (activeHeld === undefined) {
-        no(`Nothing is running on ${channel} to stop`);
+      const named = String(action.turnId ?? '');
+      if (activeHeld === undefined || (named !== '' && named !== String(activeHeld.id ?? ''))) {
+        dispatch(channel, action, origin);
         break;
       }
       if (!worker) {
-        /*
-         * A stop that names a turn other than the running one stops nothing:
-         * the protocol's reducer ends a turn only when the id it names is the
-         * active turn's, so a client that names another, one it saw end,
-         * sent a stop that changes nothing, and it goes to every client of
-         * the chat as the client's action.
-         * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
-         *
-         * A stop that names no turn means the running one, the one turn a
-         * client with no id to give can mean, and is said under its id.
-         */
-        const named = String(action.turnId ?? '');
+        // The stop is said under the running turn's id when it is taken, and
+        // the backend running that turn is told after.
         const turn = String(activeHeld.id ?? '');
-        if (named !== '' && named !== turn) {
-          dispatch(channel, action, origin);
-          break;
-        }
         stopped(activeHeld, action.duration);
         if (String(((session.chatState() as Bag).activeTurn as Bag | undefined)?.id ?? '') === turn) session.cancel(turn);
         break;
