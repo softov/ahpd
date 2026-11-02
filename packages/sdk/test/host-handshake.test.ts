@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROTOCOL_VERSION } from '@microsoft/agent-host-protocol';
 import { ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { sdkVersion } from '../src/version.js';
 import {
   resetSdk, actions, claude, createHost, emit, hello, machine, open, peer, sdk, serving, sessionQueries,
@@ -362,9 +363,9 @@ describe('a client that dropped, coming back', () => {
     const a = host.accept(first);
     await a.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
-    await a.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+    await a.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } });
 
-    const seen = actions(first, 'ahp-chat:/live');
+    const seen = actions(first, chatUriFor('ahp-session:/live'));
     const upTo = seen.at(-1)?.serverSeq ?? 0;
 
     // The socket goes. The host forgets this client's subscriptions with it,
@@ -372,7 +373,7 @@ describe('a client that dropped, coming back', () => {
     a.close();
     a.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'while away' } } },
     });
     await settle();
 
@@ -384,7 +385,7 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: upTo,
-        subscriptions: ['ahp-root://', 'ahp-session:/live', 'ahp-chat:/live'],
+        subscriptions: ['ahp-root://', 'ahp-session:/live', chatUriFor('ahp-session:/live')],
       },
     }) as { type: string; actions: { serverSeq: number; action: { type: string } }[]; missing: string[] };
 
@@ -429,15 +430,15 @@ describe('a client that dropped, coming back', () => {
         channel: 'ahp-root://',
         clientId: 'probe',
         lastSeenServerSeq: 0,
-        subscriptions: ['ahp-chat:/live'],
+        subscriptions: [chatUriFor('ahp-session:/live')],
       },
     });
     back.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
+      params: { channel: chatUriFor('ahp-session:/live'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'after' } } },
     });
     await settle();
-    expect(actions(p, 'ahp-chat:/live').some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
+    expect(actions(p, chatUriFor('ahp-session:/live')).some((e) => e.action.type === 'chat/turnStarted')).toBe(true);
   });
 
   it('hands back snapshots when the gap is longer than the buffer', async () => {

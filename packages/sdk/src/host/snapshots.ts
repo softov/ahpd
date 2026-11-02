@@ -16,7 +16,7 @@ import type { SubscribeView, Turn } from '@microsoft/agent-host-protocol';
 /** What a subscribe is answered with, and the state a session or chat channel opens with. */
 export interface Snapshots {
   value(snapshot: Record<string, unknown>): Record<string, unknown>;
-  snapshotOf(channel: string, mine?: Record<string, unknown>, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
+  snapshotOf(channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>>;
   /**
    * The state a running session's channel opens with: what its default chat's
    * backend says, with what this host keeps beside it. Read once, when the
@@ -42,7 +42,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     kept, watches, marksOf, resumedSessions, activeClientsOf,
     about, leadOf,
     LOGS, TRACES, METRICS,
-    heldAs, nameOf, sessionOfChat, sessionChannel, sessionFor,
+    nameOf, sessionOfChat, sessionChannel, sessionFor,
     relayed,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
@@ -256,7 +256,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     return ctx.openState(uri, 'session', sessionSeed(uri));
   };
 
-  const snapshotOf = async (channel: string, mine: Record<string, unknown> = {}, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
+  const snapshotOf = async (channel: string, connection?: Connection, view?: SubscribeView): Promise<Record<string, unknown>> => {
     if (isRootChannel(channel)) {
       /*
        * The root's held state, as this connection may read it.
@@ -267,7 +267,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
        */
       const daemon = ctx.stateOf(ROOT) === undefined ? await ctx.daemonValues() : {};
       const root = heldOf(ROOT, 'root', () => ctx.rootSeed(daemon));
-      return served(ROOT, ctx.rootFor(root, mine, connection));
+      return served(ROOT, ctx.rootFor(root, connection));
     }
     /*
      * A plugin channel, answered by its plugin and by nothing else here: an
@@ -373,8 +373,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // Asked of `past`, which consults the catalogue itself, rather than of
       // the maps a listing fills: a client sends the three subscriptions that
       // open a session in one breath, before its own `listSessions` has come
-      // back, and a test against those maps refuses on the race.
-      if (sessions.has(heldAs(owning)) || (await past(id)) !== undefined)
+      // back, and a test against those maps refuses on the race. The session
+      // is the one published under that URI, which is the only one its marks
+      // hang off.
+      if (sessions.has(owning) || ((await past(id)) !== undefined && nameOf(id) === owning))
         return value({ resource: channel, state: marksOf(id), fromSeq: ctx.serverSeq });
     }
     /*
@@ -541,33 +543,30 @@ export function createSnapshots(ctx: HostContext): Snapshots {
    */
   const recordSeed = async (channel: string): Promise<{ kind: 'session' | 'chat'; state: Bag }> => {
     /*
-     * A chat URI carries its session; a session URI is one. Either way the
-     * transcript is the session's, and the id is what reads it.
-     *
-     * A recorded peer chat is the exception, and the reason this is not one
-     * expression: its URI carries a uuid rather than a session, so the uuid
-     * read as an id looks for a session nobody has. What the store recorded
-     * says which session the chat was opened in, and that is what is read for
-     * one.
-     *
-     * Every other channel keeps the spelling the client wrote, holding
-     * nothing but the base64 it arrived with. A session renamed to this host's
-     * own name for it would be a second name for one session, and the snapshot
-     * is respelled back into the asked name on the way out - so the chats and
-     * worker links in it would be built from the wrong one.
+     * The session behind the channel: a session URI is one, a chat the store
+     * records belongs to the session it was recorded under, and a default or
+     * worker chat to the session its URI was built for. Either way the
+     * transcript is the session's, and the id is what reads it. A chat none of
+     * these places is no chat here, and its URI is never read for an id.
      */
-    const owning = homeId(channel) === undefined ? sessionOfChat(channel) ?? channel : sessionFor(channel);
-    // Never a session's id read out of a file, a terminal or a watch.
-    if (!sessionChannel(owning)) throw new RpcError(-32001, `No agent for session ${channel}`);
-    const id = idOf(owning);
+    const chat = spaceOf(channel) === 'chat';
+    const asked = chat ? sessionFor(channel) : channel;
+    // Never a session's id read out of a file, a terminal, a watch or a chat.
+    if (spaceOf(asked) === 'chat' || !sessionChannel(asked)) throw new RpcError(-32001, `No agent for session ${channel}`);
+    const id = idOf(asked);
     const missing = waitingFor(id);
     if (missing !== undefined) throw new RpcError(-32002, `${missing} is not loaded on this host`);
     const turns = await past(id);
+    // The chat's session read again, once `past` has named the row.
+    const owning = chat ? sessionFor(channel) : channel;
     const owner = owners.get(nameOf(id)) ?? ctx.first;
-    // Not running and not in the catalogue. Refusing is the honest answer and
-    // the one a client already knows how to render - it is what a real host
-    // says about a session whose agent has gone.
-    if (owner === undefined || !turns) throw new RpcError(-32001, `No agent for session ${channel}`);
+    // Not running and not in the catalogue, or in it under another URI.
+    // Refusing is the honest answer and the one a client already knows how to
+    // render - it is what a real host says about a session whose agent has
+    // gone, and what the reference host says about a URI no session is held
+    // under.
+    // https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L14083
+    if (owner === undefined || !turns || nameOf(id) !== owning) throw new RpcError(-32001, `No agent for session ${channel}`);
     const title = titles.get(id) ?? 'Session';
     /*
      * A chat of this session, answered from its own conversation.
@@ -588,7 +587,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
      * its default chat is not resumed: a chat there is the inner host's, and
      * one listed here would be a row that opens onto nothing.
      */
-    const opened = sessionOfChat(channel) === undefined || kept.nested?.(id) !== undefined
+    const opened = !chat || kept.nested?.(id) !== undefined
       ? undefined
       : recordedChat(id, channel);
     const stamp = moves.get(owning) ?? new Date().toISOString();
@@ -656,6 +655,8 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         },
       };
     }
+    // A chat that is none of the above is not one this record answers for.
+    if (chat) throw new RpcError(-32001, `No chat at ${channel}`);
     /*
      * The chats the store recorded for it, closed ones left out, and which of
      * them the session would come back as. None for a session inside a

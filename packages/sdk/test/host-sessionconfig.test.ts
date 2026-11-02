@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Agent, McpServer, Start } from '../src/types/agent.js';
 import type { ConnectorRef } from '../src/types/connectors.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -267,7 +268,7 @@ describe('choosing a model', () => {
     await settle();
     expect(sdk.modelsSet).toEqual(['haiku']);
 
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/live') } }) as {
       snapshot: { state: { activeTurn: { message: { model?: { id: string } } } } };
     }).snapshot.state;
     // Credited on the turn, because the transcript has to say what actually
@@ -436,7 +437,7 @@ describe('a session\'s config across a restart', () => {
     const client = await hostOnFile();
     client.handle({
       method: 'dispatchAction',
-      params: { channel: `ahp-chat:/${id}`, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor(`ahp-session:/${id}`), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options;
@@ -499,14 +500,14 @@ describe('a session\'s config across a restart', () => {
     sdk.sessions.push({ sessionId: 'row', summary: 'Row', lastModified: 1, cwd: '/home/softov' });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'claude:/row', action: { type: 'session/configChanged', config: { shellInitScripts: scripts } } },
+      params: { channel: 'ahp-session:/row', action: { type: 'session/configChanged', config: { shellInitScripts: scripts } } },
     });
     await settle();
     await written();
     expect(stored('live')?.shellInitScripts).toEqual(scripts);
     expect(stored('row')?.shellInitScripts).toEqual(scripts);
     const again = await hostOnFile();
-    const opened = await again.handle({ method: 'subscribe', params: { channel: 'claude:/row' } }) as {
+    const opened = await again.handle({ method: 'subscribe', params: { channel: 'ahp-session:/row' } }) as {
       snapshot: { state: { config: { values: Record<string, unknown> } } };
     };
     expect(opened.snapshot.state.config.values.shellInitScripts).toEqual(scripts);
@@ -535,7 +536,7 @@ describe('a session\'s config across a restart', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/lead', provider: 'claude' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/lead', action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
+      params: { channel: chatUriFor('ahp-session:/lead'), action: { type: 'session/configChanged', config: { effortLevel: 'low' } } },
     });
     await settle();
     await written();
@@ -561,10 +562,10 @@ describe('a session\'s config across a restart', () => {
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'echo' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'echo:/gone', action: { type: 'session/configChanged', config: { voice: 'shouty' } } },
+      params: { channel: 'ahp-session:/gone', action: { type: 'session/configChanged', config: { voice: 'shouty' } } },
     });
     await settle();
-    await client.handle({ method: 'disposeSession', params: { channel: 'echo:/gone' } });
+    await client.handle({ method: 'disposeSession', params: { channel: 'ahp-session:/gone' } });
     // A new session under the same name, which the late answer is not about.
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/gone', provider: 'echo' } });
     answer(true);
@@ -576,6 +577,7 @@ describe('a session\'s config across a restart', () => {
   const staleHost = async (config: Record<string, unknown>, preset?: Record<string, unknown>) => {
     const store = memorySessions();
     store.setConfig('stale', config);
+    store.setUri?.('stale', 'ahp-session:/stale');
     sdk.sessions.push({ sessionId: 'stale', summary: 'Stale', lastModified: 1, cwd: '/home/softov' });
     const said: string[] = [];
     const host = createHost({
@@ -591,7 +593,7 @@ describe('a session\'s config across a restart', () => {
     const { client, said } = await staleHost({ permissionMode: 'nope', permissions: { allow: ['Bash'] } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/stale', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
     });
     await settle(8);
     const options = sessionQueries().at(-1)?.options;
@@ -605,7 +607,7 @@ describe('a session\'s config across a restart', () => {
 
   it('keeps a stored key the schema does not declare, and drops a declared one it refuses, saying so once', async () => {
     const { client, said } = await staleHost({ model: 'opus', sandboxEnabled: 'on', permissions: 'all' });
-    const read = async () => (await client.handle({ method: 'subscribe', params: { channel: 'claude:/stale' } }) as {
+    const read = async () => (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/stale' } }) as {
       snapshot: { state: { config: { values: Record<string, unknown> } } };
     }).snapshot.state.config.values;
     const values = await read();
@@ -624,7 +626,7 @@ describe('a session\'s config across a restart', () => {
     const { client } = await staleHost(config, preset);
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/stale', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/stale'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
     });
     await settle(8);
     return sessionQueries().at(-1)?.options as { settings?: Record<string, unknown> } | undefined;

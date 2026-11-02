@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
 import type { Bag } from '../src/types/common.js';
@@ -120,7 +121,7 @@ async function opened(initial: Record<string, unknown> = { fixed: 'one', mutable
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/fixed';
-  const chatUri = 'ahp-chat:/fixed';
+  const chatUri = chatUriFor(uri);
   // The values the New view's picker held when the session was created, which
   // is what the client sends with `createSession`.
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'fixed', config: initial } });
@@ -276,7 +277,7 @@ it('treats a key a plugin contributed the same way', async () => {
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/contributed';
-  const chatUri = 'ahp-chat:/contributed';
+  const chatUri = chatUriFor(uri);
   await client.handle({
     method: 'createSession',
     params: { channel: uri, provider: 'fixed', config: { fixed: 'one', computer: 'computer://a' } },
@@ -324,10 +325,10 @@ it('keeps a change the backend took while the session was being started again', 
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/fixed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  void change(client, 'fixed:/fixed', { mutable: 'b' });
+  void change(client, 'ahp-session:/fixed', { mutable: 'b' });
   await settle();
   // The restart closes the old backend, which is when it answers.
-  void change(client, 'fixed:/fixed', { fixed: 'two' });
+  void change(client, 'ahp-session:/fixed', { fixed: 'two' });
   await settle();
   expect(store.config('fixed')).toMatchObject({ fixed: 'two', mutable: 'b' });
 });
@@ -377,7 +378,7 @@ it('applies a config change and a turn sent while the session starts again into 
   // The machine is still being made: the old backend is gone and the new one
   // not yet started. Both are sent back to back, as the first send does.
   void change(client, 'ahp-session:/boxed', { mutable: 'b' });
-  void turn(client, 'ahp-chat:/boxed', 'go');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   // And one on another channel, which this connection sent after them.
   void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
   await settle();
@@ -443,7 +444,7 @@ const intoMachine = async (throws = false) => {
 
 it('drops a turn that waited on a restart when its connection left', async () => {
   const { client, said, machine } = await intoMachine();
-  void turn(client, 'ahp-chat:/boxed', 'go');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
   await settle();
   client.close();
   machine.made('m1');
@@ -453,8 +454,8 @@ it('drops a turn that waited on a restart when its connection left', async () =>
 
 it('refuses a waiting turn the backend throws on, to the client that sent it', async () => {
   const { p, client, said, machine } = await intoMachine(true);
-  void turn(client, 'ahp-chat:/boxed', 'first');
-  void turn(client, 'ahp-chat:/boxed', 'second');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'first');
+  void turn(client, chatUriFor('ahp-session:/boxed'), 'second');
   await settle();
   machine.made('m1');
   await settle();
@@ -468,7 +469,7 @@ it('refuses a dispatch that waited too long on a restart, and goes on with the n
   const { p, client, said } = await intoMachine();
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   try {
-    void turn(client, 'ahp-chat:/boxed', 'go');
+    void turn(client, chatUriFor('ahp-session:/boxed'), 'go');
     void client.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } } } });
     await vi.advanceTimersByTimeAsync(59_000);
     expect(p.notes.filter((n) => n.method === 'action' && (n.params as Note).rejectionReason !== undefined)).toEqual([]);
@@ -554,8 +555,8 @@ it('keeps a session\'s chat names while the session starts again', async () => {
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/boxed', provider: 'fixed', config: { fixed: 'one', mutable: 'a' } } });
-  expect(await asked(client, 'createChat', { channel: 'fixed:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
-  void change(client, 'fixed:/boxed', { computer: 'disposable:box' });
+  expect(await asked(client, 'createChat', { channel: 'ahp-session:/boxed', chat: 'peer:/side' })).toHaveProperty('result');
+  void change(client, 'ahp-session:/boxed', { computer: 'disposable:box' });
   await settle();
   // The session is being started again into its machine: its chats are gone
   // from the backend and not yet back, and their names are still its.

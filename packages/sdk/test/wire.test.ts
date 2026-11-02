@@ -93,6 +93,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 const { echo } = await import('../../../examples/echo/agent.js');
 const { shellTerminals } = await import('../src/machines/terminals.js');
@@ -336,7 +337,7 @@ it('sends nothing the protocol does not declare, and nothing short of what it re
   await ask('listSessions', { channel: 'ahp-root://' });
 
   const uri = 'ahp-session:/wire';
-  const chatUri = 'ahp-chat:/wire';
+  const chatUri = chatUriFor(uri);
   await ask('createSession', { channel: uri, provider: 'claude' });
 
   /*

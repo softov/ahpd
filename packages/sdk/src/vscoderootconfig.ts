@@ -14,11 +14,11 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * contributes the literal it resolves to. The two keys whose default comes
  * from `src/vs/platform/chat/common/chatSettings.ts` name that file as a URL.
  *
- * This host acts on six of them: `globalAutoApproveEnabled` and
- * `eligibleForAutoApproval`, which are one setting for every connection,
+ * This host acts on six of them, each one setting for every connection:
+ * `globalAutoApproveEnabled` and `eligibleForAutoApproval`,
  * `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and
- * `editAutoApprovePatterns`, which are the connection's own and are read from
- * the connection that owns the session, and `canvasesEnabled`, which the
+ * `editAutoApprovePatterns`, which a session's commands are answered by, and
+ * `canvasesEnabled`, which the
  * plugin host's `openCanvas`, `updateCanvas` and `closeCanvas` ask before they
  * reach the store. The rest are declared so that a client
  * can draw them and so that a push of one is kept and read back rather than
@@ -33,12 +33,11 @@ import type { ConfigPropertySchema } from '@microsoft/agent-host-protocol';
  * which `trust.ts` asks before a tool call runs; `eligibleForAutoApproval`,
  * which `host/spawn.ts` asks before it; `terminalAutoApproveEnabled`,
  * `terminalAutoApproveRules` and `editAutoApprovePatterns`, which
- * `host/spawn.ts` reads from the connection that owns the session; and
- * `canvasesEnabled`, which `host/canvases.ts` asks before it opens, updates or
- * closes a canvas.
+ * `host/spawn.ts` answers a session's commands from; and `canvasesEnabled`,
+ * which `host/canvases.ts` asks before it opens, updates or closes a canvas.
  *
  * `workspaceTrust` is not here: it is declared beside `defaultShell` in
- * `host/root.ts`, because both belong to the connection that pushed them.
+ * `host/root.ts`.
  */
 export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
   // `agentHostProxyConfigDefinition.Proxy`, `agentHostSchema.ts:537`.
@@ -112,8 +111,8 @@ export const vscodeRootProperties: Record<string, ConfigPropertySchema> = {
   /*
    * `platformRootSchema`, `agentHostSchema.ts:852`.
    *
-   * The host's rather than a window's: a push of it is one setting for
-   * everybody, unlike `workspaceTrust` in `host/root.ts` beside it. It was
+   * The host's: a push of it is one setting for everybody, as a push of every
+   * key a client sends is. It was
    * read and declared nowhere before this, so a host that approved every tool
    * call was one no client could see or turn off.
    *

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it } from 'vitest';
 import { uriOf } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { fileResources } from '../../sdk/src/resources/resources.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { acpAgent } from '../src/index.js';
@@ -166,7 +167,7 @@ async function talking(options: {
   });
   await signIn(client);
   const uri = 'ahp-session:/ports';
-  const chatUri = 'ahp-chat:/ports';
+  const chatUri = chatUriFor(uri);
   // The window says which folders it trusts, and a session of a folder nobody
   // vouched for is refused rather than started.
   await client.handle({

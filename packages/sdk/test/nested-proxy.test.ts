@@ -746,10 +746,10 @@ it('gives a turn on a nested session the origin of the client outside that sent 
   const client = host.accept(peer);
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/outer', provider: PROVIDER, config: { computer: 'computer://box' } } });
-  await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/outer' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/outer') } });
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: 'ahp-chat:/outer', clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello world' } } },
+    params: { channel: chatUriFor('ahp-session:/outer'), clientSeq: 3, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello world' } } },
   });
   const said = (type: string): Bag | undefined =>
     peer.seen.find(({ method, params }) => method === 'action' && params?.action?.type === type)?.params;
@@ -773,8 +773,8 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
   await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/outer', provider: PROVIDER, config: { computer: 'computer://box' } } });
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/outer' } });
-  await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/outer' } });
-  const dispatch = (clientSeq: number, action: Bag, channel = 'ahp-chat:/outer'): Promise<unknown> =>
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/outer') } });
+  const dispatch = (clientSeq: number, action: Bag, channel = chatUriFor('ahp-session:/outer')): Promise<unknown> =>
     client.handle({ method: 'dispatchAction', params: { channel, clientSeq, action } });
   const told = (type: string): Bag[] => peer.seen
     .filter(({ method, params }) => method === 'action' && params?.action?.type === type)

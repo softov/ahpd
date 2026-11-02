@@ -436,14 +436,6 @@ const withoutCaseSensitiveGroups = (pattern: string): string => pattern.replace(
 const RULE_KEY = /^\/(?<pattern>.+)\/(?<flags>[dgimsuvy]*)$/u;
 
 /**
- * Whether a key is written as a regular expression rather than as a command's prefix.
- *
- * The form is the one `ruleRegexOf` reads, so a key the gate treats as an
- * expression is the key a matcher runs.
- */
-export const isRegexRuleKey = (key: string): boolean => RULE_KEY.test(key);
-
-/**
  * A rule key as a regular expression, and whether it may be matched in another casing.
  *
  * A key written `/.../flags` is the expression itself, and one that matches the

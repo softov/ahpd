@@ -86,8 +86,12 @@ export interface Catalogue {
   learnAccount(provider: string, account: Account): void;
   /** Every backend's rows, with what a refusing backend had last time carried over. */
   listing(before?: Summary[]): Promise<Summary[]>;
-  /** Record one listed row and build it, as a listing does for every row it finds. */
-  adopt(agent: Agent, row: Listed, waiting?: string): Summary;
+  /**
+   * Record one listed row and build it, as a listing does for every row it
+   * finds. `stored` says this host keeps a record for the row, which is what
+   * names an old row in its provider's scheme.
+   */
+  adopt(agent: Agent, row: Listed, waiting?: string, stored?: boolean): Summary;
   /** Tell every client about a listed row this host did not have. */
   rowAdded(summary: Summary): void;
   /**
@@ -416,7 +420,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * back to unread the moment anything else about it changes.
    */
   const statusOf = (uri: string): number => {
-    const held = sessions.get(ctx.heldAs(uri));
+    const held = sessions.get(uri);
     if (!held)
       return Status.Idle | kept.flags(idOf(uri));
     return drivingOf(held).status | kept.flags(idOf(uri));

@@ -17,8 +17,8 @@ it('reads a session held under its provider\'s scheme as a session, and a file a
   });
   const admin = made.accept(peer());
   await hello(admin, 'admin'); await signIn(admin, 'a');
-  expect(await call(admin, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
   const session = 'claude:/one';
+  expect(await call(admin, 'createSession', { channel: session, provider: 'claude' })).toHaveProperty('result');
   const opened = await call(admin, 'subscribe', { channel: session }) as { result: { snapshot: { state: { defaultChat?: string; chats?: { resource: string }[] } } } };
   const chat = opened.result.snapshot.state.defaultChat ?? opened.result.snapshot.state.chats?.[0]?.resource;
   expect(chat).toBeDefined();
@@ -48,27 +48,24 @@ it('needs a session\'s write group to drive one, and the act it is refused is th
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createSession', { channel: 'claude:/one', provider: 'claude' })).toHaveProperty('result');
   await call(admin.client, 'subscribe', { channel: 'claude:/one' });
 
-  // A member who may drive sessions and not read files drives it, by either name.
+  // A member who may drive sessions and not read files drives it.
   const member = await withRole(made, 'w');
   await member.send('claude:/one', { type: 'session/titleChanged', title: 'Held' });
-  await member.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Given' });
   expect(member.refused()).toEqual([]);
   expect(admin.seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'session/titleChanged')
-    .map((one) => one.params.action.title)).toEqual(['Held', 'Given']);
+    .map((one) => one.params.action.title)).toEqual(['Held']);
 
-  // A guest who may read files is refused all three, the annotations included,
-  // and told which act each one was.
+  // A guest who may read files is refused both, the annotations included, and
+  // told which act each one was.
   const guest = await withRole(made, 'g');
   await guest.send('claude:/one', { type: 'session/titleChanged', title: 'Mine' });
-  await guest.send('ahp-session:/one', { type: 'session/titleChanged', title: 'Mine' });
   await guest.send('claude:/one/annotations', { type: 'annotations/set', annotations: [] });
   expect(guest.refused()).toEqual([
-    'ahp-session:/one: g may not session:rename here',
-    'ahp-session:/one: g may not session:rename here',
-    'ahp-session:/one/annotations: g may not session:review here',
+    'claude:/one: g may not session:rename here',
+    'claude:/one/annotations: g may not session:review here',
   ]);
 });
 
@@ -78,7 +75,7 @@ it('reads and drives a changeset of a session held under its provider\'s scheme 
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createSession', { channel: 'claude:/one', provider: 'claude' })).toHaveProperty('result');
   const changeset = 'claude:/one/changeset/session';
 
   // Whatever the snapshot then says, it is not the gate saying it.
@@ -93,7 +90,7 @@ it('reads and drives a changeset of a session held under its provider\'s scheme 
   expect(guest.refused()).toEqual([`${changeset}: g may not session:review here`]);
 });
 
-it('needs session:changes as well as file:write to run an operation on a session\'s changeset, under either name', async () => {
+it('needs session:changes as well as file:write to run an operation on a session\'s changeset', async () => {
   const invoked: string[] = [];
   const changes: ChangesetSource = {
     scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted' }],
@@ -109,39 +106,38 @@ it('needs session:changes as well as file:write to run an operation on a session
   });
   const admin = await withRole(made, 'a');
   expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  const channel = 'ahp-session:/one/changeset/uncommitted';
 
   const writer = await withRole(made, 'f');
-  for (const channel of ['claude:/one/changeset/uncommitted', 'ahp-session:/one/changeset/uncommitted']) {
-    expect(await call(writer.client, 'invokeChangesetOperation', { channel, operationId: 'commit' }))
-      .toMatchObject({ code: -32009, message: expect.stringContaining('session:changes') });
-  }
+  expect(await call(writer.client, 'invokeChangesetOperation', { channel, operationId: 'commit' }))
+    .toMatchObject({ code: -32009, message: expect.stringContaining('session:changes') });
   expect(invoked).toEqual([]);
 
   const both = await withRole(made, 'b');
-  for (const channel of ['claude:/one/changeset/uncommitted', 'ahp-session:/one/changeset/uncommitted']) {
-    expect(await call(both.client, 'invokeChangesetOperation', { channel, operationId: 'commit' }))
-      .toMatchObject({ result: { message: 'did commit' } });
-  }
-  expect(invoked).toHaveLength(2);
+  expect(await call(both.client, 'invokeChangesetOperation', { channel, operationId: 'commit' }))
+    .toMatchObject({ result: { message: 'did commit' } });
+  expect(invoked).toEqual(['ahp-session:/one']);
 });
 
-it('asks a session\'s grants for a row a backend keeps on disk, under its name or any other', async () => {
+it('asks a session\'s grants for a row a backend keeps on disk, and for a name that is no session here', async () => {
   const { agent } = listingOne();
   const made = host({ users: directory({ r: ['session:read', 'session:write'], g: ['file:read'] }), agents: [agent] });
   const member = await withRole(made, 'r');
-  expect(await call(member.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ result: { snapshot: { resource: 'claude:/disk' } } });
   expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
+  // The row is listed as `ahp-session:/disk`, and that is its one name: the
+  // same id in the backend's scheme names no session here.
+  expect(await call(member.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ code: -32001 });
   // Marking a row read is what a client does from the catalogue, and writes
-  // the session's flags: `session:mark`, whatever the row was called. The
-  // refusal is said on the session it resolved to.
+  // the session's flags: `session:mark`, whatever the channel names. The
+  // refusal is said on the channel the client named.
   const guest = await withRole(made, 'g');
-  expect(await call(guest.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
-  await guest.send('claude:/disk', { type: 'session/isReadChanged', isRead: true });
+  expect(await call(guest.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
+  await guest.send('ahp-session:/disk', { type: 'session/isReadChanged', isRead: true });
   await guest.send('elsewhere:/disk', { type: 'session/isReadChanged', isRead: true });
   await guest.send('never-listed:/other', { type: 'session/isReadChanged', isRead: true });
   expect(guest.refused()).toEqual([
     'ahp-session:/disk: g may not session:mark here',
-    'ahp-session:/disk: g may not session:mark here',
+    'elsewhere:/disk: g may not session:mark here',
     'never-listed:/other: g may not session:mark here',
   ]);
 });
@@ -157,7 +153,7 @@ it('finds a session a backend wrote to disk after the last listing', async () =>
   const member = await withRole(made, 'r');
   await call(member.client, 'listSessions', { channel: ROOT });
   rows.push(onDisk('late'));
-  expect(await call(member.client, 'subscribe', { channel: 'claude:/late' })).toMatchObject({ result: { snapshot: { resource: 'claude:/late' } } });
+  expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/late' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/late' } } });
 });
 
 it('finds a session written between two subscribes, however close together', async () => {
@@ -169,10 +165,10 @@ it('finds a session written between two subscribes, however close together', asy
   // tells the host it has to list. A session written after that listing is
   // then opened at once - inside the two seconds the throttle used to answer
   // a second subscribe from, and which is the whole of what it cost.
-  expect(await call(member.client, 'subscribe', { channel: 'claude:/nobody' })).toMatchObject({ code: -32001 });
+  expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/nobody' })).toMatchObject({ code: -32001 });
   rows.push(onDisk('late'));
-  expect(await call(member.client, 'subscribe', { channel: 'claude:/late' }))
-    .toMatchObject({ result: { snapshot: { resource: 'claude:/late' } } });
+  expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/late' }))
+    .toMatchObject({ result: { snapshot: { resource: 'ahp-session:/late' } } });
 });
 
 it('finds a session written while a listing was already out', async () => {
@@ -192,16 +188,16 @@ it('finds a session written while a listing was already out', async () => {
    * the ask is joining one that never saw the session.
    */
   const release = holdNextList();
-  const nobody = call(member.client, 'subscribe', { channel: 'claude:/nobody' });
+  const nobody = call(member.client, 'subscribe', { channel: 'ahp-session:/nobody' });
   await settle();
   expect(counted.lists).toBe(before + 1);
 
   rows.push(onDisk('late2'));
-  const late = call(member.client, 'subscribe', { channel: 'claude:/late2' });
+  const late = call(member.client, 'subscribe', { channel: 'ahp-session:/late2' });
   await settle();
   release();
 
-  expect(await late).toMatchObject({ result: { snapshot: { resource: 'claude:/late2' } } });
+  expect(await late).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/late2' } } });
   expect(await nobody).toMatchObject({ code: -32001 });
 });
 
@@ -234,7 +230,7 @@ it('still asks a session\'s grants for a session that was disposed', async () =>
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/gone', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createSession', { channel: 'claude:/gone', provider: 'claude' })).toHaveProperty('result');
   expect(await call(admin.client, 'disposeSession', { channel: 'claude:/gone' })).toHaveProperty('result');
   const guest = await withRole(made, 'g');
   expect(await call(guest.client, 'subscribe', { channel: 'claude:/gone' })).toMatchObject({ code: -32009, message: expect.stringContaining('session:state') });
@@ -253,7 +249,7 @@ it('shares one listing among subscribes to sessions nobody has, asked at once', 
   // costs one pass over the machine's transcripts and not one each. There is no
   // window to step past any more, so nothing here moves the clock.
   const answers = await Promise.all([0, 1, 2, 3, 4].map((i) =>
-    call(member.client, 'subscribe', { channel: `claude:/nobody-${i}` })));
+    call(member.client, 'subscribe', { channel: `ahp-session:/nobody-${i}` })));
   expect(answers).toHaveLength(5);
   for (const one of answers) expect(one).toMatchObject({ code: -32001 });
   expect(counted.lists - before).toBe(1);
@@ -265,8 +261,11 @@ it('keeps config for a channel that names no session out of the store', async ()
   const made = host({ users: directory({ a: ['file:read', 'session:read', 'session:write'] }), agents: [agent], sessions: store });
   const admin = await withRole(made, 'a');
   await admin.send('zzz:/nothing', { type: 'session/configChanged', config: { voice: 'shouty' } });
-  await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'shouty', isolation: 'worktree' } });
-  expect(admin.refused()).toEqual(['zzz:/nothing: zzz:/nothing is not a session here']);
+  await admin.send('ahp-session:/disk', { type: 'session/configChanged', config: { voice: 'shouty', isolation: 'worktree' } });
+  // The row's id in another scheme is refused the same way, and its config
+  // stays what the row's own name was given.
+  await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'whisper' } });
+  expect(admin.refused()).toEqual(['zzz:/nothing: zzz:/nothing is not a session here', 'zzz:/disk: zzz:/disk is not a session here']);
   expect(store.config('nothing')).toBeUndefined();
   // The row that is a session keeps the backend's key and not this host's own.
   expect(store.config('disk')).toEqual({ voice: 'shouty' });
@@ -278,7 +277,7 @@ it('asks a session\'s grants for completions in a session', async () => {
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createSession', { channel: 'claude:/one', provider: 'claude' })).toHaveProperty('result');
   const asked = { channel: 'claude:/one', kind: 'userMessage', text: '/', offset: 1 };
   expect(await call(admin.client, 'completions', asked)).toHaveProperty('result');
   const guest = await withRole(made, 'g');
@@ -292,7 +291,7 @@ it('refuses a channel that is not a string rather than reading it as one', async
     agents: [{ ...echo({ path: root, pace: 0 }), provider: 'claude', displayName: 'Claude' }],
   });
   const admin = await withRole(made, 'a');
-  expect(await call(admin.client, 'createSession', { channel: 'ahp-session:/one', provider: 'claude' })).toHaveProperty('result');
+  expect(await call(admin.client, 'createSession', { channel: 'claude:/one', provider: 'claude' })).toHaveProperty('result');
   const guest = await withRole(made, 'g');
   const asked = { kind: 'userMessage', text: '/', offset: 1 };
 
@@ -339,7 +338,7 @@ it('needs computer:write to name a source for a session, and no more to name a m
   })).toMatchObject({ code: -32009, message: 'w may not computer:write here' });
   // And the change that makes one before the first turn, which is asked of the
   // same gate rather than of a session nobody is watching yet.
-  await worker.send('claude:/two', { type: 'session/configChanged', config: { computer: 'disposable:s' } });
+  await worker.send('ahp-session:/two', { type: 'session/configChanged', config: { computer: 'disposable:s' } });
   expect(worker.refused()).toEqual(['ahp-session:/two: w may not computer:write here']);
 });
 
@@ -356,7 +355,7 @@ it('needs computer:write to name a folder\'s dev container for a session', async
   expect(await call(worker.client, 'createSession', {
     channel: 'ahp-session:/two', provider: 'claude', config: { computer: 'devcontainer:///w/app' },
   })).toMatchObject({ code: -32009, message: 'w may not computer:write here' });
-  await worker.send('claude:/one', { type: 'session/configChanged', config: { computer: 'devcontainer:///w/app' } });
+  await worker.send('ahp-session:/one', { type: 'session/configChanged', config: { computer: 'devcontainer:///w/app' } });
   expect(worker.refused()).toEqual(['ahp-session:/one: w may not computer:write here']);
 });
 

@@ -1,4 +1,3 @@
-import { DEFAULT_TERMINAL_AUTO_APPROVE_RULES, isRegexRuleKey } from '../access/commandautoapprover.js';
 import { computerSource } from '../machines/computers.js';
 import type { Connection } from '../types/host.js';
 import type { Grant } from '../types/users.js';
@@ -277,16 +276,13 @@ export const channelRead = (channel: string, kind: ChannelKind, served?: Grant):
  * part of the host is being driven says nothing about what is being done to
  * it.
  *
- * `ahp-root://` is the one channel read with the action as well.
- * `root/configChanged` that only sets `PER_CONNECTION` keys changes nothing
- * anybody else reads, so it needs a sign-in and no grant (`undefined`) - except
- * `workspaceTrust`, which is one window's answer about the folders every
- * session of that window loads from, so pushing it needs `trust:push`, which
- * the `trust:write` group covers. The terminal rules are the window's too, but
- * a `/.../` key the default table does not carry is an expression of its own,
- * and a slow one would stall the host for every person, so it needs
- * `config:change`. Any other key, and a `replace`, changes the host for
- * everybody and needs `config:write`.
+ * `ahp-root://` is the one channel read with the action as well. Every key a
+ * `root/configChanged` names is one value for the whole host, which every
+ * session and every client reads, so a push changes the host for everybody and
+ * needs `config:change`, and so does a `replace`. A push of `workspaceTrust`
+ * alone needs `trust:push`, which the `trust:write` group covers: it is the
+ * answer about the folders sessions load their projects from. A push that names
+ * no key changes nothing, and needs a sign-in and no grant (`undefined`).
  *
  * The other is `file:watch` for a channel that is neither a session's nor a
  * terminal's - a `file:` URI, a resource watch, one another client relays. An
@@ -305,11 +301,8 @@ export const dispatchNeeds = (channel: string, kind: ChannelKind, action?: Recor
       ? action.config
       : {}) as Record<string, unknown>;
     const keys = Object.keys(config);
-    if (!keys.every((key) => PER_CONNECTION.has(key))) return 'config:change';
-    const rules = config['terminalAutoApproveRules'];
-    if (typeof rules === 'object' && rules !== null
-      && Object.keys(rules).some((key) => isRegexRuleKey(key) && !Object.hasOwn(DEFAULT_TERMINAL_AUTO_APPROVE_RULES, key))) return 'config:change';
-    return keys.includes('workspaceTrust') ? 'trust:push' : undefined;
+    if (keys.length === 0) return undefined;
+    return keys.every((key) => key === 'workspaceTrust') ? 'trust:push' : 'config:change';
   }
   return kind === 'other' && !channel.startsWith('ahp-automation') ? 'file:watch' : undefined;
 };
@@ -335,37 +328,6 @@ export const computerNeeds = (action: Record<string, unknown>): Grant | undefine
     : {}) as Record<string, unknown>;
   return computerSource(config.computer) === undefined ? undefined : 'computer:write';
 };
-
-/**
- * The root config keys that are a person's, not the host's.
- *
- * The record a client pushes to `ahp-root://` carries both kinds. Almost every
- * key describes the host and is one setting for everybody, `globalAutoApproveEnabled`
- * among them, which `trust.ts` asks before a tool call runs. `defaultShell` is
- * the person's: the host's own note by `rootConfig` says so, and names VS Code
- * pushing it out of `terminal.integrated.agentHostProfile.<os>` on connect.
- *
- * Kept in one shared record they are the same thing on a one-person daemon and
- * not on any other: whoever connected last decided everybody's shell. So these
- * live on the `Connection`, and a connection reads its own back.
- *
- * `workspaceTrust` is the person's for the same reason and a sharper one: it is
- * a window's answer about the folders that window has opened, and kept in the
- * shared record the last window to connect decided what every session on the
- * host loads from its project.
- *
- * The three terminal and edit rules are the same answer about what a window
- * lets its agent do without asking: kept in the shared record, the last window
- * to connect would decide every session's approvals, and a session is started
- * by one window rather than by whatever connected last.
- */
-export const PER_CONNECTION = new Set([
-  'defaultShell',
-  'workspaceTrust',
-  'terminalAutoApproveEnabled',
-  'terminalAutoApproveRules',
-  'editAutoApprovePatterns',
-]);
 
 /**
  * Whether this connection is somebody who may read the daemon's own settings.

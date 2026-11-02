@@ -93,7 +93,7 @@ describe('opening a past session', () => {
     await settle(4);
     const passes = counted.lists;
 
-    expect((await opened(client, 'claude:/one')).snapshot?.resource).toBe('claude:/one');
+    expect((await opened(client, 'ahp-session:/one')).snapshot?.resource).toBe('ahp-session:/one');
     // Opening the session a client is looking at is the one thing that must not
     // cost a pass over the machine: it is the case every window does on open.
     expect(counted.lists).toBe(passes);
@@ -108,7 +108,7 @@ describe('opening a past session', () => {
     await settle(4);
     const passes = counted.lists;
 
-    expect((await opened(client, 'claude:/late')).snapshot?.resource).toBe('claude:/late');
+    expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     expect(counted.asked).toEqual(['claude']);
     // No listing: one file rather than a pass over every transcript, which is
     // the whole of what `find` is for.
@@ -119,7 +119,7 @@ describe('opening a past session', () => {
     expect(added.map((one) => [one?.resource, one?.title])).toEqual([['ahp-session:/late', 'Late']]);
 
     // And it is held now, so a second opening asks nothing of anybody.
-    expect((await opened(client, 'claude:/late')).snapshot?.resource).toBe('claude:/late');
+    expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     expect(counted.asked).toEqual(['claude']);
   });
 
@@ -133,7 +133,7 @@ describe('opening a past session', () => {
     const store: SessionStore = { ...memorySessions(), provider: (id) => (id === 'late' ? 'second' : undefined) };
     const { client } = await watching([backend('first', first, counted), backend('second', second, counted)], store);
 
-    expect((await opened(client, 'claude:/late')).snapshot?.resource).toBe('claude:/late');
+    expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     // One question, to the one that recorded it: the transcript is there and
     // the answer is that this endpoint can serve it.
     expect(counted.asked).toEqual(['second']);
@@ -151,7 +151,7 @@ describe('opening a past session', () => {
     // Written to disk after the last listing, and found the only way a backend
     // without `find` can be.
     here.listed.push(row('late', 'Late'));
-    expect((await opened(client, 'claude:/late')).snapshot?.resource).toBe('claude:/late');
+    expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     expect(counted.lists).toBe(passes + 1);
   });
 
@@ -164,7 +164,7 @@ describe('opening a past session', () => {
     const passes = counted.lists;
 
     for (let i = 0; i < 5; i++) {
-      await expect(client.handle({ method: 'subscribe', params: { channel: `claude:/never-${i}` } }))
+      await expect(client.handle({ method: 'subscribe', params: { channel: `ahp-session:/never-${i}` } }))
         .rejects.toMatchObject({ code: -32001 });
     }
     // Every backend here can be asked about one session, so a listing is a pass
@@ -182,7 +182,7 @@ describe('opening a past session', () => {
     await settle(4);
     const passes = counted.lists;
 
-    await expect(client.handle({ method: 'subscribe', params: { channel: 'claude:/never' } }))
+    await expect(client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/never' } }))
       .rejects.toMatchObject({ code: -32001 });
     // Nothing here has it and nothing here can be asked again, so a listing
     // would be a pass over the machine for nothing.
@@ -210,9 +210,13 @@ describe('opening a past session', () => {
     const store = memorySessions();
     store.setProvider('bot', 'claude');
     store.setWorkingDirectory('bot', BOT);
-    const { client } = await watching([agent], store);
+    const { client, notes } = await watching([agent], store);
 
     expect((await opened(client, 'claude:/bot')).snapshot?.resource).toBe('claude:/bot');
+    // Said under the name a listing gives a row this host keeps a record for,
+    // which is the one name the row has.
+    expect(notes.filter((one) => one.method === 'root/sessionAdded')
+      .map((one) => (one.params as { summary?: { resource: string } }).summary?.resource)).toEqual(['claude:/bot']);
     expect(asked).toEqual([{ workingDirectory: BOT }]);
     expect(read).toEqual([{ workingDirectory: BOT }]);
   });
@@ -228,7 +232,7 @@ describe('opening a past session', () => {
     };
     const { client } = await watching([agent]);
 
-    expect((await opened(client, 'claude:/late')).snapshot?.resource).toBe('claude:/late');
+    expect((await opened(client, 'ahp-session:/late')).snapshot?.resource).toBe('ahp-session:/late');
     expect(asked).toEqual([['late', undefined]]);
   });
 
@@ -242,8 +246,10 @@ describe('opening a past session', () => {
     store.setProvider('ran', 'claude');
     const { client } = await watching([agent], store);
 
+    // A row this host keeps a record for keeps its provider's scheme, as a
+    // listing names it, and a row it has none for is the protocol's URI.
     await opened(client, 'claude:/ran');
-    await opened(client, 'claude:/never-ran');
+    await opened(client, 'ahp-session:/never-ran');
     expect(store.workingDirectory('ran')).toBe('/srv/worktrees/fix');
     // A session this host never ran gets no record for being looked at.
     expect(store.rowOf('never-ran')).toBeUndefined();

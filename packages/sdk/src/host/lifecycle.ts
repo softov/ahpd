@@ -202,7 +202,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const {
     options, sessions, byChat, subagents, owners, kept, decided, offered, worktrees, worktreeOf, origins,
     drafts, madeFrom, resumedSessions, githubFacts, principals, presence, marks, lives, beside, detached,
-    dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf, chatOf,
+    dispatch, broadcast, flushDeltas, log, fire, sessionEvents, leadOf,
     dirOf, changesetOf, stopUnwatched, captureBaseline,
     sessionMachines, enteredIn, inMachine, takeOut, placedIn, followOf,
     isolating, charged, senders, sentBy, forgetSender, forgetSendersIn, forgetKeys, keepKeys,
@@ -935,13 +935,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
      * moved or made.
      *
      * The same question a client adding a folder is asked, and answered from
-     * the same value: a folder the asking window has already pushed as trusted
-     * is entered without a round trip, and one it has not is entered only on
-     * its yes.
+     * the same value: a folder the host's `workspaceTrust` already trusts is
+     * entered without a round trip, and any other only on the asking window's
+     * yes.
      */
     const effective = { ...held.agent.defaults(), ...contributedDefaults(), ...held.config };
     const auto = autoApproved(effective, rootConfig);
-    await requireTrust({ folder: move.directory, sender: move.sender, autoApproved: auto });
+    await requireTrust({ folder: move.directory, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
     decided.set(uri, { ...decided.get(uri), isolation: move.isolation ? 'worktree' : 'folder' });
     offered.set(uri, (await isolating(move.directory, move.isolation ? 'worktree' : 'folder')).schema);
     await restart(uri, {}, { additional: [], directory: move.directory }, move.sender, async (repository) => {
@@ -956,7 +956,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        * started in the worktree is told the same thing.
        */
       if (repository !== move.directory) {
-        await requireTrust({ folder: repository, sender: move.sender, autoApproved: auto });
+        await requireTrust({ folder: repository, sender: move.sender, trust: rootConfig.workspaceTrust, autoApproved: auto });
       }
     });
     const lead = byChat.get(chatUriFor(uri));
@@ -1627,17 +1627,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         continue;
       }
       /*
-       * The chat the attachment names, where this host is running it.
-       *
-       * `chatOf` is what every other reader of a chat URI goes through, so a
-       * reference spelt the way this client knows the chat - the default chat's
-       * derived name, a peer chat's own name, the older `ahp-chat:/<id>` - is
-       * the same chat here as everywhere else. A chat this host is not running
-       * has no turns to read and no link to give, and a client can attach one:
-       * the reference outlives the session it names, and a message that arrives
-       * with it is still a message.
+       * The chat the attachment names, by its one URI, where this host is
+       * running it. A chat this host is not running has no turns to read and
+       * no link to give, and a client can attach one: the reference outlives
+       * the session it names, and a message that arrives with it is still a
+       * message.
        */
-      const named = chatOf(one.resource);
+      const named = one.resource;
       const live = byChat.get(named);
       const owning = live === undefined ? undefined : sessions.get(live.uri);
       const link = live === undefined || owning === undefined

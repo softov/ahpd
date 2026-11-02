@@ -1008,9 +1008,14 @@ host.on('listening', async () => {
   const conn = host.connect();
   await conn.request('initialize', { clientId: 'bot', protocolVersions: ['0.9.0'] });
   await conn.request('createSession', { channel: 'ahp-session:/bot', provider: 'claude' });
-  await conn.request('subscribe', { channel: 'ahp-chat:/bot' });
+  const opened = await conn.request('subscribe', { channel: 'ahp-session:/bot' }) as {
+    snapshot: { state: { defaultChat: string } };
+  };
+  // The session's default chat, which the session's own state names.
+  const chat = opened.snapshot.state.defaultChat;
+  await conn.request('subscribe', { channel: chat });
   conn.notify('dispatchAction', {
-    channel: 'ahp-chat:/bot',
+    channel: chat,
     action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'Say hello.' } },
   });
 });

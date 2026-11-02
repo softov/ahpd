@@ -62,7 +62,8 @@ const ready = await client.handle({
 console.log('providers:', JSON.stringify(ready.snapshots[0]?.state.agents.map((one) => one.provider)));
 
 const uri = 'ahp-session:/smoke';
-const chatUri = 'ahp-chat:/smoke';
+// The session's default chat, named after the session as the reference host names one.
+const chatUri = `ahp-chat://default/${Buffer.from(uri, 'utf8').toString('base64url')}`;
 await client.handle({
   method: 'createSession',
   params: { channel: uri, provider: 'copilot', workingDirectories: [`file://${path}`] },

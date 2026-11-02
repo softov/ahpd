@@ -44,6 +44,7 @@ export function sessionFlag(
   const after = on ? before | bit : before & ~bit;
   if (after === before) return false;
   ctx.kept.setFlags(idOf(uri), after);
+  ctx.keepName(idOf(uri));
   // Every client watching, and the catalogue: a flag one client sets is a flag
   // the others have to see, which is what having a host for this buys over
   // each client keeping its own.
@@ -436,7 +437,10 @@ export function chatAction(
     const keep = (): void => {
       const uri = sessionFor(channel);
       const taken = Object.fromEntries(Object.entries(config).filter(([key]) => !HOSTS_OWN.includes(key)));
-      if (Object.keys(taken).length > 0) kept.setConfig(idOf(uri), { ...kept.config(idOf(uri)), ...taken });
+      if (Object.keys(taken).length > 0) {
+        kept.setConfig(idOf(uri), { ...kept.config(idOf(uri)), ...taken });
+        ctx.keepName(idOf(uri));
+      }
       dispatch(uri, action, origin);
     };
     const known = (): boolean => sessions.has(sessionFor(channel)) || owners.has(sessionFor(channel));
@@ -451,10 +455,11 @@ export function chatAction(
       keep();
       return;
     }
-    // `past` reads the catalogue first, which is what lists it.
-    return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then((found) => {
+    // `past` reads the catalogue first, which is what lists it, under the one
+    // name the session is published by.
+    return conn.bounded(past(idOf(sessionFor(channel))), 'reading the catalogue').then(() => {
       if (!connections.has(connection)) return;
-      if (found !== undefined || known()) keep();
+      if (known()) keep();
       else no(`${channel} is not a session here`);
     });
   }
@@ -506,14 +511,16 @@ export function chatAction(
    * draft held for a session nobody has is a map that only grows.
    */
   if (!session && type === 'chat/draftChanged') {
-    const id = idOf(sessionFor(channel));
+    const uri = sessionFor(channel);
+    const id = idOf(uri);
     void (async () => {
       const missing = waitingFor(id);
       if (missing !== undefined) {
         refuse(connection.peer, channel, action, origin, `${missing} is not loaded on this host`);
         return;
       }
-      if (!(await past(id))) {
+      // The session the chat belongs to, under the one name it is published by.
+      if (!(await past(id)) || ctx.nameOf(id) !== uri) {
         refuse(connection.peer, channel, action, origin, `${channel} is not a session this host knows`);
         return;
       }
@@ -807,7 +814,7 @@ export function chatAction(
       void (async () => {
         try {
           if (entering !== undefined) {
-            await requireTrust({ folder: entering, sender: connection, autoApproved: auto });
+            await requireTrust({ folder: entering, sender: connection, trust: rootConfig.workspaceTrust, autoApproved: auto });
           }
           /*
            * A new first folder is a move, made as `set_workspace` makes one:

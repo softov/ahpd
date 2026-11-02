@@ -19,6 +19,9 @@ vi.mock('@anthropic-ai/claude-agent-sdk', async () => (await import('./support/c
 beforeEach(resetSdk);
 
 describe('two people on one chat', () => {
+  /** The chat of `ahp-session:/live` both of them watch. */
+  const LIVE = chatUriFor('ahp-session:/live');
+
   it('shows each other what is being typed', async () => {
     const host = serving('/home/softov');
     const one = peer();
@@ -30,27 +33,27 @@ describe('two people on one chat', () => {
     }
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     for (const client of [a, b]) {
-      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+      await client.handle({ method: 'subscribe', params: { channel: LIVE } });
     }
 
     a.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat:/live',
+        channel: LIVE,
         action: { type: 'chat/draftChanged', draft: { text: 'half a th', origin: { kind: 'user' } } },
       },
     });
     await settle();
     // The only reason a draft is on the wire at all: a client that kept its
     // own would need nothing from a host for it.
-    const typed = actions(two, 'ahp-chat:/live')
+    const typed = actions(two, LIVE)
       .find((e) => e.action.type === 'chat/draftChanged')?.action.draft as { text?: string } | undefined;
     expect(typed?.text).toBe('half a th');
 
     // And somebody arriving later gets it from the snapshot.
     const three = host.accept(peer());
     await three.handle(hello(['0.9.0']));
-    const opened = await three.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } }) as {
+    const opened = await three.handle({ method: 'subscribe', params: { channel: LIVE } }) as {
       snapshot: { state: { draft?: { text?: string } } };
     };
     expect(opened.snapshot.state.draft?.text).toBe('half a th');
@@ -66,14 +69,14 @@ describe('two people on one chat', () => {
     await b.handle(hello(['0.9.0'], { clientId: 'two' }));
     await a.handle({ method: 'createSession', params: { channel: 'ahp-session:/live', provider: 'claude' } });
     for (const client of [a, b]) {
-      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/live' } });
+      await client.handle({ method: 'subscribe', params: { channel: LIVE } });
     }
     const draft = { text: 'half a th', origin: { kind: 'user' } };
     const typed = (clientSeq: number) => a.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/live', clientSeq, action: { type: 'chat/draftChanged', draft } },
+      params: { channel: LIVE, clientSeq, action: { type: 'chat/draftChanged', draft } },
     });
-    const drafts = (p: ReturnType<typeof peer>) => actions(p, 'ahp-chat:/live').filter((e) => e.action.type === 'chat/draftChanged');
+    const drafts = (p: ReturnType<typeof peer>) => actions(p, LIVE).filter((e) => e.action.type === 'chat/draftChanged');
 
     void typed(1);
     await settle();
@@ -425,7 +428,7 @@ describe('a chat made out of another', () => {
     expect(defectsOf(p, [session, own])).toEqual([]);
   });
 
-  it('names a secondary chat it was forked from as that chat, under any spelling of the session', async () => {
+  it('names a secondary chat it was forked from as that chat, and the default chat by its own URI', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     await oneTurn(client, chatUri);
     await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/other' } });
@@ -439,19 +442,18 @@ describe('a chat made out of another', () => {
       params: { channel: uri, chat: 'ahp-chat:/lead-fork', source: { kind: 'fork', chat: chatUri, turnId: 't1' } },
     });
 
-    const alias = `claude:/${uri.slice(uri.indexOf(':/') + 2)}`;
-    const aliased = await client.handle({ method: 'subscribe', params: { channel: alias } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
       snapshot: { state: { defaultChat: string; chats: { resource: string; origin?: unknown }[] } };
     };
-    const rows = aliased.snapshot.state.chats;
+    const rows = opened.snapshot.state.chats;
     // Not the default chat: the chat it was made from is a peer of it.
     expect(rows.find((c) => c.resource === 'ahp-chat:/forked')?.origin)
       .toEqual({ kind: 'fork', chat: 'ahp-chat:/other', turnId: 't1' });
-    // The default chat, in the spelling this client gave the session.
+    // The default chat, by the one URI it has.
     expect(rows.find((c) => c.resource === 'ahp-chat:/lead-fork')?.origin)
-      .toEqual({ kind: 'fork', chat: aliased.snapshot.state.defaultChat, turnId: 't1' });
-    expect(aliased.snapshot.state.defaultChat).not.toBe(chatUri);
-    expect(defectsOf(p, [aliased])).toEqual([]);
+      .toEqual({ kind: 'fork', chat: chatUri, turnId: 't1' });
+    expect(opened.snapshot.state.defaultChat).toBe(chatUri);
+    expect(defectsOf(p, [opened])).toEqual([]);
   });
 
   it('refuses a source it does not know, and one from another session', async () => {
@@ -629,18 +631,19 @@ describe('more than one chat in a session', () => {
       .toBe(second);
     expect(actions(p, uri).find((e) => e.action.type === 'session/chatRemoved')?.action.chat).toBe(chatUri);
     /*
-     * And the name follows the role rather than the chat.
+     * And the URI stays the chat's that was closed.
      *
-     * `default` is which chat a client gets when it names none, not an identity
-     * - so once the default has moved, the URI that means "this session's
-     * default" resolves to the one that is now default. A client holding it
-     * lands on the conversation the session would hand it anyway, which is
-     * what it asked for.
+     * The derived default chat URI is its session's only while the session's
+     * record says it is the default, as the reference host gives one an owner:
+     * once the default has moved, that URI names nothing, and the session's
+     * `defaultChat` says which chat a client gets.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
      */
-    const after = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as {
-      snapshot: { state: { resource: string } };
+    await expect(client.handle({ method: 'subscribe', params: { channel: chatUri } })).rejects.toMatchObject({ code: -32001 });
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { defaultChat: string } };
     };
-    expect(after.snapshot.state.resource).toBe(second);
+    expect(session.snapshot.state.defaultChat).toBe(second);
   });
 
   it('refuses to fork one from a turn, which it cannot do', async () => {
@@ -1952,6 +1955,58 @@ describe('a chat renamed on its own channel', () => {
   });
 });
 
+/*
+ * A session renamed on its own channel, as the reference host renames one: the
+ * client's action goes out on the session's channel, and a session that counts
+ * one chat has that chat's held title and its row moved after it. A session
+ * with a peer chat keeps its default chat's title.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+ */
+describe('a session renamed on its own channel', () => {
+  const titled = (p: ReturnType<typeof peer>) => actions(p)
+    .filter((e) => e.action.type === 'session/titleChanged' || e.action.type === 'session/chatUpdated')
+    .map((e) => [e.channel, e.action, e.origin]);
+  type Opened = { snapshot: { state: { title: string; chats: { resource: string; title: string }[] } } };
+
+  it('retitles the default chat of a session with one chat, and the chat keeps the title past its next turn', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 6, action: { type: 'session/titleChanged', title: 'Whole' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [uri, { type: 'session/titleChanged', title: 'Whole' }, { clientId: 'probe', clientSeq: 6 }],
+      [uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title: 'Whole' } }, undefined],
+    ]);
+
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, action: { type: 'chat/turnStarted', turnId: 'w1', message: { text: 'go' } } } });
+    await settle();
+    await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 4 });
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    expect(session.snapshot.state.title).toBe('Whole');
+    expect(session.snapshot.state.chats.find((one) => one.resource === chatUri)?.title).toBe('Whole');
+    const own = await client.handle({ method: 'subscribe', params: { channel: chatUri } }) as { snapshot: { state: { title: string } } };
+    expect(own.snapshot.state.title).toBe('Whole');
+  });
+
+  it('keeps the default chat\'s title in a session with a peer chat', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: 'ahp-chat:/second' } });
+    const before = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    const kept = before.snapshot.state.chats.find((one) => one.resource === chatUri)?.title;
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 7, action: { type: 'session/titleChanged', title: 'Whole' } } });
+    await settle();
+    expect(titled(p)).toEqual([
+      [uri, { type: 'session/titleChanged', title: 'Whole' }, { clientId: 'probe', clientSeq: 7 }],
+    ]);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as Opened;
+    expect(session.snapshot.state.title).toBe('Whole');
+    expect(session.snapshot.state.chats.find((one) => one.resource === chatUri)?.title).toBe(kept);
+  });
+});
+
 describe('a chat of another backend', () => {
   const DIR = '/home/softov';
   const LIVE = 'ahp-session:/live';
@@ -2290,5 +2345,77 @@ describe('a chat of another backend', () => {
     expect(after.state.chats?.map((chat) => chat.resource)).toContain(PEER);
     expect((await opened(second.client, PEER)).state.turns.map((turn) => turn.message?.text))
       .toEqual(['second', 'third']);
+  });
+});
+
+/*
+ * An action naming a chat or a session this host does not know, answered as
+ * the reference host answers it: a session's read or archive toggle is dropped
+ * with nothing said or kept, any other session action is refused, a chat's read
+ * or archive is refused, and any other action on the chat is said back on its
+ * channel and runs nothing.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L12482-L12531
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentService.ts#L13442-L13460
+ */
+describe('an action naming a chat or session nobody has', () => {
+  const NOBODY = 'ahp-session:/nobody';
+  const naming = (p: ReturnType<typeof peer>, word: string) => p.notes.filter((n) => JSON.stringify(n.params).includes(word));
+
+  it('drops a session\'s read and archive toggles for a session nobody has, saying and keeping nothing', async () => {
+    const store = memorySessions();
+    const { client, peer: p } = await running({ sessions: store });
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 1, action: { type: 'session/isReadChanged', isRead: true } } });
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 2, action: { type: 'session/isArchivedChanged', isArchived: true } } });
+    await settle(8);
+    expect(naming(p, 'nobody')).toEqual([]);
+    expect(store.flags('nobody')).toBe(0);
+  });
+
+  it('refuses any other session action on a session nobody has', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: NOBODY, clientSeq: 3, action: { type: 'session/titleChanged', title: 'Mine' } } });
+    await settle(8);
+    const said = actions(p, NOBODY);
+    expect(said).toHaveLength(1);
+    expect(said[0]?.origin).toEqual({ clientId: 'probe', clientSeq: 3 });
+    expect(said[0]?.rejectionReason).toBeDefined();
+  });
+
+  it('refuses a read or an archive of a chat nobody has, in the reference host\'s words', async () => {
+    const { client, peer: p } = await running();
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-chat:/nobody', clientSeq: 4, action: { type: 'chat/isReadChanged', isRead: true } } });
+    client.handle({ method: 'dispatchAction', params: { channel: 'ahp-chat:/nobody', clientSeq: 5, action: { type: 'chat/isArchivedChanged', isArchived: true } } });
+    await settle(8);
+    expect(actions(p).map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([
+      [4, 'Only a known chat can change its read state.'],
+      [5, 'Only a known independently manageable non-default chat can be archived.'],
+    ]);
+  });
+
+  it('says any other action on a chat nobody has back on its channel, and runs nothing', async () => {
+    const { client, peer: p, uri } = await running();
+    const gone = 'ahp-chat:/gone';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: gone } });
+    await client.handle({ method: 'subscribe', params: { channel: gone } });
+    await client.handle({ method: 'disposeChat', params: { channel: gone } });
+    const before = sessionQueries().length;
+    p.notes.length = 0;
+
+    client.handle({ method: 'dispatchAction', params: { channel: gone, clientSeq: 6, action: { type: 'chat/turnStarted', turnId: 'g1', message: { text: 'still here?' } } } });
+    await settle(8);
+    expect(actions(p).map((e) => [e.channel, e.action.type, e.origin, e.rejectionReason])).toEqual([
+      [gone, 'chat/turnStarted', { clientId: 'probe', clientSeq: 6 }, undefined],
+    ]);
+    expect(sessionQueries().length).toBe(before);
+    const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
+      snapshot: { state: { chats: { resource: string }[] } };
+    };
+    expect(session.snapshot.state.chats.map((one) => one.resource)).not.toContain(gone);
   });
 });
