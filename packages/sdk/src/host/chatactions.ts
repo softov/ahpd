@@ -206,7 +206,7 @@ export function chatAction(
     contributedDefaults, decided,
     described, dispatch, drafts, fire, kept, known, leadOf, lifeOf, lives, log, messageAttachments,
     messageFrom, modelIn, names, ownerFor, owners, past, pluginsMoved, principalFor, propertyOf, putIn, renameChat,
-    restart, restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
+    renameSession, restart, restartChat, restarting, rootConfig, served, sessionFor, sessionMachines, sessions, spawn, starting,
     statusOf, subagents, summaryMoved, value, waitingFor, wake, hold,
   } = ctx;
 
@@ -696,10 +696,13 @@ export function chatAction(
      * A rename from a client.
      *
      * On a chat channel it names that chat, the way the reference host
-     * reads it (`sessionTitleContribution.ts`); on the session channel
-     * it names the session, which is its default chat. Blank is a
-     * refusal, not a blank title: a row nobody can find again is the
-     * thing the derived title exists to prevent.
+     * reads it: the client's action goes out on that channel, then the
+     * chat's held title and its row move together, and a default chat
+     * renames its session after. On the session channel it names the
+     * session, which is its default chat. Blank is a refusal, not a blank
+     * title: a row nobody can find again is the thing the derived title
+     * exists to prevent.
+     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L53-L72
      */
     case 'session/titleChanged': {
       const uri = session.uri;
@@ -713,9 +716,14 @@ export function chatAction(
         no('a title cannot be blank');
         break;
       }
-      renameChat(uri, byChat.has(channel) ? channel : owner.defaultChat, title);
-      // Answered on the chat's channel when it came on one: the rename itself
-      // is said on the session's.
+      if (byChat.has(channel)) {
+        dispatch(channel, action, origin);
+        renameChat(uri, channel, title);
+        break;
+      }
+      renameSession(uri, title);
+      // Answered on the channel it came on when the session's own rename,
+      // said on the session's channel, did not answer it there.
       if (ctx.unanswered()) dispatch(channel, action, origin);
       break;
     }

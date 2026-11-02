@@ -286,8 +286,10 @@ export interface Tooling {
   chatMeant(held: Held, chatId: string | undefined): { uri: string; chat: Session } | undefined;
   /** A move a session's agent asked for, waiting for its turn to end. */
   moving: Map<string, Move>;
-  /** Give a chat a title, and say so. */
+  /** Give a chat a title, its held state and its row together, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
+  /** Give a session a title from its own channel, and say so. */
+  renameSession(uri: string, title: string): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
   /**
@@ -1316,10 +1318,15 @@ export function createTooling(ctx: HostContext): Tooling {
   /**
    * Give a chat a title, and say so.
    *
-   * The session's title is its default chat's and goes out as
-   * `session/titleChanged`; a peer chat's is its own and goes out as
-   * `session/chatUpdated`. A client renaming a row and an agent calling
-   * `rename_chat` come to the same place.
+   * The chat's held state takes the title and its row in the session says it
+   * with `session/chatUpdated`, together, as the reference host renames a
+   * chat: no chat action carries a title, so the held state is set here, and
+   * every row read off it after says the same. The default chat's title is its
+   * session's too, said as `session/titleChanged` after the row. A client
+   * renaming a chat on its own channel and an agent calling `rename_chat` come
+   * to the same place.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2316-L2331
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L58-L71
    */
   const renameChat = (uri: string, chatUri: string, title: string): void => {
     const held = sessions.get(uri);
@@ -1329,11 +1336,30 @@ export function createTooling(ctx: HostContext): Tooling {
     // Written down here rather than at either caller, because a client's
     // `session/titleChanged` and the `rename_chat` tool both come through.
     keepTitle(uri, chatUri, title);
+    const open = ctx.heldStates.get(chatUri);
+    if (open !== undefined) open.state = { ...open.state, title };
+    dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     if (chatUri === held.defaultChat) dispatch(uri, { type: 'session/titleChanged', title });
-    else dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: { title } });
     summaryMoved(uri);
     // The session's title is the subject a commit would use, so the question
     // the changeset's commit asks names a different line now.
+    operationsMoved(uri);
+  };
+  /**
+   * Give a session a title from its own channel, and say so.
+   *
+   * The session's title is its default chat's: the chat's backend is handed
+   * it and the store keeps it under that chat, and it goes out as
+   * `session/titleChanged` on the session.
+   */
+  const renameSession = (uri: string, title: string): void => {
+    const held = sessions.get(uri);
+    const found = held?.chats.get(held.defaultChat);
+    if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
+    found.setTitle?.(title);
+    keepTitle(uri, held.defaultChat, title);
+    dispatch(uri, { type: 'session/titleChanged', title });
+    summaryMoved(uri);
     operationsMoved(uri);
   };
 
@@ -2071,7 +2097,7 @@ export function createTooling(ctx: HostContext): Tooling {
   return {
     permitted, strategyOf, sessionBindings, shapedDefinition, toolDefinitions,
     clientTools, clientPluginsOf, toggleClientPlugin, customizationUnder, folderOf, withEntries, tellOff, forgetTold, keepDecision,
-    retool, pluginsSettled, chatMeant, renameChat, toolContext,
+    retool, pluginsSettled, chatMeant, renameChat, renameSession, toolContext,
     pluginsFor, pluginsMoved, mcpFor, deniedMcpServers,
     toolsServersGone, boundTools, instructions, turnInstructions, openChat,
     moving, served,
