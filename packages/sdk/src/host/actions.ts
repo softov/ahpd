@@ -36,7 +36,7 @@ export interface Actions {
 
 export function createActions(ctx: HostContext, conn: ConnectionContext): Actions {
   const { connection, tokensFor } = conn;
-  const { refuse, echoTo } = ctx;
+  const { refuse } = ctx;
   /*
    * Nothing here that the host rewrites after it is built: `advancedTools`,
    * `contributed`, `contributing` and `restartNeeded` change while this
@@ -879,16 +879,21 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * Input is side-effect only.
          *
          * The protocol's reducer changes nothing on it, and what comes back is
-         * `terminal/data`, once the shell has actually said something. So it
-         * is answered to the client that sent it alone, as `echoTo` says, and
-         * every client reads what it did in the `terminal/data` that follows.
-         * Input with no process to reach is refused, in the terminal's words.
+         * `terminal/data`, once the shell has actually said something. It is a
+         * terminal action, so it goes to every client of the terminal and is
+         * held for replay, as the reference host records and broadcasts it,
+         * and every client reads what it did in the `terminal/data` that
+         * follows. Input with no process to reach is refused, in the
+         * terminal's words, to the same clients.
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/terminal-channel.md#L110-L112
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+         * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L224-L233
+         * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4215-L4253
          */
         case 'terminal/input': {
           const taken = terminal.write(String(action.data ?? ''));
-          if (taken === true) echoTo(connection.peer, channel, action, origin);
-          else no(taken, true);
+          if (taken === true) dispatch(channel, action, origin);
+          else no(taken);
           break;
         }
         case 'terminal/resized':
