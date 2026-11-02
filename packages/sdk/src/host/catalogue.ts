@@ -452,25 +452,28 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }),
   ];
   /**
-   * The chat that decides a session's status and activity, by the protocol's
-   * rules for a session made of chats.
+   * The chat that decides a session's status and activity, as the reference
+   * host aggregates a session made of chats.
    *
-   * The activity bits are the default chat's, promoted to `InputNeeded` when
-   * any chat needs input and to `Error` when any chat failed. The activity is
-   * the chat that contributes the bits: the default chat's, or the one that
-   * won the promotion. A worker chat is a chat of the session and counts.
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
+   * A chat that needs input makes the session need input; else a chat that
+   * runs makes it run; else the activity bits are the default chat's, or the
+   * most recently modified chat's when it has none, and a failed chat stays on
+   * its own row. `InputNeeded` carries `InProgress`, so a chat that runs is one
+   * whose bits under `InputNeeded` are `InProgress` alone. The activity is the
+   * deciding chat's. A worker chat is a chat of the session and counts.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
    */
   const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
     const chats = chatsOf(held);
     const base = chats.find((one) => one.uri === held.defaultChat)
       ?? [...chats].sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))[0];
-    const promoted = chats.find((one) => activityBits(one.status) === Status.InputNeeded)
-      ?? chats.find((one) => activityBits(one.status) === Status.Error);
-    const deciding = promoted ?? base;
-    return deciding === undefined
+    const asking = chats.find((one) => (one.status & Status.InputNeeded) === Status.InputNeeded);
+    const running = chats.find((one) => (one.status & Status.InputNeeded) === Status.InProgress);
+    if (asking !== undefined) return { status: Status.InputNeeded, activity: asking.activity };
+    if (running !== undefined) return { status: Status.InProgress, activity: running.activity };
+    return base === undefined
       ? { status: Status.Idle, activity: undefined }
-      : { status: activityBits(deciding.status), activity: deciding.activity };
+      : { status: activityBits(base.status), activity: base.activity };
   };
   /** The most recent change across every chat of a session, as the protocol aggregates `modifiedAt`. */
   const modifiedOf = (held: Held): string => chatsOf(held)

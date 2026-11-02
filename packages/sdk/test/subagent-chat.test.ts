@@ -806,18 +806,19 @@ const chatOn = (row: Bag, chat: string): number | undefined =>
   (row.chats as Bag[] | undefined)?.find((one) => one.resource === chat)?.status as number | undefined;
 
 /*
- * A session's row takes its activity from the default chat, promoted only by
- * a chat that needs input or failed, as the protocol aggregates a session made
- * of chats. Each chat's own status is on the row's list of chats.
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L89-L101
+ * A session's row is promoted by its chats as the reference host aggregates
+ * them: a chat that needs input makes it need input, else a chat that runs
+ * makes it run, else it reads its default chat. A worker is a chat of the
+ * session and counts. Each chat's own status is on the row's list of chats.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
  */
-it('reads a session by its default chat while its worker runs after the lead turn, and the worker on its own row', async () => {
+it('reads a session as running while its worker runs after the lead turn, and the worker on its own row', async () => {
   const { ask, uri, lead, row, activity } = await busyHost();
   const worker = `ahp-chat://subagent/${Buffer.from(uri, 'utf8').toString('base64url')}/${encodeURIComponent('toolu_bg')}`;
   await ask('dispatchAction', { channel: lead, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'spawn' } } });
   await settle();
   const running = held(row());
-  expect(activity(running.status)).toBe(1);
+  expect(activity(running.status)).toBe(8);
   expect(activity(chatOn(running, worker))).toBe(8);
 
   finishWorker();
@@ -834,7 +835,7 @@ it('reads a session as waiting while its worker asks, though the lead is running
   expect(activity(held(row()).status)).toBe(24);
 });
 
-it('reads a session by its idle default chat while a second chat runs, and the second on its own row', async () => {
+it('reads a session as running while a second chat runs and its default chat is idle, and the second on its own row', async () => {
   const { ask, uri, row, activity } = await busyHost();
   const second = 'ahp-chat:/busy-second';
   await ask('createChat', { channel: uri, chat: second });
@@ -842,7 +843,7 @@ it('reads a session by its idle default chat while a second chat runs, and the s
   await ask('dispatchAction', { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'work' } } });
   await settle();
   const moved = held(row());
-  expect(activity(moved.status)).toBe(1);
+  expect(activity(moved.status)).toBe(8);
   expect(activity(chatOn(moved, second))).toBe(8);
 });
 
