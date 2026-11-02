@@ -16,6 +16,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { posix } from '../../../tools/posix.ts';
 import { INITIALIZE, MAIN, REPO, config, daemonEnv, home, put, rpc, spawned } from './cli.js';
 
 /** The plugin that offers the one kind every case here uses. */
@@ -203,7 +204,8 @@ it('answers the API a tunnel\'s URL with tunnelHosts on', async () => {
   expect(status(await api(one.port, '/api/cli-manifest', host))).toBe(200);
 });
 
-it('stops every running tunnel before the plugins hear stopping', async () => {
+// Sends SIGTERM, which Windows delivers as a kill: the daemon never runs its stop.
+it.skipIf(!posix)('stops every running tunnel before the plugins hear stopping', async () => {
   const one = await daemon({ plugins: [FIXTURE], sessions: 'memory', automations: 'memory' });
   const system = systemOf(await stateOf(one));
 
