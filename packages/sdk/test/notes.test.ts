@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { chatReducer, sessionReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
+import { Status } from '../src/sessions/catalog.js';
 import { notes } from '../../../examples/notes/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -105,7 +106,7 @@ const reduced = (p: ReturnType<typeof peer>, uri: string, chatUri: string) => {
   for (const action of actions(p, uri)) session = sessionReducer(session as never, action as never) as never;
   return { chat, session } as {
     chat: { turns: { responseParts: Record<string, unknown>[] }[] };
-    session: { inputNeeded?: { id: string; kind: string }[] };
+    session: { status: number; inputNeeded?: { id: string; kind: string }[] };
   };
 };
 
@@ -287,7 +288,17 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
     snapshot: { state: { status: number; inputNeeded?: unknown[] } };
   };
   expect(opened.snapshot.state.inputNeeded).toBeUndefined();
-  expect(opened.snapshot.state.status).toBe(1);
+  // The session's status is what its reducer made of the actions it was
+  // sent, so a client subscribing now reads the bits a watching client holds,
+  // and the input-needed bit left with the question.
+  const activity = (status: number): number => status & (Status.IsRead - 1);
+  expect(activity(opened.snapshot.state.status)).toBe(activity(session.status));
+  expect(opened.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
+  // And the session's row, which aggregates its chats, says it is idle.
+  const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { resource: string; status: number }[];
+  };
+  expect(activity(listed.items.find((one) => one.resource === uri)?.status ?? 0)).toBe(Status.Idle);
 });
 
 /*

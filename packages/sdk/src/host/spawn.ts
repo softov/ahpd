@@ -38,8 +38,6 @@ import type { HostContext } from './context.js';
  * announced as, and the titles and harness a session is recorded under.
  */
 export interface Spawn {
-  /** Fold one worker chat's action into the state a subscriber reads. */
-  absorb(ref: { state: Bag }, action: Bag): void;
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   unstamped(meta: unknown): meta is Bag;
   /** A tool call action with the worker chat's URI in its `_meta`. */
@@ -50,10 +48,8 @@ export interface Spawn {
   withSender(session: string, turns: Bag[]): Bag[];
   /** A chat's state with the attachments its clients sent back on its messages. */
   asSentChat(state: Bag): Bag;
-  /** Write one action on a worker's chat, and keep the state a subscriber reads. */
+  /** Write one action on a worker's chat. */
   sendSubagent(uri: string, given: Bag): void;
-  /** What each worker chat's row last said, so an unchanged one is not re-sent. */
-  describedSub: Map<string, string>;
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   endedWorkers: Set<string>;
   /** The worker chat for one tool call of a backend's, made on first ask. */
@@ -202,21 +198,6 @@ export function createSpawn(ctx: HostContext): Spawn {
   /** The client each action a backend holds through `Start.handed` came from. */
   const handedFrom = new WeakMap<Handed, Origin>();
 
-  /**
-   * One worker chat's actions, folded into the state a subscriber reads.
-   *
-   * The protocol package's own `chatReducer`, deliberately: a hand-rolled
-   * folder here would be a second answer to what a chat action means, and the
-   * one a client runs is the one that has to agree with it.
-   */
-  const absorb = (ref: { state: Bag }, action: Bag): void => {
-    try {
-      ref.state = chatReducer(ref.state as unknown as ChatState, action as unknown as ChatAction) as unknown as Bag;
-    }
-    catch { /* an action the reducer will not take leaves the state as it was */ }
-    ref.state.modifiedAt = new Date().toISOString();
-  };
-
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
     typeof meta === 'object' && meta !== null && (meta as Bag).toolKind === 'subagent'
@@ -361,40 +342,24 @@ export function createSpawn(ctx: HostContext): Spawn {
     return { ...turn, message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } } };
   });
 
-  /**
-   * Write one action on a worker's chat, and keep the state a subscriber reads.
-   *
-   * Reduced here rather than asked of the backend: the emitter the backend
-   * holds is the only thing that writes to this chat, so folding everything it
-   * sends is the whole of that chat's state, and the row is re-announced only
-   * when what it says has moved.
-   */
-  const describedSub = new Map<string, string>();
   /** Workers whose turn has been ended, so a second ending is not a second turn. */
   const endedWorkers = new Set<string>();
+  /**
+   * Write one action on a worker's chat.
+   *
+   * The emitter the backend holds is the only thing that writes to this chat,
+   * and the chat's state takes each action as every chat's does; the row and
+   * the session's activity follow that state from there.
+   */
   const sendSubagent = (uri: string, given: Bag): void => {
     const ref = subagents.get(uri);
     if (ref === undefined) return;
     const action = withWorkerUri(uri, given);
-    const was = { status: ref.state.status };
-    absorb(ref, action);
+    const was = ctx.stateOf(uri)?.status;
     dispatch(uri, action);
     // Unread where the protocol's chat reducer makes it so. A worker is not
     // counted toward its session, so the session's bit stays where it is.
     if (clearsRead(String(action.type)) && sessions.has(ref.session)) chatFlag(ctx, ref.session, uri, Status.IsRead, false);
-    const summary = subagentSummary(uri, ref);
-    const now = JSON.stringify(summary);
-    if (describedSub.get(uri) === now) return;
-    describedSub.set(uri, now);
-    dispatch(ref.session, { type: 'session/chatUpdated', chat: uri, changes: summary });
-    /*
-     * A worker is a chat of its session, so what moved on it moves the
-     * session's row as well: its status and title are in the row's chat list,
-     * and its activity is in what the session is doing. `summaryMoved` is what
-     * decides whether the row says anything new, so it is asked whenever the
-     * chat's own summary moved rather than on a list of fields kept here.
-     */
-    summaryMoved(ref.session);
     /*
      * And whether the chat that carries it may still be moved.
      *
@@ -403,7 +368,7 @@ export function createSpawn(ctx: HostContext): Spawn {
      * own call can be inside another worker and only the top one is a chat of
      * the session.
      */
-    if (ref.state.status !== was.status) {
+    if (ctx.stateOf(uri)?.status !== was) {
       let at = ref.parentChat;
       for (let up = subagents.get(at); up !== undefined && up.parentChat !== at; up = subagents.get(at)) at = up.parentChat;
       movableMoved(at);
@@ -439,19 +404,24 @@ export function createSpawn(ctx: HostContext): Spawn {
         ...(request.description !== undefined ? { description: request.description } : {}),
         turnId: `turn-${crypto.randomUUID()}`,
         openedAt: Date.now(),
-        state: {
-          resource: uri,
-          title: request.title,
-          status: Status.Idle,
-          modifiedAt: now,
-          origin: { kind: 'tool', chat: parentChat, toolCallId },
-          interactivity: 'read-only',
-          turns: [],
-          queuedMessages: [],
-        },
       };
       subagents.set(uri, ref);
+      /*
+       * The worker's chat opens here, as nothing: what it says from here on is
+       * every action the backend emits on it, read before it is announced.
+       * Kept read until something is said in it, as a new chat starts.
+       */
       startsRead(ctx, session, uri);
+      ctx.openState(uri, 'chat', {
+        resource: uri,
+        title: request.title,
+        status: Status.Idle | kept.chatFlags(idOf(session), uri),
+        modifiedAt: now,
+        origin: { kind: 'tool', chat: parentChat, toolCallId },
+        interactivity: 'read-only',
+        turns: [],
+        queuedMessages: [],
+      });
       dispatch(session, { type: 'session/chatAdded', summary: subagentSummary(uri, ref) });
       // The session's row is where a client listing sessions reads its chats,
       // so a chat that has just appeared is said there too.
@@ -1236,6 +1206,15 @@ export function createSpawn(ctx: HostContext): Spawn {
           log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
           return;
         }
+        /*
+         * And what the session is doing is the host's to say.
+         *
+         * A session's activity is the activity of the chat that decides its
+         * status, which only the host can read across every chat of it, and
+         * it says it as each chat's own activity moves. A backend's own is its
+         * chat's, which the chat's `chat/activityChanged` already carries.
+         */
+        if (action.type === 'session/activityChanged') return;
         const where = channel === 'chat' ? chatUri : uri;
         /*
          * Who sent this turn, and a queued one finding out which turn it became.
@@ -1289,7 +1268,14 @@ export function createSpawn(ctx: HostContext): Spawn {
         const origin = handed === undefined ? undefined : handedFrom.get(handed);
         if (sender !== undefined && action.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
-          dispatch(where, asSent({ ...action, _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender } }), origin);
+          // On the message as well as the action: the message is what a
+          // chat's state keeps, and a turn read back says its sender there.
+          const message = (action.message ?? {}) as Bag;
+          dispatch(where, asSent({
+            ...action,
+            _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender },
+            message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
+          }), origin);
         }
         else dispatch(where, asSent(action), origin);
         // A tool call that finished may have written to this session's tree, so
@@ -1446,25 +1432,15 @@ export function createSpawn(ctx: HostContext): Spawn {
           }
         }
         /*
-         * The session's list of chats, when one of them has moved.
-         *
-         * Only on a change: a chat says something on every delta, and a
-         * summary re-sent per token is a list redrawn per token.
+         * The title the backend derived, when it moved on the session's default
+         * chat: it is the subject a commit would use, so the question the
+         * changeset's commit asks has changed with it.
          */
         const owner = sessions.get(uri);
         const moved = owner?.chats.get(chatUri);
-        if (moved) {
-          const previous = described.get(chatUri) ?? '';
-          const now = `${moved.title()}\u0000${String(moved.status())}\u0000${String(moved.activity() ?? '')}`;
-          if (now !== described.get(chatUri)) {
-            described.set(chatUri, now);
-            dispatch(uri, { type: 'session/chatUpdated', chat: chatUri, changes: chatSummary(uri, chatUri, moved) });
-            // A title the backend derived is the subject a commit would use, so
-            // the question the changeset's commit asks has changed with it.
-            if (owner !== undefined && chatUri === owner.defaultChat && previous.split('\u0000')[0] !== moved.title()) {
-              operationsMoved(uri);
-            }
-          }
+        if (moved !== undefined && owner !== undefined && chatUri === owner.defaultChat && (described.get(chatUri) ?? '') !== moved.title()) {
+          described.set(chatUri, moved.title());
+          operationsMoved(uri);
         }
         /*
          * The chat's read bit, and its session's when the chat is one the
@@ -1717,6 +1693,7 @@ export function createSpawn(ctx: HostContext): Spawn {
     births.set(uri, held.createdAt);
     held.chats.set(chatUri, session);
     sessions.set(uri, held);
+    ctx.asleep.delete(uri);
     /*
      * A chat on a backend of its own, which the session's own agent does not
      * serve.
@@ -1847,12 +1824,35 @@ export function createSpawn(ctx: HostContext): Spawn {
         workingDirectories: workingDirectory !== undefined ? [uriOf(workingDirectory)] : was?.workingDirectories ?? [],
       });
     }
+    /*
+     * The chat's state opens here, once, from what its backend holds now and
+     * what this host keeps beside it: every road to a running backend comes
+     * through this one, and a chat already open - a backend started again
+     * under it - keeps the state it holds. The delta window is emptied first,
+     * so a word the backend already holds is not reduced into it again. The
+     * session's row is brought into step with what the chat opened with.
+     */
+    ctx.flushDeltas();
+    const open = ctx.stateOf(chatUri);
+    if (open === undefined) ctx.openState(chatUri, 'chat', ctx.chatSeed(uri, chatUri));
+    else if (open.activeTurn === undefined && (!Array.isArray(open.turns) || open.turns.length === 0)) {
+      /*
+       * A chat that opened with no conversation - its record read nothing, as
+       * one inside a machine reads before its host there answers - takes the
+       * one its backend holds once it starts, as `chat/turnsLoaded`: the
+       * action the reference host refreshes a chat's persisted history with.
+       * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L759-L767
+       */
+      const turns = ctx.chatSeed(uri, chatUri).turns;
+      if (Array.isArray(turns) && turns.length > 0) dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
+    }
+    ctx.chatMoved(chatUri);
     return session;
   };
 
   return {
-    absorb, unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
-    sendSubagent, describedSub, endedWorkers,
+    unstamped, withWorkerUri, stampedCalls, withSender, asSentChat,
+    sendSubagent, endedWorkers,
     openSubagent, formerChatUri, titleOf, keepTitle, keepProvider,
     spawn, wirePlan,
   };

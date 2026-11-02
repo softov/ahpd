@@ -185,7 +185,7 @@ which is a different complaint from an action nobody has served.
 | action | origin | ahpd | Notes |
 | --- | :---: | :---: | --- |
 | `root/agentsChanged` | host | ✅ | Sent at the handshake and again when the boot probe answers, so a client that connected before the CLI replied gets the models, commands and customizations rather than an empty list it caches. |
-| `root/activeSessionsChanged` | host | ✅ | A count, not a list. Moves when a session is created or disposed. |
+| `root/activeSessionsChanged` | host | ✅ | A count, not a list: the sessions this host holds open, a running one and one put to sleep alike, as the protocol counts its "active (non-disposed) sessions". Moves when a session is created, opened from the catalogue or disposed. |
 | `root/terminalsChanged` | host | ✅ | The whole `TerminalInfo` list, sent when a terminal opens, closes, or exits on its own. |
 | `root/configChanged` | client | ✅ | The one root action a client originates: VS Code pushes `defaultShell` at connect. Every declared key it pushes is kept and read back on every root snapshot, whether or not this host acts on it; a key no schema declares is refused by name, and the rest of the push goes through. Five keys are the connection's own and are kept on it rather than on the host: `defaultShell`, `workspaceTrust`, which needs `trust:push` ([AUTHENTICATION.md](AUTHENTICATION.md#trusted-folders)), and `terminalAutoApproveEnabled`, `terminalAutoApproveRules` and `editAutoApprovePatterns`, which need a sign-in and no grant except that a `/.../` key in `terminalAutoApproveRules` that VS Code's default table does not carry needs `config:change`. |
 
@@ -229,7 +229,7 @@ A client older than 1.140 that still pushes one of the three has that key refuse
 | `session/creationFailed` | host | ✅ | For a session an automation could not start, where there is no request to fail. One a client asked for fails inside `createSession` instead. |
 | `session/chatAdded` | host | ✅ | Carries the whole `ChatSummary`. The reducer reads `action.summary.resource`, and a chat named any other way arrives as a `TypeError` inside it. |
 | `session/chatRemoved` | host | ✅ | On `disposeChat`. The last chat cannot be removed - that is `disposeSession`, and the refusal says so. |
-| `session/chatUpdated` | host | ✅ | Only when the row actually moved - title, status or activity. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
+| `session/chatUpdated` | host | ✅ | Only when the row actually moved, read off the chat's own state after each of its actions, and carrying only the fields that moved: `title`, `status`, `modifiedAt`, `activity`, `interactivity`, `origin` or `movable`. `resource` names the row and is never among them, because the protocol says a sender MUST omit it. A chat says something on every delta, and a summary re-sent per token is a list redrawn per token. |
 | `session/defaultChatChanged` | host | ✅ | When the chat that was the default is disposed and another takes over. |
 | `session/chatsReordered` | host | ✅ | The whole order a session's chats end up in after a move inside that session, and never what a client sends - the host is the one that knows the order. Every chat the session holds is named exactly once, which the canonical reducer checks before it applies anything. Written to the stored chat list as well, so a restart rebuilds the chats where the move left them. |
 | `session/titleChanged` | both | ✅ | A client may rename a session, or one chat when it dispatches on the chat's channel, the way the reference host reads it; a blank title is refused. This host also names one after its first message, because an untitled row is one nobody can find again, and an agent renames one with `rename_chat`. |
@@ -789,10 +789,14 @@ other server the sender alone is answered.
 A client driven by actions builds its own state; a client that subscribes reads
 the snapshot. Both are this host's answer to the same question, and a field
 carried by one and not the other is a client that renders differently depending
-on when it arrived. `invocationMessage` and `confirmed` were sent on
-`chat/toolCallReady` and never written onto the call itself, so every tool call
-in a *transcript* was a row with no sentence to draw and no answer to whether
-anybody had approved it - `ToolCallState` requires both.
+on when it arrived. So the host holds the state of the root, of each session and
+of each chat as the protocol's reducer makes it of every action it sends on that
+channel, from a seed it reads once when the channel opens, and a snapshot is that
+state. A backend's own `chatState()` and `sessionState()` are read for the seed
+alone, so whatever a backend changes after it is said as an action or not at all.
+A session's `status` is its reducer's too, which moves its read, archived and
+input-needed bits; what its chats are doing is on their rows and on the
+catalogue's row.
 
 ### Sessions and the catalogue
 

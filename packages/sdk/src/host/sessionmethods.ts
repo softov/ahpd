@@ -62,7 +62,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     isolating, isolated, keepChat, keepProvider, kept, leadOf, allRows, log, madeFrom, meantBy, messageFrom,
     movable, movableMoved, openSession, openedBy, options, orderChats,
     ownerFor, owners, past, placedIn, presence, replayable, removeSession, respell, retool, scoping, seeded,
-    seenBy, sessionAdded, sessionChannel, sessionFor, sessionOfChat, sessionSchema, sessions, settle,
+    seenBy, sessionAdded, sessionChannel, sessionComing, sessionFor, sessionOfChat, sessionSchema, sessions, settle,
     snapshotOf, spawn, spellingOf, subagentSummary, subagents, summaryMoved, unheld, waitingFor, wake, watches,
     withSender,
   } = ctx;
@@ -162,6 +162,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
     if (to === undefined) {
       named(into, 'session');
       unheld(into);
+      // Its row goes out whole once it is added, and moves from then on.
+      sessionComing(into);
       /*
        * The owner and the config are the source session's: a session made for
        * one of its chats is the same person's work under the same settings.
@@ -230,6 +232,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         sessions.delete(into);
         claims.delete(into);
         kept.forget(idOf(into));
+        ctx.forgetSent(into);
       }
       try {
         spawn(held.agent, found.uri, chatUri, chatIdOf(found.uri, chatUri, own), backendsOwn(held.config),
@@ -1281,9 +1284,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       if (fromChat !== undefined && made?.seed !== undefined) ctx.copyLocalTurns(uri, fromChat, chatUri, made.seed);
       const agent = fromChat === undefined ? held.agent : chatAgent(held, fromChat);
       const config = fromChat === undefined ? held.config : chatConfig(held, fromChat);
+      // Read until something is said in it, written before its state opens.
+      startsRead(ctx, uri, chatUri);
       const chat = spawn(agent, uri, chatUri, chatIdFor(uri, chatUri), backendsOwn(config), made, held.workingDirectory, undefined, peers, connection);
       log(`opened ${chatUri} in ${uri}`);
-      startsRead(ctx, uri, chatUri);
       // `summary`, not `chat`: the reducer reads `action.summary.resource`,
       // and a chat named any other way arrives as a TypeError inside it.
       dispatch(uri, { type: 'session/chatAdded', summary: chatSummary(uri, chatUri, chat) });

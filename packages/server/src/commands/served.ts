@@ -95,6 +95,16 @@ export interface ServedFacts {
    */
   apply?(reload?: string[]): Promise<{ restart: boolean; changed: boolean }>;
   /**
+   * Tell the host's root the daemon values a command wrote to the file, with
+   * the `root/configChanged` that moves them.
+   *
+   * Called by a command that wrote one of the daemon's keys itself, inside the
+   * turn that wrote it: no client's `root/configChanged` made that write, so
+   * nothing else says it to the clients watching the root. Absent before the
+   * host is built, when there is no root to tell.
+   */
+  valuesMoved?(): Promise<void>;
+  /**
    * Read that line over the configuration as it is now, then stop this daemon
    * once the answer has gone and start it again with it. Throws, or rejects,
    * with why the line cannot run or, unless forced, which turns are running,

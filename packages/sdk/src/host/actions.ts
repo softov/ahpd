@@ -9,6 +9,7 @@ import { chatUriFor, isRootChannel, MARKS, ROOT, spaceOf, toolCallOfSubagentChat
 import { chatAction, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
+import { RESTART_KEY } from './root.js';
 import { claimOf } from './terminals.js';
 import type { HeldCopies, TemplatePlugin } from '../types/clientplugins.js';
 import type { Bag } from '../types/common.js';
@@ -321,6 +322,13 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
        * the daemon holds.
        */
       const said: Record<string, unknown> = {};
+      /*
+       * The restart mark is the host's, so a push that names it moves nothing
+       * and its echo says the host's value. VS Code's settings editor writes
+       * every root config property back on a save, this one included.
+       * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
+       */
+      if (Object.hasOwn(config, RESTART_KEY)) said[RESTART_KEY] = ctx.restartNeeded;
       /**
        * The host's own half, applied and echoed.
        *
@@ -348,7 +356,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * `rootState` shows this map to every connection, which would hand a
          * member a credential it has no schema for.
          */
-        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key)));
+        const ours = Object.fromEntries(Object.entries(config).filter(([key]) => !PER_CONNECTION.has(key) && !daemonKey(key) && key !== RESTART_KEY));
         const into = (target: Record<string, unknown>, from: Record<string, unknown>): void => {
           for (const [key, value] of Object.entries(from)) {
             // `undefined` is how a key is taken back, and JSON has no such
@@ -379,6 +387,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         const echoConfig = { ...config, ...said };
         log(`root config: ${Object.entries(echoConfig).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ') || '(nothing)'}`);
         /*
+         * A `replace` keeps what is not the pusher's to clear: the daemon's
+         * values and every backend's account stay where they are, so the echo
+         * carries them, and the root's state a client reduces from it is the
+         * one this host holds. The reference host keeps its provider-backed
+         * values in a replace the same way.
+         * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2863-L2868
+         */
+        const echoed = action.replace === true ? { ...ctx.keptOnReplace(config), ...echoConfig } : echoConfig;
+        /*
          * Said back whole, like every other action a client originates:
          * nothing in a client applies its own dispatch, and a second client
          * watching the root learns of it only from here.
@@ -391,7 +408,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * sent them, so a value the port holds back is not carried to the
          * second admin by the echo.
          */
-        dispatch(ROOT, { ...action, config: echoConfig }, origin);
+        dispatch(ROOT, { ...action, config: echoed }, origin);
       };
       /*
        * The daemon's keys, which are not this host's to keep.

@@ -29,7 +29,7 @@ const RESOURCE = 'ahpd://users';
  * and which of the three a key came from is what the cases below read.
  */
 const PUSHED_BY_VSCODE = Object.keys(vscodeRootProperties);
-const HOST_OWN = ['defaultShell', 'workspaceTrust', 'changeWords', 'clientQueueBytes', 'replayBytes'];
+const HOST_OWN = ['defaultShell', 'workspaceTrust', 'ahpd.restartNeeded', 'changeWords', 'clientQueueBytes', 'replayBytes'];
 const DAEMON_OWN = ['daemonPort', 'advancedTools', 'apiKey'];
 
 /** A directory that knows one admin and one member, by the token each presents. */
@@ -159,7 +159,13 @@ function served(withDaemon = true) {
     await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'], initialSubscriptions: [ROOT] } });
     return { client, heard };
   };
-  return { signedIn, asRoot, rootOf, heardOnRoot, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
+  /** What a new connection is told on its handshake's `_meta`. */
+  const handshakeOf = async (clientId: string): Promise<Record<string, unknown>> => {
+    const client = host.accept(peer());
+    const answer = await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'] } }) as { _meta?: Record<string, unknown> };
+    return answer._meta ?? {};
+  };
+  return { signedIn, asRoot, rootOf, heardOnRoot, handshakeOf, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
 }
 
 it('shows the daemon its keys beside the host own, and nobody else', async () => {
@@ -862,23 +868,21 @@ it('asks the daemon for its key alone when an undeclared key is beside it', asyn
   ]);
 });
 
-it('answers restartNeeded in the _meta of every root state, and only once asked', async () => {
-  const { signedIn, rootOf, answerRestart } = served();
+/** The root config's values, as one snapshot of the root holds them. */
+const valuesOf = (state: Record<string, unknown>): Record<string, unknown> =>
+  (state.config as { values: Record<string, unknown> }).values;
+
+it('says restartNeeded in the root config to every reader of the root, once asked', async () => {
+  const { signedIn, rootOf, heardOnRoot, handshakeOf, answerRestart } = served();
   const admin = await signedIn('admin', 'admin');
   const member = await signedIn('member', 'member');
-  // The principal is the only thing about the host's own state in there yet:
-  // nobody has asked for a restart, and the notice is the whole of what this is
-  // about. What the host says about itself to everybody - `ahpd.grants`, the
-  // machine's resources, whether it takes a remote session and the build
-  // beside them - is left out of what these three compare.
-  const apart = (meta: unknown): Record<string, unknown> => {
-    const {
-      'ahpd.grants': _grants, 'vscode.agentHost.resources': _machine, 'vscode.remoteSessions': _remote,
-      hostBuild: _build, ...rest
-    } = (meta ?? {}) as Record<string, unknown>;
-    return rest;
-  };
-  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.principal': 'user:ana' });
+  const told = (heard: { notes: { method: string; params: unknown }[] }): unknown[] =>
+    heard.notes.filter((one) => one.method === 'x-ahpd/restartNeeded').map((one) => one.params);
+  // Declared read-only, so a client shows it and has no control to set it.
+  expect(((await rootOf(admin.client)).config as { schema: { properties: Record<string, { readOnly?: boolean }> } })
+    .schema.properties['ahpd.restartNeeded']?.readOnly).toBe(true);
+  expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBeUndefined();
+  expect(told(admin.heard)).toEqual([]);
 
   answerRestart(true);
   await admin.client.handle({
@@ -886,11 +890,73 @@ it('answers restartNeeded in the _meta of every root state, and only once asked'
     params: { channel: ROOT, action: { type: 'root/configChanged', config: { daemonPort: 9000 } } },
   });
   await settle();
-  // Held until the daemon restarts, and said to whoever reads the root, so a
-  // member sees the notice without seeing the keys it is about - and each
-  // snapshot names the person it was built for rather than the host's.
-  expect(apart((await rootOf(admin.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:ana' });
-  expect(apart((await rootOf(member.client))._meta)).toEqual({ 'ahpd.restartNeeded': true, 'ahpd.principal': 'user:bo' });
+  // Held until the daemon restarts, and said to whoever reads the root as the
+  // host's own `root/configChanged`, so a member reads the mark without seeing
+  // the keys it is about.
+  for (const one of [admin, member]) {
+    expect(heardOnRoot(one.heard).map((heard) => heard.action)
+      .filter((action) => Object.hasOwn((action.config ?? {}) as Record<string, unknown>, 'ahpd.restartNeeded')))
+      .toEqual([{ type: 'root/configChanged', config: { 'ahpd.restartNeeded': true } }]);
+    expect(told(one.heard)).toEqual([{ channel: ROOT }]);
+    expect(valuesOf(await rootOf(one.client))['ahpd.restartNeeded']).toBe(true);
+  }
+  // The root's config is where the mark is, and the handshake carries no copy.
+  expect((await handshakeOf('after'))['ahpd.restartNeeded']).toBeUndefined();
+});
+
+/*
+ * VS Code's settings editor draws every root config property as editable and
+ * saves the whole document as one `replace`, so the mark goes back with it.
+ * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/sessions/contrib/providers/agentHost/browser/agentHostSettingsFileSystemProvider.ts#L52-L67
+ */
+it('keeps the restart mark when a client writes the root config whole with the mark unchanged', async () => {
+  const { signedIn, rootOf, heardOnRoot, answerRestart } = served();
+  const admin = await signedIn('admin', 'admin');
+  answerRestart(true);
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { daemonPort: 9000 } } },
+  });
+  await settle();
+
+  const saved = valuesOf(await rootOf(admin.client));
+  expect(saved['ahpd.restartNeeded']).toBe(true);
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, clientSeq: 7, action: { type: 'root/configChanged', replace: true, config: { ...saved } } },
+  });
+  await settle();
+
+  const echoed = heardOnRoot(admin.heard).filter((heard) => heard.action.replace === true);
+  expect(echoed.map((heard) => [heard.rejectionReason, (heard.action.config as Record<string, unknown>)['ahpd.restartNeeded']]))
+    .toEqual([[undefined, true]]);
+  expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(true);
+});
+
+it('keeps the restart mark when a client writes the root config whole with the mark changed', async () => {
+  const { signedIn, rootOf, heardOnRoot, answerRestart } = served();
+  const admin = await signedIn('admin', 'admin');
+  answerRestart(true);
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { daemonPort: 9000 } } },
+  });
+  await settle();
+
+  // A save made from a copy read before the mark was set says it is false.
+  const stale = { ...valuesOf(await rootOf(admin.client)), 'ahpd.restartNeeded': false };
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, clientSeq: 8, action: { type: 'root/configChanged', replace: true, config: stale } },
+  });
+  await settle();
+
+  // The write is taken and its echo says the host's value, so the client puts
+  // its own copy back to what the host holds.
+  const echoed = heardOnRoot(admin.heard).filter((heard) => heard.action.replace === true);
+  expect(echoed.map((heard) => [heard.rejectionReason, (heard.action.config as Record<string, unknown>)['ahpd.restartNeeded']]))
+    .toEqual([[undefined, true]]);
+  expect(valuesOf(await rootOf(admin.client))['ahpd.restartNeeded']).toBe(true);
 });
 
 it('gives a running session the advanced tools as soon as the daemon key is written', async () => {

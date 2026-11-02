@@ -979,7 +979,14 @@ describe('turning a customization on and off', () => {
       agents: [{
         ...backend,
         create: (start: Parameters<typeof backend.create>[0]) => {
-          const inner = backend.create(start);
+          // The server on every list the backend says it loaded, as on the
+          // state it opens with: what clients hold is what it said.
+          const inner = backend.create({
+            ...start,
+            emit: (channel, action, handed) => start.emit(channel, action.type === 'session/customizationsChanged'
+              ? { ...action, customizations: [server] }
+              : action, handed),
+          });
           return {
             ...inner,
             customizations: () => [server],

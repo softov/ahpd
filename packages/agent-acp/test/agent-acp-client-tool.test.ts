@@ -771,7 +771,7 @@ it('shows the call it is waiting on in its state, and the turn stays in progress
   // A client connecting now is drawn the request from the state and not only
   // from the actions it missed.
   const snapshot = (await client.handle({ method: 'subscribe', params: { channel: uri } })) as {
-    snapshot: { state: { status: number; inputNeeded: Bag[] } };
+    snapshot: { state: { status: number; inputNeeded: Bag[]; chats: { resource: string; status?: number }[] } };
   };
   expect(snapshot.snapshot.state.inputNeeded).toHaveLength(1);
   expect(snapshot.snapshot.state.inputNeeded[0]).toMatchObject({
@@ -779,9 +779,14 @@ it('shows the call it is waiting on in its state, and the turn stays in progress
     clientId: 'a',
     toolCall: { toolName: 'openFile', status: 'running' },
   });
-  // A superset of in progress rather than a status of its own: the turn this
-  // call belongs to is still running, and that is what the session says it is.
-  expect(snapshot.snapshot.state.status).toBe(Status.InProgress);
+  // A call a client runs waits on that client and on nobody else, so the
+  // session is not waiting on a person: the session's reducer promotes only an
+  // entry that awaits one.
+  expect(snapshot.snapshot.state.status & (Status.InputNeeded & ~Status.InProgress)).toBe(0);
+  // The turn this call belongs to is still running, and the chat's row in the
+  // session says so.
+  const row = snapshot.snapshot.state.chats.find((one) => one.resource === chatUri);
+  expect((row?.status ?? 0) & (Status.IsRead - 1)).toBe(Status.InProgress);
 
   await complete(a.client, chatUri, 'call-1', OK('opened /a.txt'));
   // And it is off the state once it has been answered.

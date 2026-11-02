@@ -48,8 +48,19 @@ export interface Catalogue {
    * process held the session, which the caller has already read.
    */
   chatCatalogOf(session: string, held: Held, restored: RestoredWorker[]): Bag[];
-  restoredSubagentSummary(session: string, uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }): Bag;
+  restoredSubagentSummary(session: string, uri: string, parentChat: string, ref: { toolCallId: string; title: string; turns: Bag[] }, modifiedAt: string): Bag;
+  /**
+   * What a chat's action moved on the session holding it: the chat's row, the
+   * session's activity and its catalogue row.
+   */
+  chatMoved(chat: string): void;
+  /** An answer typed into a chat's question, carried into the session's entry for it. */
+  answerMirrored(chat: string, requestId: string): void;
+  /** What a running session's state holds of its folder and its backend, said by action where it moved. */
+  factsMoved(uri: string): void;
   activityOf(held: Held): string | undefined;
+  /** A session this host is making, which no client has a row for until `sessionAdded` says it. */
+  sessionComing(uri: string): void;
   sessionAdded(uri: string): void;
   summaryMoved(uri: string): void;
   /**
@@ -64,6 +75,8 @@ export interface Catalogue {
    */
   summaryKept(uri: string, running?: boolean): Promise<void>;
   forgetSent(uri: string): void;
+  /** How many sessions this host holds open: running, or asleep and not disposed. */
+  activeCount(): number;
   activeSessionsMoved(): void;
   learnModels(uri: string): void;
   /**
@@ -116,31 +129,52 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     return origins.has(session) ? {} : { origin: { kind: 'user' } };
   };
   /**
-   * One chat, as its session's catalogue lists it.
+   * One chat, as its session's catalogue lists it: the summary fields of the
+   * state the chat holds.
    *
    * A `ChatSummary` and not a name and a URI: `status` and `modifiedAt` are
    * required of one, and a client reducing its list against a partial row
-   * gets one it cannot sort or draw a state for.
+   * gets one it cannot sort or draw a state for. Read off the chat's own state,
+   * because the protocol has the catalogue kept consistent with the fields
+   * that state inlines; a chat whose state is not held yet is read from its
+   * backend, which is what its state opens with.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L24
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3265
    */
-  const chatSummary = (session: string, uri: string, chat: Session) => ({
+  const chatSummary = (session: string, uri: string, chat: Session): Bag => {
+    const state = ctx.stateOf(uri);
+    if (state !== undefined) return summaryIn(state, uri);
+    return {
+      resource: uri,
+      ...startedBy(session, uri),
+      title: chat.title(),
+      // What the backend is doing, with the client's own bits laid over it. A
+      // chat marked read is read whatever the backend says next, and the flags
+      // are this host's to remember - no backend has heard of them.
+      status: chat.status() | kept.chatFlags(idOf(session), uri),
+      modifiedAt: chat.modifiedAt(),
+      ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
+      // The same answer the chat's own state gives. A summary that left it out
+      // while the state carried it would be two answers to one question.
+      interactivity: 'full',
+      /*
+       * Absent when it cannot move, which is what the protocol says absence
+       * means. A row with the key left off is one a client draws no move control
+       * for, and writing `false` would say the same thing in a longer way.
+       */
+      ...(movable(uri) ? { movable: true } : {}),
+    };
+  };
+  /** The fields of a chat's state its catalogue row carries. */
+  const summaryIn = (state: Bag, uri: string): Bag => ({
     resource: uri,
-    ...startedBy(session, uri),
-    title: chat.title(),
-    // What the backend is doing, with the client's own bits laid over it. A
-    // chat marked read is read whatever the backend says next, and the flags
-    // are this host's to remember - no backend has heard of them.
-    status: chat.status() | kept.chatFlags(idOf(session), uri),
-    modifiedAt: chat.modifiedAt(),
-    ...(chat.activity() !== undefined ? { activity: chat.activity() } : {}),
-    // The same answer the chat's own state gives. A summary that left it out
-    // while the state carried it would be two answers to one question.
-    interactivity: 'full',
-    /*
-     * Absent when it cannot move, which is what the protocol says absence
-     * means. A row with the key left off is one a client draws no move control
-     * for, and writing `false` would say the same thing in a longer way.
-     */
-    ...(movable(uri) ? { movable: true } : {}),
+    ...(state.origin !== undefined ? { origin: state.origin } : {}),
+    title: String(state.title ?? ''),
+    status: Number(state.status ?? Status.Idle),
+    modifiedAt: String(state.modifiedAt ?? ''),
+    ...(state.activity !== undefined ? { activity: state.activity } : {}),
+    interactivity: state.interactivity ?? 'full',
+    ...(state.movable === true ? { movable: true } : {}),
   });
 
   /**
@@ -176,11 +210,11 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   /**
    * Whether a chat, or any worker chat beneath it, is running a turn.
    *
-   * A worker's row is this host's own, reduced from what the backend emitted on
-   * its channel, so its status is read there rather than asked of a `Session`
-   * that does not exist. Walked to the bottom because a worker's own call can
-   * open another one, and a move carries all of them: a chat whose worker is
-   * mid-turn is a chat with something in flight.
+   * Asked of a chat's backend, which is the one doing the work, and of a
+   * worker's held state, which is the whole of what a worker is. Walked to the
+   * bottom because a worker's own call can open another one, and a move
+   * carries all of them: a chat whose worker is mid-turn is a chat with
+   * something in flight.
    */
   const running = (uri: string): boolean => {
     const lead = sessions.get(sessionHolding(uri) ?? '')?.chats.get(uri);
@@ -192,7 +226,7 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       for (const [one, ref] of subagents) {
         if (ref.parentChat !== at || seen.has(one)) continue;
         seen.add(one);
-        if ((Number(ref.state.status ?? Status.Idle) & Status.InProgress) !== 0) return true;
+        if ((Number(ctx.stateOf(one)?.status ?? Status.Idle) & Status.InProgress) !== 0) return true;
         queue.push(one);
       }
     }
@@ -214,14 +248,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * worker's starting or ending, the default chat moving to another - and
    * silent for every one of them that changed nothing.
    *
-   * Two actions, because the protocol keeps the chat's own state and the row in
-   * its session's catalogue in step and says so: `chat/movableChanged` is the
-   * answer to whoever is watching the chat, and `session/chatUpdated` is the
-   * same answer to whoever is watching the list, which is a client that is not
-   * looking at the chat at all. The summary is sent whole, as every other
-   * `session/chatUpdated` here is, and `movable` is written over it because a
-   * partial is applied by spreading: a chat that stopped being movable has to
-   * say so with the key, or the client keeps the `true` it was last handed.
+   * `chat/movableChanged` is the answer to whoever is watching the chat, and
+   * the row in its session's catalogue follows the chat's state as every row
+   * does, so a client watching only the list is told by the session's own
+   * `session/chatUpdated`.
    *
    * The first call for a chat is its birth, which says nothing. Every road to a
    * running backend goes through `spawn`, which asks once as the chat is set
@@ -244,11 +274,6 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     saidMovable.set(uri, now);
     if (was === undefined) return;
     ctx.dispatch(uri, { type: 'chat/movableChanged', movable: now });
-    ctx.dispatch(session, {
-      type: 'session/chatUpdated',
-      chat: uri,
-      changes: { ...chatSummary(session, uri, chat), movable: now },
-    });
   };
 
   /**
@@ -283,30 +308,41 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     });
   };
 
-  /** A worker chat's catalogue row: read-only, and spawned by a tool call. */
-  const subagentSummary = (uri: string, ref: LiveSubagent) => ({
-    resource: uri,
-    title: ref.title,
-    // A worker is a chat of its session, so it carries the same bits: a person
-    // reads a worker's conversation, or files it away, without the lead chat.
-    status: Number(ref.state.status ?? Status.Idle) | kept.chatFlags(idOf(ref.session), uri),
-    modifiedAt: String(ref.state.modifiedAt ?? new Date().toISOString()),
-    origin: { kind: 'tool', chat: ref.parentChat, toolCallId: ref.toolCallId },
-    interactivity: 'read-only',
-    ...(ref.state.activity !== undefined ? { activity: ref.state.activity } : {}),
-  });
+  /**
+   * A worker chat's catalogue row: read-only, spawned by a tool call, and the
+   * summary fields of the state its chat holds.
+   */
+  const subagentSummary = (uri: string, ref: LiveSubagent): Bag => {
+    const state = ctx.stateOf(uri) ?? {};
+    return {
+      resource: uri,
+      title: ref.title,
+      // A worker is a chat of its session, so it carries the same bits: a
+      // person reads a worker's conversation, or files it away, without the
+      // lead chat. Both are in its state, moved by its own actions.
+      status: Number(state.status ?? Status.Idle),
+      modifiedAt: String(state.modifiedAt ?? ''),
+      origin: { kind: 'tool', chat: ref.parentChat, toolCallId: ref.toolCallId },
+      interactivity: 'read-only',
+      ...(state.activity !== undefined ? { activity: state.activity } : {}),
+    };
+  };
 
-  /** The same, for a worker read back from a backend's own record. */
+  /**
+   * The same, for a worker read back from a backend's own record, as of
+   * `modifiedAt`: the moment the record says its session last moved.
+   */
   const restoredSubagentSummary = (
     session: string,
     uri: string,
     parentChat: string,
     ref: { toolCallId: string; title: string; turns: Bag[] },
+    modifiedAt: string,
   ): Bag => ({
     resource: uri,
     title: ref.title,
     status: Status.Idle | kept.chatFlags(idOf(session), uri),
-    modifiedAt: new Date().toISOString(),
+    modifiedAt,
     origin: { kind: 'tool', chat: parentChat, toolCallId: ref.toolCallId },
     interactivity: 'read-only',
   });
@@ -334,6 +370,9 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       // one that owns the answer.
       ctx.restoredParentChat(session, held.defaultChat, one),
       one as unknown as { toolCallId: string; title: string; turns: Bag[] },
+      // A worker that ran before this process held the session last moved no
+      // later than the session's own last move the record names.
+      moves.get(session) ?? held.createdAt,
     )),
   ];
   /**
@@ -370,10 +409,10 @@ export function createCatalogue(ctx: HostContext): Catalogue {
   }));
 
   /**
-   * A session's status, with the client flags folded in.
+   * A session's status as its catalogue row says it: the activity bits its
+   * chats decide, with the session's own `IsRead` and `IsArchived`.
    *
-   * Activity is the session's own; `IsRead` and `IsArchived` are this host's,
-   * and every answer carrying a status has to carry both halves or a row goes
+   * Every answer carrying a status has to carry both halves or a row goes
    * back to unread the moment anything else about it changes.
    */
   const statusOf = (uri: string): number => {
@@ -382,59 +421,84 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       return Status.Idle | kept.flags(idOf(uri));
     return drivingOf(held).status | kept.flags(idOf(uri));
   };
-  /** How far a chat's status outranks idle when a session's status is decided. */
-  const urgency = (status: number): number => {
-    const activity = status & (Status.IsRead - 1);
-    return activity === Status.InputNeeded ? 3 : activity === Status.Error ? 2 : activity === Status.InProgress ? 1 : 0;
-  };
+  /** The activity bits of a status, without the session's own two flags. */
+  const activityBits = (status: number): number => status & (Status.IsRead - 1);
   /**
-   * The chat that decides a session's status and activity.
+   * Every chat of a running session, worker chats included, each with what
+   * its state says: its status, activity and last change. A chat whose state
+   * is not held yet answers through its backend, which is what that state
+   * opens with.
+   */
+  const chatsOf = (held: Held): { uri: string; status: number; activity: string | undefined; modifiedAt: string }[] => [
+    ...[...held.chats].map(([uri, chat]) => {
+      const state = ctx.stateOf(uri);
+      return state === undefined
+        ? { uri, status: chat.status(), activity: chat.activity(), modifiedAt: chat.modifiedAt() }
+        : {
+          uri,
+          status: Number(state.status ?? Status.Idle),
+          activity: typeof state.activity === 'string' ? state.activity : undefined,
+          modifiedAt: String(state.modifiedAt ?? ''),
+        };
+    }),
+    ...[...subagents].filter(([, ref]) => sessions.get(ref.session) === held).map(([uri]) => {
+      const state = ctx.stateOf(uri) ?? {};
+      return {
+        uri,
+        status: Number(state.status ?? Status.Idle),
+        activity: typeof state.activity === 'string' ? state.activity : undefined,
+        modifiedAt: String(state.modifiedAt ?? ''),
+      };
+    }),
+  ];
+  /**
+   * The chat that decides a session's status and activity, by the protocol's
+   * rules for a session made of chats.
    *
-   * The default chat's, promoted by any other chat of the session, a worker
-   * chat included, that is waiting on a person, failed or running, in that
-   * order: a session is waiting whichever of its chats is doing the waiting,
-   * and is running while any of them runs. The activity is the deciding
-   * chat's, so a row says what the busy chat is doing.
+   * The activity bits are the default chat's, promoted to `InputNeeded` when
+   * any chat needs input and to `Error` when any chat failed. The activity is
+   * the chat that contributes the bits: the default chat's, or the one that
+   * won the promotion. A worker chat is a chat of the session and counts.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
    */
   const drivingOf = (held: Held): { status: number; activity: string | undefined } => {
-    const lead = leadOf(held);
-    let driving = { status: lead?.status() ?? Status.Idle, activity: lead?.activity() };
-    const others = [
-      ...[...held.chats.values()].map((chat) => ({ status: chat.status(), activity: chat.activity() })),
-      ...[...subagents.values()]
-        .filter((ref) => sessions.get(ref.session) === held)
-        .map((ref) => ({
-          status: Number(ref.state.status ?? Status.Idle),
-          activity: typeof ref.state.activity === 'string' ? ref.state.activity : undefined,
-        })),
-    ];
-    for (const other of others) {
-      if (urgency(other.status) > urgency(driving.status))
-        driving = { status: other.status & (Status.IsRead - 1), activity: other.activity };
-    }
-    return driving;
+    const chats = chatsOf(held);
+    const base = chats.find((one) => one.uri === held.defaultChat)
+      ?? [...chats].sort((a, b) => Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt))[0];
+    const promoted = chats.find((one) => activityBits(one.status) === Status.InputNeeded)
+      ?? chats.find((one) => activityBits(one.status) === Status.Error);
+    const deciding = promoted ?? base;
+    return deciding === undefined
+      ? { status: Status.Idle, activity: undefined }
+      : { status: activityBits(deciding.status), activity: deciding.activity };
   };
-  /** The most recent change across a session's chats. */
-  const modifiedOf = (held: Held): string => [...held.chats.values()]
-    .map((chat) => chat.modifiedAt())
+  /** The most recent change across every chat of a session, as the protocol aggregates `modifiedAt`. */
+  const modifiedOf = (held: Held): string => chatsOf(held)
+    .map((one) => one.modifiedAt)
+    .filter((one) => one !== '')
     .sort()
-    .at(-1) ?? new Date().toISOString();
+    .at(-1) ?? held.createdAt;
   /** What a session is doing: the activity of the chat that decides its status. */
   const activityOf = (held: Held): string | undefined => drivingOf(held).activity;
 
   /**
-   * How many sessions this host is running, said when it changes.
+   * How many sessions this host holds open: the protocol's "active
+   * (non-disposed) sessions".
    *
-   * `sessions.size` and not the catalogue: the protocol asks for the active,
-   * non-disposed sessions *on the server*, and a transcript on disk is a row
-   * somebody can open rather than a session the host is holding. Reporting the
-   * catalogue meant a host running nothing claimed a hundred.
+   * Every session this host started and has not disposed, a running one and
+   * one it put to sleep alike - a sleep lets the agent go and keeps the
+   * session. A transcript on disk is a row somebody can open, and it counts
+   * from the moment this host runs it.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-root/state.ts#L39
    */
+  const activeCount = (): number => sessions.size + [...ctx.asleep].filter((uri) => !sessions.has(uri)).length;
+  /** Say how many sessions this host holds open, when the number moved. */
   let announced = -1;
   const activeSessionsMoved = (): void => {
-    if (sessions.size === announced) return;
-    announced = sessions.size;
-    ctx.dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: sessions.size });
+    const now = activeCount();
+    if (now === announced) return;
+    announced = now;
+    ctx.dispatch(ROOT, { type: 'root/activeSessionsChanged', activeSessions: now });
   };
 
   /** The diff stat of a folder with nothing changed. */
@@ -497,12 +561,14 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }
   });
   /**
-   * What a session says about itself beyond the protocol's own fields.
+   * A running session's catalogue row: the summary fields of the state the
+   * session holds, with the ones only a row carries.
    *
-   * One helper for all four places a session is described - the live snapshot,
-   * the browsed one, the catalogue row and the notification that moves it -
-   * because a row and the session it opens disagreeing is the bug this is
-   * meant to avoid.
+   * The session's state is what its row mirrors, so a row and the session it
+   * opens are one answer. `status`, `activity` and `modifiedAt` are what the
+   * session's chats decide, by the protocol's rules for a session made of
+   * chats; `createdAt` and `changes` are the row's own.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L660-L680
    *
    * Undefined for a session this host is not running, which is not an error: a
    * row read from a transcript is in the catalogue and has no `Held`.
@@ -511,15 +577,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const held = sessions.get(uri);
     const lead = held && leadOf(held);
     if (!held || !lead) return undefined;
+    // The state the session holds, or the one it would open with now: a
+    // session opens at its first action or its first subscribe, not when its
+    // row is read.
+    const state = ctx.stateOf(uri) ?? ctx.sessionSeed(uri);
+    const activity = activityOf(held);
     return {
       resource: uri,
       provider: held.agent.provider,
-      title: lead.title(),
+      title: String(state.title ?? ''),
       status: statusOf(uri),
-      ...(activityOf(held) !== undefined ? { activity: activityOf(held) } : {}),
+      ...(activity !== undefined ? { activity } : {}),
       createdAt: held.createdAt,
       modifiedAt: modifiedOf(held),
-      workingDirectories: directoriesThere(lead.workingDirectories()),
+      workingDirectories: directoriesThere(Array.isArray(state.workingDirectories) ? state.workingDirectories as string[] : []),
       /*
        * What the session's chats are, and which of them a client gets when it
        * names none.
@@ -527,112 +598,134 @@ export function createCatalogue(ctx: HostContext): Catalogue {
        * The catalogue is what a client draws a session list from, and a client
        * listing twenty sessions reads their chats from the rows rather than
        * subscribing to twenty sessions. Both fields are optional in the
-       * protocol and both are the same answer the session's own state gives,
-       * from the same list: a row and the state it opens disagreeing about
-       * what chats a session has is a client drawing a chat it cannot open.
+       * protocol, and both are read off the session's state.
        */
-      chats: compactChats(chatCatalogOf(uri, held, restoredOf(uri))),
-      defaultChat: held.defaultChat,
+      chats: compactChats(Array.isArray(state.chats) ? state.chats as Bag[] : []),
+      ...(state.defaultChat !== undefined ? { defaultChat: state.defaultChat } : {}),
       // A row's own field, and a row's alone: `SessionState` does not declare
-      // it, so it is added here rather than in `describes`.
+      // it, so it is added here rather than in the state.
       ...changesOf(uri),
-      ...ctx.describes(uri),
+      ...(state.project !== undefined ? { project: state.project } : {}),
+      ...(state._meta !== undefined ? { _meta: state._meta } : {}),
     };
   };
+  /**
+   * The sessions this host is making, each held from before its backend
+   * starts until `root/sessionAdded` says it.
+   *
+   * A change to a row is a change to one a client holds, so a session's row
+   * moves on the wire only once it has been added; what moved while it was
+   * being made goes out in the row `root/sessionAdded` carries.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/root-channel.md#L146
+   */
+  const coming = new Set<string>();
+  const sessionComing = (uri: string): void => { coming.add(uri); };
   /** A session appeared. Carries the whole row, because no client has one yet. */
   const sessionAdded = (uri: string): void => {
+    coming.delete(uri);
     const summary = summaryOf(uri);
     if (!summary) return;
-    /*
-     * Forgetting what was last sent, because the row that goes with it is one
-     * no client has: the added row is a whole row and the next move is a
-     * partial, so nothing the client already holds can be what the partial is
-     * compared against.
-     */
-    lastSent.delete(uri);
+    // The row every client now holds, which the next move is a change from.
+    const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
+    lastSent.set(uri, mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
   /**
-   * What each session's last sent `changes` serialised to.
+   * What each session's row said last, as its mutable fields.
    *
-   * The memory that makes the check below possible, and it is bounded by the
-   * sessions this host is serving rather than by the catalogue: a row is only
-   * compared against what went out for it while it was being served.
+   * What a change is measured against, and it is bounded by the sessions this
+   * host is serving rather than by the catalogue: a row is only compared
+   * against what went out for it while it was being served. A row with no entry
+   * is one this host has said nothing about since it was added or listed, and
+   * its first move carries every mutable field.
    */
-  const lastSent = new Map<string, string>();
+  const lastSent = new Map<string, Bag>();
   /** A session's row is gone, so nothing it was sent can be compared to. */
   const forgetSent = (uri: string): void => {
     lastSent.delete(uri);
+    coming.delete(uri);
   };
   /**
    * A session already in the catalogue moved.
    *
-   * `session` and `changes`, which are the names the protocol gives these. This
-   * carried `resource` and a whole `summary` under names of its own, so a
-   * client read `undefined` for both and its cached list never moved.
-   *
-   * `changes` is a *partial*: only fields that can change belong in it, and the
-   * three identity fields - `resource`, `provider`, `createdAt` - MUST be left
-   * out. Every mutable field goes rather than a computed diff, because they are
-   * all read off live objects in one pass anyway and a client applying a field
-   * to the value it already had is a no-op.
+   * `session` and `changes`, which are the names the protocol gives these.
+   * `changes` carries the fields that changed and no other, and never the three
+   * identity fields - `resource`, `provider`, `createdAt` - as the protocol has
+   * it. A field compared and found equal is not sent: the five callers of this
+   * are reached on every turn, every tool call and every re-read of a
+   * directory, and for most of those nothing about the row moved.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/root-channel.md#L146
    *
    * A session with no agent running still has a status - read and archived are
-   * this host's bits and belong to the row rather than to any process - so the
-   * fallback is that one field rather than silence. Silence is what this did
-   * before, and it was exactly the case that needed saying: marking a row read
-   * is something somebody does from the catalogue, to a session nobody has
-   * opened. Its diff stat goes with it, which costs no process to read: it is
-   * the session's own where `summaryKept` has read one, and the directory's
-   * otherwise.
-   *
-   * And nothing at all is sent when the row is the row that went out last,
-   * because the five callers of this are reached on every turn, every tool
-   * call and every re-read of a directory - and for most of those the row is
-   * byte for byte the one every client is already holding. One build session
-   * sent about 28 of these a second, of which 210 of 225 in a row were
-   * identical to the one before.
+   * this host's bits and belong to the row rather than to any process - so its
+   * row is that one field and its counts. Marking a row read is something
+   * somebody does from the catalogue, to a session nobody has opened. Its diff
+   * stat goes with it, which costs no process to read: it is the session's own
+   * where `summaryKept` has read one, and the directory's otherwise.
    */
   const summaryMoved = (uri: string): void => {
+    factsMoved(uri);
     const summary = summaryOf(uri);
     /*
-     * Zero counts when there are none to send, rather than no key: a partial
-     * without `changes` is a row whose counts did not move, and a client then
-     * keeps the last counts it drew after everything was committed.
+     * Zero counts when there are none, rather than no key: a row whose counts
+     * went to nothing after everything was committed says so, and a client
+     * then draws no counts rather than the last ones it was handed.
      */
     const counts = { changes: NO_CHANGES, ...changesOf(uri) };
-    let changes: Bag = { status: statusOf(uri), ...counts };
-    if (summary !== undefined) {
-      const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
-      /*
-       * `activity: null` when there is none, rather than no key.
-       *
-       * A partial is applied by spreading it over the row a client holds,
-       * so a key that is not there is a field that did not change - and a
-       * session that has gone idle has no activity to carry, which left
-       * every row in the reference client saying what its last tool was
-       * doing until something else about it moved. That client reads
-       * `null` as "cleared" and its host sends it; the type says `string`,
-       * and this is the one place the wire carries what the type does not,
-       * because a row that never goes quiet is worse than a field that is
-       * off-schema by one value.
-       */
-      changes = { ...mutable, ...counts, activity: mutable.activity ?? null };
+    if (summary === undefined) {
+      sayMoved(uri, { status: statusOf(uri), ...counts });
+      return;
     }
-    sayMoved(uri, changes);
+    const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary;
+    sayMoved(uri, { ...mutable, ...counts });
   };
   /**
-   * Say a row moved, unless it is the row every client already holds.
+   * What a running session's state holds of its folder and its backend, said
+   * by its own action when the two differ.
+   *
+   * The changesets a session offers are read off its folder's last read, and
+   * its `_meta` off its backend, its folder, its plugins and its owner: each
+   * read moves on its own clock, and the protocol has the producer say a
+   * field as it changes. Asked where the session's row is, which is every
+   * move of the session or its chats.
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
+   */
+  const factsMoved = (uri: string): void => {
+    const state = ctx.stateOf(uri);
+    if (state === undefined || !sessions.has(uri)) return;
+    const { changesets } = ctx.changesetsOf(uri) as { changesets?: unknown[] };
+    if (JSON.stringify(changesets ?? []) !== JSON.stringify(state.changesets ?? [])) {
+      ctx.dispatch(uri, { type: 'session/changesetsChanged', ...(changesets === undefined ? {} : { changesets }) });
+    }
+    const { _meta: meta } = ctx.describes(uri) as { _meta?: Bag };
+    if (JSON.stringify(meta ?? {}) !== JSON.stringify(state._meta ?? {})) {
+      ctx.dispatch(uri, { type: 'session/metaChanged', ...(meta === undefined ? {} : { _meta: meta }) });
+    }
+  };
+  /**
+   * Say what moved on a row, unless nothing did.
    *
    * The one place a `root/sessionSummaryChanged` leaves from, so that "does this
    * say anything new" is decided once rather than by each caller remembering to
    * ask. A live row and a listed row arrive here by different roads and are
    * judged the same way, which is what lets a client keep one list against both.
+   *
+   * `activity` that went away is said as `null`, as the reference host says
+   * it: a change is applied by spreading it over the row a client holds, and a
+   * field left out is a field that did not change, so a session gone idle would
+   * keep saying what its last tool was doing.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L319-L331
    */
-  const sayMoved = (uri: string, changes: Bag): void => {
-    const said = JSON.stringify(changes);
-    if (lastSent.get(uri) === said) return;
-    lastSent.set(uri, said);
+  const sayMoved = (uri: string, row: Bag): void => {
+    if (coming.has(uri)) return;
+    const before = lastSent.get(uri);
+    const changes: Bag = {};
+    for (const [key, value] of Object.entries(row)) {
+      if (before === undefined || JSON.stringify(before[key]) !== JSON.stringify(value)) changes[key] = value;
+    }
+    if (before?.activity !== undefined && row.activity === undefined) changes.activity = null;
+    lastSent.set(uri, { ...before, ...row, ...(row.activity === undefined ? { activity: undefined } : {}) });
+    if (Object.keys(changes).length === 0) return;
     ctx.broadcast(ROOT, 'root/sessionSummaryChanged', { channel: ROOT, session: uri, changes });
   };
   /**
@@ -1118,13 +1211,12 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * `sessionAdded` speaks for a session this host is running and builds the row
    * from it; this one is a row a backend answered for a session that is not
    * being run, which is what a client opening a link from another machine finds.
-   *
-   * Forgetting what was last sent, as that one does: the row that goes with it
-   * is one no client has, so nothing a client holds can be what the next move is
-   * compared against.
+   * The row every client now holds is the one the next move is a change from,
+   * as it is for that one.
    */
   const rowAdded = (summary: Summary): void => {
-    lastSent.delete(summary.resource);
+    const { resource, provider: _provider, createdAt: _createdAt, ...mutable } = summary as unknown as Bag;
+    lastSent.set(String(resource), mutable);
     ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary });
   };
 
@@ -1246,17 +1338,17 @@ export function createCatalogue(ctx: HostContext): Catalogue {
       if (sessions.has(row.resource))
         continue;
       if (had === undefined) {
-        lastSent.delete(row.resource);
-        ctx.broadcast(ROOT, 'root/sessionAdded', { channel: ROOT, summary: row });
+        rowAdded(row);
         continue;
       }
       if (!movedSince(had, row)) continue;
-      /*
-       * A whole mutable row rather than the fields that differ, because a
-       * client applies a partial by spreading it over what it holds and
-       * setting a field to the value it already has costs nothing.
-       */
+      // Measured against the row the clients hold: what this listing read
+      // before, when nothing was said about it since.
       const { resource: _resource, provider: _provider, createdAt: _createdAt, ...mutable } = row;
+      if (!lastSent.has(row.resource)) {
+        const { resource: _was, provider: _p, createdAt: _c, ...held } = had;
+        lastSent.set(row.resource, held);
+      }
       sayMoved(row.resource, mutable);
     }
     const claimed = claimedIds();
@@ -1347,10 +1439,78 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     }
   };
 
+  /**
+   * What a chat's action moved on its session, said on the session.
+   *
+   * The chat's row in the session's `chats` takes the fields of the chat's
+   * state that changed, as `session/chatUpdated` - only those, and never its
+   * `resource`. The session's `activity` takes the activity of the chat that
+   * now decides it, as `session/activityChanged`. And the catalogue row moves
+   * with both. Each is said only when the session's state is held: a session
+   * nothing holds opens with what its chats say then.
+   *
+   * A row's `activity` the chat cleared stays as it was: the action merges what
+   * it carries, and the protocol's summary has no value that clears it. The
+   * chat's own state and the session's `activity` say it.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3237-L3299
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/session-channel.md#L91-L99
+   */
+  const chatMoved = (chat: string): void => {
+    const session = sessionHolding(chat);
+    const held = session === undefined ? undefined : sessions.get(session);
+    if (session === undefined || held === undefined) return;
+    const state = ctx.stateOf(session);
+    const own = ctx.stateOf(chat);
+    if (state !== undefined && own !== undefined) {
+      const row = (Array.isArray(state.chats) ? state.chats as Bag[] : []).find((one) => one.resource === chat);
+      if (row !== undefined) {
+        const now = subagents.has(chat) ? subagentSummary(chat, subagents.get(chat) as LiveSubagent) : summaryIn(own, chat);
+        const changes: Bag = {};
+        for (const key of ['title', 'status', 'modifiedAt', 'activity', 'interactivity', 'origin']) {
+          if (now[key] === undefined) continue;
+          if (JSON.stringify(now[key]) !== JSON.stringify(row[key])) changes[key] = now[key];
+        }
+        if ((now.movable === true) !== (row.movable === true)) changes.movable = now.movable === true;
+        if (Object.keys(changes).length > 0) ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes });
+      }
+      const activity = activityOf(held);
+      if (activity !== state.activity) {
+        ctx.dispatch(session, { type: 'session/activityChanged', ...(activity === undefined ? {} : { activity }) });
+      }
+    }
+    summaryMoved(session);
+  };
+
+  /**
+   * An answer typed into a chat's question, carried into the session's mirror
+   * of that question.
+   *
+   * The session's `inputNeeded` entry for a question is the chat's request
+   * mirrored, answers and all, so a client watching only the session sees the
+   * form being filled in. Upserted from the chat's own state once the chat has
+   * taken the answer, as the reference host keeps the mirror; an entry nobody
+   * raised for the question is left for its raiser.
+   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/sessionInputNeeded/sessionInputNeededContribution.ts#L61-L101
+   */
+  const answerMirrored = (chat: string, requestId: string): void => {
+    const session = sessionHolding(chat);
+    const state = session === undefined ? undefined : ctx.stateOf(session);
+    const own = ctx.stateOf(chat);
+    if (session === undefined || state === undefined || own === undefined) return;
+    const entry = (Array.isArray(state.inputNeeded) ? state.inputNeeded as Bag[] : [])
+      .find((one) => one.kind === 'chatInput' && one.chat === chat && (one.request as Bag | undefined)?.id === requestId);
+    const turn = own.activeTurn as Bag | undefined;
+    const part = (Array.isArray(turn?.responseParts) ? turn.responseParts as Bag[] : [])
+      .find((one) => one.kind === 'inputRequest' && one.response === undefined && (one.request as Bag | undefined)?.id === requestId);
+    if (entry === undefined || part === undefined) return;
+    const request = { ...entry, request: part.request };
+    if (JSON.stringify(request) !== JSON.stringify(entry)) ctx.dispatch(session, { type: 'session/inputNeededSet', request });
+  };
+
   return {
     statusOf, startedBy, chatSummary, movable, running, movableMoved, chatsReordered, subagentSummary, restoredSubagentSummary,
-    chatCatalogOf,
-    activityOf, sessionAdded, summaryMoved, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
+    chatCatalogOf, chatMoved, answerMirrored, factsMoved, activeCount,
+    activityOf, sessionComing, sessionAdded, summaryMoved, summaryKept, forgetSent, activeSessionsMoved, learnModels, learnAccount,
     listing, adopt, rowAdded, liveRows, allRows, rowsMoved, waitingFor, readStored,
   };
 }

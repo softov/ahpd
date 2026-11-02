@@ -949,7 +949,10 @@ describe("a row lists the session's chats", () => {
     });
     await settle();
 
-    const updated = actions(p).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === second).at(-1);
+    // Each row change carries the fields that moved, so the status is the
+    // last one any of them carried.
+    const updated = actions(p).filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === second
+      && (e.action.changes as { status?: number }).status !== undefined).at(-1);
     const status = (updated?.action.changes as { status?: number } | undefined)?.status;
     expect(status).toBe(Status.InProgress);
     // And the row agrees with the chat, which is what a client listing
@@ -1247,35 +1250,32 @@ describe('a summary that did not change', () => {
     }, { timeout: 3000 });
   });
 
-  it('sends the first move of a session re-created under the same URI', async () => {
+  it('measures the first move of a session re-created under the same URI against its new row', async () => {
     /*
      * The clock held still, because what this is about is a row that comes
      * back exactly as it was: the last summary sent for the URI was recorded
      * against the session that was disposed, and a client has nothing of the
-     * new one to start from.
+     * new one but the row it was added with.
      */
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
     try {
       const { client, peer: p, uri } = await running();
-      // The row a session sends once its customizations arrive, which is the
-      // last one this session sends.
       await settle();
-      const opened = rowsMoved(p, 'ahp-session:/live');
-      expect(opened).not.toHaveLength(0);
 
       await client.handle({ method: 'disposeSession', params: { channel: uri } });
       await settle();
+      const added = p.notes.filter((n) => n.method === 'root/sessionAdded').length;
       await client.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
       await settle();
-      // The same conversation, under the same name, with nothing on it - and a
-      // client that watched it go has an empty row for it. The row it is sent
-      // here is byte for byte the row the disposed session last sent.
+      // The same conversation, under the same name, added whole: what a client
+      // that watched it go now holds, and what the next move is a change from.
+      expect(p.notes.filter((n) => n.method === 'root/sessionAdded')).toHaveLength(added + 1);
       const before = rowsMoved(p, 'ahp-session:/live');
-      expect(before).toHaveLength(opened.length + 1);
-      expect(before.at(-1)).toEqual(opened.at(-1));
       await retitle(client, uri, 'Paging');
-      expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
+      const moved = rowsMoved(p, 'ahp-session:/live');
+      expect(moved).toHaveLength(before.length + 1);
+      expect(moved.at(-1)).toMatchObject({ title: 'Paging' });
       await retitle(client, uri, 'Paging');
       expect(rowsMoved(p, 'ahp-session:/live')).toHaveLength(before.length + 1);
     }
@@ -1313,9 +1313,18 @@ describe("a row's counts are the session's own", () => {
     .filter((n) => n.session === session)
     .map((n) => n.changes);
 
-  /** The counts a session's row carried last. */
-  const countsOf = (p: ReturnType<typeof peer>, session: string) =>
-    rowsMoved(p, session).at(-1)?.changes as { files?: number; additions?: number; deletions?: number } | undefined;
+  /**
+   * The counts a session's row carries, as a client holds them: the last
+   * change that carried any, or the row it was added with. A change carries
+   * the fields that moved, so a later one about the title leaves the counts.
+   */
+  const countsOf = (p: ReturnType<typeof peer>, session: string) => {
+    const moved = rowsMoved(p, session).filter((changes) => changes.changes !== undefined).at(-1)?.changes;
+    const added = p.notes.filter((n) => n.method === 'root/sessionAdded')
+      .map((n) => (n.params as { summary: Record<string, unknown> }).summary)
+      .filter((summary) => summary.resource === session).at(-1)?.changes;
+    return (moved ?? added) as { files?: number; additions?: number; deletions?: number } | undefined;
+  };
 
   /**
    * A source whose counts are the session's, with a directory's of its own.

@@ -558,9 +558,10 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
      * plugins to import again, which is the one change the file does not show.
      */
     apply: async (reload?: string[]) => {
-      const answer = await applyNow(reload);
+      const answer = await appliedAfterWrite(reload);
       return { restart: answer.restart, changed: answer.changed };
     },
+    valuesMoved: () => valuesMoved(),
     // The Windows update's own way down: the helper it started runs npm once
     // this process is gone, so there is no successor to start from here.
     down: () => { wayDown?.(); },
@@ -745,6 +746,11 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   let markRestart: () => void = () => {};
   /*
+   * The host's root told of the daemon values a plugin or paths command wrote,
+   * once there is a host, through the same closure.
+   */
+  let valuesMoved: () => Promise<void> = async () => {};
+  /*
    * The file a plugin is configured in, which the channel edits and the live
    * apply reads back: one path for both, so a change and the load that answers
    * it are about the same list.
@@ -764,6 +770,17 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     alerts: {},
     routes: {},
   });
+  /*
+   * The apply after a plugin command wrote the file, over the plugins channel
+   * or at the terminal: no client's `root/configChanged` made that write, so
+   * the root hears the daemon values it moved from here. A client's own push
+   * applies through the root config port, and its echo says them.
+   */
+  const appliedAfterWrite = async (reload?: string[]): Promise<Applied> => {
+    const answer = await applyNow(reload);
+    await valuesMoved();
+    return answer;
+  };
   const pluginLists = pluginsChannel({
     configFile: pluginFile,
     where: { configDir: configDir(), cwd: process.cwd() },
@@ -773,7 +790,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
     // answer to take it from, and the row has to carry the one there is now.
     views: () => pluginHoldings.views(),
     restartNeeded: () => markRestart(),
-    apply: (reload) => applyNow(reload),
+    apply: (reload) => appliedAfterWrite(reload),
     onProblem: listProblem,
   });
   /*
@@ -1683,6 +1700,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const host = createHost({ ...started, connectors: { refs: () => connectorLists.refs(), run: connectorLists.run } });
   // The plugin channel's marks reach the host that now serves it.
   markRestart = () => { host.markRestartNeeded(); };
+  valuesMoved = () => host.daemonValuesMoved();
   /*
    * The host the plugins were loaded for, handed over now that it exists.
    *

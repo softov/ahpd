@@ -367,8 +367,8 @@ describe('a chat made out of another', () => {
     const added = actions(p, uri).find((e) => e.action.type === 'session/chatAdded');
     expect((added?.action.summary as { origin?: unknown }).origin).toEqual(origin);
 
-    // A full summary is re-sent when the chat moves, and it must not say
-    // `user` over what the chat was made from.
+    // The row's change carries the fields that moved, never `resource`, and
+    // it must not say `user` over what the chat was made from.
     client.handle({
       method: 'dispatchAction',
       params: { channel: 'ahp-chat:/forked', action: { type: 'session/titleChanged', title: 'Forked' } },
@@ -381,7 +381,8 @@ describe('a chat made out of another', () => {
     const updated = actions(p, uri)
       .filter((e) => e.action.type === 'session/chatUpdated' && e.action.chat === 'ahp-chat:/forked')
       .map((e) => e.action.changes as { origin?: unknown; resource?: unknown });
-    expect(updated.some((one) => one.resource !== undefined)).toBe(true);
+    expect(updated).not.toHaveLength(0);
+    expect(updated.every((one) => one.resource === undefined)).toBe(true);
     for (const one of updated) if (one.origin !== undefined) expect(one.origin).toEqual(origin);
 
     const session = await client.handle({ method: 'subscribe', params: { channel: uri } }) as {
@@ -1238,7 +1239,8 @@ describe('more than one chat in a session', () => {
       // delay.
       const worker = starts.at(-1)?.subagent?.('toolu_task', { title: 'Explore', prompt: 'list the files' });
       await settle();
-      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      // What `chat/movableChanged` left it, as every client that watched it.
+      expect((await opened(client, PEER)).state.movable).toBe(false);
       /*
        * And a worker is not a move of its own. It is a chat of the session and
        * the catalogue names it, but nothing holds it as a chat a client opened,
@@ -1274,7 +1276,7 @@ describe('more than one chat in a session', () => {
       // now the one the session hands out - and it stops being movable without
       // anybody having to speak to it again.
       expect((await opened(client, LIVE)).state.defaultChat).toBe(PEER);
-      expect((await opened(client, PEER)).state.movable).toBeUndefined();
+      expect((await opened(client, PEER)).state.movable).toBe(false);
       expect(moves(p, PEER)).toEqual([false]);
     }
     finally {
@@ -1598,9 +1600,12 @@ describe('more than one chat in a session', () => {
        * row back to the newest of what it still holds. A row that kept the
        * moved chat's time is a row a client draws in the wrong place.
        */
+      // Each change carries the fields that moved, so the times are the
+      // changes that carried one.
       const rows = p.notes
         .filter((n) => n.method === 'root/sessionSummaryChanged')
-        .map((n) => n.params as { session: string; changes: { modifiedAt?: string } });
+        .map((n) => n.params as { session: string; changes: { modifiedAt?: string } })
+        .filter((one) => one.changes.modifiedAt !== undefined);
       const cameTo = rows.filter((one) => one.session === 'ahp-session:/two');
       const wentFrom = rows.filter((one) => one.session === 'ahp-session:/live');
       expect(cameTo.at(-1)?.changes.modifiedAt).toBeDefined();
@@ -1830,7 +1835,7 @@ describe('more than one chat in a session', () => {
        * be moved a moment ago cannot be now, and the client is told.
        */
       expect(moves(first.p, PEER).at(-1)).toBe(false);
-      expect((await opened(first.client, PEER)).state.movable).toBeUndefined();
+      expect((await opened(first.client, PEER)).state.movable).toBe(false);
       // The session it left has its own chat and no other.
       const from = await opened(first.client, LIVE);
       expect(listed(from)).toEqual([from.state.defaultChat]);
