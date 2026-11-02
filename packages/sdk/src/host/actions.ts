@@ -6,7 +6,7 @@ import { localPath } from '../resources/fileuri.js';
 import { reason } from '../utils/values.js';
 import { computerNeeds, dispatchNeeds, ACTION_HOMES, ACTION_NEEDS, HOME_WORDS, ownIn, PER_CONNECTION } from './gate.js';
 import { chatUriFor, isRootChannel, MARKS, ROOT, spaceOf, toolCallOfSubagentChat, WORKER_ACTIONS } from './channels.js';
-import { chatAction, sessionFlag } from './chatactions.js';
+import { chatAction, chatFlag, readAggregate, sessionFlag } from './chatactions.js';
 import { HOSTS_OWN } from './common.js';
 import { AUTO_ARCHIVE_KEY, AUTO_DELETE_KEY } from './merged.js';
 import { RESTART_KEY } from './root.js';
@@ -812,14 +812,27 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       // chat is this same act - see `sessionFlag`. A bit that did not move
       // keeps the catalogue as it is, and the action goes to every client of
       // the session, as an unchanged announcement does above.
-      const moved = sessionFlag(
-        ctx,
-        sessionFor(channel),
-        type === 'session/isReadChanged' ? Status.IsRead : Status.IsArchived,
-        type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
-        action,
-      );
-      if (!moved) dispatch(channel, action, origin);
+      /*
+       * The read bit as the session's chats make it. A session marked read
+       * while one of two or more of its `readAggregate` chats is unread is
+       * said unread, the client's own action carrying the bit the session
+       * holds; a session of one such chat takes that chat to its new bit after
+       * its own action, whether or not its own bit moved.
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2869-L2878
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2912-L2918
+       * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3101-L3103
+       */
+      const uri = sessionFor(channel);
+      const read = type === 'session/isReadChanged';
+      const chats = read ? readAggregate(ctx, uri) : [];
+      const on = read
+        ? action.isRead === true && !(chats.length > 1 && chats.some((one) => !one.read))
+        : action.isArchived === true;
+      const said = read && on !== (action.isRead === true) ? { ...action, isRead: on } : action;
+      const moved = sessionFlag(ctx, uri, read ? Status.IsRead : Status.IsArchived, on, said);
+      if (!moved) dispatch(channel, said, origin);
+      const sole = chats.length === 1 ? chats[0] : undefined;
+      if (sole !== undefined && sole.read !== on) chatFlag(ctx, uri, sole.uri, Status.IsRead, on);
       return;
     }
     const terminal = terminals.get(channel);
