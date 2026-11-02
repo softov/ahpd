@@ -1,7 +1,7 @@
 ---
 title: The bot waits on every answer and hands on the message whole
 domain: bots
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -59,8 +59,8 @@ person -> bot chat begin(text, model, from, attachments) -> onMessage {text}
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a dispatch waits for its answer](task-01-a-dispatch-waits-for-its-answer.md) | todo | - |
-| [02 - the message is handed on whole](task-02-the-message-is-handed-on-whole.md) | todo | - |
+| [01 - a dispatch waits for its answer](task-01-a-dispatch-waits-for-its-answer.md) | done | - |
+| [02 - the message is handed on whole](task-02-the-message-is-handed-on-whole.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -68,12 +68,12 @@ person -> bot chat begin(text, model, from, attachments) -> onMessage {text}
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-dispatch-waits-for-its-answer.md](task-01-a-dispatch-waits-for-its-answer.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none in this plan.
 - **Open questions:** none.
 - **Watch out for:** the steer carries no model, since `Session.steer` is handed none.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on c3c8c3e4 and passes after the change.
-- [ ] `pnpm run typecheck` reports no errors.
+- [x] Each new case fails on c3c8c3e4 and passes after the change.
+- [x] `pnpm run typecheck` reports no errors.

@@ -1,6 +1,6 @@
 ---
 title: The answer is the client's own action
-status: todo
+status: done
 depends: [task-01-an-action-is-answered-on-its-own-channel.md]
 layer: "sdk host"
 refs:

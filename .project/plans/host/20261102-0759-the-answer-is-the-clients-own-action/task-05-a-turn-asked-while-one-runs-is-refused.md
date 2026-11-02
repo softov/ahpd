@@ -1,6 +1,6 @@
 ---
 title: A turn asked for while one runs is refused
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:

@@ -1,6 +1,6 @@
 ---
 title: An action is answered on its own channel
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:

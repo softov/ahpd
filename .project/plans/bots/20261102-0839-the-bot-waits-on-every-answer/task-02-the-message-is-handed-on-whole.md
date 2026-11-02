@@ -1,6 +1,6 @@
 ---
 title: The message is handed on whole
-status: todo
+status: done
 depends: []
 layer: "bot"
 refs:

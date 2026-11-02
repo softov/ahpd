@@ -1,6 +1,6 @@
 ---
 title: A stop and a client's result are said when taken
-status: todo
+status: done
 depends: [task-01-an-action-is-answered-on-its-own-channel.md]
 layer: "sdk host"
 refs:

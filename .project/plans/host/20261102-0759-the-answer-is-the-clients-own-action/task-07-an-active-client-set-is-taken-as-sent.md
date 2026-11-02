@@ -1,6 +1,6 @@
 ---
 title: An active client set is taken as sent
-status: todo
+status: done
 depends: []
 layer: "sdk host"
 refs:

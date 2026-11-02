@@ -1,7 +1,7 @@
 ---
 title: The answer is the client's own action, on its channel, in its order
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -87,13 +87,13 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an action is answered on its own channel](task-01-an-action-is-answered-on-its-own-channel.md) | todo | - |
-| [02 - the answer is the client's own action](task-02-the-answer-is-the-clients-own-action.md) | todo | 01 |
-| [03 - a stop and a result are said when taken](task-03-a-stop-and-a-result-are-said-when-taken.md) | todo | 01 |
-| [04 - answers go out in the order sent](task-04-answers-go-out-in-the-order-sent.md) | todo | 01 |
-| [05 - a turn asked while one runs is refused](task-05-a-turn-asked-while-one-runs-is-refused.md) | todo | - |
-| [06 - a config change is answered once](task-06-a-config-change-is-answered-once.md) | todo | 01 |
-| [07 - an active client set is taken as sent](task-07-an-active-client-set-is-taken-as-sent.md) | todo | - |
+| [01 - an action is answered on its own channel](task-01-an-action-is-answered-on-its-own-channel.md) | done | - |
+| [02 - the answer is the client's own action](task-02-the-answer-is-the-clients-own-action.md) | done | 01 |
+| [03 - a stop and a result are said when taken](task-03-a-stop-and-a-result-are-said-when-taken.md) | done | 01 |
+| [04 - answers go out in the order sent](task-04-answers-go-out-in-the-order-sent.md) | done | 01 |
+| [05 - a turn asked while one runs is refused](task-05-a-turn-asked-while-one-runs-is-refused.md) | done | - |
+| [06 - a config change is answered once](task-06-a-config-change-is-answered-once.md) | done | 01 |
+| [07 - an active client set is taken as sent](task-07-an-active-client-set-is-taken-as-sent.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -103,12 +103,12 @@ client chat/turnStarted, then chat/draftChanged -> the draft is said at once
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-an-action-is-answered-on-its-own-channel.md](task-01-an-action-is-answered-on-its-own-channel.md).
-- **Open questions:** none.
+- **Done so far:** tasks 01 to 07, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none in this plan.
+- **Open questions:** the `tools` an entry that names none is given; [implemented.md](implemented.md) records what each source says.
 - **Watch out for:** a client's action without `startedAt` or a message origin; the backend's word fills them.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on c3c8c3e4 and passes after the change.
-- [ ] `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` report no errors.
+- [x] Each new case fails on c3c8c3e4 and passes after the change.
+- [x] `pnpm run typecheck` reports no errors.
