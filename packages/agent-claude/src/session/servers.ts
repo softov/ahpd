@@ -54,6 +54,17 @@ export function createServers(ctx: SessionContext): Servers {
   const wanted = new Map<string, Published>();
 
   /**
+   * The servers a client's stop switched off, by name.
+   *
+   * The CLI stops a server by its disabled flag, the same flag a switch sets,
+   * and a stop leaves the customization's enabled intent where it was. So a
+   * server in here reads enabled while the CLI reports it `disabled`, and a
+   * start of it lifts the flag before it reconnects. A client's switch of the
+   * server is a decision about the intent, and takes it out of here.
+   */
+  const stopRequested = new Set<string>();
+
+  /**
    * What the CLI last said it has, kept so the list can be built again.
    *
    * A switch moves the plugins and nothing else, and the SDK asks for a whole
@@ -101,7 +112,7 @@ export function createServers(ctx: SessionContext): Servers {
       managedDir: managedDirOf(),
       ...(ctx.options.cwd !== undefined ? { cwd: ctx.options.cwd } : {}),
     });
-    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, disk);
+    ctx.customizations = customizationsOf(reported.init, reported.mcp, reported.skills, wanted, plugins, handed, off, disk, stopRequested);
     if (ctx.customizations.length > 0) {
       ctx.emit('session', { type: 'session/customizationsChanged', customizations: ctx.customizations });
     }
@@ -128,10 +139,11 @@ export function createServers(ctx: SessionContext): Servers {
   /**
    * Re-read the MCP servers and say what changed.
    *
-   * Asked of the CLI rather than assumed from what was just requested: a
-   * server told to start can come back `ready`, still `authRequired`, or
-   * `error`, and reporting the state that was *asked for* would show a green
-   * row against a server nobody has signed into.
+   * Asked of the CLI after a switch, a start or a stop: a server told to start
+   * can come back `ready`, still `authRequired`, or `error`, and only the CLI's
+   * answer says which. What changed is measured against the entry this
+   * session holds, which is what every client was last told of the server, a
+   * client's start or stop included.
    */
   const refreshMcp = async (): Promise<void> => {
     const found = await ctx.handle.mcpServerStatus().then((r) => (Array.isArray(r) ? r : [])).catch(() => [] as unknown[]);
@@ -143,7 +155,7 @@ export function createServers(ctx: SessionContext): Servers {
       if (!name) continue;
       const id = `mcp:${name}`;
       const held = ctx.customizations.find((entry) => str(entry.id) === id);
-      const fresh = bag(customizationsOf({}, [server], [], wanted)[0]);
+      const fresh = bag(customizationsOf({}, [server], [], wanted, [], undefined, [], undefined, stopRequested)[0]);
       if (!held) {
         ctx.customizations.push(fresh);
         ctx.emit('session', { type: 'session/customizationUpdated', customization: fresh });
@@ -218,6 +230,24 @@ export function createServers(ctx: SessionContext): Servers {
       ctx.customizations.splice(ctx.customizations.indexOf(entry), 1);
       ctx.emit('session', { type: 'session/customizationRemoved', id });
     }
+  };
+
+  /**
+   * Say a start or a stop of a server, and hold the server as the request
+   * leaves it in every client.
+   *
+   * The protocol's reducer moves a server a start names to `starting`, and one
+   * a stop names to `stopped`, with no `channel`; the entry this session holds
+   * takes the same, so the refresh after the CLI's call says the state the CLI
+   * reports whether or not it is the one the server was in.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/reducer.ts#L458-L479
+   */
+  const request = (id: string, type: 'session/mcpServerStartRequested' | 'session/mcpServerStopRequested'): void => {
+    ctx.emit('session', { type, id });
+    const held = ctx.customizations.find((entry) => str(entry.id) === id);
+    if (held === undefined) return;
+    held.state = { kind: type === 'session/mcpServerStartRequested' ? 'starting' : 'stopped' };
+    delete held.channel;
   };
 
   /**
@@ -408,6 +438,7 @@ export function createServers(ctx: SessionContext): Servers {
       const server = serverNamed(id);
       if (!server)
         return switchPlugin(id, enabled);
+      stopRequested.delete(server);
       const held = ctx.customizations.find((entry) => str(entry.id) === id);
       const was = str(bag(held?.state).kind);
       try {
@@ -429,7 +460,7 @@ export function createServers(ctx: SessionContext): Servers {
         }
         else {
           await ctx.handle.toggleMcpServer(server, true).catch(() => {});
-          ctx.emit('session', { type: 'session/mcpServerStartRequested', id });
+          request(id, 'session/mcpServerStartRequested');
           await ctx.handle.reconnectMcpServer(server);
         }
       }
@@ -450,19 +481,29 @@ export function createServers(ctx: SessionContext): Servers {
      * `reconnectMcpServer` makes the CLI run its own sign-in, on the machine
      * the CLI is on. AHP's `authenticate` is the other model - the client
      * fetches a token and pushes it - and the SDK has nowhere to put one, so
-     * this host serves the gesture and not the token.
+     * this host serves the gesture and not the token. A server a stop switched
+     * off has the CLI's disabled flag lifted first, in the order a switch on
+     * takes.
+     *
+     * Once the request is said it is answered, and what follows it is the
+     * state the CLI reports, a call that threw included: the guide has the
+     * host follow a start with `session/mcpServerStateChanged`.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md#L50
      */
     startMcpServer: async (id) => {
       const server = serverNamed(id);
       if (!server)
         return false;
-      ctx.emit('session', { type: 'session/mcpServerStartRequested', id });
+      request(id, 'session/mcpServerStartRequested');
       try {
+        if (stopRequested.has(server)) {
+          await ctx.handle.toggleMcpServer(server, true);
+          stopRequested.delete(server);
+        }
         await ctx.handle.reconnectMcpServer(server);
       }
       catch {
-        await refreshMcp();
-        return false;
+        // Said by the refresh below, which reads what the CLI made of it.
       }
       await refreshMcp();
       return true;
@@ -506,17 +547,31 @@ export function createServers(ctx: SessionContext): Servers {
 
     awaiting: () => [...wanted.values()].map((published) => published.resource),
 
+    /**
+     * Stop one, by the CLI's disabled flag.
+     *
+     * The guide has a stop manage the server's process and leave the
+     * customization's enabled intent as it was, so a server that was on when
+     * it stopped is kept in `stopRequested` and reads on. It is kept from
+     * before the CLI is asked, so a start that arrives while the CLI is still
+     * stopping it lifts the flag, and given back when the CLI refuses the
+     * stop. Once the request is said it is answered, and what follows it is
+     * the state the CLI reports, a call that threw included.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md#L48-L51
+     */
     stopMcpServer: async (id) => {
       const server = serverNamed(id);
       if (!server)
         return false;
-      ctx.emit('session', { type: 'session/mcpServerStopRequested', id });
+      const on = bag(list(ctx.customizations.find((entry) => str(entry.id) === id)?.enablement)[0]).enabled !== false;
+      request(id, 'session/mcpServerStopRequested');
+      if (on) stopRequested.add(server);
       try {
         await ctx.handle.toggleMcpServer(server, false);
       }
       catch {
-        await refreshMcp();
-        return false;
+        // Said by the refresh below, which reads what the CLI made of it.
+        stopRequested.delete(server);
       }
       await refreshMcp();
       return true;
