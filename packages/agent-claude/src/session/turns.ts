@@ -287,16 +287,23 @@ export function createTurns(ctx: SessionContext): Turns {
      * The form the model came with, which is one key here.
      *
      * `thinkingLevel` is what a client writes into `ModelSelection.config`,
-     * and the CLI holds one effort setting for the whole query rather than one
-     * per turn - so a turn that names a level sets it from here on, and the
-     * session-wide `effortLevel` is told so the two controls do not describe
-     * different futures.
+     * and it is this turn's: the reference host hands a turn's model to its
+     * agent, which sets the model's effort on the SDK, and no session config
+     * moves. The CLI holds one effort for the whole query, so a turn that
+     * names none after one that did puts the session's `effortLevel` back.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L2228-L2235
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/claude/claudeAgentSession.ts#L1206-L1226
      */
     const level = EFFORTS.find((one) => one === (model?.config ?? {}).thinkingLevel);
-    if (level !== undefined && level !== ctx.settings.effortLevel) {
-      ctx.settings.effortLevel = level;
+    const sessions = EFFORTS.find((one) => one === ctx.settings.effortLevel);
+    const running = ctx.turnEffort ?? sessions;
+    if (level !== undefined && level !== running) {
+      ctx.turnEffort = level === sessions ? undefined : level;
       void ctx.handle.applyFlagSettings({ effortLevel: level }).catch(() => {});
-      ctx.emit('session', { type: 'session/configChanged', config: { effortLevel: level } });
+    }
+    else if (level === undefined && ctx.turnEffort !== undefined) {
+      ctx.turnEffort = undefined;
+      if (sessions !== undefined) void ctx.handle.applyFlagSettings({ effortLevel: sessions }).catch(() => {});
     }
     ctx.active = {
       id: turnId,

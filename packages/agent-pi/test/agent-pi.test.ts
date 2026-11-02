@@ -598,15 +598,22 @@ it('names no point for a !command turn, which is not pi running', async () => {
   expect(session.endPoint?.('t1')).toBeUndefined();
 });
 
-it('fails the turn when pi refuses to move the leaf back', async () => {
+/*
+ * A cut pi refuses is logged, and the turn runs on pi's leaf: the reference
+ * host logs an agent's cut that failed (agentSideEffects.ts L1982-L1986 at
+ * a4e689ae).
+ */
+it('runs the turn when pi refuses to move the leaf back, and logs the refusal', async () => {
   const { session, pi, last } = opened({ rewindAt: 'entry-7' } as Partial<Start>);
   pi.refuseRewind();
+  const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
   session.begin('t1', 'hello');
   await settled();
   expect(pi.asked.find((one) => one.kind === 'rewind')?.entryId).toBe('entry-7');
-  const failure = last('chat/error');
-  expect(((failure?.part as Bag).error as Bag).message).toContain('refused');
-  expect(session.status()).toBe(2);
+  expect(last('chat/error')).toBeUndefined();
+  expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('hello');
+  expect(warned.mock.calls.some(([line]) => String(line).includes('refused to move the leaf back to entry-7'))).toBe(true);
+  warned.mockRestore();
 });
 
 it('fails the turn on the last assistant message ending in error', async () => {

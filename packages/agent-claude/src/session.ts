@@ -19,7 +19,7 @@ import { createWorkers } from './session/workers.js';
 
 export { keptLabel } from './session/asking.js';
 export { INTERNAL_AGENT, agentNameOf, customizationsOf } from './session/customizations.js';
-export { EFFORT_LABELS, EFFORTS, permissionFor } from './session/config.js';
+export { EFFORT_LABELS, EFFORTS } from './session/config.js';
 export type { ClaudeSessionOptions } from './session/context.js';
 export type { Published } from './session/customizations.js';
 
@@ -66,6 +66,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     settings: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
+    turnEffort: undefined as string | undefined,
     offering: [...(options.tools ?? [])] as BoundTool[],
     handle: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,
