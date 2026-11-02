@@ -54,4 +54,6 @@ A stop of the running turn reaches every backend under that turn's id, a stop th
 
 ## Left for later
 
-- None.
+- Softov's review of 2026-11-01 names a gap: a stop sent while a turn is still starting is refused, and the turn then runs.
+- The windows are a policy check, a Claude model switch, a machine answering and a wake, while `chatState()` has no `activeTurn` yet. Before this plan the stop was echoed and lost the same way.
+- Case 015, a cancel that finalizes its turn, is a `REFUSALS` entry because the driver runs no turn. So the protocol's finalize path is not driven.
