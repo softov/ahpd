@@ -202,8 +202,9 @@ const serving = async (source: ChangesetSource) => {
 };
 
 describe('what the host answers', () => {
-  it('answers a tick on a file already ticked to the client that sent it alone', async () => {
-    const { host, two, review, answer } = await serving(held().source);
+  it('says a tick on a file already ticked to every watcher, writing nothing', async () => {
+    const { source, ticked } = held();
+    const { host, two, review, answer } = await serving(source);
     await review(1, [A]);
     await until(() => answer(1) !== undefined, 'the first answer');
     expect(two.heard.map((heard) => heard.action)).toEqual([{ type: 'changeset/filesReviewChanged', files: [A], reviewed: true }]);
@@ -211,7 +212,12 @@ describe('what the host answers', () => {
     await review(2, [A]);
     await until(() => answer(2) !== undefined, 'the second answer');
     expect(answer(2)?.rejectionReason).toBeUndefined();
-    expect(two.heard).toHaveLength(1);
+    await until(() => two.heard.length > 1, 'the second tick at the other watcher');
+    expect(two.heard.map((heard) => heard.action)).toEqual([
+      { type: 'changeset/filesReviewChanged', files: [A], reviewed: true },
+      { type: 'changeset/filesReviewChanged', files: [A], reviewed: true },
+    ]);
+    expect([...ticked]).toEqual([A]);
     await host.close();
   });
 
@@ -233,7 +239,7 @@ describe('what the host answers', () => {
     await host.close();
   });
 
-  it('ticks only the files the changeset holds, and answers a review of none of them to its sender alone', async () => {
+  it('ticks only the files the changeset holds, and says a review of none of them to every watcher, ticking nothing', async () => {
     const { source, ticked } = held();
     const { host, two, review, answer } = await serving(source);
     await review(1, [A, ELSEWHERE]);
@@ -244,7 +250,8 @@ describe('what the host answers', () => {
     await review(2, [ELSEWHERE]);
     await until(() => answer(2) !== undefined, 'the second answer');
     expect(answer(2)?.rejectionReason).toBeUndefined();
-    expect(two.heard).toHaveLength(1);
+    await until(() => two.heard.length > 1, 'the second review at the other watcher');
+    expect(two.heard.at(-1)?.action).toEqual({ type: 'changeset/filesReviewChanged', files: [ELSEWHERE], reviewed: true });
     expect([...ticked]).toEqual([A]);
     await host.close();
   });

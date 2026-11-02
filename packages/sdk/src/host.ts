@@ -6,9 +6,9 @@
  *
  * Rules that govern anything answering AHP:
  *
- * - `serverSeq` advances when state changes, not per message. A snapshot is
- *   taken at a sequence number and every action after it carries a greater
- *   one, which is how a client knows it missed nothing.
+ * - `serverSeq` advances with every action envelope this host sends. A
+ *   snapshot is taken at a sequence number and every action after it carries
+ *   a greater one, which is how a client knows it missed nothing.
  * - Notifications carry no id and get no reply. `unsubscribe` and
  *   `dispatchAction` are notifications.
  * - Subscriptions are per connection. Dropping one client's subscription must
@@ -861,10 +861,10 @@ export function createHost(options: HostOptions): Host {
   /**
    * One state action, to everyone watching that channel.
    *
-   * `serverSeq` moves here and only here. A snapshot is taken *at* a sequence
-   * number and every action after it carries a greater one, which is how a
-   * client knows it missed nothing - so the counter has to advance with state,
-   * never with messages.
+   * `serverSeq` moves here and in `refuse`, once for each envelope. A snapshot
+   * is taken *at* a sequence number and every action after it carries a
+   * greater one, which is how a client knows it missed nothing.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
    */
   const emit = (channel: string, action: Record<string, unknown>, origin: Origin | undefined, audience?: PublishOptions): void => {
     ctx.serverSeq += 1;
@@ -1083,25 +1083,21 @@ export function createHost(options: HostOptions): Host {
    * The other half of the write-ahead loop. A client applies an action before
    * sending it, so a host that decides not to apply one has to *say so*: an
    * envelope carrying `rejectionReason` is what tells the client to put its own
-   * state back. Dropping it - which is what every one of these sites used to do
-   * - leaves the client holding a change this host never made, with nothing
-   * anywhere to correct it. The log line goes to the daemon's stdout, where no
-   * client is looking.
+   * state back. The log line goes to the daemon's stdout, where no client is
+   * looking.
    *
-   * Three things it deliberately does not do.
+   * It takes the next `serverSeq`, as every envelope does: a client that has
+   * just subscribed holds a snapshot taken at the number this host was at, and
+   * every action after it carries a greater one.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
    *
-   * `serverSeq` does not move, because no state did. The counter's whole job is
-   * to let a client tell what it has already seen from what is still to come,
-   * and a refusal is neither: it carries the sequence this host is *still* at.
-   *
-   * It is not buffered for replay, for the same reason. A client that comes
-   * back is asking what it missed of the state, and this changed none of it.
-   *
-   * It goes to the one connection that sent it rather than to everyone watching
-   * the channel. A refusal answers one client's dispatch; nobody else applied
-   * it optimistically, so nobody else has anything to put back - and a client
-   * that reduced a rejected envelope would apply the very change this host
-   * refused.
+   * It goes to the one connection that sent it, and is not buffered for
+   * replay. A refusal answers one client's dispatch: nobody else applied it
+   * optimistically, so nobody else has anything to put back, and a client that
+   * reduced a rejected envelope would apply the very change this host refused.
+   * A client that comes back clears what it held pending, so a refusal replayed
+   * to it would answer nothing.
+   * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md
    */
   const refuse = (
     peer: Peer,
@@ -1112,34 +1108,8 @@ export function createHost(options: HostOptions): Host {
   ): void => {
     log(`${channel}: ${reason}`);
     answeredBy(channel, origin, action);
+    ctx.serverSeq += 1;
     peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin, rejectionReason: reason });
-  };
-  /**
-   * A client's action, accepted, echoed in that client's hearing alone.
-   *
-   * The other half of the loop `refuse` is half of. A client applies its own
-   * action before it sends it and holds it pending until the host says what
-   * became of it - an echo carrying the `clientSeq` it sent, or a refusal. An
-   * action that leaves this host's state exactly as it was gets neither on the
-   * ordinary path, and the client sits on it until it reconnects.
-   *
-   * The same three things `refuse` deliberately does not do, for the same
-   * reasons. `serverSeq` does not move, because no state did. It is not
-   * buffered for replay, because a client that comes back is asking what it
-   * missed of the state and this changed none of it. And it goes to the one
-   * connection that sent it rather than to everyone watching the channel: the
-   * others applied nothing and so have nothing pending to drop, while an
-   * action echoed back to *them* is a state action on the session, which is
-   * what sent the loop round three hundred times.
-   */
-  const echoTo = (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
-  ): void => {
-    answeredBy(channel, origin, action);
-    peer.notify('action', { channel: watchedAs(peer, channel), action, serverSeq: ctx.serverSeq, origin });
   };
   /**
    * Let a watch go once nobody is listening to it.
@@ -1334,7 +1304,7 @@ export function createHost(options: HostOptions): Host {
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
     madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
-    logs, detached, refuse, echoTo,
+    logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
     watches, marksOf, resumedSessions, activeClientsOf, drafts,

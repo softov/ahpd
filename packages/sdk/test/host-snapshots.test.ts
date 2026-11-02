@@ -405,7 +405,7 @@ describe('the fields a client reads by name', () => {
     expect(state.draft?.text).toBe('/');
   });
 
-  it('answers a draft it already holds for a session nothing is running for to its sender alone', async () => {
+  it('says a draft it already holds for a session nothing is running for to every client of the chat, starting nothing', async () => {
     sdk.sessions.push({ sessionId: 'held', summary: 'Read me', lastModified: 1, cwd: '/home/softov' });
     const host = serving('/home/softov');
     const p = peer();
@@ -430,7 +430,8 @@ describe('the fields a client reads by name', () => {
     const answer = drafts(p).find((one) => one.origin?.clientSeq === 2);
     expect(answer?.origin?.clientId).toBe('one');
     expect(answer?.rejectionReason).toBeUndefined();
-    expect(drafts(other)).toHaveLength(1);
+    // The client watching alongside hears it too, the sender's own action.
+    expect(drafts(other).map((one) => one.origin?.clientSeq)).toEqual([1, 2]);
     expect(sessionQueries()).toHaveLength(0);
   });
 
@@ -628,9 +629,11 @@ describe('the fields a client reads by name', () => {
     // this chat has no turn by that name, so there is nothing to truncate to.
     expect((refused[0] as { rejectionReason?: string }).rejectionReason)
       .toContain('not a completed turn');
-    // No state moved, so the sequence did not either: the refusal carries the
-    // number this host is still at rather than claiming a place in the stream.
-    expect(refused[0]?.serverSeq).toBe(at);
+    // An envelope after a snapshot carries a greater number than the one the
+    // snapshot was taken at, a refusal included: "Subsequent actions will have
+    // `serverSeq > fromSeq`".
+    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/common/state.ts#L357
+    expect(refused[0]?.serverSeq).toBeGreaterThan(at);
     // And the client watching alongside hears nothing: it never applied this,
     // so it has nothing to put back - and reducing a refused envelope would
     // apply the very change this host declined to make.
@@ -737,10 +740,11 @@ describe('the fields a client reads by name', () => {
     expect(state.status).toBe(Status.Idle | Status.IsRead);
   });
 
-  it('only answers its sender the second time a chat is marked read', async () => {
+  it('says a chat marked read again on the chat alone, moving no row', async () => {
     const { client, peer: p, uri } = await running();
     const second = 'ahp-chat:/second';
     await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
     const read = (clientSeq: number) => ({
       method: 'dispatchAction',
       params: { channel: second, clientSeq, action: { type: 'chat/isReadChanged', isRead: true } },
@@ -750,11 +754,10 @@ describe('the fields a client reads by name', () => {
     const said = p.notes.length;
     client.handle(read(2));
     await settle();
-    // One echo, with the sender's own `clientSeq`, so it can let go of what it
-    // applied. Not the row: the catalogue did not move, and a state that did
-    // not move is no reason to wake anybody.
+    // The client's own action on the chat, with its `clientSeq`, so it can let
+    // go of what it applied. Not the row: the catalogue did not move.
     const after = p.notes.slice(said);
-    expect(after.map((one) => one.method)).toEqual(['action']);
+    expect(after.map((one) => [one.method, (one.params as { channel?: string }).channel])).toEqual([['action', second]]);
     expect((after[0]?.params as { origin?: { clientSeq?: number } }).origin?.clientSeq).toBe(2);
   });
 

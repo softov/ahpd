@@ -56,7 +56,7 @@ A Claude transcript read back after a restart shows the same turns. The CLI writ
 
 A draft is a `Message` rather than a string, and the session holds it rather than the chat's client, so two people in one chat see each other's. It is taken for a session nothing is running for too - somebody typing into a row from the catalogue is typing before there is any reason to start an agent, and refusing it is a composer that empties itself as it is typed into.
 
-`serverSeq` moves with state and never with messages. A snapshot is taken at a sequence number and every action after it carries a greater one, which is how a client knows it missed nothing.
+`serverSeq` moves with every envelope, a refusal included. A snapshot is taken at a sequence number and every action after it carries a greater one, which is how a client knows it missed nothing.
 
 ## Canvases
 

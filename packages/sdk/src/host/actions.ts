@@ -36,7 +36,7 @@ export interface Actions {
 
 export function createActions(ctx: HostContext, conn: ConnectionContext): Actions {
   const { connection, tokensFor } = conn;
-  const { refuse, echoTo } = ctx;
+  const { refuse } = ctx;
   /*
    * Nothing here that the host rewrites after it is built: `advancedTools`,
    * `contributed`, `contributing` and `restartNeeded` change while this
@@ -513,11 +513,10 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * changeset holds, and to nothing else.
      *
      * Those are the files its watchers were last told, or the ones a read
-     * finds when nobody has been told any. A review that moves nothing is
-     * answered to its sender alone, so a client ticking a file already ticked
-     * does not have every other client redraw, and one the source keeps no
-     * review for is refused in its words. What moved goes to every watcher,
-     * and is what they hold from then on.
+     * finds when nobody has been told any. A review that moves nothing writes
+     * nothing to the source and goes to every watcher as it came, and one the
+     * source keeps no review for is refused in its words. What moved goes to
+     * every watcher, and is what they hold from then on.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/changesets.md
      */
     if (type === 'changeset/filesReviewChanged') {
@@ -550,7 +549,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
           return;
         }
         if (!moved) {
-          echoTo(connection.peer, channel, action, origin);
+          dispatch(channel, action, origin);
           return;
         }
         // As the next read gives them: a cleared file carries no `reviewed`,
@@ -720,13 +719,14 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
      * dispatch gets, because this one has no result to carry it.
      *
      * A stop taken is a side effect that changes no state of its own, which is
-     * how the protocol's reducer reads it too, so it is answered to its sender
-     * alone, and the run's lifecycle, said to everyone, is what came of it.
+     * how the protocol's reducer reads it too. It goes to every client of the
+     * run as any accepted action does, and the run's lifecycle, said to
+     * everyone, is what came of it.
      */
     if (type === 'automationRun/cancelRequested') {
       const refused = cancelRun(channel);
       if (refused !== undefined) no(refused);
-      else echoTo(connection.peer, channel, action, origin);
+      else dispatch(channel, action, origin);
       return;
     }
 
@@ -769,22 +769,19 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
       const held = presence.get(idOf(channel)) ?? new Map<string, Bag>();
       presence.set(idOf(channel), held);
       /*
-       * Saying again what this host already held is not a change.
+       * Saying again what this host already held leaves the entry and the
+       * tools every chat is offered as they are, and the action goes to
+       * every client of the session, as any accepted action does.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/ahp-and-acp.md#how-they-compose
        *
-       * `serverSeq` advances with *state* and never with messages, and a
-       * client reconciles what it contributes whenever the session state
-       * moves. So an echo of an announcement that changed nothing was
-       * itself the change that prompted the next announcement, and the two
-       * of us ran that loop three hundred times in a few seconds, burning
-       * a sequence number apiece. The guard `isReadChanged` has below is
-       * the same guard, and this is the same reason for it.
-       *
-       * The client is still holding what it sent, so it is answered - to
-       * its own hearing only, which is the one place this differs from the
-       * echo every other action gets: the others did not send it.
+       * A client that announces itself whenever the session's state moves
+       * reads this echo as the state moving. One that compares what it would
+       * send with the entry the state holds and with what it sent last, as VS
+       * Code's session handler does, sends nothing more.
+       * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L1237-L1253
        */
       if (JSON.stringify(held.get(clientId)) === JSON.stringify(activeClient)) {
-        echoTo(connection.peer, channel, action, origin);
+        dispatch(channel, { type, activeClient }, origin);
         return;
       }
       // Re-announcing is how a client refreshes what it contributes, so
@@ -803,8 +800,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
     if (type === 'session/isReadChanged' || type === 'session/isArchivedChanged') {
       // The session's own bits, kept beside it and never seen by a backend.
       // One function, because `chat/isArchivedChanged` on a session's default
-      // chat is this same act - see `sessionFlag`. A bit that did not move is
-      // answered to its sender alone, as an unchanged announcement is above.
+      // chat is this same act - see `sessionFlag`. A bit that did not move
+      // keeps the catalogue as it is, and the action goes to every client of
+      // the session, as an unchanged announcement does above.
       const moved = sessionFlag(
         ctx,
         sessionFor(channel),
@@ -812,7 +810,7 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         type === 'session/isReadChanged' ? action.isRead === true : action.isArchived === true,
         action,
       );
-      if (!moved) echoTo(connection.peer, channel, action, origin);
+      if (!moved) dispatch(channel, action, origin);
       return;
     }
     const terminal = terminals.get(channel);
@@ -822,15 +820,16 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * Input is side-effect only.
          *
          * The protocol's reducer changes nothing on it, and what comes back is
-         * `terminal/data`, once the shell has actually said something. So it
-         * is answered to the client that sent it alone, as any action that
-         * changes no state is, and every client reads what it did in the
-         * `terminal/data` that follows. Input with no process to reach is
-         * refused, in the terminal's words.
+         * `terminal/data`, once the shell has actually said something. It is
+         * still a terminal action, so it goes to every client of the terminal,
+         * and every client reads what it did in the `terminal/data` that
+         * follows. Input with no process to reach is refused, in the
+         * terminal's words.
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/terminal-channel.md#L110-L112
          */
         case 'terminal/input': {
           const taken = terminal.write(String(action.data ?? ''));
-          if (taken === true) echoTo(connection.peer, channel, action, origin);
+          if (taken === true) dispatch(channel, action, origin);
           else no(taken);
           break;
         }
@@ -840,9 +839,9 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
         case 'terminal/cleared':
           terminal.clear();
           break;
-        // A title it has already changes nothing, and is answered to its sender alone.
+        // A title it has already changes nothing, and goes to every client of the terminal.
         case 'terminal/titleChanged':
-          if (!terminal.setTitle(String(action.title ?? ''))) echoTo(connection.peer, channel, action, origin);
+          if (!terminal.setTitle(String(action.title ?? ''))) dispatch(channel, action, origin);
           break;
         /*
          * A claim that names nobody is refused, and the terminal's own claim
