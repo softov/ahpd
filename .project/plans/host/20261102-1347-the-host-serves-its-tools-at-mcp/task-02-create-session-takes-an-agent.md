@@ -1,6 +1,6 @@
 ---
 title: create_session takes an agent and a config
-status: todo
+status: implemented
 depends:
   - task-01-a-host-tool-may-run-with-no-session.md
 layer: sdk
@@ -50,3 +50,11 @@ The host checks `config` against that agent's schema, as `createChat` checks a c
 - `pnpm typecheck` passes.
 
 ## Resume
+
+Built. `create_session` takes `agent` and `config` in its schema. An `agent` this host does not offer is refused with the ids it does offer; the model is filtered by that agent before any choice is made; `currentSession` passes both to `createChat` and `independent` passes both to `create`. `ToolCall.create` takes `config`, and both `create` implementations check it with `checkedConfig` for the provider and spread the host's own `isolation` and `model` over it, so those two keys win. A `config` that is not an object is refused in the tool before the host sees it. With `currentSession`, a chat of the named agent runs under its provider while the session keeps its own, and the answer's link names that agent.
+
+The five new cases in `packages/sdk/test/sessiontools.test.ts` hold: two agents sharing a model id, with `agent` deciding which one starts the session; an unknown agent refused with both ids named; a model of the other agent refused; `config` reaching the backend and a value its schema rules out refused, and a non-object `config` refused; and `currentSession` with `agent` opening a second chat on that agent while the session's own provider stays.
+
+Departures. `ToolCall` gained `providers()`, which no step names: naming the providers a host offers needs the agent map, and `models()` reports only what a backend has already told the host, so an agent without a model yet would be missing from it. Both call contexts answer it from the host's agents map. The Validation bullet "the tool refuses a key outside the agent's schema" is not what `checkedConfig` does - it refuses a value a declared key rules out and hands through a key the schema does not declare, which is `createChat`'s own reading - so the case refuses an enum value instead. The prose lint on `docs/sdk/TOOLS.md` reports the page's existing sentence-length findings, the new paragraph's among them.
+
+Gates: `pnpm -s build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm -s boundary` and `pnpm -s schema` pass; `packages/sdk/test/sessiontools.test.ts` passes 43 of 43.

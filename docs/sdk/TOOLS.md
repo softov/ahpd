@@ -34,11 +34,13 @@ The nine session tools are the reference host's, by name and by schema, so a ski
 | `get_current_session` | Its own session, as `list_sessions` would describe it |
 | `get_session_context` | A chat's turns, its active turn, and whether there is history before them |
 | `send_message` | A message into any chat of any session this host runs: sent when the chat is free, queued when it is busy |
-| `create_session` | Start another session, owned by the owner of the one it was called from |
+| `create_session` | Start another session, owned by the owner of the one it was called from, or by the person calling with no session |
 | `create_chat` | A second conversation in a session |
 | `rename_chat` | Title a chat. The session's title is its first chat's |
 | `set_workspace` | Move the session to another directory, acted on when the turn ends rather than mid-turn |
 | `delete_session` | Delete a session this host runs, refused for the one it was called from |
+
+`create_session` takes two settings of its own. `agent` names the backend the new session runs, by provider id; absent, the choice is the provider of the `model` asked for, then the calling session's, then the first backend the host holds. A provider the host does not offer is refused, and the refusal names the providers it does. `config` is the new session's settings, as that backend's schema names them, checked the way `createChat` checks a chat's: a value the schema rules out is refused before anything starts, and the host's own `isolation` and `model` win over a key of the same name. With `relationship: currentSession`, both reach the new chat instead, so it runs on the named backend with those settings while the session keeps its own.
 
 `set_workspace` is the one that cannot act when it is called: the agent is restarted in the new directory, and a restart mid-turn is a turn that never finishes, so the request waits for the turn to end. `delete_session` acts as the person whose turn it was called in, and as the owner of the session it was called from where no turn is running: it is never the model, and never whichever connection started the session it names.
 

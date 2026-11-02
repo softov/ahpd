@@ -1127,6 +1127,14 @@ export interface ToolCall {
   /** Models any session here can run on, each with the provider it belongs to. */
   models(): { id: string; name: string; provider: string }[];
   /**
+   * The provider ids this host offers, in the order it holds them.
+   *
+   * Every backend the host was built with or was handed by a plugin, whether
+   * or not it has told the host a model yet - the list a tool names when it
+   * refuses one an input names.
+   */
+  providers(): string[];
+  /**
    * A chat's conversation, as its channel snapshot carries it.
    *
    * The newest page of turns, the running one, and whether older ones exist
@@ -1150,13 +1158,20 @@ export interface ToolCall {
    *
    * `isolation` decides a worktree the way a client's `config.isolation`
    * does; absent, the host's default for the directory. `model` names the
-   * provider as well as the model. Answers the session's URI and its default
-   * chat's.
+   * provider as well as the model.
+   *
+   * `config` is the backend's settings for the new session, checked against
+   * its schema as `createChat` checks a chat's. What the host owns - the
+   * `isolation` and `model` above - wins over a value of the same name, since
+   * those are the keys this call was made with.
+   *
+   * Answers the session's URI and its default chat's.
    */
   create(options: {
     workingDirectory: string;
     provider?: string;
     model?: string;
+    config?: Record<string, unknown>;
     isolation?: 'worktree' | 'folder';
     title: string;
     prompt: string;

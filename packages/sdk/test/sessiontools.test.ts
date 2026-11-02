@@ -899,11 +899,11 @@ describe('a tool a person calls with no session', () => {
    * two people these cases name. `contribution` adds a plugin's read of the
    * host's events, which is how a case watches `tool_call`.
    */
-  const hosting = (more: HostTool[] = [], contribution?: Contribution) => {
+  const hosting = (more: HostTool[] = [], contribution?: Contribution, agents?: Agent[]) => {
     const users = directory({ member: MEMBER, guest: GUEST });
     const store = fileSessions({ dir: join(root, 'sessions') });
     const base: HostOptions = {
-      path: root, agents: [claude({ paths: [root] })], ...machine(),
+      path: root, agents: agents ?? [claude({ paths: [root] })], ...machine(),
       users, sessions: store, tools: [...hostTools(), ...more], sleepAfterMinutes: 0,
     };
     return { host: createHost(contribution === undefined ? base : foldHostOptions(base, [contribution]).options), users, store };
@@ -1016,5 +1016,107 @@ describe('a tool a person calls with no session', () => {
     expect(seen[0]).toMatchObject({ type: 'tool_call', person: 'member', tool: 'list_sessions', ok: true });
     expect(seen[0]).not.toHaveProperty('session');
     expect(seen[0]).not.toHaveProperty('chat');
+  });
+
+  /** A backend offering the models these cases share with the first. */
+  const backend = (provider: string, starts: Start[]): Agent => {
+    const models = [
+      { id: 'shared-model', name: 'Shared model' },
+      ...(provider === 'claude' ? [{ id: 'claude-model', name: 'Claude model' }] : [{ id: 'other-model', name: 'Other model' }]),
+    ];
+    const base = claude({ paths: [root], models });
+    return { ...base, provider, create: (start: Start) => { starts.push(start); return base.create(start); } };
+  };
+
+  /** The two backends, both offering `shared-model`, recording what starts on the second. */
+  const pair = (starts: Start[]): Agent[] => [backend('claude', []), backend('other', starts)];
+
+  it('starts a new session on the agent it names, where two agents offer one model', async () => {
+    const starts: Start[] = [];
+    const { host, users } = hosting([], undefined, pair(starts));
+    // The models are learned by a probe, which answers after the host is built.
+    await settle(8);
+    const said = await run(host, { principal: await principal(users, 'member') }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'On the other one',
+      workspace: uriOf(root), worktree: false, agent: 'other', model: 'shared-model',
+    });
+    expect(said).toMatch(/^New session created \(agent-host-session:\/\/other\/[^)]+\)\.$/);
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.settings).toMatchObject({ model: 'shared-model' });
+  });
+
+  it('refuses an agent this host does not offer, and names the ones it does', async () => {
+    const starts: Start[] = [];
+    const { host, users } = hosting([], undefined, pair(starts));
+    await settle(8);
+    await expect(run(host, { principal: await principal(users, 'member') }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Nowhere',
+      workspace: uriOf(root), worktree: false, agent: 'nobody',
+    })).rejects.toThrow('Invalid create_session input: agent "nobody" is not one this host offers; it offers claude, other.');
+    expect(starts).toHaveLength(0);
+  });
+
+  it('refuses a model the agent it names does not offer', async () => {
+    const starts: Start[] = [];
+    const { host, users } = hosting([], undefined, pair(starts));
+    await settle(8);
+    await expect(run(host, { principal: await principal(users, 'member') }, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Wrong model',
+      workspace: uriOf(root), worktree: false, agent: 'other', model: 'claude-model',
+    })).rejects.toThrow('Invalid create_session input: model "claude-model" is not one this host offers for other.');
+  });
+
+  it('gives a new session its settings, and refuses what its agent does not take', async () => {
+    const starts: Start[] = [];
+    const { host, users } = hosting([], undefined, pair(starts));
+    await settle(8);
+    const member = { principal: await principal(users, 'member') };
+    await run(host, member, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Configured',
+      workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'plan' },
+    });
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.settings).toMatchObject({ permissionMode: 'plan' });
+    await expect(run(host, member, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Refused',
+      workspace: uriOf(root), worktree: false, agent: 'other', config: { permissionMode: 'nonsense' },
+    })).rejects.toThrow('permissionMode "nonsense" is not a value other takes');
+    await expect(run(host, member, 'create_session', {
+      relationship: 'independent', prompt: 'say hi', title: 'Refused',
+      workspace: uriOf(root), worktree: false, config: 'loud',
+    })).rejects.toThrow('Invalid create_session input: config must be an object.');
+  });
+
+  it('opens a chat of the agent it names in the session it is called from', async () => {
+    const starts: Start[] = [];
+    const { host } = hosting([], undefined, pair(starts));
+    const client = host.accept(peer());
+    await hello(client, 'member');
+    await signIn(client, 'member');
+    await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/mine', provider: 'claude' } });
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/mine' } }) as {
+      snapshot: { state: { defaultChat: string } };
+    }).snapshot.state.defaultChat;
+    await client.handle({ method: 'subscribe', params: { channel: chat } });
+    // A turn the member sent, which is where a session tool reads its person.
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'go' } } },
+    });
+    await settle(8);
+    const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, { tools: Tool[] }> | undefined;
+    const create = servers?.ahp?.tools.find((one) => one.name === 'create_session');
+    if (create === undefined) throw new Error('no create_session');
+    const made = await create.handler({
+      relationship: 'currentSession', prompt: 'say hi', title: 'Another backend', agent: 'other',
+    });
+    expect(made.isError).toBeFalsy();
+    expect(starts).toHaveLength(1);
+    // The session keeps the backend it had; the chat is the other one's.
+    const state = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/mine' } }) as {
+      snapshot: { state: { provider?: string; chats: { resource: string }[] } };
+    }).snapshot.state;
+    expect(state.provider).toBe('claude');
+    expect(state.chats).toHaveLength(2);
   });
 });

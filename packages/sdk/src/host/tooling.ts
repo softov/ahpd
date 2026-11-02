@@ -1670,6 +1670,9 @@ export function createTooling(ctx: HostContext): Tooling {
       id: model.id, name: model.name, provider,
     })));
 
+  /** Every backend this host offers, whether or not it has named a model yet. */
+  const providersKnown = (): string[] => [...ctx.agents.keys()];
+
   /** A chat's conversation, as its channel snapshot carries it. */
   const contextOf = async (
     session: string, chatId?: string,
@@ -1714,6 +1717,7 @@ export function createTooling(ctx: HostContext): Tooling {
     },
     chats: chatsOf,
     models: modelsKnown,
+    providers: providersKnown,
     context: contextOf,
     send: async (session, chatId, text, from) => {
       const at = heldAs(session);
@@ -1774,9 +1778,18 @@ export function createTooling(ctx: HostContext): Tooling {
       }
       const provider = asked.provider ?? sessions.get(uri)?.agent.provider ?? ctx.first?.provider;
       if (provider === undefined) throw new Error(NO_AGENT);
+      const agent = ctx.agents.get(provider);
+      if (agent === undefined) throw new Error(`No provider called ${provider}`);
       // Named the way a client's `createSession` names a session.
       const made = uriFor(crypto.randomUUID());
+      /*
+       * What the backend is given, checked against its own schema and under
+       * the keys this call owns: `isolation` and `model` are the two the call
+       * was made with, and a value of the same name inside `config` would be
+       * the tool arguing with which session it asked for.
+       */
       const config: Record<string, unknown> = {
+        ...(checkedConfig(agent, asked.config) ?? {}),
         ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
         ...(asked.model !== undefined ? { model: asked.model } : {}),
       };
@@ -1957,6 +1970,7 @@ export function createTooling(ctx: HostContext): Tooling {
       sessions: async () => (callerMay(caller, 'session:read') ? await allRows() : []),
       chats: chatsOf,
       models: modelsKnown,
+      providers: providersKnown,
       context: contextOf,
       send: async (session, chatId, text, from) => {
         const at = heldAs(session);
@@ -1990,8 +2004,13 @@ export function createTooling(ctx: HostContext): Tooling {
         // no parent, and spends no budget kept for one.
         const provider = asked.provider ?? ctx.first?.provider;
         if (provider === undefined) throw new Error(NO_AGENT);
+        const agent = ctx.agents.get(provider);
+        if (agent === undefined) throw new Error(`No provider called ${provider}`);
         const made = uriFor(crypto.randomUUID());
+        // The backend's own settings, checked, and the two keys this call owns
+        // over them, as a session made from a turn builds them.
         const config: Record<string, unknown> = {
+          ...(checkedConfig(agent, asked.config) ?? {}),
           ...(asked.isolation !== undefined ? { isolation: asked.isolation } : {}),
           ...(asked.model !== undefined ? { model: asked.model } : {}),
         };

@@ -50,6 +50,21 @@ export const sessionMeant = (asked: string, rows: Summary[]): { session: Summary
   return row === undefined ? undefined : { session: row };
 };
 
+/**
+ * A session's settings, as the object a backend's schema is checked against.
+ *
+ * A tool's input arrives as JSON, so anything that is not an object - a
+ * string, a number, a list - is refused here rather than handed to a
+ * backend as settings it cannot read. An absent value and a null both mean
+ * none were asked for.
+ */
+const settingsOf = (value: unknown, tool: string): Record<string, unknown> | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error(`Invalid ${tool} input: config must be an object.`);
+  return value as Record<string, unknown>;
+};
+
 /** A title fit to keep: non-blank, two hundred characters at most, one space between words. */
 const titled = (value: unknown, tool: string): string => {
   const title = required(value, 'title', tool).trim().replace(/\s+/g, ' ');
@@ -490,6 +505,8 @@ export const sessionTools = (): HostTool[] => [
           worktree: { type: 'boolean', description: 'Override isolation for the new independent session. Set true only when the user explicitly asks to create a worktree, or false only when the user explicitly asks to work without one. Omit to preserve the existing isolation behavior: inherit the creating session\'s isolation for the same project, otherwise use worktree isolation. Only valid with relationship `independent`; omit for `currentSession`.' },
           title: { type: 'string', maxLength: 200, description: 'Short title for the new chat or independent session.' },
           model: { type: 'string', description: 'Optional model ID or display name. Defaults to the current chat\'s model. For `currentSession`, the model must belong to the current session\'s provider; for `independent`, the model selects the new session\'s provider.' },
+          agent: { type: 'string', description: 'Optional provider id of the agent to run, such as one `list_sessions` shows. Defaults to the model\'s provider, then the current session\'s.' },
+          config: { type: 'object', description: 'Optional settings for the new session, as the agent\'s config schema names them.' },
         },
         required: ['relationship', 'prompt', 'title'],
       },
@@ -505,6 +522,13 @@ export const sessionTools = (): HostTool[] => [
         throw new Error(`Invalid ${tool} input: relationship must be "currentSession" or "independent".`);
       const prompt = required(input.prompt, 'prompt', tool);
       const title = titled(input.title, tool);
+      const agent = optional(input.agent, 'agent', tool);
+      if (agent !== undefined) {
+        const offers = at.providers();
+        if (!offers.includes(agent))
+          throw new Error(`Invalid ${tool} input: agent "${agent}" is not one this host offers${offers.length > 0 ? `; it offers ${offers.join(', ')}` : ''}.`);
+      }
+      const config = settingsOf(input.config, tool);
       const rows = await at.sessions();
       const calling = at.session;
       const mine = calling === undefined ? undefined : rows.find((row) => row.resource === calling);
@@ -513,13 +537,20 @@ export const sessionTools = (): HostTool[] => [
           throw new Error('currentSession needs a calling session; use independent');
         if (input.workspace !== undefined || input.worktree !== undefined)
           throw new Error(`Invalid ${tool} input: workspace and worktree are only valid with relationship "independent".`);
-        const model = modelMeant(at, optional(input.model, 'model', tool), tool, mine?.provider);
-        const made = await at.createChat(calling, { title, prompt, ...(model ? { model: model.id } : {}), from: delegated(at) });
-        return `Chat created in the current session (${openLink(calling, mine?.provider ?? 'claude', idOf(made.chat))}).`;
+        const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent ?? mine?.provider);
+        const made = await at.createChat(calling, {
+          title,
+          prompt,
+          ...(agent !== undefined ? { provider: agent } : {}),
+          ...(config !== undefined ? { config } : {}),
+          ...(model ? { model: model.id } : {}),
+          from: delegated(at),
+        });
+        return `Chat created in the current session (${openLink(calling, agent ?? mine?.provider ?? 'claude', idOf(made.chat))}).`;
       }
       const workspace = workspaceMeant(required(input.workspace, 'workspace', tool), rows, tool);
       const worktree = flag(input.worktree, 'worktree', tool);
-      const model = modelMeant(at, optional(input.model, 'model', tool), tool);
+      const model = modelMeant(at, optional(input.model, 'model', tool), tool, agent);
       // What was asked; else the caller's own arrangement for its own
       // directory, which is the folder it is in; else a worktree, which is
       // what keeps two sessions from editing one checkout.
@@ -529,13 +560,15 @@ export const sessionTools = (): HostTool[] => [
         : own === workspace ? 'folder' : 'worktree';
       const made = await at.create({
         workingDirectory: workspace,
+        ...(agent !== undefined ? { provider: agent } : {}),
+        ...(config !== undefined ? { config } : {}),
         ...(model ? { provider: model.provider, model: model.id } : {}),
         isolation,
         title,
         prompt,
         from: delegated(at),
       });
-      return `New session created (${openLink(made.session, model?.provider ?? mine?.provider ?? 'claude')}).`;
+      return `New session created (${openLink(made.session, agent ?? model?.provider ?? mine?.provider ?? 'claude')}).`;
     },
   },
   {
