@@ -24,7 +24,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -540,7 +540,8 @@ const REFUSALS: Record<string, { said: (action: Record<string, unknown>, where: 
     source: 'host policy, host/actions.ts: a root config push writes only keys the root config schema declares',
   }],
   'session/workingDirectorySet': [{
-    said: (action) => `Workspace trust was not granted for '${localPath(String(action.directory))}'`,
+    // The folder as it resolves, which on Windows is on the daemon's drive.
+    said: (action) => `Workspace trust was not granted for '${resolve(localPath(String(action.directory)))}'`,
     source: 'host policy, host/chatactions.ts: a folder joins a session only once the window trusts it',
   }],
   'chat/truncated': [{
