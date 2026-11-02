@@ -1,6 +1,6 @@
 ---
 title: The host holds the window keys
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -57,4 +57,10 @@ A push of a window key needs `config:change`, and a push of `workspaceTrust` alo
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `8e6cbbc5`.
+
+- `root-config.test.ts` moved with the behavior: the trust and the three approval keys read by every client, and their grant.
+- `users-gate-dispatch.test.ts` moved: the grants a push needs, the echo and replay, the replace, and the shell every client's terminal opens.
+- `host-trust.test.ts` moved: the trust of the last push, and an automation's on a host with no people.
+- `autoapproval.test.ts` moved: the rules of the last push, whichever window pushed them.
+- Each moved case fails on `60fa2ccd`'s sources, 14 in all.

@@ -1,6 +1,6 @@
 ---
 title: The docs and specs say so
-status: todo
+status: done
 depends:
   - task-01-the-host-holds-the-window-keys.md
 layer: docs
@@ -38,4 +38,7 @@ Each names the grants a push needs.
 
 ## Resume
 
-Not started.
+Built 2026-11-02 in `59911c5e`.
+
+- Five docs and the two specs say the keys are the host's, and name the grants a push needs.
+- `TERMINALS.md` counted two of three ways in for `defaultShell`, and says one, a client's terminal.

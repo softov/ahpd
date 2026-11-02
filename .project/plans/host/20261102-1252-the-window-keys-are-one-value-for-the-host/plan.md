@@ -1,7 +1,7 @@
 ---
 title: The window keys are one value for the host
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -88,8 +88,8 @@ root/configChanged -> actions.ts -> rootConfig -> one echo to every root subscri
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host holds the window keys](task-01-the-host-holds-the-window-keys.md) | todo | - |
-| [02 - The docs and specs say so](task-02-the-docs-and-specs-say-so.md) | todo | 01 |
+| [01 - The host holds the window keys](task-01-the-host-holds-the-window-keys.md) | done | - |
+| [02 - The docs and specs say so](task-02-the-docs-and-specs-say-so.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -99,13 +99,13 @@ root/configChanged -> actions.ts -> rootConfig -> one echo to every root subscri
 
 ## Resume state
 
-- **Done so far:** planned 2026-11-02.
-- **Next action:** [task-01-the-host-holds-the-window-keys.md](task-01-the-host-holds-the-window-keys.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** `snapshotOf` and `rootFor` lose the connection's own values as a parameter, and every caller moves with them.
 
 ## Final verification checklist
 
-- [ ] Each changed case fails on `60fa2ccd` for the reason it names, and passes after the change.
-- [ ] The touched suites pass.
-- [ ] `pnpm run typecheck`, `pnpm run boundary` and `pnpm i18n` report no errors, and the prose lint is clean.
+- [x] Each changed case fails on `60fa2ccd` for the reason it names, and passes after the change.
+- [x] The touched suites pass.
+- [x] `pnpm run typecheck`, `pnpm run boundary` and `pnpm i18n` report no errors, and the prose lint is clean.
