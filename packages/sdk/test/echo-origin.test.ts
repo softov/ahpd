@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { fileResources } from '../src/resources/resources.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Agent, Start } from '../src/types/agent.js';
@@ -24,7 +25,7 @@ import type { Peer } from '../src/types/rpc.js';
 import type { Session } from '../src/types/session.js';
 
 const SESSION = 'ahp-session:/one';
-const CHAT = 'ahp-chat:/one';
+const CHAT = chatUriFor(SESSION);
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'ahpd-echo-origin-')); });

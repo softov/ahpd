@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import { expect, it } from 'vitest';
 import type { Agent, Bag } from '../../sdk/src/types/index.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';
 import { piSession } from '../src/session.js';
@@ -45,7 +46,7 @@ it('refuses to take back a steering message pi holds, and keeps it in the chat',
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/steering';
-  const chatUri = 'ahp-chat:/steering';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi', workingDirectories: [`file://${root}`] } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });
   const dispatch = (clientSeq: number, action: Bag): void => {

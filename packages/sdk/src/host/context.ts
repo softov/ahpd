@@ -101,6 +101,15 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
    * a reader by client id rather than by connection.
    */
   locales: Map<string, string>;
+  /**
+   * The name each client gave in `clientInfo` at `initialize`, by client id.
+   *
+   * Kept beside `known` and for the same span, because a `reconnect` names
+   * no `clientInfo` and an older VS Code window is told by that name, as the
+   * reference host reads it off the client's record.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1350-L1351
+   */
+  clientNames: Map<string, string>;
   /** The last locale a client sent, or `undefined` when it sent none. */
   localeOf: (clientId: string) => string | undefined;
   /**
@@ -427,16 +436,6 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
     origin: Origin | undefined,
     reason: string,
     alone?: boolean,
-  ) => void;
-  /**
-   * Answer one client's terminal input, accepted, to that client alone, at
-   * the next `serverSeq` and not buffered.
-   */
-  echoTo: (
-    peer: Peer,
-    channel: string,
-    action: Record<string, unknown>,
-    origin: Origin | undefined,
   ) => void;
   /** The host's own log. */
   log: (message: string) => void;

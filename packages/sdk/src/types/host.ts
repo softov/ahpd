@@ -1354,19 +1354,6 @@ export interface Connection {
    */
   principalUntil?: number;
   /**
-   * The preferences this client pushed that are its own, not the host's.
-   *
-   * `root/configChanged` carries two kinds of key. Some describe the host and
-   * are one setting for everybody, like `globalAutoApproveEnabled`.
-   * `defaultShell` is not one of those: the host's own note calls these "the
-   * preferences a *client* holds about how the host should behave for it", and
-   * VS Code pushes the shell out of a per-person setting the moment it
-   * connects. Kept in one shared record, the last client to connect decided
-   * everybody's shell - so the person's half is kept here instead, and each
-   * connection reads its own back in root state.
-   */
-  config?: Record<string, unknown>;
-  /**
    * The folders this window said yes to when the host asked it about one.
    *
    * A move into a folder the window never pushed asks it then and there, and
@@ -1377,8 +1364,7 @@ export interface Connection {
    * window pushes a `workspaceTrust` value, which answers for every folder at
    * once and so puts the folder-by-folder answers behind it.
    *
-   * Per connection for the same reason `config` is: it is what one window
-   * said, and it dies with the socket.
+   * Per connection: it is what one window said, and it dies with the socket.
    */
   trustedFolders?: string[];
   /**
@@ -1400,16 +1386,30 @@ export interface Connection {
    */
   tokens: Map<string, Credential>;
   /**
-   * Channels this client named in a shape of its own, by the channel they mean.
-   *
-   * A client may address a chat by a URI this host did not mint - see
-   * `chatFor` - and it then expects to be answered about *that* URI: its
-   * subscription is keyed by the string it sent, and an action arriving under
-   * any other name belongs to a channel it is not watching. So the spelling is
-   * remembered per connection and every notification is addressed back the way
-   * it was asked for.
+   * Host channels this client named in another spelling, by the channel they
+   * mean: `ahp-root:` for `ahp-root://`, and the automations catalogue with an
+   * authority. Its subscription is keyed by the string it sent, so every
+   * notification on such a channel is addressed back that way. A session and a
+   * chat have one URI each, and are never here.
    */
   aliases: Map<string, string>;
+  /**
+   * Whether this client is a VS Code window that cannot address an
+   * `ahp-session:` session: it names itself `vscode-editor-window` or
+   * `vscode-agents-window` and does not declare `vscode.ahpSessionUris`. Such a
+   * window is shown no `ahp-session:` session, as the reference host hides one
+   * from it.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L1054-L1055
+   */
+  legacySessionUris?: boolean;
+  /**
+   * Whether this client is a VS Code window that cannot address an opaque
+   * chat: it names itself as above and does not declare `vscode.ahpChatUris`.
+   * Such a window reads a chat's session out of its URI, so it is shown only
+   * shaped chats in the session they name.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4344-L4351
+   */
+  legacyChatUris?: boolean;
 }
 
 /**

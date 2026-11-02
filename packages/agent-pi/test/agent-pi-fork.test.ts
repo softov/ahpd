@@ -6,6 +6,7 @@ import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { Agent, Bag, Start } from '../../sdk/src/types/index.js';
 import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { createHost } from '../../sdk/src/host.js';
+import { chatUriFor } from '../../sdk/src/host/channels.js';
 import type { Peer } from '../../sdk/src/types/rpc.js';
 import { piAgent } from '../src/agent.js';
 import { forget } from '../src/catalog.js';
@@ -94,7 +95,7 @@ it('accepts a fork through the host and opens the new chat at that turn', async 
     params: { clientId: 'probe', protocolVersions: ['0.9.0'], initialSubscriptions: ['ahp-root://'] },
   });
   const uri = 'ahp-session:/one';
-  const chatUri = 'ahp-chat:/one';
+  const chatUri = chatUriFor(uri);
   await client.handle({ method: 'createSession', params: { channel: uri, provider: 'pi' } });
   await client.handle({ method: 'subscribe', params: { channel: uri } });
   await client.handle({ method: 'subscribe', params: { channel: chatUri } });

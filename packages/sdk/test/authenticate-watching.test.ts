@@ -110,7 +110,12 @@ it('refuses a token aimed at a session its connection does not watch', async () 
   expect(header(one)).toBeUndefined();
 });
 
-it('asks a client watching under an older spelling to sign in, by that spelling', async () => {
+/*
+ * A session is watched, asked about and aimed at by the one URI it is held by:
+ * the same id in a provider's scheme is no session, and a token aimed at it
+ * names no server.
+ */
+it('asks a client watching the session to sign in under its one URI, and refuses a token aimed at another', async () => {
   sdk.mcp = [{ name: 'desk', status: 'connected' }];
   const host = createHost({ path: DIR, agents: [claude({ paths: [DIR] })], ...machine() });
   const ana = await introduced(host, 'ana');
@@ -118,9 +123,7 @@ it('asks a client watching under an older spelling to sign in, by that spelling'
     method: 'createSession',
     params: { channel: ONE, provider: 'claude', workingDirectories: [`file://${DIR}`] },
   });
-  // The name a session had before this host named one `ahp-session:`, which a
-  // client may still watch it by.
-  await ana.client.handle({ method: 'subscribe', params: { channel: 'claude:/one' } });
+  await ana.client.handle({ method: 'subscribe', params: { channel: ONE } });
   await settle(8);
 
   // The server starts asking for a sign-in, read when somebody asks it to start.
@@ -133,12 +136,15 @@ it('asks a client watching under an older spelling to sign in, by that spelling'
 
   expect(signIns(ana.wire, 'required')).toEqual([{
     method: 'auth/required',
-    params: { channel: 'claude:/one', resource: expect.objectContaining({ resource: DESK }), reason: 'required' },
+    params: { channel: ONE, resource: expect.objectContaining({ resource: DESK }), reason: 'required' },
   }]);
-  // And its token, aimed at the session under that spelling, is taken.
   await expect(ana.client.handle({
     method: 'authenticate',
     params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: 'claude:/one', customizationId: 'mcp:desk' } },
+  })).rejects.toMatchObject({ code: -32602 });
+  await expect(ana.client.handle({
+    method: 'authenticate',
+    params: { channel: ROOT, resource: DESK, token: 'desk-ana', target: { kind: 'mcpServer', session: ONE, customizationId: 'mcp:desk' } },
   })).resolves.toEqual({});
 });
 

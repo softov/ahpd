@@ -8,7 +8,7 @@ import {
 } from './support/host.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
 import { uriOf } from '../src/resources/resources.js';
-import { retainedTerminalOf } from '../src/host/channels.js';
+import { chatUriFor, retainedTerminalOf } from '../src/host/channels.js';
 import type { Bag } from '../src/types/common.js';
 import type { SessionStore } from '../src/types/sessions.js';
 
@@ -144,7 +144,8 @@ it('names no terminal on a call read back where nothing was kept', async () => {
 
   sdk.sessions.push({ sessionId: 'kept', summary: 'count it', lastModified: 1, cwd: dir });
   sdk.transcript.push(...transcriptOf(before.notice));
+  // A host with no record of the session lists it as the protocol's URI.
   const { client } = await hostOn(dir, fileSessions({ dir: join(dir, 'sessions') }));
-  const call = callsOf(await stateOf(client, before.chat)).find((one) => one.toolCallId === 'toolu_big');
+  const call = callsOf(await stateOf(client, chatUriFor('ahp-session:/kept'))).find((one) => one.toolCallId === 'toolu_big');
   expect(call?.content).toEqual([{ type: 'text', text: before.notice }]);
 });

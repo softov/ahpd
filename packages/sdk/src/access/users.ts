@@ -76,9 +76,9 @@ export const SUBJECTS = [
   // Running the host's tools from a person's MCP client at `/mcp`, which the
   // gate asks for as `mcp:call`; the write group covers it.
   'mcp',
-  // Pushing a window's answer about a folder to this host, which decides what
-  // that window's sessions load from the project. The gate asks for
-  // `trust:push`, and the write group covers it.
+  // Pushing the host's answer about the folders sessions load their projects
+  // from, which a window sends. The gate asks for `trust:push`, and the write
+  // group covers it.
   'trust',
   // The account each agent bills to, which the host publishes as a root config
   // value and which the operator's own email is in. Nothing to change: the
@@ -229,7 +229,7 @@ export const OPERATIONS: Record<string, SubjectOperations> = {
   // own, so a client drawing a role editor reads them here or not at all.
   trust: {
     title: 'Workspace trust',
-    description: 'A window\'s answer about the folders its sessions load project files from.',
+    description: 'The host\'s answer about the folders sessions load project files from, which a window pushes.',
     operations: ['push'],
     groups: { read: [], write: ['push'] },
   },

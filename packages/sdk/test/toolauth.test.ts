@@ -81,6 +81,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 const { createHost } = await import('../src/host.js');
+const { chatUriFor } = await import('../src/host/channels.js');
 const { claude } = await import('../../agent-claude/src/claude.js');
 
 const settle = async (times = 10): Promise<void> => {
@@ -110,7 +111,7 @@ async function said(...frames: Record<string, unknown>[]): Promise<void> {
 }
 
 const uri = 'ahp-session:/auth';
-const chatUri = 'ahp-chat:/auth';
+const chatUri = chatUriFor(uri);
 
 async function running(plugins: Record<string, unknown>[] = []) {
   sdk.queries.length = 0;

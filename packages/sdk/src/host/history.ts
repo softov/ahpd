@@ -222,8 +222,8 @@ export function createHistory(ctx: HostContext): History {
    * was just told is gone. Removed here, and dated, so the pass behind that
    * answer cannot put it back either.
    *
-   * By id, because the two names a session answers to are one session: a
-   * delete under either spelling drops the row under both.
+   * By id, the key a row and the store's record share: one id is one session
+   * here, whatever scheme its URI is in.
    */
   const drop = (resource: string): void => {
     const id = idFor(resource);
@@ -334,7 +334,9 @@ export function createHistory(ctx: HostContext): History {
       if (record !== undefined && runs !== undefined) {
         if (!row) {
           const { title, createdAt, modifiedAt, workingDirectories } = record;
-          const found = ctx.adopt(runs, { id, title, createdAt, modifiedAt, workingDirectories });
+          // Named as a listing names it, which is one name for the row
+          // whichever road reached it first.
+          const found = ctx.adopt(runs, { id, title, createdAt, modifiedAt, workingDirectories }, undefined, ctx.kept.sessions().includes(id));
           ctx.rowAdded(found);
           rows.push(found);
           row = found;
@@ -351,9 +353,11 @@ export function createHistory(ctx: HostContext): History {
            * What the host knows about a row is what a client is sent for the
            * next move of it, and this row is in the catalogue as surely as one
            * a listing found - so it goes in with the rest, is said to every
-           * client, and the next opening of it asks nobody anything.
+           * client, and the next opening of it asks nobody anything. It is
+           * named as a listing names it: a row this host keeps a record for
+           * keeps the name its clients hold.
            */
-          const found = ctx.adopt(one.agent, one.row);
+          const found = ctx.adopt(one.agent, one.row, undefined, ctx.kept.sessions().includes(id));
           ctx.rowAdded(found);
           if (!rows.some((heldRow) => heldRow.resource === found.resource)) rows.push(found);
           row = found;
