@@ -411,6 +411,33 @@ it('answers a toggle on a client plugin itself, and never asks the backend', asy
   expect(toggled).toEqual([]);
 });
 
+it('answers the client that turned a client plugin off with its own action', async () => {
+  const { served } = serving();
+  await session(served);
+  const b = await joins(served, 'plugin', TREE);
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await announce(b.client, [{ type: 'plugin', uri: PLUGIN, nonce: 'n1' }]);
+  await settle();
+
+  b.client.handle({
+    method: 'dispatchAction',
+    params: {
+      channel: URI,
+      clientSeq: 3,
+      action: { type: 'session/customizationToggled', id: `plugin|${PLUGIN}`, enablement: [{ kind: 'session', enabled: false }] },
+    },
+  });
+  await settle();
+
+  // The client holds its switch until an action with its own origin answers it.
+  const answers = b.peer.notes
+    .filter((n) => n.method === 'action')
+    .map((n) => n.params as { action: Record<string, unknown>; origin?: { clientSeq: number }; rejectionReason?: string })
+    .filter((n) => n.origin?.clientSeq === 3);
+  expect(answers.map((n) => n.action.type)).toEqual(['session/customizationToggled']);
+  expect(answers[0]?.rejectionReason).toBeUndefined();
+});
+
 it('takes a client\'s plugins away with the client', async () => {
   const { served } = serving();
   const a = await session(served);
