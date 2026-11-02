@@ -516,6 +516,14 @@ export const createTurns = (
    * every turn on the failure path rather than on the ordinary one: the client
    * asked to carry on from a point, and carrying on from somewhere else
    * without saying so is the one answer that is worse than an error.
+   *
+   * A turn that finds another running once the lookup has settled is refused
+   * to the client that sent it, in the words of the host's own guard. That
+   * guard lets a turn through while the chat holds no active one, so a turn
+   * handed during the lookup can meet the one that opened before it, or the
+   * paused run the lookup made the chat's turn again. The client's `handed`
+   * is taken while its dispatch is applied, which is the only time it names
+   * that dispatch.
    */
   const beginTurn = (
     turnId: string,
@@ -525,7 +533,12 @@ export const createTurns = (
     queuedMessageId?: string,
     attachments?: MessageAttachment[],
   ): void => {
+    const handed = ctx.start.handed?.({ type: 'chat/turnStarted', turnId });
     const start = (): void => {
+      if (ctx.active !== undefined) {
+        handed?.refuse('A turn is running in this chat');
+        return;
+      }
       if (ctx.refused !== undefined) {
         failTurn(turnId, text, model, from, queuedMessageId, attachments, ctx.refused);
         return;
@@ -564,6 +577,19 @@ export const createTurns = (
       return;
     }
     if (ctx.active !== undefined || ctx.closed) return;
+    /*
+     * A steering message the run it was sent into never took in, before the
+     * queue: it was meant for the turn that just ended. Its turn names it in
+     * `queuedMessageId`, as a steering message taken in by a turn of its own
+     * is, which takes it out of every client's state.
+     * https://github.com/microsoft/agent-host-protocol/blob/main/docs/specification/chat-channel.md#steering-messages
+     */
+    const left = ctx.untaken.shift();
+    if (left !== undefined) {
+      if (ctx.steering?.id === left.id) ctx.steering = undefined;
+      beginTurn(crypto.randomUUID(), left.text, undefined, left.from, left.id, left.attachments);
+      return;
+    }
     const next = queued.shift();
     if (next === undefined) return;
     /*
