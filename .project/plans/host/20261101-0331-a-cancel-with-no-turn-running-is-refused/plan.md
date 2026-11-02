@@ -107,10 +107,12 @@ client chat/turnCancelled -> applyDispatch -> chatAction
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 03, 2026-11-01, and the builds on the held-state plan and on the plan in which a validation reads the held state.
+- **Done so far:** tasks 01 to 03, 2026-11-01.
+  The builds on the held-state plan and on the plan in which a validation reads the held state are done too.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
-- **Watch out for:** every chat's running turn is the one its held state has, a worker chat's the host's own; the backend's `chatState` says only whether the backend or the host says the end of a stopped turn.
+- **Watch out for:** every chat's running turn is the one its held state has, a worker chat's the host's own.
+  The backend's `chatState` says only whether the backend or the host says the end of a stopped turn.
 
 ## Final verification checklist
 

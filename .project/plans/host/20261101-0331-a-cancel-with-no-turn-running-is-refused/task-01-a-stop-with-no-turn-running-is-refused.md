@@ -42,7 +42,7 @@ A stop naming another turn than a lead chat's running turn stays an echo to its 
 - `subagent-chat.test.ts`: the host refuses a stop on the chat of an ended worker, and calls no `stopWorker`.
 - `subagent-chat.test.ts`: a stop while the worker runs still reaches `stopWorker`.
 - `session-wake.test.ts`: the host refuses a stop on a sleeping session and starts no backend.
-- `ahp-test-cases.test.ts`: case 015, a stop of the turn its chat holds as running, is answered through the host.
+- `ahp-test-cases.test.ts`: the host answers case 015, a stop of the turn its chat holds as running.
 - `ahp-test-cases.test.ts`: every protocol case passes.
 
 ## Resume
