@@ -1,7 +1,7 @@
 ---
 title: A turn ends as VS Code ends it
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -77,12 +77,12 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 ## Resume state
 
 - **Done so far:** tasks 01 and 02, 2026-11-02.
-- **Next action:** the implemented record.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a halt ends the outer turn too, so both endings take the turn's start.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `89ebe4d5` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
