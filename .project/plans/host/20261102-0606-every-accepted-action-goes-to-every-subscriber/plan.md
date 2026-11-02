@@ -60,7 +60,7 @@ client dispatchAction refused right after a subscribe
 | --- | --- | --- |
 | An accepted action goes to every subscriber of its channel, sequenced and applied | ahp-and-acp.md "How They Compose", step 2; subscriptions.md L140-L143 | 01 |
 | An action the reducer leaves as it was is accepted and goes the same way | the same; no validation table lists a no-op as invalid | 01 |
-| Terminal input goes to every client of the terminal | terminal-channel.md L110-L112: a side-effect-only client action, and a terminal action | 01 |
+| Terminal input is answered to its sender alone, at the next `serverSeq`, unbuffered. This is a gap against subscriptions.md L140-L143, which sends every terminal action to every client | Softov, 2026-11-02: "Accept, keep terminal input to sender" | 01 |
 | A refusal takes the next `serverSeq` | state.ts L357; actions.md L18 | 01 |
 | A refusal stays with its sender, unbuffered | reconciliation.md steps 2 and 3, and L81 | 01 |
 | A client that reconciles on every move sends its set once | VS Code's session handler L1237-L1253; the loop of cf90c9e4 kept as the acceptance | 01 |
@@ -68,7 +68,7 @@ client dispatchAction refused right after a subscribe
 
 ## Proposed architecture
 
-- **Data flow** - an accepted action that moves nothing goes through `dispatch`, as every other accepted action does; `echoTo` goes.
+- **Data flow** - an accepted action that moves nothing goes through `dispatch`, as every other accepted action does. `echoTo` stays for terminal input only.
 - **State flow** - `emit` sequences, reduces, buffers and broadcasts it; the reducer leaves the state as it was.
 - **Layer responsibilities** - sdk host: `chatactions.ts`, `actions.ts`, `host.ts`, `context.ts`. docs: AHP.md's section on accepted actions, and each row that said sender-only.
 - **Source-of-truth files** - [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts), [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts)
@@ -81,7 +81,7 @@ client dispatchAction refused right after a subscribe
 
 ## Risks and tradeoffs
 
-- Terminal input reaches every client of the terminal, and the replay buffer, as VS Code's host has it.
+- Terminal input stays with the client that typed it and out of the replay buffer. So another client never reads a password typed at a prompt.
 - A client that sends its set again on every state move loops with any host that echoes.
   Every client found that sends a set guards against it or sends it once.
 

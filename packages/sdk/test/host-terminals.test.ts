@@ -728,8 +728,9 @@ describe('a shell on this machine', () => {
   /*
    * Every terminal action a client sends is answered, its echo or its refusal.
    * Input is side-effect only, so the protocol's reducer changes nothing on it,
-   * and a title set to the one it has changes nothing either: each goes to
-   * every client of the terminal as the sender's own action.
+   * and a title set to the one it has changes nothing either. A title goes to
+   * every client of the terminal as the sender's own action; input is answered
+   * to the client that typed it, and to nobody else.
    * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
    */
   const watched = async (uri: string) => {
@@ -748,16 +749,18 @@ describe('a shell on this machine', () => {
     return { ...opened_, other, send };
   };
 
-  it('says what it is sent to every client of the terminal, the sender\'s own action', async () => {
+  it('answers input to the client that typed it, and to nobody else', async () => {
     const uri = 'ahp-terminal:/answered';
     const { peer: p, other, send } = await watched(uri);
     await send(3, { type: 'terminal/input', data: 'echo answered-input\n' });
     await spoken(p, uri, 'answered-input');
 
-    for (const q of [p, other]) {
-      const said = actions(q, uri).filter((e) => e.action.type === 'terminal/input');
-      expect(said.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
-    }
+    const mine = actions(p, uri).filter((e) => e.action.type === 'terminal/input');
+    expect(mine.map((e) => [e.origin?.clientSeq, e.rejectionReason])).toEqual([[3, undefined]]);
+    expect(actions(other, uri).filter((e) => e.action.type === 'terminal/input')).toEqual([]);
+    // Every envelope takes its own number, the echo too.
+    const seqs = p.notes.filter((n) => n.method === 'action').map((n) => (n.params as { serverSeq: number }).serverSeq);
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
 
   it('refuses what it is sent once the shell has gone', async () => {

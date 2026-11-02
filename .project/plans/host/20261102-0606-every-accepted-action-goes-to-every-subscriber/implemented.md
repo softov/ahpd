@@ -10,10 +10,10 @@ commits:
 
 ## What changed
 
-- [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts) - `echoTo` is gone; `refuse` moves `serverSeq` before its envelope, which still goes to its sender alone and is not buffered.
-- [`code://packages/sdk/src/host/context.ts`](../../../../packages/sdk/src/host/context.ts) - `echoTo` left the context; `refuse` says it takes the next `serverSeq`.
+- [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts) - `echoTo` answers terminal input alone; it and `refuse` move `serverSeq` before the envelope, which goes to its sender alone and is not buffered.
+- [`code://packages/sdk/src/host/context.ts`](../../../../packages/sdk/src/host/context.ts) - `echoTo` and `refuse` say each takes the next `serverSeq`.
 - [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts) - a chat bit, a held draft, a session folder, a chat folder, a cancel naming another turn and a background request go through `dispatch`.
-- [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts) - a review, a run's cancel, an unchanged set, a session bit, terminal input and a held terminal title go through `dispatch`.
+- [`code://packages/sdk/src/host/actions.ts`](../../../../packages/sdk/src/host/actions.ts) - a review, a run's cancel, an unchanged set, a session bit and a held terminal title go through `dispatch`. Terminal input goes through `echoTo`, to its sender alone.
 - An unchanged active client set goes out as the host's entry, as a changed one does.
 - [`code://docs/sdk/AHP.md`](../../../../docs/sdk/AHP.md) - its section on accepted actions says the rule, the refusal's sequence and the client's guard.
   Twelve rows say the action goes to every client.
@@ -27,7 +27,7 @@ commits:
   A client that reconciles as VS Code's session handler does sends its set once while the other client sends three.
 - That case could fail: with the client's two guards taken out, the same host received 4073 sets before the test ended.
 - `host-snapshots.test.ts`: a refusal right after a subscribe carries a `serverSeq` above the snapshot's `fromSeq`; on e4694965 it carried the same number.
-- The review, folder, background request, draft, chat read and terminal cases each reach every client; each fails on e4694965.
+- The review, folder, background request, draft, chat read and terminal title cases each reach every client; each fails on e4694965.
 - The seven changed files on e4694965's source: 21 failed, 833 passed. With the change: 854 passed.
 - `pnpm run typecheck`, `pnpm run boundary` and `pnpm run i18n` exit 0.
 

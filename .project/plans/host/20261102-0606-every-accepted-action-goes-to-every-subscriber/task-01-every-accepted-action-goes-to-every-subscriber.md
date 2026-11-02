@@ -16,10 +16,10 @@ A refusal takes the next `serverSeq`.
 
 ## Files
 
-- `UPDATE: packages/sdk/src/host.ts` - `echoTo` removed; `refuse` moves `serverSeq`; the rule at the top and `emit`'s comment say so.
-- `UPDATE: packages/sdk/src/host/context.ts` - `echoTo` removed from the context.
+- `UPDATE: packages/sdk/src/host.ts` - `echoTo` kept for terminal input; it and `refuse` move `serverSeq`; the rule at the top and `emit`'s comment say so.
+- `UPDATE: packages/sdk/src/host/context.ts` - `echoTo` and `refuse` take the next `serverSeq`.
 - `UPDATE: packages/sdk/src/host/chatactions.ts` - a chat bit, a draft, a session and a chat folder, a cancel naming another turn and a background request go through `dispatch`.
-- `UPDATE: packages/sdk/src/host/actions.ts` - a review, a run's cancel, an unchanged set, a session bit, terminal input and a terminal title go through `dispatch`.
+- `UPDATE: packages/sdk/src/host/actions.ts` - a review, a run's cancel, an unchanged set, a session bit and a terminal title go through `dispatch`; terminal input goes through `echoTo`.
 - `UPDATE: docs/sdk/AHP.md` - the section on accepted actions, and every row that said sender-only.
 - `UPDATE: docs/sdk/CHATS.md` - `serverSeq` moves with every envelope.
 - `UPDATE: packages/sdk/test/ahp-test-cases.test.ts` - the ten `senderOnly` rows and the reason go.
@@ -29,9 +29,9 @@ A refusal takes the next `serverSeq`.
 
 ## Steps
 
-1. Replace each `echoTo(connection.peer, channel, action, origin)` with `dispatch(channel, action, origin)`.
+1. Replace each `echoTo(connection.peer, channel, action, origin)` with `dispatch(channel, action, origin)`, except for terminal input.
 2. Send an unchanged active client set as the host's normalized entry, as a changed one goes.
-3. Remove `echoTo` from `host.ts` and the context.
+3. Make `echoTo` take the next `serverSeq`, as `refuse` does.
 4. Move `serverSeq` in `refuse` before its envelope.
 5. Rewrite the comments and docs that said sender-only.
 6. Drop the oracle's `senderOnly` rows, and change each test that asserted the sender alone.

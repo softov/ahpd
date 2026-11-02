@@ -36,7 +36,7 @@ export interface Actions {
 
 export function createActions(ctx: HostContext, conn: ConnectionContext): Actions {
   const { connection, tokensFor } = conn;
-  const { refuse } = ctx;
+  const { refuse, echoTo } = ctx;
   /*
    * Nothing here that the host rewrites after it is built: `advancedTools`,
    * `contributed`, `contributing` and `restartNeeded` change while this
@@ -829,16 +829,15 @@ export function createActions(ctx: HostContext, conn: ConnectionContext): Action
          * Input is side-effect only.
          *
          * The protocol's reducer changes nothing on it, and what comes back is
-         * `terminal/data`, once the shell has actually said something. It is
-         * still a terminal action, so it goes to every client of the terminal,
-         * and every client reads what it did in the `terminal/data` that
-         * follows. Input with no process to reach is refused, in the
-         * terminal's words.
+         * `terminal/data`, once the shell has actually said something. So it
+         * is answered to the client that sent it alone, as `echoTo` says, and
+         * every client reads what it did in the `terminal/data` that follows.
+         * Input with no process to reach is refused, in the terminal's words.
          * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/terminal-channel.md#L110-L112
          */
         case 'terminal/input': {
           const taken = terminal.write(String(action.data ?? ''));
-          if (taken === true) dispatch(channel, action, origin);
+          if (taken === true) echoTo(connection.peer, channel, action, origin);
           else no(taken);
           break;
         }
