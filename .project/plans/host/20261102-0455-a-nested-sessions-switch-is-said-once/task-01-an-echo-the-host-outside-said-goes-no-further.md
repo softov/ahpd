@@ -1,6 +1,6 @@
 ---
 title: An echo the host outside said goes no further
-status: todo
+status: done
 depends: []
 layer: "sdk sessions"
 refs:
@@ -37,4 +37,4 @@ Its echo from the host inside moves the mirror and is not emitted.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `2f3224d7`; [implemented.md](implemented.md) says what was verified.

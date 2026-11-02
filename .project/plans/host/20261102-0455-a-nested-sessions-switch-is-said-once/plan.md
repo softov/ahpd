@@ -1,7 +1,7 @@
 ---
 title: A nested session's switch is said once
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -62,7 +62,7 @@ client outside: session/customizationToggled (clientSeq 9)
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - an echo the host outside said goes no further](task-01-an-echo-the-host-outside-said-goes-no-further.md) | todo | - |
+| [01 - an echo the host outside said goes no further](task-01-an-echo-the-host-outside-said-goes-no-further.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -70,12 +70,12 @@ client outside: session/customizationToggled (clientSeq 9)
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** an inner session publishes its customizations by action; a case waits for them before it switches one.
 
 ## Final verification checklist
 
-- [ ] A switch on a nested session reaches the client outside once, with its origin.
-- [ ] On main's code the client outside hears it twice.
+- [x] A switch on a nested session reaches the client outside once, with its origin.
+- [x] On main's code the client outside hears it twice.
