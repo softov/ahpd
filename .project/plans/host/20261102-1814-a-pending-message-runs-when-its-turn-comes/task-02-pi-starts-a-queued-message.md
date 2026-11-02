@@ -1,6 +1,6 @@
 ---
 title: pi starts a queued message as a turn naming it
-status: todo
+status: done
 depends: []
 layer: agent-pi
 refs:
@@ -36,3 +36,9 @@ Every turn pi starts for a queued message names it as `queuedMessageId`, and not
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- `agent-pi.test.ts`'s queue case moved with the behavior: it read the removal said before the turn.
+- It now reads the turn that names the message.
+- On `89ebe4d5`'s sources the three cases fail: the removal came first, the idle message waited, and the command's turn named nothing.

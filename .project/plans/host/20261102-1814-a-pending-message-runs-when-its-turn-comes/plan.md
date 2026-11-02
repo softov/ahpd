@@ -91,7 +91,7 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A steering message runs as VS Code runs it](task-01-a-steering-message-runs-as-vs-code-runs.md) | done | - |
-| [02 - pi starts a queued message as a turn naming it](task-02-pi-starts-a-queued-message.md) | todo | - |
+| [02 - pi starts a queued message as a turn naming it](task-02-pi-starts-a-queued-message.md) | done | - |
 | [03 - A bot's steer goes into the open turn](task-03-a-bots-steer-goes-into-the-turn.md) | todo | - |
 
 ## Risks and tradeoffs
@@ -102,8 +102,8 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-02.
-- **Next action:** [task-02-pi-starts-a-queued-message.md](task-02-pi-starts-a-queued-message.md).
+- **Done so far:** tasks 01 and 02, 2026-11-02.
+- **Next action:** [task-03-a-bots-steer-goes-into-the-turn.md](task-03-a-bots-steer-goes-into-the-turn.md).
 - **Open questions:** none.
 - **Watch out for:** the owed answer to a steering message is the backend's queued `chat/pendingMessageSet`, said as the client's own action.
 

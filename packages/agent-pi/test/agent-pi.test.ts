@@ -471,7 +471,7 @@ it('keeps the turn running when pi will not take a steer, and takes the message 
 });
 
 it('queues a second message and runs it when the first turn ends', async () => {
-  const { session, pi, types } = opened();
+  const { session, pi, types, last } = opened();
   pi.hold();
   session.begin('t1', 'first');
   await settled();
@@ -482,7 +482,9 @@ it('queues a second message and runs it when the first turn ends', async () => {
 
   pi.raise({ type: 'agent_settled', aborted: false });
   await settled();
-  expect(types('chat')).toContain('chat/pendingMessageRemoved');
+  // The turn that takes it up names it; nothing is said before that turn.
+  expect(types('chat')).not.toContain('chat/pendingMessageRemoved');
+  expect(last('chat/turnStarted')?.queuedMessageId).toBe('t2');
   expect(pi.asked.filter((one) => one.kind === 'prompt').map((one) => one.text)).toEqual(['first', 'second']);
 });
 
@@ -699,6 +701,40 @@ it('sends no usage for a !command turn, which is not pi running', async () => {
   session.ran?.('t1', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }));
   await settled();
   expect(types('chat')).not.toContain('chat/usage');
+});
+
+/*
+ * A queued message with nothing running starts at once, as a turn naming it:
+ * "the server SHOULD immediately consume it", and the reference host starts
+ * an accepted queued message while its chat is idle, as `chat/turnStarted`
+ * with `queuedMessageId` and nothing said before it (queueDrainContribution.ts
+ * L117-L119, L283-L292 at a4e689ae).
+ */
+it('starts a message queued with nothing running at once, as a turn naming it', async () => {
+  const { session, sent, pi } = opened();
+  session.queue('q1', 'only');
+  await settled();
+  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+  expect(said.map((one) => one.type).slice(0, 2)).toEqual(['chat/pendingMessageSet', 'chat/turnStarted']);
+  expect(said.find((one) => one.type === 'chat/turnStarted')?.queuedMessageId).toBe('q1');
+  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
+  expect(pi.asked.find((one) => one.kind === 'prompt')?.text).toBe('only');
+});
+
+it('starts a queued !command as a turn naming it, with nothing said before it', async () => {
+  const { session, pi, sent } = opened();
+  pi.hold();
+  session.begin('t1', 'hello');
+  await settled();
+  session.ran?.('t2', 'echo hi', async () => ({ success: true, said: 'Ran echo hi', output: 'hi', code: 0 }), 'q1');
+  await settled();
+  pi.raise({ type: 'agent_settled', aborted: false });
+  await settled();
+  const said = sent.filter((one) => one.channel === 'chat').map((one) => one.action);
+  const started = said.filter((one) => one.type === 'chat/turnStarted');
+  expect(started.at(-1)?.message).toMatchObject({ text: '!echo hi' });
+  expect(started.at(-1)?.queuedMessageId).toBe('q1');
+  expect(said.some((one) => one.type === 'chat/pendingMessageRemoved')).toBe(false);
 });
 
 it('sends no usage for an error that used no tokens', async () => {
