@@ -1,6 +1,6 @@
 ---
 title: A steering message taken back is withdrawn or refused
-status: todo
+status: done
 depends: []
 layer: "agent-cofold, sdk sessions"
 refs:
@@ -42,4 +42,4 @@ The proxy carries a removal inside under the kind the inner chat holds the messa
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `f88076de`; [implemented.md](implemented.md) says what was verified.

@@ -1,7 +1,7 @@
 ---
 title: A steering message taken back is withdrawn or refused
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -73,7 +73,7 @@ nested: unqueue carries {kind: queued} inside -> the host inside refuses a queue
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a steering message taken back is withdrawn or refused](task-01-a-steering-message-taken-back-is-withdrawn-or-refused.md) | todo | - |
+| [01 - a steering message taken back is withdrawn or refused](task-01-a-steering-message-taken-back-is-withdrawn-or-refused.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,14 +83,14 @@ nested: unqueue carries {kind: queued} inside -> the host inside refuses a queue
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a client's fold that applies a refused envelope; read the state from a snapshot instead.
 
 ## Final verification checklist
 
-- [ ] cofold takes back a message its stopped run handed back, and the message never runs.
-- [ ] cofold's run keeps a message it holds, and the host refuses the removal.
-- [ ] pi keeps a message it holds, and the host refuses the removal.
-- [ ] A nested session's removal reaches the host inside as `steering`, and its answer reaches the client outside.
+- [x] cofold takes back a message its stopped run handed back, and the message never runs.
+- [x] cofold's run keeps a message it holds, and the host refuses the removal.
+- [x] pi keeps a message it holds, and the host refuses the removal.
+- [x] A nested session's removal reaches the host inside as `steering`, and its answer reaches the client outside.
