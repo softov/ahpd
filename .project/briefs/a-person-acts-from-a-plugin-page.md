@@ -22,6 +22,9 @@ refs:
   - https://github.com/microsoft/vscode/blob/171e90619c7/src/vs/workbench/contrib/remote/browser/tunnelView.ts#L1112-L1116 - the Ports view's "Forward a Port" action
   - https://github.com/microsoft/vscode/blob/171e90619c7/src/vscode-dts/vscode.proposed.resolvers.d.ts#L45 - `registerTunnelProvider`, how an extension gives VS Code tunnels
   - file:///github/ahpd/.project/briefs/an-agent-makes-a-canvas.md - the canvas brief; how a canvas is served stays there
+  - file:///github/ahpd/.project/briefs/the-host-keeps-the-tunnels.md - the host's list of tunnels, which the canvas URL reads
+  - "[code://packages/tunnel-devtunnel/src/devtunnel.ts#L209-L224](../../packages/tunnel-devtunnel/src/devtunnel.ts#L209-L224) - `prepare`, which adds the one port and its anonymous access"
+  - https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands - `devtunnel port create` and `delete`, a port's own URL, and access for each port, read 2026-11-02
 ---
 
 # A person acts from a plugin's page
@@ -31,7 +34,8 @@ Softov runs ahpw on a public address, and ahpw is a proxy to ahpd.
 He wants to see a canvas in that setup before an agent makes one.
 The same page then gives the devtunnel plugin actions, such as "add a tunnel".
 A model tool can do the same work, behind a setting.
-The host can keep a list of the addresses that tunnels give, so a plugin builds a URL that a remote client reaches.
+The host keeps a list of tunnels, so a plugin builds a URL that a remote client reaches.
+[the-host-keeps-the-tunnels.md](the-host-keeps-the-tunnels.md) has that list.
 How the host serves a canvas page is in [an-agent-makes-a-canvas.md](an-agent-makes-a-canvas.md), not here.
 
 ## What others do
@@ -87,6 +91,7 @@ No open PR on softov/ahpd at the time of writing.
 
 The example plugin's page:
 
+- The example serves its canvas page from its own HTTP server on a loopback port, as a VS Code extension does. The canvas brief's *Answers* has Softov's words.
 - The page lists the live chats, each with an "Open canvas" Button.
 - The Button calls `x-example-canvas/open` with the chat in its `context`. The method calls `openCanvas`.
 - The page draws again when a chat opens or closes.
@@ -96,30 +101,27 @@ The canvas URL, one setting per case, each with its own default:
 
 | Case | URL |
 | --- | --- |
-| A client on the daemon's machine | The bound address, read as loopback |
-| A proxy such as Softov's ahpw | The `origin` option |
-| A tunnel | An address from the host's list |
+| A client on the daemon's machine | The example's own server, `http://127.0.0.1:<port>/` |
+| A remote client, such as Softov's ahpw | The URL of the tunnel port that forwards the example's port, from the host's list |
+| A proxy that forwards the example's port | The `origin` option |
 
 devtunnel actions, each a method that a Button calls:
 
+- Forward a port, and stop forwarding it, as VS Code's "Forward a Port" does. The port gets its own URL and its own anonymous switch, as the canvas brief's *Where a canvas page is served* says. This action comes first, because the example's canvas needs it.
 - Add a tunnel, and remove one.
 - Turn anonymous access on and off.
 - Start the relay again after it stopped.
 
 A model tool for each action is an option of the plugin. It is off by default, because a tool reaches every session's model.
 
-The host's list of addresses:
-
-- A plugin adds an address and removes it at any time, not only at `listening`.
-- The host keeps the list, with the plugin that gave each one.
-- The list feeds the routes' `Host` check, as announced names do today. The API's check reads it behind a setting.
-- A plugin can read the list. The example builds its canvas URL from it.
-- A client sees the list on the plugins channel.
+The host's list of addresses is the list of tunnels in [the-host-keeps-the-tunnels.md](the-host-keeps-the-tunnels.md).
+The example reads its canvas URL from that list.
 
 ## Open points
 
 1. Does the page list the chats, or does the client send the chat it shows? The second needs a binding, which a later plan brings.
-2. What is a second devtunnel tunnel for: a second port, or a second account?
-3. Is the list a list of tunnels, or of addresses? A proxy address, such as Softov's ahpw, is not a tunnel.
-4. Does `say` stay, beside the list, for `ahpd status`?
-5. Does the API's `Host` check read the list by default?
+2. One tunnel holds many ports. Is a second devtunnel tunnel still needed, for a second account?
+3. Does a person forward the example's port by hand, as in VS Code's Ports view, or does the example ask devtunnel for it?
+4. Does the example keep its route under `/plugins/example-canvas/` beside its own server?
+5. A forwarded port carries no canvas token. Is the example's port anonymous by default, or only behind the Dev Tunnels sign-in?
+6. Does forwarding a port start `devtunnel host` again? That would drop the clients on the daemon's port for a moment.

@@ -19,7 +19,8 @@ refs:
   - https://developers.cloudflare.com/api/resources/zero_trust/subresources/tunnels/subresources/cloudflared/subresources/token/methods/get/ - read a tunnel's token, read 2026-11-02
   - https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/routing-to-tunnel/ - a `CNAME` to `<UUID>.cfargotunnel.com`, read 2026-11-02
   - https://developers.cloudflare.com/network/websockets/ - WebSockets on every plan, and idle closes, read 2026-11-02
-  - file:///github/ahpd/.project/briefs/a-person-acts-from-a-plugin-page.md - the host's list of addresses, and actions on a plugin's page
+  - file:///github/ahpd/.project/briefs/a-person-acts-from-a-plugin-page.md - actions on a plugin's page
+  - file:///github/ahpd/.project/briefs/the-host-keeps-the-tunnels.md - the host's list of tunnels, which this plugin adds to
 ---
 
 # A Cloudflare tunnel publishes the daemon
@@ -67,7 +68,8 @@ Facts from Cloudflare's documents, read on 2026-11-02:
 | Writer | Files | What the change does to it |
 | --- | --- | --- |
 | The `plugin/canvas-example` branch | `examples/canvas/`, the `--plugin` change | No overlap |
-| [a-person-acts-from-a-plugin-page.md](a-person-acts-from-a-plugin-page.md) | The host's list of addresses, devtunnel actions | This plugin gives its address to that list once it exists |
+| [a-person-acts-from-a-plugin-page.md](a-person-acts-from-a-plugin-page.md) | devtunnel actions | No overlap |
+| [the-host-keeps-the-tunnels.md](the-host-keeps-the-tunnels.md) | The host's list of tunnels | This plugin provides a kind of tunnel to that list once it exists |
 | `release/prerelease-channel` worktree | Release files | The new package joins the release list |
 
 No open PR on softov/ahpd at the time of writing.

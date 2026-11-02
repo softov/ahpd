@@ -35,6 +35,7 @@ refs:
   - "[code://packages/server/src/proxy/listener.ts#L129](../../packages/server/src/proxy/listener.ts#L129) - the proxy does not pass `Set-Cookie` back"
   - https://github.com/mdn/browser-compat-data/blob/main/api/FetchEvent.json - `clientId` and `resultingClientId` in every engine; no `replacesClientId`, read 2026-11-02
   - file:///github/ahpd/.project/briefs/a-person-acts-from-a-plugin-page.md - the host's list of addresses, which a `tunnel` way reads
+  - https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands - a Dev Tunnels port's own URL, and access for each port, read 2026-11-02
 ---
 
 # An agent makes a canvas
@@ -97,6 +98,7 @@ Softov, 2026-11-01. Each answer is a default for now, not a lock.
 | Who may make a canvas | A daemon setting. Its default: a page folder needs no grant, and a URL source and a plugin type need one. |
 | The URL a client gets | `resource` when it is set. When it is not, the known name that the client's connection named in `Host`. |
 | `canvasesEnabled` from VS Code | The host follows the value a client sends, as VS Code does. A VS Code user turns on `chat.canvases.enabled`. |
+| How the example plugin serves its page | From its own HTTP server on a loopback port, as a VS Code extension does. Softov, 2026-11-02: "we need to make the plugin open a canvas like a port running so it get more close to vscode". |
 
 ## The change
 
@@ -183,9 +185,17 @@ Facts for `port` and `ports`:
 - ahpw keeps no token in a cookie, and the proxy does not pass `Set-Cookie` back ([`code://packages/server/src/proxy/listener.ts`](../../packages/server/src/proxy/listener.ts#L129)).
 - A browser applies no cross-origin rule to a WebSocket. When ahpw's server holds the token, the socket it serves must check `Origin`, or any page can use the token.
 
+Facts for `tunnel` with Dev Tunnels, from its CLI reference:
+
+- One tunnel holds many ports. `devtunnel port create -p <port> --protocol http` adds one, and `devtunnel port delete -p <port>` removes it.
+- Each port gets its own URL, such as `https://<tunnel-id>-<port>.<region>.devtunnels.ms/`. So each forwarded port is its own origin.
+- Access is set for each port: `devtunnel access create <tunnel-id> --port <port> --anonymous`.
+- A tunnel that is not anonymous sends a browser to a sign-in page first.
+- A forwarded port carries no canvas token. With anonymous access on, anyone with the URL reaches the page's server.
+
 Not checked yet:
 
-- Whether each Dev Tunnels port gets its own URL.
+- Whether a running `devtunnel host` serves a port added after it started, or must start again.
 - Whether Safari, and the WebView2 that ahp-desk uses, send `*.localhost` to loopback.
 - Whether ahpw's server checks `Origin` on the socket when it holds the token.
 
@@ -222,7 +232,7 @@ Not checked yet:
 
 | # | Step | Needs |
 |---|---|---|
-| 1 | Check by hand that a plugin's `openCanvas` shows in ahpw | nothing |
+| 1 | Check by hand that the example's page, on its own loopback port, shows in ahpw through a Dev Tunnels port | devtunnel forwards a port, in [a-person-acts-from-a-plugin-page.md](a-person-acts-from-a-plugin-page.md) |
 | 2 | The list of types, `registerCanvas`, and `canvasesEnabled` on by default | nothing |
 | 3 | The host serves every canvas at a token URL, with the proxy setting and the URL each client gets | nothing |
 | 4 | A page talks back through the host | step 3 |
