@@ -499,12 +499,15 @@ describe('the flags a client sets', () => {
 });
 
 /*
- * A chat's read bit and its session's, each moved by its own action alone:
- * "The action toggles `SessionStatus.IsRead` only on the addressed
- * `ChatState`; it does not change the read state of the owning session or
- * sibling chats ... `session/isReadChanged` independently changes the owning
- * session's read state; neither action implies the other."
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
+ * A chat's read bit and its session's, moving each other as the reference
+ * host couples them: a session read is said unread while one of its two or
+ * more chats is unread, a session of one chat moves that chat with it, a chat
+ * marked unread marks a read session unread, and the last chat read marks an
+ * unread session read. A tool's chat and a hidden one move nothing of the
+ * session's.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2869-L2878
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2912-L2918
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2993-L3008
  */
 describe('a chat\'s read bit and its session\'s', () => {
   type Client = Awaited<ReturnType<typeof running>>['client'];
@@ -545,19 +548,23 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(chat.status & Status.IsRead).toBe(Status.IsRead);
   });
 
-  it('leaves the session and the other chat as they are when a chat turns unread', async () => {
+  it('marks a read session unread when one of its chats turns unread, and leaves the other chat as it is', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     p.notes.length = 0;
     await send(client, second, chatRead(false));
     expect(await isRead(client, second)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+    // This host's own action, after the chat's and its row, so a client applies those first.
+    const marked = actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged');
+    expect(marked.map((e) => [e.action.isRead, e.origin])).toEqual([[false, undefined]]);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
     // The chat's row in its session moves with the chat, which keeps the list in step.
     expect(actions(p, uri).filter((e) => e.action.type === 'session/chatUpdated').map((e) => e.action.chat)).toEqual([second]);
   });
 
-  it('leaves an unread session unread when its chats are read', async () => {
+  it('marks an unread session read when its last unread chat is read', async () => {
     const { client, uri, chatUri } = await twoChats();
     await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
@@ -565,16 +572,49 @@ describe('a chat\'s read bit and its session\'s', () => {
     await send(client, second, chatRead(true));
     expect(await isRead(client, second)).toBe(true);
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
   });
 
-  it('leaves the one chat read when a session with one chat is marked unread', async () => {
+  /*
+   * A read said again keeps a session of several chats unread: only a chat
+   * that was unread, or a sole one, reads its session read.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3002-L3003
+   */
+  it('keeps a session of two chats unread when a chat that is read is read again', async () => {
+    const { client, peer: p, uri, chatUri } = await twoChats();
+    await send(client, uri, sessionRead(false));
+    p.notes.length = 0;
+
+    await send(client, chatUri, chatRead(true));
+    expect(await isRead(client, uri)).toBe(false);
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+  });
+
+  it('marks the one chat unread after the session when a session with one chat is marked unread', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     p.notes.length = 0;
     await send(client, uri, sessionRead(false));
     expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(false);
+    // This host's own action on the chat, after the client's on the session.
+    expect(actions(p, chatUri).map((e) => [e.action.type, e.action.isRead, e.origin])).toEqual([['chat/isReadChanged', false, undefined]]);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`session/isReadChanged ${uri}`)).toBeLessThan(said.indexOf(`chat/isReadChanged ${chatUri}`));
+  });
+
+  it('marks the one chat read when its session is marked read, though the session was read already', async () => {
+    const { client, peer: p, uri, chatUri } = await running();
+    // A turn's start makes the chat unread and leaves the session read.
+    await send(client, chatUri, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hi' } });
+    expect(await isRead(client, chatUri)).toBe(false);
+    expect(await isRead(client, uri)).toBe(true);
+    p.notes.length = 0;
+
+    await send(client, uri, sessionRead(true));
     expect(await isRead(client, chatUri)).toBe(true);
-    expect(actions(p, chatUri)).toEqual([]);
+    expect(await isRead(client, uri)).toBe(true);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`session/isReadChanged ${uri}`)).toBeLessThan(said.indexOf(`chat/isReadChanged ${chatUri}`));
   });
 
   it('leaves each chat as it is when a session with two chats is marked unread', async () => {
@@ -584,24 +624,26 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(await isRead(client, second)).toBe(true);
   });
 
-  it('leaves unread chats unread when the session is marked read, and says the session once', async () => {
+  it('says a session read as unread while one of its two chats is unread, under the client\'s own origin', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
-    await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
-    await send(client, chatUri, chatRead(false));
     p.notes.length = 0;
 
-    await send(client, uri, sessionRead(true));
-    expect(await isRead(client, uri)).toBe(true);
-    expect(await isRead(client, chatUri)).toBe(false);
+    client.handle({ method: 'dispatchAction', params: { channel: uri, clientSeq: 5, action: sessionRead(true) } });
+    await settle();
+    expect(await isRead(client, uri)).toBe(false);
+    expect(await isRead(client, chatUri)).toBe(true);
     expect(await isRead(client, second)).toBe(false);
-    expect(actions(p).map((e) => e.action.type)).toEqual(['session/isReadChanged']);
+    // The session's bit did not move, so the answer is the one action, carrying the bit it holds.
+    expect(actions(p).map((e) => [e.channel, e.action, e.origin])).toEqual([
+      [uri, { type: 'session/isReadChanged', isRead: false }, { clientId: 'probe', clientSeq: 5 }],
+    ]);
 
     // Said again, nothing moved: the action goes out, and no row with it.
     const said = p.notes.length;
     await send(client, uri, sessionRead(true));
     expect(p.notes.slice(said).map((one) => one.method)).toEqual(['action']);
-    expect(actions(p, uri).at(-1)?.action.type).toBe('session/isReadChanged');
+    expect(actions(p, uri).at(-1)?.action).toEqual({ type: 'session/isReadChanged', isRead: false });
   });
 
   it('marks a chat unread when a turn starts, as a client reduces it, and leaves its session read', async () => {
@@ -742,10 +784,11 @@ describe('a chat\'s read bit and its session\'s', () => {
   });
 
   /*
-   * A chat archived on its own is marked read, as the reference host marks it.
-   * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+   * A chat archived on its own is marked read, as the reference host marks it,
+   * with the read action that moves its session after it.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
    */
-  it('marks an unread chat read when it is archived, after the archive', async () => {
+  it('marks an unread chat read when it is archived, after the archive, and keeps its session unread while another chat is', async () => {
     const { client, peer: p, uri, chatUri } = await twoChats();
     await send(client, chatUri, chatRead(false));
     await send(client, second, chatRead(false));
@@ -755,10 +798,10 @@ describe('a chat\'s read bit and its session\'s', () => {
     expect(actions(p, second).map((e) => e.action.type)).toEqual(['chat/isArchivedChanged', 'chat/isReadChanged']);
     expect(await isRead(client, second)).toBe(true);
     expect(await isRead(client, chatUri)).toBe(false);
-    expect(await isRead(client, uri)).toBe(true);
+    expect(await isRead(client, uri)).toBe(false);
   });
 
-  it('leaves an unread session unread when its last unread chat is archived', async () => {
+  it('marks an unread session read when its last unread chat is archived', async () => {
     const { client, peer: p, uri } = await twoChats();
     await send(client, uri, sessionRead(false));
     await send(client, second, chatRead(false));
@@ -766,8 +809,9 @@ describe('a chat\'s read bit and its session\'s', () => {
 
     await send(client, second, { type: 'chat/isArchivedChanged', isArchived: true });
     expect(await isRead(client, second)).toBe(true);
-    expect(await isRead(client, uri)).toBe(false);
-    expect(actions(p, uri).filter((e) => e.action.type === 'session/isReadChanged')).toEqual([]);
+    expect(await isRead(client, uri)).toBe(true);
+    const said = actions(p).map((e) => `${String(e.action.type)} ${e.channel}`);
+    expect(said.indexOf(`chat/isReadChanged ${second}`)).toBeLessThan(said.indexOf(`session/isReadChanged ${uri}`));
   });
 
   it('changes no read bit when a chat is taken out of the archive', async () => {

@@ -19,10 +19,9 @@ import type { ConnectionContext, HostContext } from './context.js';
  * on the session's default chat, which archives the session because that chat
  * is what the session's row is.
  *
- * The read bit is the session's alone, as the protocol has it:
- * "`session/isReadChanged` independently changes the owning session's read
- * state; neither action implies the other".
- * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
+ * A read bit moved here is the session's. The chats it moves with, and when,
+ * are `readAggregate`'s and `sessionFollows`'s, and the session's own action
+ * moves a sole chat where `session/isReadChanged` is applied.
  *
  * An archived bit that moved moves the default chat's with it. The protocol
  * makes archiving the default chat the same act as archiving the session, and
@@ -111,6 +110,60 @@ export function chatFlag(
 }
 
 /**
+ * The chats a session's read bit is made of, each with its own read bit.
+ *
+ * Every open chat of the session but one whose origin is a tool and one that
+ * is hidden: those keep their own bits and move nothing of the session's, as
+ * the reference host has it. A running session's chats are the ones it holds;
+ * one nothing is running has the chats its state opens with, its default
+ * first, as the reference host reads a session it has not loaded off its
+ * catalog row. A session the catalogue does not list has none, as the
+ * reference host has no row to read for one.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/common/state/sessionState.ts#L2063-L2070
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12042-L12078
+ */
+export function readAggregate(ctx: HostContext, session: string): { uri: string; read: boolean }[] {
+  const id = idOf(session);
+  const held = ctx.sessions.get(session);
+  if (held === undefined && !ctx.owners.has(session)) return [];
+  const recorded = held !== undefined || ctx.kept.nested?.(id) !== undefined ? [] : ctx.recordedChats(id);
+  const chats: Bag[] = held !== undefined
+    ? [...held.chats].map(([uri, chat]) => ctx.chatSummary(session, uri, chat))
+    : [
+      { resource: recorded.find((one) => one.default === true)?.uri ?? chatUriFor(ctx.nameOf(id)) },
+      ...recorded.filter((one) => one.default !== true).map((one) => ({ resource: one.uri, origin: one.origin })),
+    ];
+  return chats
+    .filter((one) => (one.origin as Bag | undefined)?.['kind'] !== 'tool' && one.interactivity !== 'hidden'
+      && toolCallOfSubagentChat(String(one.resource)) === undefined)
+    .map((one) => ({ uri: String(one.resource), read: (ctx.kept.chatFlags(id, String(one.resource)) & Status.IsRead) !== 0 }));
+}
+
+/**
+ * A session's read bit, moved after a read action on one of its chats.
+ *
+ * A chat of its `readAggregate` that is unread marks a read session unread.
+ * One that is read marks an unread session read once every chat of it is
+ * read, unless it was read already and has a sibling: a read said again keeps
+ * a session of several chats unread, and a sole chat's bit is its session's.
+ * Each with this host's own `session/isReadChanged`, after the chat's action,
+ * whether or not the chat's own bit moved; a chat outside the aggregate moves
+ * nothing.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2993-L3008
+ */
+export function sessionFollows(ctx: HostContext, session: string, chat: string, wasRead: boolean): void {
+  const chats = readAggregate(ctx, session);
+  const own = chats.find((one) => one.uri === chat);
+  if (own === undefined) return;
+  const sessionRead = (ctx.kept.flags(idOf(session)) & Status.IsRead) !== 0;
+  if (!own.read && sessionRead) {
+    sessionFlag(ctx, session, Status.IsRead, false, { type: 'session/isReadChanged', isRead: false });
+  } else if (own.read && !sessionRead && (!wasRead || chats.length === 1) && chats.every((one) => one.read)) {
+    sessionFlag(ctx, session, Status.IsRead, true, { type: 'session/isReadChanged', isRead: true });
+  }
+}
+
+/**
  * A chat that is new, marked read before anybody is told about it.
  *
  * Nothing has been said in it yet, so there is nothing in it to read.
@@ -191,21 +244,17 @@ export function chatAction(
   /*
    * The two bits a chat carries of its own.
    *
-   * Read and archived are this host's, the way a session's are, and they
-   * belong to the chat rather than to the session it sits in: a session is a
-   * container for conversations and a person reads one of them without the
-   * others.
+   * Read and archived are this host's, the way a session's are, kept per
+   * chat: a session is a container for conversations and a person reads one
+   * of them at a time. A read action on a chat moves its session's read bit
+   * after it, as `sessionFollows` says, and the reference host does.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2993-L3008
    *
    * Handled above the worker guard, because a worker chat carries them too.
    * Read-only says nobody types into it; it does not say nobody may file it
    * away. Only a chat of a session this host is running has anywhere to keep
    * one - a chat read back off a disk is a row nothing was recorded for, and
    * the guard below answers for it.
-   *
-   * A chat's read bit is its own, as the protocol has it: the action "toggles
-   * `SessionStatus.IsRead` only on the addressed `ChatState`; it does not
-   * change the read state of the owning session or sibling chats".
-   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/specification/chat-channel.md#L26-L36
    */
   const bitOf = type === 'chat/isReadChanged' ? Status.IsRead
     : type === 'chat/isArchivedChanged' ? Status.IsArchived
@@ -236,20 +285,27 @@ export function chatAction(
     }
     /*
      * Said again, a bit that did not move keeps the catalogue as it is. The
-     * action is still accepted, and goes to every client of the chat.
+     * action is still accepted, and goes to every client of the chat. A read
+     * action moves the session after it all the same: the reference host reads
+     * the chat's bit after every read action, moved or not.
      * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/subscriptions.md#L140-L143
+     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2968-L2970
      */
-    if (!chatFlag(ctx, flagSession, channel, bitOf, on, action)) {
-      dispatch(channel, action, origin);
+    const wasRead = (kept.chatFlags(idOf(flagSession), channel) & Status.IsRead) !== 0;
+    const moved = chatFlag(ctx, flagSession, channel, bitOf, on, action);
+    if (!moved) dispatch(channel, action, origin);
+    if (bitOf === Status.IsRead) {
+      sessionFollows(ctx, flagSession, channel, wasRead);
       return;
     }
     /*
      * A chat filed away is read: nobody is going to come back to it for what
-     * is new in it, and the reference host marks it so. Taking one back out
-     * leaves its read bit as it is.
-     * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
+     * is new in it, and the reference host marks it so, with the read action
+     * that moves its session after it. Taking one back out leaves its read bit
+     * as it is.
+     * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/chatContributions/chatArchive/chatArchiveContribution.ts#L50-L51
      */
-    if (bitOf === Status.IsArchived && on) chatFlag(ctx, flagSession, channel, Status.IsRead, true);
+    if (moved && on && chatFlag(ctx, flagSession, channel, Status.IsRead, true)) sessionFollows(ctx, flagSession, channel, false);
     return;
   }
   /*
