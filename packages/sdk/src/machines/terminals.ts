@@ -96,10 +96,9 @@ const windowsShell = (
 /**
  * What runs, when nothing else was asked for.
  *
- * `asked` is a connection's `defaultShell` where there is a connection to have
- * one, and it wins on either system: somebody who named a shell gets that
- * shell, and failing to start it is the answer rather than a reason to quietly
- * pick another.
+ * `asked` is the host's `defaultShell` for a client's terminal, and it wins on
+ * either system: somebody who named a shell gets that shell, and failing to
+ * start it is the answer rather than a reason to quietly pick another.
  *
  * The platform, the environment and the check for a file are handed in, so a
  * case on Linux can ask what a Windows machine would answer - there is no

@@ -101,20 +101,19 @@ it('classifies a dispatch by its action, with the channel beside it', async () =
   expect(await needs('ahp-automations://', { type: 'automation/createRequested', automation: 'x' })).toBe('automation:create');
   expect(await needs(ROOT, { type: 'root/configChanged', config: { telemetryLevel: 'off' } })).toBe('config:change');
   expect(await needs(ROOT, { type: 'root/configChanged', replace: true, config: { defaultShell: '/bin/sh' } })).toBe('config:change');
-  // The root is read with its action: a person's own keys need only a sign-in.
-  expect(await needs(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBeUndefined();
-  // The one per-connection key the gate asks a grant for: the trust key asks
-  // for the push, which the write group covers.
+  // The root is read with its action. A window's keys are one value for the
+  // whole host, so each changes the host for everybody.
+  expect(await needs(ROOT, { type: 'root/configChanged', config: { defaultShell: '/bin/sh' } })).toBe('config:change');
+  // The trust key alone asks for the push, which the write group covers.
   expect(await needs(ROOT, { type: 'root/configChanged', config: { workspaceTrust: { enabled: true, trustedUris: [] } } })).toBe('trust:push');
-  // The terminal rules are the window's, except an expression of its own: a
-  // slow one would stall the host for every person. A plain key and a key from
-  // VS Code's own table still need no grant.
+  // The terminal rules, plain or an expression, and VS Code's own table.
   const rules = (terminalAutoApproveRules: Record<string, unknown>) =>
     needs(ROOT, { type: 'root/configChanged', config: { terminalAutoApproveRules } });
-  expect(await rules({ 'make test': true })).toBeUndefined();
-  expect(await rules({ '/^npm\\s+audit$/': true })).toBeUndefined();
+  expect(await rules({ 'make test': true })).toBe('config:change');
   expect(await rules({ '/(a+)+$/': true })).toBe('config:change');
-  expect(await rules({ ...DEFAULT_TERMINAL_AUTO_APPROVE_RULES, 'my-tool': true })).toBeUndefined();
+  expect(await rules({ ...DEFAULT_TERMINAL_AUTO_APPROVE_RULES, 'my-tool': true })).toBe('config:change');
+  // And a push that names no key changes nothing.
+  expect(await needs(ROOT, { type: 'root/configChanged', config: {} })).toBeUndefined();
   // A file, a watch and any other `ahp-` channel are the host's own names, and
   // watching one is the grant an action no family claims is held to.
   for (const channel of ['file:///x', 'ahp-resource-watch:/x', 'ahp-sessionx:/x']) {
@@ -158,17 +157,14 @@ it('dispatches freely with no user directory', async () => {
 });
 
 /*
- * The root record is two kinds of key.
+ * The root record holds one value per key for the whole host.
  *
- * `defaultShell` is the person's - the host's own note by `rootConfig` says so,
- * and names VS Code pushing it on connect - so it lives on the connection and
- * reaches only the terminals that connection opens. Everything else describes
- * the host and is still one setting for everybody.
- *
- * That is also what retires the rule that setting it needed `terminal`: a
- * preference nobody else reads cannot aim anybody else's shell, and the paths
- * with no connection in hand (a `!command`, and the factory a backend opens a
- * terminal with) take the daemon's own shell and no person's at all.
+ * `defaultShell` among them: the shell every client's terminal opens, which
+ * the last push sets, as the reference host's terminal manager reads it. Saying
+ * it changes the host for everybody, so it needs `config:change`. The paths with
+ * no connection in hand (a `!command`, and the factory a backend opens a
+ * terminal with) take the daemon's own shell.
+ * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostTerminalManager.ts#L949-L960
  */
 
 const configChanged = (client: ReturnType<ReturnType<typeof createHost>['accept']>, config: Record<string, unknown>) =>
@@ -186,7 +182,7 @@ const terminalsOf = async (client: ReturnType<ReturnType<typeof createHost>['acc
   return (snap.snapshot?.state?.terminals ?? []) as Bag[];
 };
 
-it('keeps defaultShell to the connection that pushed it, and shares the rest', async () => {
+it('keeps defaultShell for the whole host, with the rest', async () => {
   const made = host({ users: directory({ a: ['config:write', 'file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'], b: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }) });
   const mine = watching();
   const first = made.accept(mine);
@@ -197,15 +193,11 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
 
   await configChanged(first, { defaultShell: '/bin/sh', telemetryLevel: 'off' });
 
-  // Its own, and the host's half with it.
+  // One value each, which every connection reads.
   expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
-  // The host's half reached the other connection; the person's did not.
-  const theirs = await values(second);
-  expect(theirs).toMatchObject({ telemetryLevel: 'off' });
-  expect(theirs).not.toHaveProperty('defaultShell');
+  expect(await values(second)).toMatchObject({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
 
-  // One echo each, on one serverSeq: whole to the sender, without the shell to
-  // everybody else.
+  // One echo each, on one serverSeq, the same to the sender and to everybody else.
   const echoes = (seen: ReturnType<typeof watching>) =>
     seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'root/configChanged');
   const [sent] = echoes(mine);
@@ -214,7 +206,7 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   expect(echoes(other)).toHaveLength(1);
   expect(sent?.params.serverSeq).toBe(told?.params.serverSeq);
   expect(sent?.params.action?.config).toEqual({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
-  expect(told?.params.action?.config).toEqual({ telemetryLevel: 'off' });
+  expect(told?.params.action?.config).toEqual({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
 
   // A client that comes back and is replayed the action reads it the same way.
   const back = made.accept(peer());
@@ -225,10 +217,10 @@ it('keeps defaultShell to the connection that pushed it, and shares the rest', a
   const again = (answer.result ?? answer) as { type: string; actions: { serverSeq: number; action: Bag }[] };
   expect(again.type).toBe('replay');
   const replayed = again.actions.find((one) => one.serverSeq === told?.params.serverSeq);
-  expect(replayed?.action.config).toEqual({ telemetryLevel: 'off' });
+  expect(replayed?.action.config).toEqual({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
 });
 
-it('keeps the other connection\'s own shell in a config that replaces the rest', async () => {
+it('replaces every connection\'s shell with a config that replaces the rest', async () => {
   const made = host({ terminals: shellTerminals() });
   const first = made.accept(peer());
   const other = watching();
@@ -240,11 +232,11 @@ it('keeps the other connection\'s own shell in a config that replaces the rest',
 
   const told = other.seen.filter((one) => one.method === 'action' && one.params.action?.replace === true);
   expect(told).toHaveLength(1);
-  expect(told[0]?.params.action?.config).toEqual({ defaultShell: '/bin/bash' });
-  expect(await values(second)).toMatchObject({ defaultShell: '/bin/bash' });
+  expect(told[0]?.params.action?.config).toEqual({ defaultShell: '/bin/sh' });
+  expect(await values(second)).toMatchObject({ defaultShell: '/bin/sh' });
 });
 
-it('lets anybody signed in set their own shell, and only config:write change the host', async () => {
+it('lets only config:write set the shell, as it changes the rest of the host', async () => {
   const MEMBER: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'];
   const made = host({ users: directory({ m: MEMBER, g: ['session:read'], a: ['config:write'] }) });
   const refusals = (seen: ReturnType<typeof watching>) =>
@@ -255,42 +247,33 @@ it('lets anybody signed in set their own shell, and only config:write change the
   const member = made.accept(memberSeen);
   await hello(member, 'member'); await signIn(member, 'm');
   await configChanged(member, { defaultShell: '/bin/sh' });
-  expect(refusals(memberSeen)).toEqual([]);
   await configChanged(member, { telemetryLevel: 'off' });
-  expect(refusals(memberSeen)).toEqual(['m may not config:change here']);
+  expect(refusals(memberSeen)).toEqual(['m may not config:change here', 'm may not config:change here']);
+  expect(await values(member)).not.toHaveProperty('defaultShell');
   expect(await values(member)).not.toHaveProperty('telemetryLevel');
-
-  // A guest may not open a shell, but the preference is still theirs to hold.
-  const guestSeen = watching();
-  const guest = made.accept(guestSeen);
-  await hello(guest, 'guest'); await signIn(guest, 'g');
-  await configChanged(guest, { defaultShell: '/bin/sh' });
-  expect(refusals(guestSeen)).toEqual([]);
 
   const adminSeen = watching();
   const admin = made.accept(adminSeen);
   await hello(admin, 'admin'); await signIn(admin, 'a');
-  await configChanged(admin, { telemetryLevel: 'off' });
+  await configChanged(admin, { defaultShell: '/bin/sh', telemetryLevel: 'off' });
   expect(refusals(adminSeen)).toEqual([]);
-  expect(await values(member)).toMatchObject({ telemetryLevel: 'off' });
+  expect(await values(member)).toMatchObject({ defaultShell: '/bin/sh', telemetryLevel: 'off' });
 
-  // Nobody signed in sets nothing, their own shell included.
+  // Nobody signed in sets nothing.
   const strangerSeen = watching();
   const stranger = made.accept(strangerSeen);
   await hello(stranger, 'stranger');
   await configChanged(stranger, { defaultShell: '/bin/sh' });
-  expect(refusals(strangerSeen)).toEqual(['Sign in to use this host: ahp-root://']);
+  expect(refusals(strangerSeen)).toEqual(['Sign in to use this host: ahp-root:// needs config:change']);
 });
 
 /*
  * Pushing trust needs a grant.
  *
- * `workspaceTrust` lives on the connection beside `defaultShell`, and a key in
- * `PER_CONNECTION` used to need no grant at all - so any connection that had
- * signed in decided what its sessions load from a folder, project settings and
- * hooks included. The trust key alone needs `trust:push`, and the `trust:write`
- * group covers it; a shell preference is still the person's with nothing asked
- * for it.
+ * `workspaceTrust` is one value for the whole host, beside `defaultShell`, and
+ * it decides what sessions load from a folder, project settings and hooks
+ * included. The trust key alone needs `trust:push`, and the `trust:write` group
+ * covers it.
  */
 
 /** The refusals a connection was told, which is how a notification is refused. */
@@ -357,11 +340,11 @@ it('accepts a workspaceTrust push from a member', async () => {
   const trust = { enabled: true, trustedUris: [`file://${root}`] };
   await configChanged(client, { workspaceTrust: trust });
   expect(refusalsOf(seen)).toEqual([]);
-  // That connection's own, as a shell preference is.
+  // The host's, which every connection reads.
   expect(await values(client)).toMatchObject({ workspaceTrust: trust });
 });
 
-it('keeps the trust a connection had when a push is refused', async () => {
+it('keeps the trust the host had when a push is refused', async () => {
   const usersPath = join(root, 'users.json');
   // A role of this install's own, so the grant can be taken away mid-connection.
   writeFileSync(usersPath, JSON.stringify({ roles: { files: ['file:read'] }, users: [] }));
@@ -378,7 +361,7 @@ it('keeps the trust a connection had when a push is refused', async () => {
   expect(refusalsOf(seen)).toEqual([]);
 
   // A role is read again on every dispatch, so the grant going away is in force
-  // on the next push - which is refused, and leaves what the connection had.
+  // on the next push - which is refused, and leaves what the host had.
   await users.add('ana', ['files']);
   await configChanged(client, { workspaceTrust: { enabled: false, trustedUris: [] } });
   expect(refusalsOf(seen)).toEqual(['ana may not trust:push here']);
@@ -386,14 +369,11 @@ it('keeps the trust a connection had when a push is refused', async () => {
 });
 
 /*
- * Pushing a terminal rule needs a grant only for an expression of the window's
- * own.
+ * Pushing a terminal rule needs `config:change`.
  *
- * `terminalAutoApproveRules` lives on the connection, so a signed-in member may
- * push it. But a `/.../` key the default table does not carry is a matcher that
- * runs against every command of the sessions that connection owns, and one that
- * does not finish stalls the daemon for every person - so it needs
- * `config:change`.
+ * `terminalAutoApproveRules` is one value for the whole host, and every rule in
+ * it runs against every command of every session there - a `/.../` key that
+ * does not finish stalls the daemon for every person.
  */
 it('refuses a pushed regular expression from a member, and the root connection takes it', async () => {
   const made = host({ users: directory({ m: ['file:read', 'session:read'] }) });
@@ -416,15 +396,15 @@ it('refuses a pushed regular expression from a member, and the root connection t
   expect(await values(door)).toMatchObject(pushed);
 });
 
-it('accepts defaultShell alone with no grant', async () => {
+it('refuses defaultShell alone from a role with no config grant', async () => {
   const made = host({ users: directory({ g: ['session:read'] }) });
   const seen = watching();
   const client = made.accept(seen);
   await hello(client, 'g'); await signIn(client, 'g');
 
   await configChanged(client, { defaultShell: '/bin/sh' });
-  expect(refusalsOf(seen)).toEqual([]);
-  expect(await values(client)).toMatchObject({ defaultShell: '/bin/sh' });
+  expect(refusalsOf(seen)).toEqual(['g may not config:change here']);
+  expect(await values(client)).not.toHaveProperty('defaultShell');
 });
 
 it('accepts every push on a host with no people directory', async () => {
@@ -438,44 +418,45 @@ it('accepts every push on a host with no people directory', async () => {
   expect(refusalsOf(seen)).toEqual([]);
 });
 
-it('opens a client terminal with that connection\'s own shell', async () => {
-  const made = host({ users: directory({ a: ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'] }), terminals: shellTerminals() });
+it('opens every client\'s terminal with the host\'s shell', async () => {
+  const OPENS: Grant[] = ['file:read', 'file:write', 'session:read', 'session:write', 'terminal:read', 'terminal:write'];
+  const made = host({ users: directory({ a: ['config:write', ...OPENS], b: OPENS }), terminals: shellTerminals() });
   const client = made.accept(peer());
-  await hello(client); await signIn(client, 'a');
+  await hello(client, 'a'); await signIn(client, 'a');
+  const other = made.accept(peer());
+  await hello(other, 'b'); await signIn(other, 'b');
   await configChanged(client, { defaultShell: '/bin/sh' });
 
-  const uri = 'ahp-terminal:/mine';
-  expect(await call(client, 'createTerminal', {
-    channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}`,
-  })).toHaveProperty('result');
   // The title is the shell's own name when nobody named the terminal, which is
-  // how the chosen binary is visible from outside.
-  const shown = (await terminalsOf(client)).find((one) => one.resource === uri);
-  expect(shown?.title).toBe('sh');
+  // how the chosen binary is visible from outside: the one value opens the
+  // terminal of the connection that pushed it and of the one that did not.
+  for (const [one, uri] of [[client, 'ahp-terminal:/mine'], [other, 'ahp-terminal:/theirs']] as const) {
+    expect(await call(one, 'createTerminal', {
+      channel: uri, claim: { kind: 'client', clientId: 'probe' }, cwd: `file://${root}`,
+    })).toHaveProperty('result');
+    const shown = (await terminalsOf(one)).find((row) => row.resource === uri);
+    expect(shown?.title).toBe('sh');
+  }
 });
 
-it('lets a role that may not open a terminal set a shell that reaches nothing', async () => {
+it('refuses a shell from a role with no config grant, and that role opens no terminal', async () => {
   const made = host({ users: directory({ w: ['file:read', 'file:write', 'session:read', 'session:write'] }), terminals: shellTerminals() });
   const seen = watching();
   const client = made.accept(seen);
   await hello(client); await signIn(client, 'w');
 
-  // Allowed now, because it is theirs: the rule that refused this is retired.
   await configChanged(client, { defaultShell: '/tmp/not-a-shell' });
-  expect(seen.seen.filter((one) => one.method === 'action' && typeof one.params.rejectionReason === 'string')).toEqual([]);
-  expect(await values(client)).toMatchObject({ defaultShell: '/tmp/not-a-shell' });
-
-  // And it reaches nothing: they may not open a terminal at all, and no other
-  // connection and no session-side path reads it.
+  expect(refusalsOf(seen)).toEqual(['w may not config:change here']);
+  expect(await values(client)).not.toHaveProperty('defaultShell');
   expect(await call(client, 'createTerminal', { channel: 'ahp-terminal:/no', cwd: root })).toMatchObject({ code: -32009 });
 });
 
-it('keeps a shell to its connection with no user directory either', async () => {
+it('keeps one shell for every connection with no user directory either', async () => {
   const made = host({ terminals: shellTerminals() });
   const first = made.accept(peer());
   const second = made.accept(peer());
   await hello(first); await hello(second);
   await configChanged(first, { defaultShell: '/bin/sh' });
   expect(await values(first)).toMatchObject({ defaultShell: '/bin/sh' });
-  expect(await values(second)).not.toHaveProperty('defaultShell');
+  expect(await values(second)).toMatchObject({ defaultShell: '/bin/sh' });
 });

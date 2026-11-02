@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { Peer } from '../src/types/rpc.js';
 
@@ -125,7 +126,7 @@ it('sends a span for the turn, once the turn has ended', async () => {
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://traces' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/t', provider: 'echo' } });
-  const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L3Q=';
+  const chat = chatUriFor('ahp-session:/t');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },
@@ -148,7 +149,7 @@ it('counts turns cumulatively, so a collector that arrives late reads a total', 
   const { client, peer: p } = await connected();
   await client.handle({ method: 'subscribe', params: { channel: 'ahp-otlp://metrics' } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/m', provider: 'echo' } });
-  const chat = 'ahp-chat://default/YWhwLXNlc3Npb246L20=';
+  const chat = chatUriFor('ahp-session:/m');
   client.handle({
     method: 'dispatchAction',
     params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } } },

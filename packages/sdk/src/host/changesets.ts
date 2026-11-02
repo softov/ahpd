@@ -53,7 +53,7 @@ export interface Changesets {
 }
 
 export function createChangesets(ctx: HostContext): Changesets {
-  const { options, connections, sessions, heldAs, leadOf, wheres, worktreeOf, githubFacts, lent, dispatch } = ctx;
+  const { options, connections, sessions, leadOf, wheres, worktreeOf, githubFacts, lent, dispatch } = ctx;
 
   /**
    * The directory a session works in, as a path.
@@ -63,10 +63,9 @@ export function createChangesets(ctx: HostContext): Changesets {
    * URI, which git and `basename` do not take.
    */
   const dirOf = (uri: string): string | undefined => {
-    const named = heldAs(uri);
-    const held = sessions.get(named);
+    const held = sessions.get(uri);
     const lead = held && leadOf(held);
-    const where = lead?.workingDirectories()[0] ?? wheres.get(named)?.[0];
+    const where = lead?.workingDirectories()[0] ?? wheres.get(uri)?.[0];
     return where === undefined ? undefined : localPath(where);
   };
 
@@ -130,16 +129,10 @@ export function createChangesets(ctx: HostContext): Changesets {
     return { owner, scope: channel.slice(cut + '/changeset/'.length), dir, ...(base === undefined ? {} : { base }) };
   };
 
-  /**
-   * Whether a changeset channel is one of a session's, under any spelling of it.
-   *
-   * A changeset is watched under the name the client used for its session,
-   * so a scan of what connections watch looks through that name to the
-   * session it is held as.
-   */
+  /** Whether a changeset channel is one of a session's: it hangs off the session's URI. */
   const changesetOf = (channel: string, uri: string): boolean => {
     const cut = channel.indexOf('/changeset/');
-    return cut > 0 && (channel.slice(0, cut) === uri || heldAs(channel.slice(0, cut)) === uri);
+    return cut > 0 && channel.slice(0, cut) === uri;
   };
 
   /**
@@ -412,8 +405,7 @@ export function createChangesets(ctx: HostContext): Changesets {
    * written from: the setting that says where they come from, and what the
    * session has said about the work.
    */
-  const operationContext = (asked: string, dir: string): ChangesetOperationContext => {
-    const uri = heldAs(asked);
+  const operationContext = (uri: string, dir: string): ChangesetOperationContext => {
     const base = baseOf(uri);
     const git = (options.directories?.meta(dir) as { git?: Record<string, unknown> } | undefined)?.git;
     const facts = githubFacts.get(dir) as { pullRequestUrls?: string[]; pullRequestBranchName?: string } | undefined;

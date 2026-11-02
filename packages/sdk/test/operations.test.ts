@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { changesetReducer } from '@microsoft/agent-host-protocol';
 import { createHost } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import { echo } from '../../../examples/echo/agent.js';
 import type { ChangesetOperation, ChangesetOperationContext, ChangesetOperationRequest, ChangesetSource } from '../src/types/changes.js';
 import type { Peer } from '../src/types/rpc.js';
@@ -61,30 +62,19 @@ function scripted(fail?: string | Error) {
 }
 
 /*
- * A changeset URI is built from the session's, so a template is the session's
- * name in disguise - and a client resolves a changeset channel back to the
- * session that owns it. A template naming the held spelling teaches a client
- * that asked about another one a *second* name for the same session; it then
- * addresses the session, its chat and its annotations under that one, and
- * which name the conversation ends up keyed by is whichever subscription
- * happened to land first.
+ * A changeset URI is built from the session's, and a client resolves a
+ * changeset channel back to the session that owns it, so a template names the
+ * session by the one URI it is held by. The same id in a provider's scheme is
+ * no session here, and no changeset hangs off it.
  */
-it('spells a changeset template with the name the client asked under', async () => {
+it('spells a changeset template from the session\'s one URI', async () => {
   const { source } = scripted();
   const host = createHost({ path: DIR, agents: [echo({ path: DIR })], changes: source });
   const client = host.accept(peer());
   await client.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
   await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/one', provider: 'echo' } });
 
-  // The same session, asked about under the name a client computes from the
-  // provider rather than the one this host holds it by.
-  const opened = await client.handle({ method: 'subscribe', params: { channel: 'claude:/one' } }) as {
-    snapshot: { state: { changesets: { uriTemplate: string }[] } };
-  };
-  const templates = opened.snapshot.state.changesets.map((one) => one.uriTemplate);
-  expect(templates).toEqual(['claude:/one/changeset/uncommitted']);
-
-  // And under its own name it is still its own name.
+  await expect(client.handle({ method: 'subscribe', params: { channel: 'claude:/one' } })).rejects.toMatchObject({ code: -32001 });
   const own = await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
     snapshot: { state: { changesets: { uriTemplate: string }[] } };
   };
@@ -107,7 +97,7 @@ async function watching(source: ChangesetSource, pace = 0) {
   const changeset = `${uri}/changeset/uncommitted`;
   const opened = await client.handle({ method: 'subscribe', params: { channel: changeset } });
   const snapshot = (opened as { snapshot: { state: Record<string, unknown> } }).snapshot;
-  return { host, client, peer: p, uri, chatUri: 'ahp-chat:/one', changeset, snapshot };
+  return { host, client, peer: p, uri, chatUri: chatUriFor(uri), changeset, snapshot };
 }
 
 // A refused envelope is left out, as a client leaves it.

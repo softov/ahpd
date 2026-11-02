@@ -18,8 +18,9 @@ refs:
   - "[code://packages/sdk/src/host/spawn.ts#L630-L657](../../packages/sdk/src/host/spawn.ts#L630-L657) - `trustedBy`, the answer a backend gets as `start.trusted`"
   - "[code://packages/sdk/src/host/lifecycle.ts#L834-L870](../../packages/sdk/src/host/lifecycle.ts#L834-L870) - `moveSession`, which asks before a move"
   - "[code://packages/sdk/src/host/chatactions.ts#L645-L670](../../packages/sdk/src/host/chatactions.ts#L645-L670) - a working directory added to a session"
-  - "[code://packages/sdk/src/host/actions.ts#L360-L376](../../packages/sdk/src/host/actions.ts#L360-L376) - a `workspaceTrust` push clears the folder answers"
-  - "[code://packages/sdk/src/host/gate.ts#L289-L298](../../packages/sdk/src/host/gate.ts#L289-L298) - `dispatchNeeds`, the `trust:push` scope"
+  - "[code://packages/sdk/src/host/actions.ts#L372-L378](../../packages/sdk/src/host/actions.ts#L372-L378) - a `workspaceTrust` push clears the pushing window's folder answers"
+  - "[code://packages/sdk/src/host/gate.ts#L297-L308](../../packages/sdk/src/host/gate.ts#L297-L308) - `dispatchNeeds`, the `trust:push` scope"
+  - "https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/agentHostSessionPrewarmer.ts#L162 - VS Code's host reads one trust value for every session"
   - "[code://packages/server/src/commands/paths.ts#L100-L320](../../packages/server/src/commands/paths.ts#L100-L320) - `ahpd paths list`, `add` and `remove`"
   - "[code://packages/server/src/commands/configure.ts#L308-L320](../../packages/server/src/commands/configure.ts#L308-L320) - `askToServe`"
   - "[code://packages/server/src/commands/options.ts#L1035-L1048](../../packages/server/src/commands/options.ts#L1035-L1048) - the start folder and `--no-cwd`"
@@ -28,21 +29,21 @@ refs:
   - git://d9d4f950^ - the deleted decisions this spec was written from: a-folder-is-untrusted-until-a-client-says-otherwise, a-served-paths-change-reaches-the-running-daemon, a-start-in-an-unserved-folder-asks-to-serve-it, a-worktree-inherits-its-repositorys-trust, ahpd-paths-lists-adds-and-removes-a-served-folder, the-sender-decides-on-a-host-with-no-people
 ---
 
-Workspace trust says whether a backend may load a folder's own settings, hooks and MCP servers. Each connection pushes its own `workspaceTrust` value, as VS Code does, and the host reads it for that connection only. A backend asks the host through `start.trusted(folder)`, and a folder is untrusted until a client says otherwise. Before a session moves to a folder, or adds a working directory, the host asks the window with `vscode/requestWorkspaceTrust`. Served folders are a different thing: they are the folders this host offers at all, kept in `paths` and edited with `ahpd paths`.
+Workspace trust says whether a backend may load a folder's own settings, hooks and MCP servers. A window pushes `workspaceTrust`, and the host keeps one value for every session, which the last push sets, as VS Code's host does. A backend asks the host through `start.trusted(folder)`, and a folder is untrusted until a client says otherwise. Before a session moves to a folder, or adds a working directory, the host asks the window with `vscode/requestWorkspaceTrust`. Served folders are a different thing: they are the folders this host offers at all, kept in `paths` and edited with `ahpd paths`.
 
 ## Scenarios
 
 ### A folder is untrusted until a client says otherwise
 
 WHEN a backend asks whether a folder is trusted
-AND the connection pushed `workspaceTrust` with `enabled: true` and a `trustedUris` list
+AND the host's `workspaceTrust` has `enabled: true` and a `trustedUris` list
 THEN the folder is trusted when the list holds the folder or a folder above it.
 
-WHEN the connection pushed `enabled: false`
+WHEN the host's value has `enabled: false`
 THEN every folder is trusted.
 
-WHEN the connection pushed no value, or a value without `enabled`
-THEN the folder is untrusted, unless the connection said yes to it when it was asked.
+WHEN no window pushed a value, or the value has no `enabled`
+THEN the folder is untrusted, unless the window that sent the turn said yes to it when it was asked.
 
 The host resolves symlinks and `..` before it compares folders, also for a folder that does not exist yet.
 A `file://` URI with a host other than `localhost` names no folder here.
@@ -62,7 +63,7 @@ The pi backend trusts the project only when the folder is trusted and its own tr
 ### A move asks the window
 
 WHEN a client moves a session to a folder, or adds a working directory to it
-AND the folder is not trusted for that connection
+AND the host's trust does not cover the folder, and that window did not say yes to it
 THEN the host sends `vscode/requestWorkspaceTrust` with the folder as `workspace`
 AND only the answer `{trusted: true}` lets the move go on.
 
@@ -78,7 +79,7 @@ THEN the host keeps the folder on that connection
 AND each backend started from that connection sees the folder as trusted.
 
 WHEN the window pushes a new `workspaceTrust` value
-THEN the host forgets the folder answers, because the value answers for every folder.
+THEN the host forgets that window's folder answers, because the value answers for every folder.
 
 A push of `workspaceTrust` needs the `trust:push` scope.
 See [`code://packages/sdk/src/host/gate.ts`](../../packages/sdk/src/host/gate.ts).
@@ -86,6 +87,7 @@ See [`code://packages/sdk/src/host/gate.ts`](../../packages/sdk/src/host/gate.ts
 ### No window asked
 
 WHEN a move or a new working directory comes from no connection, for example from an automation
+AND the host's trust does not cover the folder
 THEN the host refuses it without a question, because nobody can vouch for the folder.
 
 ### A worktree inherits its repository's trust
@@ -98,17 +100,17 @@ The host does not send `trustedParent`, which VS Code sends for a folder that do
 When a move names a repository other than the move folder, the host asks about the repository too.
 See [`code://packages/sdk/src/host/spawn.ts`](../../packages/sdk/src/host/spawn.ts).
 
-### The sender decides on a host with no people
+### The host's trust decides on a host with no people
 
 WHEN the host has no people
-THEN the trust of the connection that sent the turn decides.
+THEN the host's trust decides for every turn, a turn no window sent among them.
 
 WHEN the host has people
 AND the sender is not the session's owner
 THEN the folder is untrusted for that session.
 
 The reason: a host with no people has no owner to compare, so a check would refuse every folder.
-A turn with no sender sees every folder as untrusted.
+On a host with people, a turn with no sender sees every folder as untrusted.
 
 ### ahpd paths lists the served folders
 

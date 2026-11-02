@@ -942,7 +942,7 @@ describe('a session with a working tree of its own', () => {
     await second.handle({ method: 'initialize', params: { clientId: 'probe', protocolVersions: ['0.9.0'] } });
     await second.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } });
     await say(second, chat, 't2');
-    await second.handle({ method: 'disposeSession', params: { channel: 'echo:/restarted' } });
+    await second.handle({ method: 'disposeSession', params: { channel: uri } });
     await cleared(project(root), branch);
     expect(existsSync(where)).toBe(false);
     expect(store.worktree?.('restarted')).toBeUndefined();

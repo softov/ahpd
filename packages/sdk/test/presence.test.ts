@@ -356,6 +356,52 @@ it('replaces what a client contributes rather than merging it', async () => {
   expect(opened.snapshot.state.activeClients[0]?.tools).toEqual([{ name: 'a' }]);
 });
 
+/*
+ * The entry as the client sent it, `tools` left out included: the reference
+ * host reduces a set as sent, and a VS Code window reads `tools` of every
+ * client in the session, so a list this host made up would read as one the
+ * client never sent.
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2750-L2752
+ * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostCustomizationService.ts#L1083-L1101
+ */
+it('holds an entry that names no tools as it was sent, and its client provides none', async () => {
+  const { agent, offered } = watched();
+  const held = createHost({ path: DIR, agents: [agent] });
+  const a = await joins(held, 'one');
+  const b = await joins(held, 'two');
+  await a.client.handle({ method: 'createSession', params: { channel: URI, provider: 'echo' } });
+  await a.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await b.client.handle({ method: 'subscribe', params: { channel: URI } });
+  await enter(b.client, 'two', [{ name: 'openFile', inputSchema: { type: 'object' } }]);
+  await a.client.handle({
+    method: 'dispatchAction',
+    params: { channel: URI, action: { type: 'session/activeClientSet', activeClient: { clientId: 'one', displayName: 'cli' } } },
+  });
+  await settle();
+
+  const said = actions(b.peer, URI).filter((one) => one.type === 'session/activeClientSet');
+  expect(said.at(-1)?.activeClient).toEqual({ clientId: 'one', displayName: 'cli' });
+  const opened = await b.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.activeClients.find((one) => one.clientId === 'one')).toEqual({ clientId: 'one', displayName: 'cli' });
+  // The other client's tool is all the chat is offered.
+  expect(offered.at(-1)).toEqual(['two__openFile']);
+});
+
+it('holds a creator\'s entry that names no tools as it was sent', async () => {
+  const held = host();
+  const a = await joins(held, 'creator');
+  await a.client.handle({
+    method: 'createSession',
+    params: { channel: URI, provider: 'echo', activeClient: { displayName: 'cli' } },
+  });
+  const opened = await a.client.handle({ method: 'subscribe', params: { channel: URI } }) as {
+    snapshot: { state: { activeClients: Record<string, unknown>[] } };
+  };
+  expect(opened.snapshot.state.activeClients).toEqual([{ displayName: 'cli', clientId: 'creator' }]);
+});
+
 it('takes a client out on unsubscribe, on disconnect, and on a reconnect that drops it', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   const held = host();

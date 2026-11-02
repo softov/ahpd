@@ -22,6 +22,7 @@ import type { PlanUpdate, Session } from '../src/types/session.js';
 import type { SessionAction, SessionInputRequest, SessionState } from '@microsoft/agent-host-protocol';
 import type { Grant, Principal, Users } from '../src/types/users.js';
 import { ROOT } from '../src/host.js';
+import { chatUriFor } from '../src/host/channels.js';
 import {
   resetSdk, actions, claude, createHost, echo, emit, hello, hostTools,
   machine, peer, sdk, serving, sessionQueries, settle, running,
@@ -228,6 +229,40 @@ describe('tools the host contributes', () => {
       const rows = JSON.parse(await call('list_sessions', {})) as { sessions: { session: string }[] };
       expect(rows.sessions.map((one) => one.session)).toContain(summary?.resource);
       expect(rows.sessions.map((one) => one.session)).toContain('ahp-session:/served');
+    });
+
+    /*
+     * A session the tool makes during a turn an older VS Code window sent is
+     * named in its provider's scheme, so that window can see it, as the
+     * reference host mints a session for the client whose turn made it.
+     * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L10074-L10108
+     */
+    it('names a session it creates for an older VS Code window\'s turn in its provider\'s scheme', async () => {
+      const host = createHost({ path: HERE, agents: [claude({ paths: [HERE] })], ...machine(), tools: hostTools() });
+      const p = peer();
+      const window = host.accept(p);
+      await window.handle(hello(['1.0.0'], {
+        clientId: 'window', clientInfo: { name: 'vscode-agents-window', title: 'VS Code Agents Window' }, initialSubscriptions: ['ahp-root://'],
+      }));
+      const uri = 'claude:/0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+      await window.handle({ method: 'createSession', params: { channel: uri, provider: 'claude' } });
+      const chat = chatUriFor(uri);
+      await window.handle({ method: 'subscribe', params: { channel: chat } });
+      window.handle({
+        method: 'dispatchAction',
+        params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'start the port' } } },
+      });
+      await settle();
+      const said = await call('create_session', {
+        relationship: 'independent', workspace: HERE, title: 'Port the makefile', prompt: 'port it', worktree: false,
+      });
+      expect(said).toMatch(/^New session created/);
+      await settle();
+      const added = p.notes.filter((one) => one.method === 'root/sessionAdded')
+        .map((one) => (one.params as { summary: { resource: string } }).summary.resource)
+        .filter((one) => one !== uri);
+      expect(added).toHaveLength(1);
+      expect(added[0]).toMatch(/^claude:\/[0-9a-f-]+$/);
     });
 
     it('creates a chat in the current session for currentSession work, and refuses a workspace with it', async () => {
@@ -496,7 +531,7 @@ describe('tools the host contributes', () => {
       const client = host.accept(peer(), people ? ana : undefined);
       await client.handle(hello(['0.9.0']));
       await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'claude' } });
-      await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/who' } });
+      await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/who') } });
       const person = async (): Promise<string | undefined> => {
         const servers = sessionQueries().at(-1)?.options.mcpServers as Record<string, {
           tools: { name: string; handler: (input: unknown) => Promise<{ content: { text: string }[] }> }[];
@@ -513,7 +548,7 @@ describe('tools the host contributes', () => {
 
     // A turn sent by her gives the person the host knows behind that owner.
     await plenty.client.handle({ method: 'dispatchAction', params: {
-      channel: 'ahp-chat:/who',
+      channel: chatUriFor('ahp-session:/who'),
       action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'who am I' } },
     } });
     await settle();
@@ -2984,8 +3019,8 @@ describe('a harness list handed to the host', () => {
     const client = host.accept(peer(), ana);
     await client.handle(hello(['0.9.0']));
     await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/list', provider: 'echo' } });
-    // The chat a client addresses, which is the one the client named it by.
-    const chat = 'ahp-chat:/list';
+    // The chat a client addresses, the session's default chat.
+    const chat = chatUriFor('ahp-session:/list');
     await client.handle({
       method: 'dispatchAction',
       params: { channel: chat, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'plan it' } } },

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { chatUriFor } from '../src/host/channels.js';
 import { Status } from '../src/sessions/catalog.js';
 import { uriOf } from '../src/resources/resources.js';
 import { fileSessions, memorySessions } from '../src/sessions/sessions.js';
@@ -251,7 +252,7 @@ describe('a session that already happened', () => {
     client.handle({
       method: 'dispatchAction',
       params: {
-        channel: 'ahp-chat:/older',
+        channel: chatUriFor('ahp-session:/older'),
         action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } },
       },
     });
@@ -264,7 +265,7 @@ describe('a session that already happened', () => {
     expect(sdk.said).toEqual(['and now?']);
 
     // And the channel does not open empty while it resumes.
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/older' } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/older') } }) as {
       snapshot: { state: { turns: unknown[]; activeTurn?: unknown } };
     }).snapshot.state;
     expect(chat.turns.length).toBeGreaterThan(0);
@@ -292,6 +293,9 @@ describe('paging a long history', () => {
 
   interface Loaded { turns: { message: { text: string } }[]; turnsNextCursor?: string }
 
+  /** The default chat of the long session, the chat every case here pages. */
+  const LONG = chatUriFor('ahp-session:/long');
+
   /**
    * The session opened, with the window the paging cases page from.
    *
@@ -310,11 +314,11 @@ describe('paging a long history', () => {
     await client.handle(hello(['0.9.0']));
     const chat = (await client.handle({
       method: 'subscribe',
-      params: { channel: 'ahp-chat:/long', ...(view === null ? {} : { view }) },
+      params: { channel: LONG, ...(view === null ? {} : { view }) },
     }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
-    const pages = () => actions(p, 'ahp-chat:/long')
+    const pages = () => actions(p, LONG)
       .filter((e) => e.action.type === 'chat/turnsLoaded')
       .map((e) => e.action as unknown as Loaded);
     return { client, chat, pages };
@@ -357,13 +361,13 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/long', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
 
     // Live now, so the state is the backend's rather than the transcript's.
-    const chat = (await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/long' } }) as {
+    const chat = (await client.handle({ method: 'subscribe', params: { channel: LONG } }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
     expect(chat.turns).toHaveLength(121);
@@ -374,7 +378,7 @@ describe('paging a long history', () => {
     const { client } = await opened();
     await client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/long', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
+      params: { channel: LONG, action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'say ok' } } },
     });
     await settle(6);
     await emit({ type: 'result', subtype: 'success', is_error: false, duration_ms: 1 });
@@ -382,7 +386,7 @@ describe('paging a long history', () => {
     // The backend gives every turn, so the host is the one that cuts.
     const chat = (await client.handle({
       method: 'subscribe',
-      params: { channel: 'ahp-chat:/long', view: { turns: 20 } },
+      params: { channel: LONG, view: { turns: 20 } },
     }) as {
       snapshot: { state: { turns: { message: { text: string } }[]; turnsNextCursor?: string } };
     }).snapshot.state;
@@ -395,7 +399,7 @@ describe('paging a long history', () => {
     const { client, pages } = await opened();
     const result = await client.handle({
       method: 'fetchTurns',
-      params: { channel: 'ahp-chat:/long', cursor: '70' },
+      params: { channel: LONG, cursor: '70' },
     });
     // Empty on purpose: the turns arrive as an action on the channel, so
     // every client watching the chat gets them - not only the one that asked.
@@ -412,7 +416,7 @@ describe('paging a long history', () => {
     const { client, chat, pages } = await opened();
     let cursor = chat.turnsNextCursor;
     for (let i = 0; i < 6 && cursor !== undefined; i++) {
-      await client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor } });
+      await client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor } });
       cursor = pages().at(-1)?.turnsNextCursor;
     }
 
@@ -432,7 +436,7 @@ describe('paging a long history', () => {
     // No cursor asks for whatever is next, and a snapshot that named a view
     // carries the cursor that names the page before it. The host keeps no
     // record of which window a client got, so there is nothing to guess at.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG } }))
       .resolves.toEqual({});
     expect(pages()).toHaveLength(0);
   });
@@ -445,7 +449,7 @@ describe('paging a long history', () => {
     // and nothing is refused. Refusing here is what reached a reader as
     // `RPC error -32602: Unrecognised cursor undefined` at the top of a
     // transcript that was already whole.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG } }))
       .resolves.toEqual({});
     expect(pages()).toHaveLength(0);
   });
@@ -454,9 +458,9 @@ describe('paging a long history', () => {
     const { client } = await opened();
     // Guessing would answer a question about old turns with new ones, and the
     // client would page for ever without noticing.
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor: 'banana' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor: 'banana' } }))
       .rejects.toMatchObject({ code: -32602 });
-    await expect(client.handle({ method: 'fetchTurns', params: { channel: 'ahp-chat:/long', cursor: '9999' } }))
+    await expect(client.handle({ method: 'fetchTurns', params: { channel: LONG, cursor: '9999' } }))
       .rejects.toMatchObject({ code: -32602 });
   });
 });
@@ -882,7 +886,7 @@ describe('a session read from its transcript', () => {
     );
     const client = open();
     await client.handle(hello(['0.9.0']));
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/old' } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/old') } }) as {
       snapshot: { state: { turns: { usage?: Record<string, unknown>; responseParts: { toolCall?: Record<string, unknown> }[] }[] } };
     };
     const turn = opened.snapshot.state.turns[0];
@@ -953,7 +957,7 @@ describe('a session read from its transcript', () => {
 
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/old', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
+      params: { channel: chatUriFor('ahp-session:/old'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'carry on' } } },
     });
     await settle(8);
     // Most of what the schema offers is fixed when the query is built, so a
@@ -968,7 +972,7 @@ describe('a session read from its transcript', () => {
 
     // Nothing in the transcript yet, which is the answer a read that failed
     // and a session nobody has written both give.
-    const first = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+    const first = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } }) as {
       snapshot: { state: { turns: unknown[] } };
     };
     expect(first.snapshot.state.turns).toEqual([]);
@@ -978,7 +982,7 @@ describe('a session read from its transcript', () => {
     // the empty answer it kept, which is what made one bad read permanent for
     // the life of the process.
     sdk.transcript.push({ type: 'user', uuid: 'u1', message: { role: 'user', content: 'now' } });
-    const second = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } }) as {
+    const second = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } }) as {
       snapshot: { state: { turns: { message: { text: string } }[] } };
     };
     expect(sdk.reads).toBe(2);
@@ -986,7 +990,7 @@ describe('a session read from its transcript', () => {
 
     // And a read that has turns is still kept, which is the large transcript
     // this cache was added for: a third open does not read at all.
-    await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/late' } });
+    await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/late') } });
     expect(sdk.reads).toBe(2);
   });
 
@@ -997,7 +1001,7 @@ describe('a session read from its transcript', () => {
 
     const client = open();
     await client.handle(hello(['0.9.0']));
-    const opened = await client.handle({ method: 'subscribe', params: { channel: 'ahp-chat:/flaky' } }) as {
+    const opened = await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/flaky') } }) as {
       snapshot: { state: { turns: { message: { text: string } }[] } };
     };
     // The first read threw and the second answered, so the client is drawn a
@@ -1110,7 +1114,7 @@ describe("a row lists the session's chats", () => {
     await client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/restored' } });
     client.handle({
       method: 'dispatchAction',
-      params: { channel: 'ahp-chat:/restored', action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
+      params: { channel: chatUriFor('ahp-session:/restored'), action: { type: 'chat/turnStarted', turnId: 't1', message: { text: 'and now?' } } },
     });
     await settle(8);
     // Subscribing again is what reads the backend's record of the workers it

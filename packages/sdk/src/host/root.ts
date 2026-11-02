@@ -1,5 +1,5 @@
 import { availableParallelism, totalmem } from 'node:os';
-import { seesAccount, seesConfig, PER_CONNECTION } from './gate.js';
+import { seesAccount, seesConfig } from './gate.js';
 import { OPERATIONS, operationsOf } from '../access/users.js';
 import { REMOTE_SESSIONS_META } from '../sessions/remotesession.js';
 import { sdkVersion } from '../version.js';
@@ -148,10 +148,9 @@ export interface Root {
   rootSeed(daemon: Record<string, unknown>): Bag;
   /**
    * The root's held state as one connection reads it: the agents it may use,
-   * the config keys it may read with its own preferences in theirs, and the
-   * `_meta` the handshake gave it.
+   * the config keys it may read, and the `_meta` the handshake gave it.
    */
-  rootFor(held: Bag, mine?: Record<string, unknown>, connection?: Connection): Bag;
+  rootFor(held: Bag, connection?: Connection): Bag;
   /**
    * What a root config `replace` keeps that the push names none of: the
    * daemon's values, every backend's account and the restart mark, as the
@@ -281,11 +280,13 @@ export function createRoot(ctx: HostContext): Root {
    * Host-wide configuration, which a connected client pushes.
    *
    * Not this host's own settings - those are argv and `config.json`, and a
-   * client has no business in them. These are the preferences a *client* holds
-   * about how the host should behave for it: VS Code sends `defaultShell` out
-   * of `terminal.integrated.agentHostProfile.<os>` the moment it connects,
-   * because which shell a host-managed terminal opens is a preference of the
-   * person's rather than a fact about the machine.
+   * client has no business in them. These are the preferences a client holds
+   * about how the host should behave: VS Code sends its window's shell, trust
+   * and command and edit rules the moment it connects. Each key is one value
+   * for the whole host, which the last push sets and every session and every
+   * client reads, as the reference host keeps one root config for every window
+   * connected to it.
+   * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/common/agentHostManagedSettings.ts#L20-L23
    *
    * Everything pushed whose key is declared below is kept, and only what the
    * host's own half of that schema names is acted on. Keeping a declared key
@@ -307,11 +308,11 @@ export function createRoot(ctx: HostContext): Root {
    * setting. The host's own keys come after, so a clash would resolve to the
    * host's reading of the same key (there is none).
    *
-   * Ten of them are read by this host: `defaultShell` and `workspaceTrust`
-   * below, which belong to the connection that pushed them, the three
-   * terminal and edit rules among VS Code's own, which belong there for the
-   * same reason and are what `spawn.ts` answers `getAutoApproval` from,
-   * `globalAutoApproveEnabled`, which `trust.ts` asks before a tool call runs,
+   * Ten of them are read by this host: `defaultShell`, which a client's
+   * terminal opens, and `workspaceTrust` below, the three terminal and edit
+   * rules among VS Code's own, which are what `spawn.ts` answers
+   * `getAutoApproval` from, `globalAutoApproveEnabled`, which `trust.ts` asks
+   * before a tool call runs,
    * `eligibleForAutoApproval`, which `spawn.ts` asks per tool before a call
    * runs, and this host's own `changeWords`, which says where a commit message
    * and a pull request's words come from, with `clientQueueBytes` and
@@ -331,7 +332,7 @@ export function createRoot(ctx: HostContext): Root {
         description: 'Absolute path to the shell host-managed terminals open. The system shell when unset.',
       },
       /*
-       * Which folders the window starting this session trusts.
+       * Which folders the host's sessions may load their projects from.
        *
        * VS Code's own property, `agentHostSchema.ts:864-877`, English strings
        * out of `localize` - see host/66 p1 task 01, which declares it here
@@ -339,10 +340,8 @@ export function createRoot(ctx: HostContext): Root {
        * `readOnly` because the value is the window's to push and not a
        * control for a person to set on the host, and required so a client
        * that draws it says both halves. It declares the key and nothing else:
-       * what reads it is `PER_CONNECTION` keeping it on the connection that
-       * pushed it (`gate.ts`), `trusted` answering a folder from it
-       * (`trust.ts`) and the move asking a client before it goes somewhere
-       * untrusted.
+       * what reads it is `trusted` answering a folder from it (`trust.ts`),
+       * and the move asking a client before it goes somewhere untrusted.
        */
       workspaceTrust: {
         type: 'object',
@@ -686,7 +685,7 @@ export function createRoot(ctx: HostContext): Root {
     if (Object.keys(moved).length > 0) ctx.dispatch(ROOT, { type: 'root/configChanged', config: moved });
   };
 
-  const rootFor = (held: Bag, mine: Record<string, unknown> = {}, connection?: Connection): Bag => {
+  const rootFor = (held: Bag, connection?: Connection): Bag => {
     const config = (held.config ?? { schema: ROOT_CONFIG_SCHEMA, values: {} }) as { schema: Bag; values: Bag };
     /*
      * The daemon's own keys for a connection that may read them and nobody
@@ -695,14 +694,10 @@ export function createRoot(ctx: HostContext): Root {
      * `an-agent-account-is-shown-to-account-readers`. A connection without the
      * grant is handed neither, which is the same absence a backend nothing has
      * reported an account for has.
-     *
-     * A `PER_CONNECTION` key is the pushing client's, so another connection
-     * reads its own in its place: the state holds whatever was pushed last,
-     * and that copy belongs to nobody.
      */
     const reads = seesConfig(connection);
     const values = Object.fromEntries(Object.entries(config.values).filter(([key]) =>
-      !PER_CONNECTION.has(key) && (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
+      (reads || !daemonHeld(key)) && (seesAccount(connection) || !isAccountKey(key))));
     const properties = (config.schema.properties ?? {}) as Bag;
     const meta = metaFor(connection);
     return {
@@ -714,7 +709,7 @@ export function createRoot(ctx: HostContext): Root {
         schema: reads
           ? config.schema
           : { ...config.schema, properties: Object.fromEntries(Object.entries(properties).filter(([key]) => !daemonHeld(key))) },
-        values: { ...values, ...mine },
+        values,
       },
       ...(Object.keys(meta).length === 0 ? {} : { _meta: meta }),
     };

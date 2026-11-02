@@ -277,15 +277,14 @@ describe('a canvas whose chat goes', () => {
   });
 });
 
-describe('a client that knows the session by another name', () => {
+describe('a second client of the session', () => {
   it('is sent the canvas channel and the URL as they are', async () => {
     const { made, calls } = withCanvases();
     const first = await at(made, 'canvas');
     const chat = await sessionAt(first.client);
 
-    // The same session under its provider's scheme, which is the alias.
-    const other = await at(made, 'alias');
-    const view = await other.client.handle({ method: 'subscribe', params: { channel: 'claude:/one' } }) as {
+    const other = await at(made, 'second');
+    const view = await other.client.handle({ method: 'subscribe', params: { channel: 'ahp-session:/one' } }) as {
       snapshot: { state: { defaultChat: string } };
     };
     const theirChat = view.snapshot.state.defaultChat;
@@ -294,7 +293,8 @@ describe('a client that knows the session by another name', () => {
     const resource = calls.open(chat, STATE);
     const lists = other.seen.seen.filter((one) => one.method === 'action' && one.params.action?.type === 'chat/canvasesChanged');
     expect(lists).toHaveLength(1);
-    // Under the chat name this client was given, and the resource untouched.
+    // Under the chat's one URI, and the resource untouched.
+    expect(theirChat).toBe(chat);
     expect(lists[0]!.params.channel).toBe(theirChat);
     expect(lists[0]!.params.action.canvases).toEqual([{ resource }]);
 
