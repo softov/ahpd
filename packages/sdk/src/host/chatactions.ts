@@ -958,15 +958,21 @@ export function chatAction(
       /*
        * The fixed keys a backend or a plugin declared.
        *
-       * `sessionMutable: false` is the schema saying this value is read
-       * when the backend starts - the computer a session runs in, and
-       * Claude's thinking - so a new value before the first turn is the
-       * session being created differently, exactly as `isolation` is.
-       * Only a key that moved, for the same reason `ours` is filtered.
+       * A declared key is mutable only where its schema says
+       * `sessionMutable: true`: "Only properties with `sessionMutable: true`
+       * in the config schema may be changed." Any other is read when the
+       * backend starts - the computer a session runs in, and Claude's
+       * thinking - so a new value before the first turn is the session being
+       * created differently, exactly as `isolation` is. Only a key that
+       * moved, for the same reason `ours` is filtered.
+       * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L604-L608
        */
       const fixed = owning === undefined ? [] : Object.entries(config)
         .filter(([key]) => !HOSTS_OWN.includes(key))
-        .filter(([key]) => propertyOf(owning.agent, key)?.sessionMutable === false)
+        .filter(([key]) => {
+          const property = propertyOf(owning.agent, key);
+          return property !== undefined && property.sessionMutable !== true;
+        })
         .filter(([key, value]) => value !== before.get(key));
       /*
        * One restart for both kinds of fixed key, because two keys in
@@ -1015,13 +1021,15 @@ export function chatAction(
        * the key can move on a running session, and whether it belongs to the
        * session or to one chat in it.
        *
-       * Absent is not a refusal. `autoApprove` and `mode` are conventional
-       * names a client sends whatever a host advertises, and this backend
-       * takes both without declaring either - so the schema decides how a key
-       * behaves and the backend decides whether it is taken at all.
+       * A key the schema does not declare goes to the backend too, which
+       * takes it or says why it will not.
        */
       const asked = Object.entries(config)
-        .filter(([key]) => !HOSTS_OWN.includes(key) && propertyOf(owning?.agent, key)?.sessionMutable !== false);
+        .filter(([key]) => {
+          if (HOSTS_OWN.includes(key)) return false;
+          const property = propertyOf(owning?.agent, key);
+          return property === undefined || property.sessionMutable === true;
+        });
       if (asked.length > 0 && session.setConfig === undefined) {
         refused(`${asked[0]?.[0] ?? ''} is not a config key this backend takes`);
         break;

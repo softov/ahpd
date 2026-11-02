@@ -1,6 +1,6 @@
 ---
 title: A key the schema does not mark mutable is fixed
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -35,3 +35,10 @@ Before it, such a key starts the backend again with its new value.
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- `runningSchema` shows every key that does not say `sessionMutable: true` as a read-only chip, as it showed a `sessionMutable: false` key.
+- The comment on `Agent.schema` says the same rule.
+- On `89ebe4d5`'s sources the two new cases fail: the change was taken with no refusal, and the backend did not start again.
+- The sdk, agent-claude, agent-pi and agent-cofold test files pass, each timeout under load passing alone.
