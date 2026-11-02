@@ -1,6 +1,6 @@
 ---
 title: A delta lands while the snapshot read waits
-status: todo
+status: done
 depends: []
 layer: "sdk test"
 refs:
@@ -31,4 +31,4 @@ The words it said then are the snapshot's, and only what came after follows.
 
 ## Resume
 
-Not started.
+Done 2026-11-02 in `1e1e2492`; [implemented.md](implemented.md) says what was verified.

@@ -1,7 +1,7 @@
 ---
 title: The dropped checks are held again
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -64,8 +64,8 @@ late subscribe parks in the record's workers read -> a turn resumes the session,
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a failed turn leaves the session out of error](task-01-a-failed-turn-leaves-the-session-out-of-error.md) | todo | - |
-| [02 - a delta lands while the snapshot read waits](task-02-a-delta-lands-while-the-snapshot-read-waits.md) | todo | - |
+| [01 - a failed turn leaves the session out of error](task-01-a-failed-turn-leaves-the-session-out-of-error.md) | done | - |
+| [02 - a delta lands while the snapshot read waits](task-02-a-delta-lands-while-the-snapshot-read-waits.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -74,14 +74,14 @@ late subscribe parks in the record's workers read -> a turn resumes the session,
 
 ## Resume state
 
-- **Done so far:** nothing built.
-- **Next action:** task 01.
+- **Done so far:** tasks 01 and 02, 2026-11-02; [implemented.md](implemented.md) says what was verified.
+- **Next action:** none.
 - **Open questions:** none.
 - **Watch out for:** a session's own `status` keeps its activity bits; the protocol's session reducer has no action to move them.
 
 ## Final verification checklist
 
-- [ ] The session's row and list row go Error, InProgress, Idle with the chat, and the session carries no error.
-- [ ] A host whose row for a failed chat stops following it fails the case, and main's case passes it.
-- [ ] A delta said while the read waits is in the snapshot and is not replayed.
-- [ ] A subscribe that reads `fromSeq` before the wait fails the case, and main's case passes it.
+- [x] The session's row and list row go Error, InProgress, Idle with the chat, and the session carries no error.
+- [x] A host whose row for a failed chat stops following it fails the case, and main's case passes it.
+- [x] A delta said while the read waits is in the snapshot and is not replayed.
+- [x] A subscribe that reads `fromSeq` before the wait fails the case, and main's case passes it.
