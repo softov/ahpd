@@ -457,6 +457,34 @@ describe('paging a long history', () => {
   });
 });
 
+/*
+ * A session's row reads its default chat unless another chat needs input or
+ * runs, and a failed chat stays on its own row, as the reference host
+ * aggregates a session made of chats.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3339-L3367
+ */
+describe('a session row\'s status', () => {
+  it('reads its idle default chat when a second chat fails, and the failure on that chat\'s own row', async () => {
+    const { client, uri } = await running();
+    const second = 'ahp-chat:/second';
+    await client.handle({ method: 'createChat', params: { channel: uri, chat: second } });
+    await client.handle({ method: 'subscribe', params: { channel: second } });
+    client.handle({
+      method: 'dispatchAction',
+      params: { channel: second, action: { type: 'chat/turnStarted', turnId: 's1', message: { text: 'hi' } } },
+    });
+    await settle();
+    await emit({ type: 'result', subtype: 'error_during_execution', is_error: true, errors: ['no'], duration_ms: 4 });
+
+    const listed = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+      items: { resource: string; status: number; chats?: { resource: string; status?: number }[] }[];
+    };
+    const row = listed.items.find((one) => one.resource === uri);
+    expect((row?.chats?.find((one) => one.resource === second)?.status ?? 0) & 31).toBe(Status.Error);
+    expect((row?.status ?? 0) & 31).toBe(Status.Idle);
+  });
+});
+
 describe('the flags a client sets', () => {
   it('keeps read and archived, and tells everyone watching', async () => {
     sdk.sessions.push({ sessionId: 'old', summary: 'Older', lastModified: 1, cwd: '/home/softov' });
