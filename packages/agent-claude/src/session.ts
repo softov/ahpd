@@ -66,6 +66,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     settings: { permissionMode: 'default', ...options.settings } as Record<string, unknown>,
     allowed: listsOf(options.settings?.permissions) ?? { allow: [], deny: [] },
     chosen: undefined as string | undefined,
+    turnEffort: undefined as string | undefined,
     offering: [...(options.tools ?? [])] as BoundTool[],
     handle: undefined as unknown as ReturnType<typeof query>,
     active: undefined as Bag | undefined,

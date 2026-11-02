@@ -1,6 +1,6 @@
 ---
 title: A turn's thinking level moves no session config
-status: todo
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -19,7 +19,8 @@ A later turn that names no level sets the CLI back to the session's `effortLevel
 - `UPDATE: packages/agent-claude/src/session/turns.ts:286-300` - the turn's level goes to the CLI alone.
 - `UPDATE: packages/agent-claude/src/session/context.ts:362-381` - the effort a turn set over the session's.
 - `UPDATE: packages/agent-claude/src/session/config.ts:276-282` - a set `effortLevel` is the effort in force.
-- `UPDATE: packages/agent-claude/test` - a turn with a level, then one without.
+- `UPDATE: packages/agent-claude/src/session.ts:68` - the context starts with no turn's level.
+- `UPDATE: packages/sdk/test/host-harness.test.ts` - a turn with a level, then one without.
 
 ## Steps
 
@@ -36,3 +37,10 @@ A later turn that names no level sets the CLI back to the session's `effortLevel
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-02.
+
+- The Claude cases live in `host-harness.test.ts`, which drives the backend through the host with the fake SDK.
+- `host-harness.test.ts` moved with the behavior: its case read `effortLevel: 'xhigh'` back from the session's config.
+- That case keeps the model and the level reaching the SDK, and the new case holds the session's config.
+- On `89ebe4d5`'s sources the new case fails: a `session/configChanged` was said for the turn's level.

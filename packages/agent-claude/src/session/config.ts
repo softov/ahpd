@@ -231,6 +231,8 @@ export function createConfig(ctx: SessionContext): Config {
         const found = EFFORTS.find((one) => one === said);
         if (!found) return `The harness has no effort level called ${said}`;
         ctx.settings.effortLevel = found;
+        // The level in force from here, over any a turn's model set.
+        ctx.turnEffort = undefined;
         void ctx.handle.applyFlagSettings({ effortLevel: found }).catch(() => {});
         return true;
       }
