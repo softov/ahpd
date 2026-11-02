@@ -1,6 +1,6 @@
 ---
 title: Another spelling's config change, draft and turn are ignored
-status: todo
+status: done
 depends:
   - task-01-the-host-answers-one-uri.md
 layer: sdk
@@ -41,4 +41,8 @@ Under a URI whose id no session here carries, each is answered as it is today.
 
 ## Resume
 
-Not started.
+Built 2026-11-02.
+
+- On `7bc0140f`'s sources both cases fail: the config change, the draft and the turn under `claude:/row` are refused, and so is `zzz:/disk`.
+- A waiting row's id under another spelling is dropped where its published name is known, and refused by name where it is not.
+- The files that assert a refusal of an unknown session pass, with the name, catalogue, config and wake files.

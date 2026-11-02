@@ -115,7 +115,7 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 | --- | --- | --- |
 | [01 - The host answers one URI, and an older window what it can address](task-01-the-host-answers-one-uri.md) | done | - |
 | [02 - The docs say so](task-02-the-docs-say-so.md) | done | 01 |
-| [03 - Another spelling's config change, draft and turn are ignored](task-03-another-spellings-config-draft-and-turn-are-ignored.md) | todo | 01 |
+| [03 - Another spelling's config change, draft and turn are ignored](task-03-another-spellings-config-draft-and-turn-are-ignored.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -127,8 +127,8 @@ a tool's new session -> tooling.ts -> the turn's sender -> the provider's scheme
 
 ## Resume state
 
-- **Done so far:** tasks 01 and 02, 2026-11-02.
-- **Next action:** task 03.
+- **Done so far:** tasks 01, 02 and 03, 2026-11-02.
+- **Next action:** the implemented record.
 - **Open questions:** none.
 - **Watch out for:** `sessionOfChat` also says whether a URI is a chat, so each caller is read again for an opaque chat.
 

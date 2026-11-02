@@ -409,8 +409,7 @@ export function createSleep(ctx: HostContext): Sleep {
     const id = idOf(uri);
     // A spelling of an id this host publishes under another name is refused
     // before it can join that session's resume.
-    const published = ctx.names.get(id) ?? kept.uri?.(id);
-    if (published !== undefined && published !== uri) return Promise.reject(new Error(`${chat ?? uri} is not a session this host knows`));
+    if (ctx.heldElsewhere(uri)) return Promise.reject(new Error(`${chat ?? uri} is not a session this host knows`));
     const already = waking.get(id);
     if (already !== undefined) {
       return already.then((woken) => ({ uri: woken.uri, chat: picked(woken.uri, chat) ?? woken.chat }));

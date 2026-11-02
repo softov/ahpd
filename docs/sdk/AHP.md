@@ -642,9 +642,14 @@ is no session here, whatever id it carries: a subscribe to it answers `-32001`
 A read or archive flag or a mark dispatched on it is dropped with nothing said,
 as the protocol has a server ignore an action naming a session that does not
 exist
-([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)),
-and a config change, a draft or a turn is refused as one for a session nobody
-has is. Nothing of any session changes.
+([session-channel.md#L166](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/session-channel.md#L166)).
+So is a config change, a draft or a turn under another spelling of a session
+held here, or of a chat of one
+([chat-channel.md#L351](https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L351)):
+a VS Code window dispatches only on the URIs this host gave it, so none sends
+one. Under a URI whose id no session here carries, a config change, a draft or
+a turn is refused as one for a session nobody has is. Nothing of any session
+changes.
 
 A session a client creates is stored under the id the client chose, by naming
 it to the backend, so the backend writes its transcript under that id and the
