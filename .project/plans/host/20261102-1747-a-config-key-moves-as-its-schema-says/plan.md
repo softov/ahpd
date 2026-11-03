@@ -1,7 +1,7 @@
 ---
 title: A config key moves as its schema says
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -110,7 +110,7 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 | [02 - Claude takes only the keys it declares](task-02-claude-takes-only-declared-keys.md) | done | - |
 | [03 - A turn's thinking level moves no session config](task-03-a-turns-level-moves-no-config.md) | done | - |
 | [04 - A cut pi refuses is logged](task-04-a-cut-pi-refuses-is-logged.md) | done | - |
-| [05 - The host takes the sensitive edit locations](task-05-the-host-takes-sensitive-locations.md) | todo | - |
+| [05 - The host takes the sensitive edit locations](task-05-the-host-takes-sensitive-locations.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -120,8 +120,8 @@ chat/truncated -> the host's held state -> pi's next open -> pi's rewind
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 04, 2026-11-02.
-- **Next action:** task 05.
+- **Done so far:** tasks 01 to 05, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a key this host owns, such as `isolation`, keeps its own rule in `ours`.
 

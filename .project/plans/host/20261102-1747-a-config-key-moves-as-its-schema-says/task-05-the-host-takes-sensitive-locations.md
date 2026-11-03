@@ -1,6 +1,6 @@
 ---
 title: The host takes the sensitive edit locations
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -46,3 +46,11 @@ A redirect whose destination is in one of the locations is not approved without 
 - `packages/sdk/test/commandautoapprover.test.ts` and `packages/sdk/test/autoapproval.test.ts`: the new cases fail on `65132a70` and pass after.
 - The sdk test files that read a session's config pass.
 - `pnpm run typecheck` is clean.
+
+## Resume
+
+Built 2026-11-02.
+
+- On `65132a70`'s sources the approver's case fails, the redirect approved, and the host's case fails, the key refused.
+- `example.test.ts` moved with the behavior: the echo backend's form lists the host's key beside `voice`.
+- `UPSTREAM.md` ticks the key's entry.
