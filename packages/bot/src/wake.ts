@@ -641,9 +641,15 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * into a session already working names the open turn it went into, which
        * is the turn the answer after it belongs to, and keeps what was posted
        * into that turn before the steer.
+       *
+       * `held` is a main turn this wake already answers from this session: the
+       * entry lives until the back turn ends, so a turn is running there even
+       * where the session's status does not say so yet. A Claude turn that is
+       * still starting is one, and a second turn sent into it is refused.
        */
       const before = answering.get(session);
-      const posted = before !== undefined && before.handle === handle && before.turnId === message.turnId && before.posted === true;
+      const held = before !== undefined && before.handle === handle && before.turnId === message.turnId;
+      const posted = held && before.posted === true;
       answering.set(session, {
         session: message.session, turnId: message.turnId, handle, bot: bot.name, ...(posted ? { posted } : {}),
       });
@@ -654,7 +660,7 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * already shows.
        */
       handle.working?.(looked.chat, bot.name);
-      const action = looked.working ? steer(block, message) : turn(block, message);
+      const action = looked.working || held ? steer(block, message) : turn(block, message);
       if (action['type'] === 'chat/turnStarted') begun.set(session, { turn: String(action['turnId']), at: Date.now() });
       let refused: string | undefined;
       try {
@@ -665,6 +671,13 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
         // rather than the host's answer to the action: the message reached
         // nobody, which the person is owed in the same words.
         refused = reason(error);
+      }
+      if (refused !== undefined && held) {
+        // The steer was not taken, and the back turn it was meant for still
+        // runs and still answers this main turn: the binding stays, and the
+        // operator is told.
+        seams.problem(`a message steered into ${session} was refused: ${refused}`);
+        return;
       }
       if (refused !== undefined) {
         // Nothing was said, so nothing is coming: the turn ends here rather

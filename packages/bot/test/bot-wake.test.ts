@@ -362,6 +362,45 @@ it('steers a message into the back session that is already working', async () =>
 });
 
 /*
+ * A message steered into the main turn a back turn already answers is a steer,
+ * even where the session's status does not say the turn runs yet: a Claude
+ * turn that is still starting is not marked, and a second turn sent into it is
+ * refused (2026-11-03, "make it 5 minutes" ten seconds after "Hi here").
+ */
+it('steers into a back turn this wake started, before the session says it is working', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+
+  // The session's status is still idle: nothing was added to `working`.
+  await one.wake.woken(message('t1', 'make it 5 minutes'), said.handle);
+
+  expect(one.sent.map((each) => each.action['type'])).toEqual(['chat/turnStarted', 'chat/pendingMessageSet']);
+  expect(one.sent[1]?.action).toMatchObject({ kind: 'steering', message: { text: carrying('make it 5 minutes') } });
+  expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
+  expect(said.posts).toEqual(['done']);
+});
+
+it('keeps the back turn\'s binding when a steer into it is refused', async () => {
+  const one = await sitting();
+  const said = turn();
+  await one.wake.woken(message('t1', 'hello'), said.handle);
+  one.refuseSend('A turn is running in this chat');
+
+  await one.wake.woken(message('t1', 'make it 5 minutes'), said.handle);
+
+  // The back turn still runs and still answers the main turn: nothing ended
+  // it, its posts land, and the operator is told about the refused steer.
+  expect(said.notices).toEqual([]);
+  expect(said.endings).toEqual([]);
+  expect(one.problems).toEqual(['a message steered into ahp-session:/1 was refused: A turn is running in this chat']);
+  expect(one.wake.posted('ahp-session:/1', 'done')).toBe(true);
+  expect(said.posts).toEqual(['done']);
+  one.wake.finished('ahp-session:/1', 'done');
+  expect(said.endings).toEqual(['ended']);
+});
+
+/*
  * A stopped main turn stops the work behind it: the reference host cancels the
  * running turn of each subagent session of a chat whose turn is stopped, with
  * the time it ran (agentSideEffects.ts L1470-L1483 at a4e689ae).
