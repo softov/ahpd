@@ -368,9 +368,13 @@ export function createTurns(ctx: SessionContext): Turns {
     if (busy() || ctx.closed)
       return;
     // Nor while the CLI owes an answer: a prompt handed to it now is read after
-    // the one it owes, and that answer would be taken for this one's.
-    if (ctx.owed.size > 0)
+    // the one it owes, and that answer would be taken for this one's. The start
+    // is made once that answer comes.
+    if (ctx.owed.size > 0) {
+      ctx.deferred = true;
       return;
+    }
+    ctx.deferred = false;
     const next = ctx.queued.shift();
     if (!next)
       return;

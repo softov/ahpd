@@ -685,9 +685,8 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
      * line it began with did: a turn a client watched end is a turn a restart
      * can read back.
      *
-     * `next` says whether what was waiting starts now. A steer ends a turn
-     * without it: the steered message is a turn in front of the queue, and the
-     * message behind it starts when that turn ends.
+     * `next` says whether what was waiting starts now. A stop ends a turn
+     * without it, and what waits starts when a message is queued after it.
      */
     const finish = (held: OpenTurn, state: Ending, parts: Bag[], next = true): void => {
       open = undefined;
@@ -1050,10 +1049,16 @@ export function botChatAgent(configDir: string, store: BotStore, heard?: (messag
        * ended as a cancelled one, and a client watching the chat is told
        * exactly that. The host names the open turn by its id.
        */
+      /*
+       * A stop ends the turn and starts nothing behind it: the reference host
+       * leaves queued messages queued, for a message sent after the stop to
+       * start.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+       */
       cancel: (turnId) => {
         const held = open;
         if (held === undefined || held.id !== turnId) return;
-        finish(held, 'cancelled', []);
+        finish(held, 'cancelled', [], false);
       },
 
       // Held by the session, so two people on one chat see each other's - which

@@ -185,6 +185,17 @@ export function piSession(
   let unsubscribe: (() => void) | undefined;
   let closed = false;
   let cancelled = false;
+  /**
+   * Whether a message was queued while a stop was in flight.
+   *
+   * A stopped turn starts nothing behind it, as the reference host leaves
+   * queued messages queued, and a message queued after the stop starts the
+   * head of the queue once pi lets the turn go, as the reference host takes the
+   * first queued message once one is set while idle.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1950-L1954
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
+   */
+  let askedSinceStop = false;
   /** What it is doing, and the one handle that says it. */
   const activity = activityOf(emit);
   let title = UNTITLED;
@@ -728,7 +739,9 @@ export function piSession(
       emit('chat', { type: 'chat/error', turnId, duration, part });
     }
     touch();
-    startNext();
+    const asked = askedSinceStop;
+    askedSinceStop = false;
+    if (ending !== 'cancelled' || asked) startNext();
   };
 
   /**
@@ -1370,6 +1383,7 @@ export function piSession(
         emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
         touch();
         // At once when nothing runs, as a queued message is.
+        if (cancelled) askedSinceStop = true;
         startNext();
         return;
       }
@@ -1524,6 +1538,7 @@ export function piSession(
        * is idle.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L117-L119
        */
+      if (cancelled) askedSinceStop = true;
       startNext();
     },
 

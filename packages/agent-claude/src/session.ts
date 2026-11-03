@@ -83,6 +83,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
     peers: [...(options.additional ?? [])] as string[],
     steering: undefined as Bag | undefined,
     owed: new Map<string, Owed>(),
+    deferred: false,
     answering: undefined as string | undefined,
     hostInstructions: undefined as { turn: Bag; said: string[] } | undefined,
     running: undefined as string | undefined,
