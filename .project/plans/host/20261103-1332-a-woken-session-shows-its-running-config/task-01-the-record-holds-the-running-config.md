@@ -1,6 +1,6 @@
 ---
 title: The record holds the running config
-status: todo
+status: done
 depends: []
 layer: host
 refs:

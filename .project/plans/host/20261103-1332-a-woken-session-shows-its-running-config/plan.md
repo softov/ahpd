@@ -1,7 +1,7 @@
 ---
 title: A woken session shows its running config
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -92,7 +92,7 @@ chat/turnStarted -> wake -> spawn -> a held state is kept -> chatMoved
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The record holds the running config](task-01-the-record-holds-the-running-config.md) | todo | - |
+| [01 - The record holds the running config](task-01-the-record-holds-the-running-config.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -101,14 +101,14 @@ chat/turnStarted -> wake -> spawn -> a held state is kept -> chatMoved
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a session the host decided no keys for, which a restart leaves with the backend's config alone.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `c97d8459`'s sources and passes after the change.
-- [ ] The touched files' test files pass, one file at a time.
-- [ ] The wake cases pass on a merge of this branch and the residency branch.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] The touched files' test files pass, one file at a time.
+- [x] The wake cases pass on a merge of this branch and the residency branch.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
