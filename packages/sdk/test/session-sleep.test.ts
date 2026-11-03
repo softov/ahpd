@@ -369,10 +369,37 @@ it('sleeps an archived session at once', async () => {
   await one.leave();
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+    params: { channel: one.channel, clientSeq: 1, action: { type: 'session/isArchivedChanged', isArchived: true } },
   });
   await until(() => knobs.closes.length > 0);
   expect(awake()).toBe(0);
+});
+
+/*
+ * VS Code's host refuses an archive of a default chat without restoring the
+ * session it is in.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L12120-L12122
+ */
+it('wakes nothing for an archive of a sleeping session\'s default chat, and archives nothing', async () => {
+  const knobs: Knobs = { closes: [] };
+  const { client, time, open, awake } = await serving(knobs);
+  const one = await open('one');
+  await one.leave();
+  time.pass(31);
+  await until(() => knobs.closes.length > 0);
+  expect(awake()).toBe(0);
+  const starts = knobs.starts;
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: one.chatUri, clientSeq: 1, action: { type: 'chat/isArchivedChanged', isArchived: true } },
+  });
+  await settle();
+  expect(knobs.starts).toBe(starts);
+  const rows = await client.handle({ method: 'listSessions', params: { channel: 'ahp-root://' } }) as {
+    items: { resource: string; status: number }[];
+  };
+  // `SessionStatus.IsArchived` is 64.
+  expect((rows.items.find((row) => row.resource === one.resource)?.status ?? 0) & 64).toBe(0);
 });
 
 it('closes each chat with close(\'stopping\'), and keeps its terminals and rule state', async () => {
