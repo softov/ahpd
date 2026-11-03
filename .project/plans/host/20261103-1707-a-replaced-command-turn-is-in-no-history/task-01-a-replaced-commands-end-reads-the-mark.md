@@ -1,6 +1,6 @@
 ---
 title: A replaced command's end reads the mark
-status: todo
+status: done
 depends: []
 layer: host
 refs:
