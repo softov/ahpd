@@ -1,6 +1,6 @@
 ---
 title: The reader reads the turn it steered
-status: doing
+status: done
 depends: []
 layer: bot
 refs:
@@ -31,3 +31,8 @@ A `steering` line is the record that a message was said in the turn it names, an
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-03 in `b553da30`.
+
+- The line is still read for its mark, which is what names a chat's bot where the first line is unreadable.
+- On `a8eff676`'s sources both cases fail: the chat read back holds a second turn.

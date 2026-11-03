@@ -1,7 +1,7 @@
 ---
 title: A reloaded chat shows the steer in its turn
 domain: bots
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -91,7 +91,7 @@ client chat/pendingMessageSet steering -> the bot's steer -> the open turn, whic
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The reader reads the turn it steered](task-01-the-reader-reads-the-turn-it-steered.md) | doing | - |
+| [01 - The reader reads the turn it steered](task-01-the-reader-reads-the-turn-it-steered.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -99,13 +99,13 @@ client chat/pendingMessageSet steering -> the bot's steer -> the open turn, whic
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-the-reader-reads-the-turn-it-steered.md](task-01-the-reader-reads-the-turn-it-steered.md).
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the line's mark is what names the chat's bot, so it is still read.
 
 ## Final verification checklist
 
-- [ ] Each changed case fails on `a8eff676` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` reports no errors, and the prose lint is clean.
+- [x] Each changed case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` reports no errors, and the prose lint is clean.
