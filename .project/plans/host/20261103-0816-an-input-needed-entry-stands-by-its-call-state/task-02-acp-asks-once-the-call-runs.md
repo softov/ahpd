@@ -1,6 +1,6 @@
 ---
 title: ACP asks once the call runs
-status: todo
+status: done
 depends: [task-01-an-entry-stands-in-its-own-state.md]
 layer: agent
 refs:
@@ -37,4 +37,6 @@ An ACP session asks a client to run a call once the chat holds that call running
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the order fails: the entry goes up before the ready.

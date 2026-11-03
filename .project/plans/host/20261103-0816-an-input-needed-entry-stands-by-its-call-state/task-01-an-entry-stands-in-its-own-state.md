@@ -1,6 +1,6 @@
 ---
 title: An entry stands in its own state
-status: todo
+status: done
 depends: []
 layer: host
 refs:
@@ -32,4 +32,6 @@ A client execution entry stands while the call runs, and an authentication entry
 
 ## Resume
 
-Not started.
+Built 2026-11-03.
+
+- On `cde4dd6c`'s sources the new case fails: each kind stands through a streaming call.

@@ -1,7 +1,7 @@
 ---
 title: An input needed entry stands by its call state
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -63,8 +63,8 @@ an ACP update -> mapUpdate -> the ready goes out -> the clients' calls it starte
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - An entry stands in its own state](task-01-an-entry-stands-in-its-own-state.md) | todo | - |
-| [02 - ACP asks once the call runs](task-02-acp-asks-once-the-call-runs.md) | todo | - |
+| [01 - An entry stands in its own state](task-01-an-entry-stands-in-its-own-state.md) | done | - |
+| [02 - ACP asks once the call runs](task-02-acp-asks-once-the-call-runs.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -72,13 +72,13 @@ an ACP update -> mapUpdate -> the ready goes out -> the clients' calls it starte
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a ready carrying no `confirmed` leaves the call at a pending confirmation, which a confirmation entry stands in.
 
 ## Final verification checklist
 
-- [ ] The new case and the ACP order fail on `cde4dd6c` for the reasons they name, and pass after the change.
-- [ ] The input-needed, tools, ACP client tool, ACP catalog and ACP ports test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] The new case and the ACP order fail on `cde4dd6c` for the reasons they name, and pass after the change.
+- [x] The input-needed, tools, ACP client tool, ACP catalog and ACP ports test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
