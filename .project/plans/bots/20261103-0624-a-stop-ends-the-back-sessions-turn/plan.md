@@ -1,7 +1,7 @@
 ---
 title: A stop ends the back session's turn
 domain: bots
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -109,8 +109,8 @@ client chat/turnCancelled -> the bot's cancel -> onStop -> wake.stopped
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop cancels the back turn](task-01-a-stop-cancels-the-back-turn.md) | doing | - |
-| [02 - The link stays, and pending sends go](task-02-the-link-stays.md) | todo | 01 |
+| [01 - A stop cancels the back turn](task-01-a-stop-cancels-the-back-turn.md) | done | - |
+| [02 - The link stays, and pending sends go](task-02-the-link-stays.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -118,13 +118,13 @@ client chat/turnCancelled -> the bot's cancel -> onStop -> wake.stopped
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-stop-cancels-the-back-turn.md](task-01-a-stop-cancels-the-back-turn.md).
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a steer into a working back session overwrites its link with the steered turn.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

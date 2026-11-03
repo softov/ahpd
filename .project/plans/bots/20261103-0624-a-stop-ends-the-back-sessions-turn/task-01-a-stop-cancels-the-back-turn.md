@@ -1,6 +1,6 @@
 ---
 title: A stop cancels the back turn
-status: doing
+status: done
 depends: []
 layer: bot
 refs:
@@ -33,3 +33,9 @@ A client's stop of a bot's turn cancels the running turn of each back session an
 - The changed lines are `020669b1`'s.
 
 ## Resume
+
+Built 2026-11-03 in `cccdb02b`.
+
+- `020669b1` applied to upstream main with no conflict, and its 141 changed lines are the same.
+- The patch ids differ for the context alone, which the plans commit before it moved.
+- On `a8eff676`'s sources both cases fail: the wake has no `stopped`, and the handle's holder is never told.
