@@ -1,6 +1,6 @@
 ---
 title: A host tool knows its call
-status: todo
+status: implemented
 depends: []
 layer: "@ahpd/sdk, @ahpd/agent-claude, @ahpd/agent-pi, @ahpd/agent-cofold"
 refs:
@@ -61,3 +61,13 @@ A host tool can carry `overridesBuiltInTool`, and then Claude and pi use it in p
 - `pnpm typecheck` and each backend's suite pass, one at a time.
 
 ## Resume
+
+Implemented on `build/agents/09cc9b8d`, one commit for this task.
+
+- **SDK:** `BoundTool.run(input, call?)` takes `ToolCallFacts { toolCallId?, opened? }`; `HostToolCommon` and `BoundTool` carry `overridesBuiltInTool`; `ToolCall` carries `toolCallId` and `opened`; `offeredTools` copies the mark and passes the call through `toolContext`.
+- **Claude:** `clienttools.ts` reads `claudecode/toolUseId` for a host tool and gives it an `opened` that puts a `terminal` block on the call and emits `chat/toolCallContentChanged`; `openedTerminals` carries that block into the completion in `stream.ts`. `options.ts`/`query.ts` disallow `Bash` and alias it to `mcp__ahp__bash` when a marked `bash` is offered. `asking.ts` reads `mcp__ahp__bash` lines by the terminal rules as `Bash` lines.
+- **pi:** `tools.ts` keeps a marked host tool of a `PI_TOOLS` name, passes the call id and `opened`; `session.ts` opens the terminal on the call; `mapping.ts` keeps terminal blocks in the completion.
+- **cofold:** `tools.ts` passes `ctx.callId` and `opened`; `mapping.ts` and `turnagent.ts` put the terminal on the call and carry it into the completion.
+- **Tests:** `packages/agent-claude/test/agent-claude-host-shell-tool.test.ts` (4 cases), one case in `packages/agent-pi/test/agent-pi-tools.test.ts`, one in `packages/agent-cofold/test/agent-cofold-tools.test.ts`.
+- **Gates:** `pnpm build`, `pnpm exec tsc -p tsconfig.json --noEmit`, `pnpm boundary`, `pnpm --filter @ahpd/sdk test` (218 files, 4141 passed), and the agent-claude (57 files, 538 passed), agent-pi (18 files, 251 passed), agent-cofold (18 files, 280 passed) and agent-acp (20 files, 295 passed) suites all pass.
+- **Not done:** `git checkout -- packages/sdk/test/fixtures/wire.jsonl` is denied in this session, so the fixture stays dirty with what the suite wrote; restore it before committing anything else.

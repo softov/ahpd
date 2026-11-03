@@ -158,7 +158,7 @@ export function createSession(options: ClaudeSessionOptions): Session {
    * at construction so `setMcpServers` keeps it: that call replaces the whole
    * set, and a set rebuilt without this would take the host's tools away.
    */
-  if (ctx.offering.length > 0) ctx.declared.ahp = contributed(ctx.offering, ctx.ranByClient) as Bag;
+  if (ctx.offering.length > 0) ctx.declared.ahp = contributed(ctx.offering, ctx.ranByClient, ctx.openedFor) as Bag;
 
   // ------------------------------------------------------------------ the run
   // The login the first CLI signs in with, which the query's environment reads.

@@ -5,6 +5,7 @@ import { bag, list, str } from './common.js';
 import type { SessionContext } from './context.js';
 import { lineOf, pastLineOf, questionRequest, toolInputOf, writeOf } from '../input.js';
 import { toolMetaOf } from '../kinds.js';
+import { HOST_SHELL_TOOL } from '../options.js';
 interface PendingInput {
   id: string;
   entry: Bag;
@@ -576,9 +577,12 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * it always was. Read after the abort, because a cancelled call is not one
      * to approve. Nothing is announced either, as with an allow list: the row
      * the assistant message carries is already `not-needed`, and there is no
-     * question for a client to draw.
+     * question for a client to draw. The host's shell, where it takes the
+     * place of `Bash`, runs the same commands and is read by the same rules,
+     * as the reference reads its own shell tool's calls as shell requests
+     * (`copilotAgentSession.ts#L7535-L7553` at VS Code `122ec4fe4431`).
      */
-    if (toolName === 'Bash') {
+    if (toolName === 'Bash' || toolName === HOST_SHELL_TOOL) {
       const command = written ?? str(raw.command);
       if (command !== undefined && (await ctx.options.getAutoApproval?.('shell', command, 'bash', toolName)) === 'not-needed') {
         return { behavior: 'allow', updatedInput: raw };

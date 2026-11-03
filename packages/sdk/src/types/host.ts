@@ -2,6 +2,7 @@
 
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Agent, BoundTool, McpServer, ToolEffects } from './agent.js';
+import type { CommandTerminal } from './session.js';
 import type { ToolsServers } from '../tools/server.js';
 import type { HostHandlers } from './events.js';
 import type { ResourceProvider, ResourceStore } from './resources.js';
@@ -1066,6 +1067,16 @@ interface HostToolCommon {
    */
   deferLoading?: boolean;
   /**
+   * Whether this tool takes the place of the agent's own tool of that name.
+   *
+   * The reference host's `overridesBuiltInTool`, which its agent terminal tool
+   * sets: a backend whose harness has a tool of its own by the name, or by the
+   * name a harness spells it with, offers this one instead, in the way that
+   * harness documents for replacing one of its own. Undefined leaves the
+   * harness's tools as they are.
+   */
+  overridesBuiltInTool?: boolean;
+  /**
    * The grant a person needs to see this tool where no session asks.
    *
    * Only read for a tool that says `sessionless: true`, and only by the list
@@ -1182,6 +1193,17 @@ export interface ToolCall {
   provider?: string;
   /** The turn the call is running in, when the chat has one running. */
   turn(): string | undefined;
+  /** The call's own id, as its `chat/toolCallStart` carried it, when the backend named it. */
+  toolCallId?: string;
+  /**
+   * Told the terminal as soon as a host tool opens one for this call.
+   *
+   * The backend's half of showing a call's shell, as `RunCommand` is for a `!`
+   * command: the terminal is put on the call and a
+   * `chat/toolCallContentChanged` goes out, so a client watches the output
+   * arrive. Absent where the backend names no call, or names none to a handler.
+   */
+  opened?(terminal: CommandTerminal): void;
   /**
    * Who is behind this call: a person's id, a session's owner, or `host`.
    *

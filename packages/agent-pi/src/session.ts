@@ -368,6 +368,30 @@ export function piSession(
   };
 
   /**
+   * The terminal a host tool opened for a call, put on the call as it opens.
+   *
+   * The same block and the same change a `!` command's call carries: onto the
+   * held call and into the action from one object, so a client that watches was
+   * sent what a client that subscribes later reads. The block stays on the call
+   * and `tool_execution_end` carries it into the completion, which replaces the
+   * call's whole content.
+   */
+  const openedFor = (toolCallId: string): ((terminal: CommandTerminal) => void) => (terminal) => {
+    if (mapping === undefined) return;
+    const part = callPartOf(mapping, toolCallId);
+    const call = bag(part?.toolCall);
+    if (part === undefined) return;
+    const block: Bag = {
+      type: 'terminal',
+      resource: terminal.uri,
+      title: 'Terminal',
+      ...(terminal.isPty === undefined ? {} : { isPty: terminal.isPty }),
+    };
+    call.content = [block];
+    emit('chat', { type: 'chat/toolCallContentChanged', turnId: mapping.turnId, toolCallId, content: [block] });
+  };
+
+  /**
    * Calls waiting on a person, by pi's call id.
    *
    * A map because a turn can ask twice at once: the protocol's `inputNeeded`
@@ -916,7 +940,7 @@ export function piSession(
     // while the turn ran.
     const building = [...offering];
     built = building;
-    const tools = (await Promise.all(building.map((one) => toPiTool(one, ranByClient))))
+    const tools = (await Promise.all(building.map((one) => toPiTool(one, ranByClient, openedFor))))
       .flatMap((tool) => (tool === undefined ? [] : [tool]));
     // An empty entry is not an instruction, and pi would put a blank paragraph
     // in the system prompt for one.

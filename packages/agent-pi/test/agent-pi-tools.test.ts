@@ -63,6 +63,23 @@ it('drops a tool that would shadow one of pi own', async () => {
   expect(await toPiTool({ definition: { name: 'bash' }, run: async () => 'no' }, noClient)).toBeUndefined();
 });
 
+it('keeps a marked host tool that takes the place of one of pi own', async () => {
+  let seen: string | undefined;
+  const tool = await toPiTool({
+    definition: { name: 'bash' },
+    overridesBuiltInTool: true,
+    run: async (_input, call) => {
+      seen = call?.toolCallId;
+      return 'the host ran it';
+    },
+  }, noClient);
+  expect(tool?.name).toBe('bash');
+  // The call's own id reaches the tool, as it does for every other host tool.
+  const result = await callTool(tool, { command: 'echo hi' });
+  expect(result.content).toEqual([{ type: 'text', text: 'the host ran it' }]);
+  expect(seen).toBe('c1');
+});
+
 it('hands the host tools to pi as custom tools', async () => {
   const { session, pi } = opened({
     tools: [

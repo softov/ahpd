@@ -103,7 +103,7 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | todo | - |
+| [01 - a host tool knows its call](task-01-a-host-tool-knows-its-call.md) | implemented | - |
 | [02 - an agent's shells run its commands](task-02-an-agents-shells-run-its-commands.md) | todo | 01 |
 | [03 - the six tools behind the switch](task-03-the-six-tools-behind-the-switch.md) | todo | 01, 02 |
 
@@ -116,10 +116,10 @@ model calls bash -> backend runs the bound tool with { toolCallId, opened } -> s
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-host-tool-knows-its-call.md](task-01-a-host-tool-knows-its-call.md), which needs nothing from plan A.
+- **Done so far:** task 01, on `build/agents/09cc9b8d`. A host tool's `run` gets its call id and an `opened` callback; Claude, pi and cofold put the terminal on the call and keep it in the completion; a marked `bash` replaces Claude's and pi's own shell, and Claude reads `mcp__ahp__bash` lines by the terminal rules.
+- **Next action:** [task-02-an-agents-shells-run-its-commands.md](task-02-an-agents-shells-run-its-commands.md), which needs task 01's call context.
 - **Open questions:** none.
-- **Watch out for:** do not merge the fork branch. Its `shells.ts` counts output; main reads a `command` part.
+- **Watch out for:** do not merge the fork branch. Its `shells.ts` counts output; main reads a `command` part. `packages/sdk/test/fixtures/wire.jsonl` is dirty from the test run and its `git checkout` is denied in this session.
 
 ## Final verification checklist
 
