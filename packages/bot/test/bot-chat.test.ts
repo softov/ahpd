@@ -1,7 +1,7 @@
 import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { parseYaml, stringifyYaml } from '@cofold/yaml';
 import { createHost, ROOT } from '../../sdk/src/host.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
@@ -13,7 +13,7 @@ import { memorySessions } from '../../sdk/src/sessions/sessions.js';
 import { sdkVersion } from '../../sdk/src/version.js';
 import { echo } from '../../../examples/echo/agent.js';
 import { botChatAgent, CHAT_PROVIDER, turns } from '../src/chat.js';
-import { BOTS_DIR } from '../src/names.js';
+import { BOTS_DIR, chatsOf, rowId, sessionsOf } from '../src/names.js';
 import { apply } from '../src/plugin.js';
 import { botStore } from '../src/store.js';
 import type { ChatMessage } from '../src/chat.js';
@@ -111,7 +111,10 @@ function made() {
     records,
   };
   const { options } = foldHostOptions(base, [contribution]);
-  return { host: createHost(options), root, bots, configDir, records };
+  const host = createHost(options);
+  // The plugin's own connection, which the daemon binds once the host exists.
+  contribution.connects.host = host;
+  return { host, root, bots, configDir, records, contribution };
 }
 
 type Client = ReturnType<ReturnType<typeof createHost>['accept']>;
@@ -1035,6 +1038,61 @@ it('begins a turn nobody here said, and tells no listener', async () => {
   chat.reply('done');
   expect((await stateOf(client))['activeTurn']).toBeUndefined();
   expect(heard).toEqual([]);
+});
+
+/*
+ * A back turn that ended before its main turn opened.
+ *
+ * The plugin reads the bot's rows and the back chat before it opens the main
+ * turn, and a back turn that fails or is stopped at once ends during those
+ * reads. Its `turn_end` comes first, and the main turn still opens and ends
+ * with the back turn's words, rather than wait for the next back turn.
+ */
+it('ends a main turn at once when its back turn ended while it opened', async () => {
+  const { host, records, contribution } = made();
+  const client = await anyone(host);
+  await talkTo(client);
+  const backSession = 'ahp-session:/back';
+  const backChat = chatUriFor(backSession);
+  await client.handle({ method: 'createSession', params: { channel: backSession, provider: 'base' } });
+  await client.handle({ method: 'subscribe', params: { channel: backChat } });
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: backChat, action: { type: 'chat/turnStarted', turnId: 'b1', message: { text: 'typed on the back session' } } },
+  });
+  const backState = async (): Promise<Bag> => (await client.handle({ method: 'subscribe', params: { channel: backChat } }) as {
+    snapshot: { state: Bag };
+  }).snapshot.state;
+  const backTurn = await vi.waitFor(async () => {
+    const turnsHeld = (await backState())['turns'] as Bag[];
+    expect(turnsHeld).toHaveLength(1);
+    return turnsHeld[0] as Bag;
+  });
+  // The rows that make this the back session of the bot's chat with this host.
+  await (await records.collection(sessionsOf('backer'))).put({
+    id: rowId(['backer', 'test', 'work']), bot: 'backer', user: 'test', name: 'work', session: backSession,
+  });
+  await (await records.collection(chatsOf('backer'))).put({ id: rowId(['backer', 'root:test']), chat: HELD });
+
+  // The end arrives while the start is still reading.
+  const listeners = contribution.events as unknown as Record<string, { handle: (event: Bag) => unknown }[]>;
+  void listeners['turn_start']?.[0]?.handle({ type: 'turn_start', session: backSession, chat: backChat, turn: 'b1' });
+  void listeners['turn_end']?.[0]?.handle({ type: 'turn_end', session: backSession, chat: backChat, turn: 'b1', status: 'complete' });
+
+  const ended = await vi.waitFor(async () => {
+    const state = await stateOf(client);
+    expect(state['activeTurn']).toBeUndefined();
+    expect(state['turns']).toHaveLength(1);
+    return (state['turns'] as Bag[])[0] as Bag;
+  });
+  expect(ended['message']).toMatchObject({ text: 'typed on the back session' });
+  const said = (backTurn['responseParts'] as Bag[]).filter((part) => part['kind'] === 'markdown').map((part) => part['content']).join('');
+  expect(said).not.toBe('');
+  // The back session as the one call the turn waited on, and the words it ended with.
+  expect(ended['responseParts']).toMatchObject([
+    { kind: 'toolCall', toolCall: { toolName: 'subagent', status: 'completed', _meta: { subagentChatUri: backChat } } },
+    { kind: 'markdown', content: said },
+  ]);
 });
 
 it('sends calls as the protocol declares them, and a late client reads them the same way', async () => {
