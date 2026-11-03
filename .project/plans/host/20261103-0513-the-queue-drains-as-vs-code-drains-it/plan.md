@@ -1,7 +1,7 @@
 ---
 title: The queue drains as VS Code drains it
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -141,7 +141,7 @@ a client's chat/pendingMessageSet, pendingMessageRemoved or queuedMessagesReorde
 
 - **Turn end** - each backend starts its queue only after a turn that completed, and after a `!` command's turn.
 - **Client change** - each backend's `unqueue` and `reorder` start the head, which starts nothing while a turn runs.
-- **Hold** - `startNext` in each backend starts nothing while the latest turn is a resumable failure.
+- **Hold** - `startNext` starts nothing while the latest turn is a resumable failure, in Claude, pi and cofold, the backends that write one.
 - **Layer responsibilities** - sdk: the hold's rule · agent-claude, agent-pi, agent-acp, agent-cofold, bot, examples: where their queue starts.
 - **Source-of-truth files** - [`code://packages/sdk/src/sessions/catalog.ts`](../../../../packages/sdk/src/sessions/catalog.ts)
 
@@ -149,8 +149,8 @@ a client's chat/pendingMessageSet, pendingMessageRemoved or queuedMessagesReorde
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop holds the queue](task-01-a-stop-holds-the-queue.md) | doing | - |
-| [02 - Only a success starts the queue](task-02-only-a-success-starts-the-queue.md) | todo | 01 |
+| [01 - A stop holds the queue](task-01-a-stop-holds-the-queue.md) | done | - |
+| [02 - Only a success starts the queue](task-02-only-a-success-starts-the-queue.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -159,13 +159,13 @@ a client's chat/pendingMessageSet, pendingMessageRemoved or queuedMessagesReorde
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-stop-holds-the-queue.md](task-01-a-stop-holds-the-queue.md).
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** Claude defers a start while its CLI owes an answer, and pi while it lets a stopped turn go.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

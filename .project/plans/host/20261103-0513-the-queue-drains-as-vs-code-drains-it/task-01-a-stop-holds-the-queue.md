@@ -1,6 +1,6 @@
 ---
 title: A stop holds the queue
-status: doing
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -39,3 +39,9 @@ A message queued after the stop starts the head once the stopped turn has let go
 - The patch id of the applied commit is `ff7f255e`'s.
 
 ## Resume
+
+Built 2026-11-03 in `631c1419`.
+
+- `ff7f255e` applied with one conflict, in the bot's `finish` comment, where main had added the paragraph on `answered`.
+- The patch ids differ for that context alone: the removed and added lines of the two commits are the same 143 lines.
+- On `a8eff676`'s sources each case fails: the queued message starts at the stop.
