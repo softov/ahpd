@@ -165,7 +165,19 @@ function served(withDaemon = true) {
     const answer = await client.handle({ method: 'initialize', params: { clientId, protocolVersions: ['0.9.0'] } }) as { _meta?: Record<string, unknown> };
     return answer._meta ?? {};
   };
-  return { signedIn, asRoot, rootOf, heardOnRoot, handshakeOf, writes, refuseWith: (why: string) => { refuseWith = why; }, answerRestart: (yes: boolean) => { restartNeeded = yes; } };
+  return {
+    host,
+    signedIn,
+    asRoot,
+    rootOf,
+    heardOnRoot,
+    handshakeOf,
+    writes,
+    refuseWith: (why: string) => { refuseWith = why; },
+    answerRestart: (yes: boolean) => { restartNeeded = yes; },
+    /** A key the daemon's file no longer holds, as an edit outside this host makes one. */
+    drop: (key: string) => { const { [key]: _gone, ...rest } = held; held = rest; },
+  };
 }
 
 it('shows the daemon its keys beside the host own, and nobody else', async () => {
@@ -890,6 +902,42 @@ it('asks the daemon for its key alone when an undeclared key is beside it', asyn
 /** The root config's values, as one snapshot of the root holds them. */
 const valuesOf = (state: Record<string, unknown>): Record<string, unknown> =>
   (state.config as { values: Record<string, unknown> }).values;
+
+/*
+ * A key the daemon's file no longer holds is taken back by a replacement of
+ * the root's values, which is the protocol's only way to take one back: its
+ * reducer merges a config in, "Merges (or replaces) `config.values`", so a
+ * `null` sent as a merge is a value every client then holds under that key.
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/reducer.ts#L34
+ * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/root-channel.md#L100
+ */
+it('takes back a daemon key the file no longer holds, by replacing the root\'s values', async () => {
+  const { host, signedIn, rootOf, heardOnRoot, drop } = served();
+  const admin = await signedIn('admin', 'admin');
+  // A key of this host's own beside the daemon's, which the replacement keeps.
+  await admin.client.handle({
+    method: 'dispatchAction',
+    params: { channel: ROOT, action: { type: 'root/configChanged', config: { defaultShell: 'fish' } } },
+  });
+  await settle();
+  expect(valuesOf(await rootOf(admin.client))['daemonPort']).toBe(9187);
+
+  drop('daemonPort');
+  await host.daemonValuesMoved();
+  await settle();
+
+  const said = heardOnRoot(admin.heard).map((heard) => heard.action).filter((action) => action.type === 'root/configChanged');
+  const last = said.at(-1);
+  expect(last?.replace).toBe(true);
+  // The values it carries are every value the root holds, less the key that went.
+  const carried = last?.config as Record<string, unknown>;
+  expect(Object.hasOwn(carried, 'daemonPort')).toBe(false);
+  expect(carried['advancedTools']).toBe(false);
+  expect(carried['defaultShell']).toBe('fish');
+  const now = valuesOf(await rootOf(admin.client));
+  expect(Object.hasOwn(now, 'daemonPort')).toBe(false);
+  expect(now['defaultShell']).toBe('fish');
+});
 
 it('says restartNeeded in the root config to every reader of the root, once asked', async () => {
   const { signedIn, rootOf, heardOnRoot, handshakeOf, answerRestart } = served();

@@ -677,11 +677,23 @@ export function createRoot(ctx: HostContext): Root {
     const now = await daemonValues();
     for (const key of [...Object.keys(daemonProperties()), ...Object.keys(now)]) daemonSeen.add(key);
     const held = (ctx.stateOf(ROOT)?.config as { values?: Bag } | undefined)?.values ?? {};
-    // A key the file no longer holds is said as `null`, the way a client takes
-    // a key back, so a reader that merged the old value is told it is gone.
-    const moved = Object.fromEntries([...new Set([...Object.keys(now), ...Object.keys(held).filter(daemonHeld)])]
-      .filter((key) => Object.hasOwn(now, key) ? JSON.stringify(held[key]) !== JSON.stringify(now[key]) : held[key] !== null)
-      .map((key) => [key, Object.hasOwn(now, key) ? now[key] : null]));
+    const moved = Object.fromEntries(Object.keys(now)
+      .filter((key) => JSON.stringify(held[key]) !== JSON.stringify(now[key]))
+      .map((key) => [key, now[key]]));
+    /*
+     * A key the file no longer holds goes out as a replacement of the root's
+     * values, which is the protocol's only way to take a key back: its reducer
+     * merges a config in, "Merges (or replaces) `config.values`", so a `null`
+     * sent as a merge is a value every client then holds under that key.
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-root/reducer.ts#L34
+     * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/root-channel.md#L100
+     */
+    const gone = Object.keys(held).filter((key) => daemonHeld(key) && !Object.hasOwn(now, key));
+    if (gone.length > 0) {
+      const values = { ...rootConfig, ...now, ...accountValues(), ...(ctx.restartNeeded ? { [RESTART_KEY]: true } : {}) };
+      ctx.dispatch(ROOT, { type: 'root/configChanged', replace: true, config: values });
+      return;
+    }
     if (Object.keys(moved).length > 0) ctx.dispatch(ROOT, { type: 'root/configChanged', config: moved });
   };
 
