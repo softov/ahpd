@@ -1,7 +1,7 @@
 ---
 title: A pending message runs when its turn comes
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -107,8 +107,8 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 | [01 - A steering message runs as VS Code runs it](task-01-a-steering-message-runs-as-vs-code-runs.md) | done | - |
 | [02 - pi starts a queued message as a turn naming it](task-02-pi-starts-a-queued-message.md) | done | - |
 | [03 - A bot's steer goes into the open turn](task-03-a-bots-steer-goes-into-the-turn.md) | done | - |
-| [04 - A stop holds the queue](task-04-a-stop-holds-the-queue.md) | todo | - |
-| [05 - Idle steering runs ahead of the queue](task-05-idle-steering-runs-ahead.md) | todo | 04 |
+| [04 - A stop holds the queue](task-04-a-stop-holds-the-queue.md) | done | - |
+| [05 - Idle steering runs ahead of the queue](task-05-idle-steering-runs-ahead.md) | done | 04 |
 
 ## Risks and tradeoffs
 
@@ -118,8 +118,8 @@ chat/pendingMessageSet queued -> session.queue -> the backend's queue -> its tur
 
 ## Resume state
 
-- **Done so far:** tasks 01 to 03, 2026-11-02.
-- **Next action:** task 04.
+- **Done so far:** tasks 01 to 05, 2026-11-02.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the owed answer to a steering message is the backend's queued `chat/pendingMessageSet`, said as the client's own action.
 

@@ -1,6 +1,6 @@
 ---
 title: Idle steering runs ahead of the queue
-status: todo
+status: done
 depends: [task-04-a-stop-holds-the-queue.md]
 layer: host
 refs:
@@ -44,3 +44,14 @@ A steering message sent with no turn running is the next turn, ahead of every qu
 - The new cases fail on `0229216e` and pass after.
 - The sdk, agent-claude, agent-pi, agent-acp, agent-cofold and bot test files that queue a message pass.
 - `pnpm run typecheck` is clean.
+
+## Resume
+
+Built 2026-11-02.
+
+- On `ff7f255e`'s sources the host's and ACP's cases fail, the message refused, and cofold's runs the queued message first.
+- The host refused steering for a backend with no `steer`, ACP's and the examples', even with nothing running.
+- It refuses there only while a turn runs, which the plan's *Departures* records.
+- A backend shows a waiting steering message as the chat's steering message, and takes it back under that kind.
+- The example backends, `echo` and `notes`, take the kind too.
+- `agent-pi-truncate.test.ts` timed out twice under load and passed four runs alone; `agent-pi-fork.test.ts` times out on `0229216e` too.

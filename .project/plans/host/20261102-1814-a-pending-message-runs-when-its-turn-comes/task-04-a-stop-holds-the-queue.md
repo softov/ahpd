@@ -1,6 +1,6 @@
 ---
 title: A stop holds the queue
-status: todo
+status: done
 depends: []
 layer: agent-claude
 refs:
@@ -40,3 +40,10 @@ The queue stays, and a message queued after the stop starts its head once the st
 - The three new cases fail on `0229216e` and pass after.
 - The agent-claude, agent-pi and bot test files that queue a message pass.
 - `pnpm run typecheck` is clean.
+
+## Resume
+
+Built 2026-11-02.
+
+- On `0229216e`'s sources each new case fails: the queued message starts at the stop.
+- The bot's `finish` comment names the stop as its one caller without `next`.
