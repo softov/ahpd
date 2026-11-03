@@ -1181,8 +1181,8 @@ export function createSpawn(ctx: HostContext): Spawn {
        * and the refusal goes to the client that sent it. The dispatch is marked
        * taken, so the host leaves its answer to the backend.
        */
-      handed: (action) => {
-        const at = ctx.answering(String(action.type ?? '').startsWith('session/') ? uri : chatUri, action);
+      handed: (action, channel) => {
+        const at = ctx.answering(channel ?? (String(action.type ?? '').startsWith('session/') ? uri : chatUri), action);
         if (at === undefined) return undefined;
         at.taken = true;
         const handed: Handed = {
@@ -1201,6 +1201,13 @@ export function createSpawn(ctx: HostContext): Spawn {
         };
         handedFrom.set(handed, at);
         return handed;
+      },
+      /*
+       * An action on a channel this session's backend serves, said under this
+       * host's name for it, and the client's echo where it answers one.
+       */
+      emitOn: (channel, action, handed) => {
+        dispatch(channel, action, handed === undefined ? undefined : handedFrom.get(handed)?.origin);
       },
       emit: (channel, action, handed) => {
         /*
@@ -1226,6 +1233,20 @@ export function createSpawn(ctx: HostContext): Spawn {
          * chat's, which the chat's `chat/activityChanged` already carries.
          */
         if (action.type === 'session/activityChanged') return;
+        /*
+         * A chat's read and archived bits are this host's, laid over the status
+         * a backend says on the chat's row, as they are on the chat's state.
+         */
+        if (channel === 'session' && (action.type === 'session/chatUpdated' || action.type === 'session/chatAdded')) {
+          const row = (action.type === 'session/chatAdded' ? action.summary : action.changes) as Bag | undefined;
+          const named = String((action.type === 'session/chatAdded' ? row?.resource : action.chat) ?? '');
+          if (row !== undefined && typeof row.status === 'number') {
+            const status = (row.status & (Status.IsRead - 1)) | kept.chatFlags(idOf(uri), named);
+            action = action.type === 'session/chatAdded'
+              ? { ...action, summary: { ...row, status } }
+              : { ...action, changes: { ...row, status } };
+          }
+        }
         const where = channel === 'chat' ? chatUri : uri;
         /*
          * Who sent this turn, and a queued one finding out which turn it became.

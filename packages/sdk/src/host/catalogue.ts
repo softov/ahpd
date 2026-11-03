@@ -705,14 +705,16 @@ export function createCatalogue(ctx: HostContext): Catalogue {
    * its `_meta` off its backend, its folder, its plugins and its owner: each
    * read moves on its own clock, and the protocol has the producer say a
    * field as it changes. Asked where the session's row is, which is every
-   * move of the session or its chats.
+   * move of the session or its chats. A session whose backend serves its
+   * own changesets, as the proxy of a session in a machine does, has them
+   * said by that backend.
    * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/docs/guide/actions.md#L3
    */
   const factsMoved = (uri: string): void => {
     const state = ctx.stateOf(uri);
     if (state === undefined || !sessions.has(uri)) return;
     const { changesets } = ctx.changesetsOf(uri) as { changesets?: unknown[] };
-    if (JSON.stringify(changesets ?? []) !== JSON.stringify(state.changesets ?? [])) {
+    if (!ctx.relaysChangesets(uri) && JSON.stringify(changesets ?? []) !== JSON.stringify(state.changesets ?? [])) {
       ctx.dispatch(uri, { type: 'session/changesetsChanged', ...(changesets === undefined ? {} : { changesets }) });
     }
     const { _meta: meta } = ctx.describes(uri) as { _meta?: Bag };
@@ -1481,7 +1483,20 @@ export function createCatalogue(ctx: HostContext): Catalogue {
     const own = ctx.stateOf(chat);
     if (state !== undefined && own !== undefined) {
       const row = (Array.isArray(state.chats) ? state.chats as Bag[] : []).find((one) => one.resource === chat);
-      if (row !== undefined) {
+      /*
+       * A chat whose backend serves its row says the row itself, all but the
+       * read and archived bits of its status, which this host lays on.
+       */
+      const relayed = !subagents.has(chat) && held.chats.get(chat)?.channel !== undefined;
+      if (row !== undefined && relayed) {
+        const flags = (status: unknown): number => Number(status ?? 0) & ~(Status.IsRead - 1);
+        const now = flags(own.status);
+        if (now !== flags(row.status)) {
+          const status = (Number(row.status ?? Status.Idle) & (Status.IsRead - 1)) | now;
+          ctx.dispatch(session, { type: 'session/chatUpdated', chat, changes: { status } });
+        }
+      }
+      else if (row !== undefined) {
         const now = subagents.has(chat) ? subagentSummary(chat, subagents.get(chat) as LiveSubagent) : summaryIn(own, chat);
         const changes: Bag = {};
         for (const key of ['title', 'status', 'modifiedAt', 'activity', 'interactivity', 'origin']) {

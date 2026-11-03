@@ -162,7 +162,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // read back from.
       ...(mine === undefined ? {} : { config: mergedConfig(channel, theirs.config, mine) }),
       ...describes(channel),
-      ...changesetsOf(channel),
+      // The changesets of the folder this host serves, unless the backend
+      // serves the session's own, as the proxy of a session in a machine does.
+      ...(ctx.relaysChangesets(channel) ? {} : changesetsOf(channel)),
       // Required by the protocol and empty until somebody announces
       // themselves, which is a real answer: a session nobody has opened has
       // nobody in it.
@@ -195,7 +197,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         .filter((one) => one.parentToolCallId === undefined || String(one.parentToolCallId) === '')
       : [];
     const background = ctx.background.rows(chatUri);
-    const canvases = ctx.canvases.listOf(chatUri);
+    const canvases = talking.chat.channel === undefined ? ctx.canvases.listOf(chatUri) : undefined;
     const state: Bag = {
       ...talking.chat.chatState(),
       ...startedBy(session, chatUri),
@@ -211,9 +213,10 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       // session's answer and not the backend's - so it is read here and left
       // off when it cannot move, as the protocol's absence-means-false has it.
       ...(movable(chatUri) ? { movable: true } : {}),
-      // The canvases this chat shows, which are this host's and no
-      // backend's, laid over its state the way `movable` is - and absent
-      // rather than empty when there are none.
+      // The canvases this chat shows, which are this host's, laid over its
+      // state the way `movable` is - and absent rather than empty when there
+      // are none. A backend that serves the chat's canvases, as the proxy of
+      // a session in a machine does, lists them in its own state.
       ...(canvases === undefined ? {} : { canvases }),
     };
     /*
@@ -283,6 +286,19 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       ctx.flushDeltas();
       const fromSeq = ctx.serverSeq;
       const state = await served.channel.snapshot(channel, connection?.principal, connection?.clientId ?? '');
+      return structuredClone({ resource: channel, state, fromSeq });
+    }
+    /*
+     * A changeset or a canvas a session's backend serves: the proxy of a
+     * session in a machine, whose host there runs the session and answers its
+     * channels. `fromSeq` is read before it is asked, so what it says while it
+     * answers is replayed after the snapshot.
+     */
+    const backendChannel = ctx.relayedChannel(channel);
+    if (backendChannel !== undefined) {
+      ctx.flushDeltas();
+      const fromSeq = ctx.serverSeq;
+      const state = await backendChannel.snapshot();
       return structuredClone({ resource: channel, state, fromSeq });
     }
     /*
@@ -397,6 +413,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
       return value({ resource: channel, state: watching.state, fromSeq: ctx.serverSeq });
     }
     const at = changesetAt(channel);
+    // A changeset of a session in a machine is its host's there, which
+    // answers it while the session runs.
+    if (at && ctx.relaysChangesets(at.owner)) throw new RpcError(-32001, `No changeset at ${channel}`);
     if (at) {
       /*
        * Asked again, here, because this is the moment somebody reads one.
@@ -729,7 +748,9 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         activeClients: activeClientsOf(nameOf(id)),
         ...(ctx.contributing.length > 0 ? { serverTools: ctx.toolDefinitions(nameOf(id)) } : {}),
         ...describes(nameOf(id)),
-        ...changesetsOf(nameOf(id)),
+        // None for a session in a machine, whose changesets its host there
+        // lists once it runs.
+        ...(ctx.relaysChangesets(nameOf(id)) ? {} : changesetsOf(nameOf(id))),
         // What its backend offers, since nothing is running to say what this
         // session in particular was given, with what its clients handed it.
         ...(offered === undefined ? {} : { customizations: offered }),

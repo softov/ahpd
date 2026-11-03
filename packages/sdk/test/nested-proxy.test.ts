@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
 import { createHost } from '../src/host.js';
-import { chatUriFor, subagentChatUri } from '../src/host/channels.js';
+import { canvasResource, chatUriFor, subagentChatUri } from '../src/host/channels.js';
 import { posixUriOf, uriOf } from '../src/resources/fileuri.js';
 import { createPeer, receive } from '../src/rpc.js';
 import { machinePathOf } from '../src/machines/machine.js';
@@ -16,6 +16,7 @@ import type { BackgroundTask } from '../src/types/background.js';
 import type { NestedHost } from '../src/sessions/nested.js';
 import type { NestedStart } from '../src/types/computers.js';
 import type { HostOptions } from '../src/types/host.js';
+import type { ServedCanvases } from '../src/types/plugin.js';
 import type { Handler, Peer, Wire } from '../src/types/rpc.js';
 
 /*
@@ -84,8 +85,8 @@ const trusting = (): Peer & { seen: { method: string; params: Bag }[] } => ({
  * the frames a real host would parse, and its stdout is whatever that host
  * answers - a real `createPeer` on the other end.
  */
-const innerHost = (agent: Agent) => {
-  const host = createHost({ path: REPO_ROOT, agents: [agent] });
+const innerHost = (agent: Agent, more: Partial<HostOptions> = {}) => {
+  const host = createHost({ path: REPO_ROOT, agents: [agent], ...more });
   let toOuter: ((text: string) => void) | undefined;
   const ends = listeners();
   const stderr: ((chunk: unknown) => void)[] = [];
@@ -383,13 +384,15 @@ it('a chat waiting on a confirmation inside says it waits on somebody', async ()
 });
 
 /*
- * What the outer host says of a nested session itself, said by it alone: the
- * lead chat's row, from the chat it holds, and the canvases it serves. The
- * inner host's own are about channels no client out here reaches.
+ * What the host inside says of a nested session is relayed as it said it, the
+ * lead chat's row and the chat's canvases among it, under the names this
+ * session serves them by out here: the host running a session is the one
+ * producer of its state.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
  */
-it('keeps back the inner host\'s row for the lead chat and its canvases', async () => {
+it('relays the inner host\'s row for the lead chat and its canvases, under the outer names', async () => {
   const { agent } = scriptedAgent((session, turnId) => {
-    session.emit('chat', { type: 'chat/canvasesChanged', canvases: [{ resource: 'ahp-canvas:/inside', title: 'Inside' }] });
+    session.emit('chat', { type: 'chat/canvasesChanged', canvases: [{ resource: canvasResource(session.chatUri, 'board') }] });
     session.emit('chat', { type: 'chat/turnComplete', turnId, duration: 1 });
   });
   const inner = innerHost(agent);
@@ -399,9 +402,14 @@ it('keeps back the inner host\'s row for the lead chat and its canvases', async 
   session.begin('t1', 'do it');
   await until(() => seen.some(({ action }) => action.type === 'chat/turnComplete'));
   await settleInner();
-  expect(seen.filter(({ action }) => action.type === 'session/chatUpdated' || action.type === 'chat/canvasesChanged')).toEqual([]);
-  // Nor in the state the host seeds a chat with.
-  expect(session.chatState().canvases).toBeUndefined();
+  const outer = canvasResource('ahp-chat:/outer', 'board');
+  expect(seen.filter(({ action }) => action.type === 'chat/canvasesChanged').map(({ action }) => action.canvases))
+    .toEqual([[{ resource: outer }]]);
+  const rows = seen.filter(({ action }) => action.type === 'session/chatUpdated');
+  expect(rows.length).toBeGreaterThan(0);
+  expect(rows.map(({ action }) => action.chat)).toEqual(rows.map(() => 'ahp-chat:/outer'));
+  // And in the state the host seeds a chat with.
+  expect(session.chatState().canvases).toEqual([{ resource: outer }]);
   session.close();
 });
 
@@ -2082,4 +2090,105 @@ it('the catalogue rows of an inner subagent chat reach a client outside under th
   const named = JSON.stringify(peer.seen).match(/ahp-chat:\/\/subagent\/[^"\\]+/g) ?? [];
   expect([...new Set(named)]).toEqual([worker]);
   await host.close();
+});
+
+/**
+ * An outer host whose one backend runs its sessions through the proxy, in an
+ * inner host given `inside`, with one nested session made and a client out
+ * here watching it and its chat.
+ */
+const throughHost = async (inside: Partial<HostOptions>, outside: Partial<HostOptions> = {}) => {
+  const inner = innerHost(backend(20), inside);
+  const host = createHost({
+    path: REPO_ROOT,
+    agents: [nestedAgent(backend(), { plugins: PLUGINS, start: async () => inner.proc, timeoutMs: 500 })],
+    computers: { how: async () => ({ command: 'true', args: [] }) },
+    ...outside,
+  });
+  const peer = watching();
+  const client = host.accept(peer);
+  const uri = 'ahp-session:/nested';
+  await client.handle({ method: 'initialize', params: { clientId: 'window', protocolVersions: ['1.0.0'] } });
+  await client.handle({
+    method: 'createSession',
+    params: { channel: uri, provider: PROVIDER, config: { computer: 'computer://box' }, workingDirectories: [uriOf(REPO_ROOT)] },
+  });
+  const read = async (channel: string): Promise<Bag> =>
+    ((await client.handle({ method: 'subscribe', params: { channel } })) as { snapshot: { state: Bag } }).snapshot.state;
+  await read(uri);
+  await read(chatUriFor(uri));
+  // Up inside: the inner host has said the session it runs.
+  await until(() => inner.messages.some((message) => message.method === 'subscribe' && message.params?.channel === chatUriFor(uri)));
+  await settleInner();
+  /** Close both, the process inside going as its stop is sent. */
+  const close = async (): Promise<void> => {
+    const closing = host.close();
+    inner.crash(null, 'SIGTERM');
+    await closing;
+  };
+  return { inner, host, peer, client, uri, read, close };
+};
+
+/*
+ * A nested session's changesets are the host inside's, the one producer of
+ * the session's state: listed as it lists them, each served out here from it,
+ * and reviewed there.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
+ */
+it('lists a nested session\'s changesets as the host inside does, and serves and reviews each from there', async () => {
+  const file = { id: 'file:///inside/a.txt', edit: { after: { uri: 'file:///inside/a.txt', content: { uri: 'file:///inside/a.txt' } } } };
+  const reviews: { files: string[]; reviewed: boolean }[] = [];
+  const inside = {
+    scopes: () => [{ id: 'uncommitted', label: 'Uncommitted Changes', changeKind: 'uncommitted', reviewable: true }],
+    state: async () => ({ status: 'ready', files: [file] }),
+    summary: () => undefined,
+    review: (_dir: string, _session: string, _scope: string, files: string[], reviewed: boolean) => {
+      reviews.push({ files, reviewed });
+      return true;
+    },
+  } as unknown as NonNullable<HostOptions['changes']>;
+  // A folder out here with changesets of its own, which a nested session does not list.
+  const outside = {
+    scopes: () => [{ id: 'outside', label: 'Outside', changeKind: 'uncommitted' }],
+    state: async () => ({ status: 'ready', files: [] }),
+    summary: () => undefined,
+  } as unknown as NonNullable<HostOptions['changes']>;
+  const { peer, client, uri, read, close } = await throughHost({ changes: inside }, { changes: outside });
+  const changeset = `${uri}/changeset/uncommitted`;
+
+  const listed = ((await read(uri)).changesets ?? []) as Bag[];
+  expect(listed.map((one) => [one.label, one.uriTemplate])).toEqual([['Uncommitted Changes', changeset]]);
+  expect(((await read(changeset)).files as Bag[]).map((one) => one.id)).toEqual([file.id]);
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: changeset, clientSeq: 7, action: { type: 'changeset/filesReviewChanged', files: [file.id], reviewed: true } },
+  });
+  await until(() => peer.seen.some(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged'));
+  expect(reviews).toEqual([{ files: [file.id], reviewed: true }]);
+  const echo = peer.seen.find(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged');
+  expect(echo?.params.origin).toEqual({ clientId: 'window', clientSeq: 7 });
+  await close();
+});
+
+/*
+ * And its chat's canvases: listed as the host inside lists them, each served
+ * out here from it, and redrawn as the host inside redraws it.
+ */
+it('lists a nested chat\'s canvases as the host inside does, and serves each from there', async () => {
+  const served: ServedCanvases = { by: 'fixture' };
+  const { inner, peer, uri, read, close } = await throughHost({ pluginCanvases: [served] });
+  // Canvases are a key a window turns on, on the host that serves them.
+  const local = inner.host.accept(watching());
+  await local.handle({ method: 'initialize', params: { clientId: 'inside', protocolVersions: ['1.0.0'] } });
+  await local.handle({ method: 'dispatchAction', params: { channel: 'ahp-root://', action: { type: 'root/configChanged', config: { canvasesEnabled: true } } } });
+  const state = { instanceId: 'board-1', extensionId: 'com.brbyte.canvas', canvasId: 'board', title: 'Board', url: 'https://canvas.test/board' };
+  const resource = served.open?.(chatUriFor(uri), state) ?? '';
+  await until(() => peer.seen.some(({ params }) => params?.action?.type === 'chat/canvasesChanged'));
+
+  expect((await read(chatUriFor(uri))).canvases).toEqual([{ resource }]);
+  expect(await read(resource)).toMatchObject({ title: 'Board' });
+  served.update?.(resource, { ...state, title: 'Drawn again' });
+  await until(() => peer.seen.some(({ params }) => params?.channel === resource && params?.action?.canvas?.title === 'Drawn again'));
+  await close();
 });

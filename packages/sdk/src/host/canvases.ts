@@ -30,6 +30,11 @@ export interface CanvasHost {
    */
   holds(chat: string): boolean;
   /**
+   * Whether a chat's canvases are its backend's, which lists and serves them:
+   * the chat of a session in a machine, whose host there runs the session.
+   */
+  relays?(chat: string): boolean;
+  /**
    * Whether this host serves canvases at all.
    *
    * `canvasesEnabled`, which is off by default. Read at each call rather than
@@ -153,6 +158,9 @@ export function createCanvases(ctx: CanvasHost): Canvases {
     callable();
     if (!ctx.holds(chat)) {
       throw new Error(`plugin ${by}: openCanvas needs a chat this host has live, and ${chat} is not one`);
+    }
+    if (ctx.relays?.(chat) === true) {
+      throw new Error(`plugin ${by}: openCanvas needs a chat whose canvases this host lists, and ${chat}'s are listed by the host its session runs in`);
     }
     check('openCanvas', by, state);
     const resources = chats.get(chat) ?? [];
