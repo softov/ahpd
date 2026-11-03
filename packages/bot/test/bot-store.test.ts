@@ -179,7 +179,7 @@ it('reads the collections back, as a daemon that started again does', async () =
   expect(problems).toEqual([]);
 });
 
-it('keeps the persona in the record when its AGENTS.md cannot be read', async () => {
+it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('keeps the persona in the record when its AGENTS.md cannot be read', async () => {
   const { bots, store, problems } = await made();
   const folder = join(root, 'bots', 'motion');
   mkdirSync(folder, { recursive: true });

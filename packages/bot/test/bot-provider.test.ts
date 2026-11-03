@@ -1461,8 +1461,8 @@ it('removes nothing for a tombstone whose name is not a bot\'s', async () => {
     expect(existsSync(join(configDir, 'bots-gone', name))).toBe(true);
   }
   expect(existsSync(join(configDir, 'templates', 'kept.md'))).toBe(true);
-  expect(reported.join('\n')).toMatch(/bots-gone\/\.\.md was left where it is: \. is not a bot's name/);
-  expect(reported.join('\n')).toMatch(/bots-gone\/Foo\.md was left where it is: Foo is not a bot's name/);
+  expect(reported.join('\n')).toMatch(/bots-gone[\\/]\.\.md was left where it is: \. is not a bot's name/);
+  expect(reported.join('\n')).toMatch(/bots-gone[\\/]Foo\.md was left where it is: Foo is not a bot's name/);
 });
 
 it('keeps a tombstoned folder that still holds its record, and reports the spent name', async () => {
@@ -1487,8 +1487,8 @@ it('keeps a tombstoned folder that still holds its record, and reports the spent
   expect(existsSync(join(configDir, 'bots', 'motion', 'bot.md'))).toBe(true);
   expect(await listing(soft, 'bot://')).toEqual([]);
   expect(await call(soft, 'resourceRead', { uri: 'bot://motion' })).toMatchObject({ code: -32008 });
-  expect(reported.join('\n')).toMatch(/bots\/motion was kept: motion has a tombstone, so the name is spent/);
-  expect(reported.join('\n')).toMatch(/bots\/motion has a tombstone; the name is spent and it was left out/);
+  expect(reported.join('\n')).toMatch(/bots[\\/]motion was kept: motion has a tombstone, so the name is spent/);
+  expect(reported.join('\n')).toMatch(/bots[\\/]motion has a tombstone; the name is spent and it was left out/);
 });
 
 it('removes the rows and logs a deleted bot left in the older collections', async () => {
@@ -1536,9 +1536,9 @@ it('leaves a file the move cannot place, and reports it', async () => {
   expect(existsSync(join(configDir, 'bot-chats', 'anon.md'))).toBe(true);
   expect(existsSync(join(configDir, 'bot-chats', 'notes.txt'))).toBe(true);
   expect(existsSync(join(configDir, 'bot-sessions', 'anon.md'))).toBe(true);
-  expect(reported.join('\n')).toMatch(/bot-chats\/anon\.md was left where it is: it names no bot/);
-  expect(reported.join('\n')).toMatch(/bot-chats\/notes\.txt was left where it is: it is not a chat row or a log/);
-  expect(reported.join('\n')).toMatch(/bot-sessions\/anon\.md was left where it is: it names no bot/);
+  expect(reported.join('\n')).toMatch(/bot-chats[\\/]anon\.md was left where it is: it names no bot/);
+  expect(reported.join('\n')).toMatch(/bot-chats[\\/]notes\.txt was left where it is: it is not a chat row or a log/);
+  expect(reported.join('\n')).toMatch(/bot-sessions[\\/]anon\.md was left where it is: it names no bot/);
 });
 
 it('deletes a bot by removing bots/<slug>/, and keeps its work folder', async () => {
