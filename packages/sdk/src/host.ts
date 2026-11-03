@@ -576,6 +576,15 @@ export function createHost(options: HostOptions): Host {
    */
   const restarting = new Map<string, Promise<void>>();
   /**
+   * A stop that waits for the start of the turn it names, by its chat's
+   * channel, settled once the stop is applied or refused. A dispatch on that
+   * chat from any connection waits for it: the reference host applies a
+   * client's action when it comes and matches a stop to the active turn then,
+   * so what a client sends after a stop is applied after it.
+   * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480
+   */
+  const ahead = new Map<string, Promise<void>>();
+  /**
    * One token per session, by session URI: made the first time a
    * `session/configChanged` for it is applied, and dropped when the session
    * is disposed or a restart of it fails.
@@ -1439,7 +1448,7 @@ export function createHost(options: HostOptions): Host {
     ],
     replayable, leaves, seenBy, claims, agents, first: options.agents[0], connections, clientsChanged, relays: new Map(), holders, sessions, byChat, subagents, owners, names,
     leadOf, wheres, worktrees, worktreeOf, githubFacts, kept, offered, decided, about, terminals,
-    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, learned, starting,
+    madeFrom, origins, births, moves, listedMeta, browsable, broadcast, presence, beside, marks, lives, lifeOf, restarting, ahead, learned, starting,
     logs, detached, refuse,
     serverSeq: 0,
     closed: false, refusing: undefined, bareSessions: new Set<string>(), commandTurns: new Map<string, boolean>(), described, links,
