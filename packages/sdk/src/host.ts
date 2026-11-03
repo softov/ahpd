@@ -1277,6 +1277,19 @@ export function createHost(options: HostOptions): Host {
     watches.delete(channel);
     log(`released ${channel}`);
   };
+  /**
+   * Let a channel a session's backend serves go once no connection here
+   * watches it, so the host it lives on stops saying what moves on it here.
+   * Checked against every connection, as a watch is.
+   */
+  const releaseRelayed = (channel: string): void => {
+    const handle = ctx.relayedChannel(channel);
+    if (handle === undefined) return;
+    for (const connection of connections) {
+      if (connection.watching.has(channel)) return;
+    }
+    handle.release();
+  };
 
   /**
    * Let the state of a session this host is not running go, with its chats',
@@ -1484,6 +1497,7 @@ export function createHost(options: HostOptions): Host {
   ctx.canvases = createCanvases({
     dispatch: (channel, action) => dispatch(channel, action),
     holds: (chat) => byChat.has(chat),
+    relays: (chat) => byChat.get(chat)?.chat.channel !== undefined,
     // Read at each call, because a window may push the key while the daemon
     // runs, and a canvas that is already open stays open when it turns off.
     enabled: () => ctx.rootConfig.canvasesEnabled === true,
@@ -2233,6 +2247,7 @@ export function createHost(options: HostOptions): Host {
           // in as many words: it has no dispose command, so the last
           // unsubscribe is what releases the watcher.
           releaseWatch(channel);
+          releaseRelayed(channel);
           // And unsubscribing from a session is one of the three ways the
           // protocol says a client stops being active in it.
           leaves(channel, connection.clientId || 'anonymous');
@@ -2414,6 +2429,7 @@ export function createHost(options: HostOptions): Host {
           // Before anything else looks: a watch this client owned and never
           // subscribed to has nobody left to subscribe to it.
           for (const channel of [...watches.keys()]) releaseWatch(channel);
+          for (const channel of was) releaseRelayed(channel);
           /*
            * Gone without reconnecting, which is the second of the three ways -
            * and the one that waits rather than leaving at once. The connection

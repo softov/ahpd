@@ -1,13 +1,13 @@
 import type { ChangesetFile } from '@microsoft/agent-host-protocol';
 import { idOf, Status, uriFor } from '../sessions/catalog.js';
 import { localPath, uriOf } from '../resources/fileuri.js';
-import { chatUriFor } from './channels.js';
+import { chatOfCanvas, chatUriFor } from './channels.js';
 import { startsRead } from './chatactions.js';
 import type {
   ChangeWords, ChangeWordsAsk, ChangeWordsMode, ChangeWordsSetting, ChangesetOperationContext, ChangesetState,
 } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
-import type { Session } from '../types/session.js';
+import type { Session, SessionChannel } from '../types/session.js';
 import type { Held } from './state.js';
 import type { HostContext } from './context.js';
 
@@ -45,6 +45,8 @@ export interface Changesets {
   operationsMoved(uri: string): void;
   contentMoved(uri: string): Promise<void>;
   changesetsOf(uri: string): Bag;
+  relaysChangesets(uri: string): boolean;
+  relayedChannel(channel: string): SessionChannel | undefined;
   operationContext(asked: string, dir: string): ChangesetOperationContext;
   opKey(channel: string, id: string): string;
   inFlight: Set<string>;
@@ -471,9 +473,11 @@ export function createChangesets(ctx: HostContext): Changesets {
    * anything in a changeset's *content* moving: a turn starting disables every
    * operation on every changeset the session has, and nothing else would say
    * so. Only channels somebody is watching - a changeset nobody subscribed to
-   * has no buttons on screen to correct.
+   * has no buttons on screen to correct. A session whose backend serves its
+   * changesets has them said by that backend.
    */
   const operationsMoved = (uri: string): void => {
+    if (relaysChangesets(uri)) return;
     const done = new Set<string>();
     for (const connection of connections) {
       for (const channel of connection.watching) {
@@ -571,8 +575,11 @@ export function createChangesets(ctx: HostContext): Changesets {
    * before the read and keeps its files while it runs, which on a large
    * repository is seconds of `git status` and `git diff`. A changeset with no
    * completed result - a first read - has nothing to keep and is told nothing.
+   * A session whose backend serves its changesets has them said by that
+   * backend.
    */
   const contentMoved = async (uri: string): Promise<void> => {
+    if (relaysChangesets(uri)) return;
     const done = new Set<string>();
     for (const connection of connections) {
       for (const channel of connection.watching) {
@@ -647,8 +654,33 @@ export function createChangesets(ctx: HostContext): Changesets {
     return changesets.length > 0 ? { changesets } : {};
   };
 
+  /**
+   * Whether a session's changesets are its backend's to say: a session in a
+   * machine, whose host there runs it and lists them, which its proxy serves
+   * out here while it runs. Read off the running backend, and off the session's
+   * record while nothing runs it.
+   */
+  const relaysChangesets = (uri: string): boolean => {
+    const held = sessions.get(uri);
+    const lead = held === undefined ? undefined : leadOf(held);
+    return lead === undefined ? ctx.kept.nested?.(idOf(uri)) !== undefined : lead.channel !== undefined;
+  };
+
+  /**
+   * A changeset or canvas channel a running session's backend serves under
+   * this name, or nothing: the session is the one a changeset hangs off, or
+   * the one holding the chat a canvas names.
+   */
+  const relayedChannel = (channel: string): SessionChannel | undefined => {
+    const chat = chatOfCanvas(channel);
+    const cut = channel.indexOf('/changeset/');
+    const session = chat !== undefined ? ctx.sessionHolding(chat) : cut > 0 ? channel.slice(0, cut) : undefined;
+    const held = session === undefined ? undefined : sessions.get(session);
+    return held === undefined ? undefined : leadOf(held)?.channel?.(channel);
+  };
+
   return {
     dirOf, catalogueOf, changesetAt, changesetOf, operationsOf, operationsMoved, contentMoved,
-    changesetsOf, operationContext, opKey, inFlight, lastError, shown,
+    changesetsOf, relaysChangesets, relayedChannel, operationContext, opKey, inFlight, lastError, shown,
   };
 }

@@ -439,6 +439,11 @@ export interface Start {
   /** Where state actions go. The host routes them to the right channel. */
   emit: Emit;
   /**
+   * Where the actions of a channel `Session.channel` serves go, under the name
+   * the host asked for it by. `handed` is as for `emit`.
+   */
+  emitOn?: (channel: string, action: Bag, handed?: Handed) => void;
+  /**
    * The client's action the host handed this backend, for a backend that
    * answers it in a later turn of the event loop (`Handed`).
    *
@@ -448,8 +453,12 @@ export interface Start {
    * or a queued message handed over after the host waited on a machine or a
    * policy check, by the id `action` names. Undefined when `action` answers
    * no client, as for a call the host makes of its own accord.
+   *
+   * `channel` is the channel the action came on where it is one
+   * `Session.channel` serves; a session's action is otherwise the session's,
+   * and any other the chat's.
    */
-  handed?: (action: Bag) => Handed | undefined;
+  handed?: (action: Bag, channel?: string) => Handed | undefined;
   /**
    * Ask the host for a read-only chat for one of this backend's tool calls.
    *
