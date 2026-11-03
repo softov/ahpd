@@ -895,9 +895,9 @@ export function createHost(options: HostOptions): Host {
    * The dispatch being applied, answered by `origin` on a road that says so
    * itself, and the answer owed to that dispatch let go of.
    *
-   * Only an answer owed to `origin`'s own dispatch: a client that sends a
-   * call's result twice is refused the second, under the key the first is
-   * still owed its answer by.
+   * Only an answer owed to `origin`'s own dispatch: a turn begun or a message
+   * queued is owed under its channel, its kind and what it names, and another
+   * dispatch answered under that key leaves it owed.
    */
   const answeredBy = (channel: string, origin: Origin | undefined, action: Record<string, unknown>): void => {
     if (origin === undefined) return;

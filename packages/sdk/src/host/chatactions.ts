@@ -2128,8 +2128,11 @@ export function chatAction(
      * all: the agent is blocked on this call, and this is what unblocks
      * it.
      *
-     * The result goes back to the harness, which writes the tool result, and
-     * the client's action is the completion every client is told of.
+     * The result goes back to the harness, which runs on with it. What every
+     * client is told is the client's own action, said once the backend has
+     * taken it, and the call is completed once: the completion the harness
+     * reports after it is not said, as `dispatch` drops a backend's result
+     * for a call the chat holds completed.
      */
     case 'chat/toolCallComplete': {
       const toolCallId = String(action.toolCallId ?? '');
