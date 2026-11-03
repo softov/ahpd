@@ -181,12 +181,14 @@ export interface Wake {
   main(backSession: string): Answering | undefined;
   /**
    * A client stopped a main turn: each back session answering it stops its
-   * running turn too, and answers that main turn no more.
+   * running turn too, and keeps its link to the main chat, and a message still
+   * on its way to a back session for that turn is not sent.
    *
    * The reference host cancels the running turn of each subagent session of a
-   * chat whose turn is stopped, with the time it ran, and this host's back
+   * chat whose turn is stopped, with the time it ran, keeps their
+   * registrations, and drops the signals they had pending; this host's back
    * session is that subagent's: the work a stopped turn waited on.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1497
    */
   stopped(session: string, turnId: string): Promise<void>;
   /**
@@ -302,6 +304,45 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
    */
   const begun = new Map<string, { turn: string; at: number }>();
+  /**
+   * The messages on their way to a back session, by the main turn they belong
+   * to: how many are, and whether a client stopped that turn meanwhile.
+   *
+   * What a stop finds pending is dropped, as the reference host drops the
+   * stopped chat's pending subagent signals and keeps their registrations: a
+   * message not yet sent is not sent, and one whose send was under way has its
+   * back turn cancelled once the send is done.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1484-L1491
+   */
+  const delivering = new Map<string, { count: number; stopped: boolean }>();
+  /**
+   * Cancel the turn running in one back session, with the time this wake's
+   * clock gives for a turn it began there, or zero for one it did not, as a
+   * client measures a turn it stops by its own stopwatch.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
+   */
+  const cancelBack = async (back: string): Promise<void> => {
+    let looked: Looked;
+    try {
+      looked = await seams.look(back);
+    }
+    catch (error) {
+      seams.problem(`${back} was not stopped: ${reason(error)}`);
+      return;
+    }
+    if (looked.turn === undefined) return;
+    const clock = begun.get(back);
+    const duration = clock?.turn === looked.turn ? Date.now() - clock.at : 0;
+    let refused: string | undefined;
+    try {
+      refused = await seams.send(looked.chat, { type: 'chat/turnCancelled', turnId: looked.turn, duration });
+    }
+    catch (error) {
+      refused = reason(error);
+    }
+    if (refused !== undefined) seams.problem(`${back}'s turn was not stopped: ${refused}`);
+  };
 
   /**
    * The sessions this host already had, each with the bot that started it.
@@ -489,31 +530,17 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
     main: (backSession) => answering.get(backSession),
 
     stopped: async (session, turnId) => {
+      // What is on its way to a back session for this turn is dropped.
+      const pending = delivering.get(`${session} ${turnId}`);
+      if (pending !== undefined) pending.stopped = true;
+      /*
+       * Each back session answering the turn keeps its link to the main chat,
+       * as the reference host keeps a stopped chat's subagent registrations,
+       * and has its running turn cancelled.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1942
+       */
       const backs = [...answering].filter(([, held]) => held.session === session && held.turnId === turnId).map(([back]) => back);
-      for (const back of backs) {
-        // Answered by nothing more: what the back session says after the stop
-        // is about a turn that is over.
-        answering.delete(back);
-        let looked: Looked;
-        try {
-          looked = await seams.look(back);
-        }
-        catch (error) {
-          seams.problem(`${back} was not stopped: ${reason(error)}`);
-          continue;
-        }
-        if (looked.turn === undefined) continue;
-        const clock = begun.get(back);
-        const duration = clock?.turn === looked.turn ? Date.now() - clock.at : 0;
-        let refused: string | undefined;
-        try {
-          refused = await seams.send(looked.chat, { type: 'chat/turnCancelled', turnId: looked.turn, duration });
-        }
-        catch (error) {
-          refused = reason(error);
-        }
-        if (refused !== undefined) seams.problem(`${back}'s turn was not stopped: ${refused}`);
-      }
+      for (const back of backs) await cancelBack(back);
     },
 
     /*
@@ -591,86 +618,102 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
     },
 
     woken: async (message, handle) => {
-      // The sessions this host already had, before one is started here: a
-      // session that is theirs is answered with its bot's connectors, and a
-      // message is what may build its first tool list.
-      await filled;
-      const chat = await chatOf(message.session);
-      if (chat === undefined) {
+      // On its way from here, so a stop of the main turn meanwhile finds it.
+      const key = `${message.session} ${message.turnId}`;
+      const delivery = delivering.get(key) ?? { count: 0, stopped: false };
+      delivery.count += 1;
+      delivering.set(key, delivery);
+      try {
+        // The sessions this host already had, before one is started here: a
+        // session that is theirs is answered with its bot's connectors, and a
+        // message is what may build its first tool list.
+        await filled;
+        const chat = await chatOf(message.session);
+        if (chat === undefined) {
+          /*
+           * A chat no read of a bot opened, so nothing says which bot the person
+           * is talking to. The turn ends here rather than staying open: there is
+           * nothing behind this chat to answer it, which is what a chat with no
+           * bot was before there was a wake at all.
+           */
+          seams.problem(`${message.session} is a chat no bot on this host opened`);
+          handle.end();
+          return;
+        }
+        const { bot, owner } = chat;
+        const name = nameFor(bot, message);
+        if (!isFilledName(name)) {
+          handle.notice(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
+          return;
+        }
+        let session: string;
+        let looked: Looked;
+        try {
+          session = await sessionNamed(bot, owner, userOf(owner), name);
+          looked = await seams.look(session);
+        }
+        catch (error) {
+          handle.notice(`${bot.name} was not woken: ${reason(error)}`);
+          return;
+        }
+        // A message whose main turn a client stopped on its way is not sent.
+        if (delivery.stopped) return;
         /*
-         * A chat no read of a bot opened, so nothing says which bot the person
-         * is talking to. The turn ends here rather than staying open: there is
-         * nothing behind this chat to answer it, which is what a chat with no
-         * bot was before there was a wake at all.
+         * What changes from message to message, said with the message: the main
+         * chat the person is waiting in, who they are, and when they said it. The
+         * system prompt is the bot's and never changes, so nothing of this goes
+         * there. Only the back session is given it - `message.text` stays the
+         * person's own words, which is what the main chat keeps and shows.
          */
-        seams.problem(`${message.session} is a chat no bot on this host opened`);
-        handle.end();
-        return;
+        const block = contextBlock([
+          ['main chat', `bot:/${bot.id}/${userOf(owner)}`],
+          ['from', userOf(owner)],
+          ['time', timeWithOffset(new Date())],
+        ]);
+        /*
+         * Held before the message is sent, so a back session that answers and
+         * ends inside the send still finds the turn that is waiting on it. A steer
+         * into a session already working names the open turn it went into, which
+         * is the turn the answer after it belongs to, and keeps what was posted
+         * into that turn before the steer.
+         */
+        const before = answering.get(session);
+        const posted = before !== undefined && before.handle === handle && before.turnId === message.turnId && before.posted === true;
+        answering.set(session, {
+          session: message.session, turnId: message.turnId, handle, bot: bot.name, ...(posted ? { posted } : {}),
+        });
+        /*
+         * The open turn shows what it is waiting on: the back session's chat, as
+         * a subagent call a client opens. The title is the bot's, which is who
+         * the person is talking to; a steer into the open turn keeps the call it
+         * already shows.
+         */
+        handle.working?.(looked.chat, bot.name);
+        const action = looked.working ? steer(block, message) : turn(block, message);
+        if (action['type'] === 'chat/turnStarted') begun.set(session, { turn: String(action['turnId']), at: Date.now() });
+        let refused: string | undefined;
+        try {
+          refused = await seams.send(looked.chat, action);
+        }
+        catch (error) {
+          // A send that could not be made at all - the connection's own refusal,
+          // rather than the host's answer to the action: the message reached
+          // nobody, which the person is owed in the same words.
+          refused = reason(error);
+        }
+        if (refused !== undefined) {
+          // Nothing was said, so nothing is coming: the turn ends here rather
+          // than waiting for an answer this session never received.
+          answering.delete(session);
+          handle.notice(`${bot.name} was not woken: ${refused}`);
+          return;
+        }
+        // A send a stop came during: the turn it began is stopped as well.
+        if (delivery.stopped) await cancelBack(session);
       }
-      const { bot, owner } = chat;
-      const name = nameFor(bot, message);
-      if (!isFilledName(name)) {
-        handle.notice(`${name} is not a name a back session can have: lowercase letters, digits and a dash, at most eighty`);
-        return;
-      }
-      let session: string;
-      let looked: Looked;
-      try {
-        session = await sessionNamed(bot, owner, userOf(owner), name);
-        looked = await seams.look(session);
-      }
-      catch (error) {
-        handle.notice(`${bot.name} was not woken: ${reason(error)}`);
-        return;
-      }
-      /*
-       * What changes from message to message, said with the message: the main
-       * chat the person is waiting in, who they are, and when they said it. The
-       * system prompt is the bot's and never changes, so nothing of this goes
-       * there. Only the back session is given it - `message.text` stays the
-       * person's own words, which is what the main chat keeps and shows.
-       */
-      const block = contextBlock([
-        ['main chat', `bot:/${bot.id}/${userOf(owner)}`],
-        ['from', userOf(owner)],
-        ['time', timeWithOffset(new Date())],
-      ]);
-      /*
-       * Held before the message is sent, so a back session that answers and
-       * ends inside the send still finds the turn that is waiting on it. A steer
-       * into a session already working names the open turn it went into, which
-       * is the turn the answer after it belongs to, and keeps what was posted
-       * into that turn before the steer.
-       */
-      const before = answering.get(session);
-      const posted = before !== undefined && before.handle === handle && before.turnId === message.turnId && before.posted === true;
-      answering.set(session, {
-        session: message.session, turnId: message.turnId, handle, bot: bot.name, ...(posted ? { posted } : {}),
-      });
-      /*
-       * The open turn shows what it is waiting on: the back session's chat, as
-       * a subagent call a client opens. The title is the bot's, which is who
-       * the person is talking to; a steer into the open turn keeps the call it
-       * already shows.
-       */
-      handle.working?.(looked.chat, bot.name);
-      const action = looked.working ? steer(block, message) : turn(block, message);
-      if (action['type'] === 'chat/turnStarted') begun.set(session, { turn: String(action['turnId']), at: Date.now() });
-      let refused: string | undefined;
-      try {
-        refused = await seams.send(looked.chat, action);
-      }
-      catch (error) {
-        // A send that could not be made at all - the connection's own refusal,
-        // rather than the host's answer to the action: the message reached
-        // nobody, which the person is owed in the same words.
-        refused = reason(error);
-      }
-      if (refused !== undefined) {
-        // Nothing was said, so nothing is coming: the turn ends here rather
-        // than waiting for an answer this session never received.
-        answering.delete(session);
-        handle.notice(`${bot.name} was not woken: ${refused}`);
+      finally {
+        delivery.count -= 1;
+        if (delivery.count === 0) delivering.delete(key);
       }
     },
 

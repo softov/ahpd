@@ -158,6 +158,8 @@ async function sitting(
   const during: (Record<string, string> | undefined)[] = [];
   /** What a start is refused with, where the host refuses one. */
   let startRefusal: string | undefined;
+  /** What a held start waits on, for a case that acts while one is still running. */
+  let held: Promise<void> | undefined;
   /** What a start is refused with after it has named the session. */
   let lateRefusal: string | undefined;
   /** Whether the start names the session first, as a host built here does. */
@@ -186,6 +188,7 @@ async function sitting(
       // Asked the way the host asks it at the first tool list, with the start
       // still running.
       during.push(wake.bindings(uri));
+      if (held !== undefined) await held;
       if (lateRefusal !== undefined) throw new Error(lateRefusal);
       owners.set(uri, wanted.owner);
       at.set(uri, `ahp-chat:/${minted}`);
@@ -219,6 +222,12 @@ async function sitting(
     wake, backs, starts, sent, problems, working, running, store, during,
     refuseStart: (line: string) => { startRefusal = line; },
     refuseStartLate: (line: string) => { lateRefusal = line; },
+    /** Hold every start from here, and answer with what lets them go. */
+    holdStart: (): (() => void) => {
+      let go = (): void => {};
+      held = new Promise<void>((resolve) => { go = () => { resolve(); }; });
+      return go;
+    },
     startWithoutNaming: () => { namesFirst = false; },
     refuseSend: (line: string) => { sendRefusal = line; },
   };
@@ -364,9 +373,10 @@ it('steers a message into the back session that is already working', async () =>
 /*
  * A stopped main turn stops the work behind it: the reference host cancels the
  * running turn of each subagent session of a chat whose turn is stopped, with
- * the time it ran (agentSideEffects.ts L1470-L1483 at a4e689ae).
+ * the time it ran, and keeps their registrations (agentSideEffects.ts L1942,
+ * L1470-L1486 at a4e689ae).
  */
-it('stops the back session\'s running turn when its main turn is stopped, and answers that turn no more', async () => {
+it('stops the back session\'s running turn when its main turn is stopped, and keeps its link', async () => {
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
@@ -381,7 +391,29 @@ it('stops the back session\'s running turn when its main turn is stopped, and an
     action: { type: 'chat/turnCancelled', turnId: begun?.action['turnId'] },
   });
   expect(typeof one.sent.at(-1)?.action['duration']).toBe('number');
-  // What the back session says after the stop answers nothing.
+  // The back session stays linked to the main chat it was answering.
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ session: CHAT, turnId: 't1' });
+});
+
+/*
+ * What a stop finds on its way to a back session is dropped, as the reference
+ * host drops a stopped chat's pending subagent signals (agentSideEffects.ts
+ * L1487-L1491 at a4e689ae): a message whose back session was still starting is
+ * not sent.
+ */
+it('sends no message a stop finds still on its way to a starting back session', async () => {
+  const one = await sitting();
+  const said = turn();
+  const release = one.holdStart();
+  const woke = one.wake.woken(message('t1', 'hello'), said.handle);
+  await new Promise((done) => { setTimeout(done, 5); });
+
+  await one.wake.stopped(CHAT, 't1');
+  release();
+  await woke;
+
+  expect(one.starts).toHaveLength(1);
+  expect(one.sent).toEqual([]);
   expect(one.wake.main('ahp-session:/1')).toBeUndefined();
   expect(one.wake.posted('ahp-session:/1', 'late')).toBe(false);
   expect(said.posts).toEqual([]);
@@ -455,7 +487,8 @@ it('stops a back turn the main chat shows, with the time it ran', async () => {
     action: { type: 'chat/turnCancelled', turnId: 'back-t1' },
   });
   expect(Number(one.sent.at(-1)?.action['duration'])).toBeGreaterThan(0);
-  expect(one.wake.main('ahp-session:/1')).toBeUndefined();
+  // The back session stays linked to the main chat it was answering.
+  expect(one.wake.main('ahp-session:/1')).toMatchObject({ session: CHAT, turnId: 't1' });
 });
 
 it('starts a session of its own for each message when the name holds {turn}', async () => {
