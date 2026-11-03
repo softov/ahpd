@@ -1,6 +1,6 @@
 ---
 title: A stop stops the turn it names
-status: doing
+status: done
 depends: []
 layer: host
 refs:
@@ -46,3 +46,9 @@ A stop naming no turn, and a client's tool result, go to every client of the cha
 - `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-03 in `0b7e8ff0`.
+
+- On `a8eff676`'s sources the empty and missing stops stop the turn, and the result is said under `t1`.
+- `notes.test.ts` and a worker case of `subagent-chat.test.ts` stopped a running turn with `turnId: ''`.
+- They name the running turn, read from the chat, as a client's stop does.

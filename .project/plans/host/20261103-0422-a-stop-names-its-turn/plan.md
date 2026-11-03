@@ -1,7 +1,7 @@
 ---
 title: A stop names its turn
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -122,7 +122,7 @@ client chat/toolCallComplete -> the backend takes it -> said as sent
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop stops the turn it names](task-01-a-stop-stops-the-turn-it-names.md) | doing | - |
+| [01 - A stop stops the turn it names](task-01-a-stop-stops-the-turn-it-names.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -131,13 +131,13 @@ client chat/toolCallComplete -> the backend takes it -> said as sent
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-stop-stops-the-turn-it-names.md](task-01-a-stop-stops-the-turn-it-names.md).
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the host fills a stop's missing `duration`, which this plan keeps.
 
 ## Final verification checklist
 
-- [ ] Each new or changed case fails on `a8eff676` for the reason it names, and passes after the change.
-- [ ] The touched test files pass.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new or changed case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] The touched test files pass.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
