@@ -6,7 +6,7 @@ import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.
 import { piAgent } from '../src/agent.js';
 import { loadPi } from '../src/pi.js';
 import { piSession } from '../src/session.js';
-import { failedReply, promptOf, resumeOrCreate } from '../src/backend.js';
+import { promptOf, resumeOrCreate, resumePoint } from '../src/backend.js';
 import { answer, driveCall, fakePi, opened, root, sessionOnDisk, settled, streamed } from './fake-pi.js';
 
 // A session from disk -------------------------------------------------------
@@ -136,13 +136,13 @@ it('resumes again from a failed reply whose earlier resume threw before pi wrote
   const disk = await sessionOnDisk(sessionDir);
   const { SessionManager } = await loadPi();
   const store = SessionManager.open(disk.file, sessionDir, root);
-  expect(failedReply(store)).toEqual({ id: disk.secondEnd, edited: false });
+  expect(resumePoint(store)).toEqual({ drop: disk.secondEnd });
   // The first resume took the reply out of the model's context, then threw.
   store.appendContextEdit(disk.secondEnd, null);
-  expect(failedReply(store)).toEqual({ id: disk.secondEnd, edited: true });
+  expect(resumePoint(store)).toEqual({});
   // A reply after it is a conversation that moved on.
   store.appendMessage(answer([{ type: 'text', text: 'done' }], 'stop'));
-  expect(failedReply(store)).toBeUndefined();
+  expect(resumePoint(store)).toBeUndefined();
 });
 
 it('keeps the turns from pi file in the record of a session resumed and run again', async () => {
@@ -195,12 +195,12 @@ it('reads back what a turn used as the sum of its answers, as the turn said it l
   expect(turns[0]?.usage).toMatchObject({ inputTokens: 20, outputTokens: 10, model: 'anthropic/claude-opus-5' });
 });
 
-it('reads a call with no result back as one its turn ended around, and that turn as stopped', async () => {
+it('reads a call with no result back as one its turn ended around, and an earlier turn that held it as stopped', async () => {
   /*
    * A call pi's file holds no result for never finished. The protocol's
    * reducer holds a call still open when its turn ends as cancelled and
    * skipped, and the reference reads a transcript's call with no result back
-   * that way, with the turn that held it cancelled.
+   * that way, with the turn that held it cancelled when a turn came after it.
    * https://github.com/microsoft/vscode/blob/1306698e328e5e531f5e632301d30020aa994eff/src/vs/platform/agentHost/node/claude/claudeReplayMapper.ts#L492-L514
    */
   const { replayEntries } = await import('../src/replay.js');
@@ -211,10 +211,73 @@ it('reads a call with no result back as one its turn ended around, and that turn
       type: 'message', id: 'a1', parentId: 'u1', timestamp: at,
       message: answer([{ type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }], 'toolUse'),
     },
+    { type: 'message', id: 'u2', parentId: 'a1', timestamp: at, message: { role: 'user', content: 'again', timestamp: 0 } },
+    { type: 'message', id: 'a2', parentId: 'u2', timestamp: at, message: answer([{ type: 'text', text: 'Fine' }], 'stop') },
   ] as never);
-  expect(turns.map((one) => one.state)).toEqual(['cancelled']);
+  expect(turns.map((one) => one.state)).toEqual(['cancelled', 'complete']);
   const call = (turns[0]?.parts.find((part) => part.kind === 'toolCall') as Bag | undefined)?.toolCall as Bag | undefined;
   expect(call).toMatchObject({ toolCallId: 'call-1', status: 'cancelled', reason: 'skipped' });
+});
+
+/*
+ * A file that ends while its last turn's request still ran reads that turn
+ * back interrupted, as VS Code's reader ends one whose request is still active:
+ * in error, its last part `executionInterrupted` and resumable, whether the
+ * last answer asked for a tool with no result, every tool returned and the
+ * model said nothing after, or the prompt has no answer at all.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
+ * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
+ */
+it.each<[string, string[], string | undefined]>([
+  ['an answer that asked for a tool with no result', ['toolUse'], 'cancelled'],
+  ['every tool returned and nothing after', ['toolUse', 'result'], 'completed'],
+  ['a prompt with no answer', [], undefined],
+])('reads a file that ends at %s back as interrupted and resumable', async (_what, tail, status) => {
+  const { replayEntries } = await import('../src/replay.js');
+  const at = new Date().toISOString();
+  const entries: Bag[] = [{ type: 'message', id: 'u1', parentId: null, timestamp: at, message: { role: 'user', content: 'go', timestamp: 0 } }];
+  if (tail.includes('toolUse')) {
+    entries.push({
+      type: 'message', id: 'a1', parentId: 'u1', timestamp: at,
+      message: answer([{ type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: 'a.ts' } }], 'toolUse'),
+    });
+  }
+  if (tail.includes('result')) {
+    entries.push({
+      type: 'message', id: 'r1', parentId: 'a1', timestamp: at,
+      message: { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: [{ type: 'text', text: 'export {};' }], isError: false, timestamp: 0 },
+    });
+  }
+  const { turns } = replayEntries(entries as never);
+  expect(turns.map((one) => one.state)).toEqual(['error']);
+  const call = (turns[0]?.parts.find((part) => part.kind === 'toolCall') as Bag | undefined)?.toolCall as Bag | undefined;
+  expect(call?.status).toBe(status);
+  expect(turns[0]?.parts.at(-1)).toEqual({
+    kind: 'error',
+    error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+    resumable: true,
+  });
+});
+
+it('resumes a cut-off request from where the file ends, and a failed or cut-off answer once it is dropped', async () => {
+  const sessionDir = join(root, 'pi');
+  const disk = await sessionOnDisk(sessionDir);
+  const { SessionManager } = await loadPi();
+  const store = SessionManager.open(disk.file, sessionDir, root);
+  // A failed reply is dropped from the model's context, and the model asked again.
+  expect(resumePoint(store)).toEqual({ drop: disk.secondEnd });
+  // A prompt with no answer, and a tool's result with nothing after, go on as they are.
+  store.appendMessage({ role: 'user', content: 'go on', timestamp: Date.now() });
+  expect(resumePoint(store)).toEqual({});
+  const asked = store.appendMessage(answer([{ type: 'toolCall', id: 'call-9', name: 'read', arguments: { path: 'b.ts' } }], 'toolUse'));
+  expect(resumePoint(store)).toEqual({ drop: asked });
+  store.appendMessage({
+    role: 'toolResult', toolCallId: 'call-9', toolName: 'read', content: [{ type: 'text', text: 'export {};' }], isError: false, timestamp: Date.now(),
+  } as never);
+  expect(resumePoint(store)).toEqual({});
+  // An answer that ended the request leaves nothing to resume.
+  store.appendMessage(answer([{ type: 'text', text: 'done' }], 'stop'));
+  expect(resumePoint(store)).toBeUndefined();
 });
 
 it('marks only the last turn read back resumable, when it failed on a model call', async () => {
