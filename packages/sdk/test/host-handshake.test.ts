@@ -356,6 +356,26 @@ describe('what it will not pretend', () => {
   });
 });
 
+describe('a connection accepted with what the listener knew', () => {
+  it('keeps the socket number, the address, the forwarded claim and the connect time', async () => {
+    const host = serving('/home/softov');
+    const accepted = host.accept(peer(), undefined, false, { socket: 7, address: '127.0.0.1', forwardedFor: '203.0.113.9' });
+    await accepted.handle(hello(['0.9.0']));
+
+    const [row] = host.clientRegistry.connected();
+    expect(row).toMatchObject({ socket: 7, clientId: 'probe', address: '127.0.0.1', forwardedFor: '203.0.113.9' });
+    expect(typeof row?.connectedAt).toBe('number');
+  });
+
+  it('lists a connection that came in with nothing said about it without a socket or a claim', async () => {
+    const host = serving('/home/softov');
+    host.accept(peer());
+    const [row] = host.clientRegistry.connected();
+    expect(row?.socket).toBeUndefined();
+    expect(row?.forwardedFor).toBeUndefined();
+  });
+});
+
 describe('a client that dropped, coming back', () => {
   it('replays what it missed, and nothing it already had', async () => {
     const host = serving('/home/softov');

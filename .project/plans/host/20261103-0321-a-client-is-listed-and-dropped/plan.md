@@ -98,7 +98,7 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A connection knows its address](task-01-a-connection-knows-its-address.md) | todo | - |
+| [01 - A connection knows its address](task-01-a-connection-knows-its-address.md) | implemented | - |
 | [02 - The host lists and drops its clients](task-02-the-host-lists-and-drops-clients.md) | todo | 01 |
 | [03 - A row counts frames and bytes](task-03-a-row-counts-frames-and-bytes.md) | todo | 02 |
 
@@ -112,9 +112,9 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-a-connection-knows-its-address.md](task-01-a-connection-knows-its-address.md).
-- **Open questions:** none.
+- **Done so far:** task 01 implemented. `Opened` and `Connection` hold the socket number, the address, the forwarded claim and the connect time, on all four transports, and `Host.clientRegistry.connected()` answers the rows.
+- **Next action:** [task-02-the-host-lists-and-drops-clients.md](task-02-the-host-lists-and-drops-clients.md).
+- **Open questions:** task 02 says to add `clients: ClientRegistry` to `Host`, and that name is taken by `Clients`, the resource-provider view. Its `watch(client, uri, options)` would clash with `ClientRegistry.watch(onChange)` on any merged type. The build used `clientRegistry`, named for its type as `HostOptions.nodes` is. If you want another name, it is one property and one export to rename.
 - **Watch out for:** `acceptConnection` in `run.ts` and `overStdio` both call `host.accept` without `opened`. Pass it on both paths.
 
 ## Final verification checklist

@@ -36,7 +36,7 @@ import { debugLogs } from './sessions/debuglogs.js';
 import type { Terminal } from './types/terminals.js';
 import type { SessionConfigAnswerer, SessionConfigAsk } from './types/completions.js';
 import type { MessageAttachment, MessageFrom } from './types/session.js';
-import type { Connection, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
+import type { Connection, ConnectedClient, Credential, Host, HostOptions, HostTool, TitleStrategy, ToolCall } from './types/host.js';
 import type { Principal } from './types/users.js';
 import type { Summary } from './types/catalog.js';
 import type { Agent, BoundTool, Listed, McpServer } from './types/agent.js';
@@ -44,6 +44,7 @@ import type { ToolsEndpoint } from './tools/server.js';
 import type { Bag } from './types/common.js';
 import type { Session, SubagentChat, SubagentRequest } from './types/session.js';
 import type { Peer } from './types/rpc.js';
+import type { Opened } from './types/listen.js';
 import type { Owner } from './types/usage.js';
 import type { StoredWorktree } from './types/sessions.js';
 import type { ChannelSubscriber, PublishOptions } from './types/plugin.js';
@@ -1787,8 +1788,30 @@ export function createHost(options: HostOptions): Host {
     return undefined;
   };
 
+  /**
+   * One open connection, as the client registry lists it.
+   *
+   * Read at each call rather than kept: a row exists while its socket does,
+   * and the connection is where each field is as it stands now, so a client
+   * that signed in or subscribed after it arrived is shown that way.
+   */
+  const clientRow = (connection: Connection): ConnectedClient => ({
+    ...(connection.socket === undefined ? {} : { socket: connection.socket }),
+    clientId: connection.clientId,
+    ...(clientNames.get(connection.clientId) === undefined ? {} : { name: clientNames.get(connection.clientId) as string }),
+    ...(connection.address === undefined ? {} : { address: connection.address }),
+    ...(connection.forwardedFor === undefined ? {} : { forwardedFor: connection.forwardedFor }),
+    ...(connection.protocolVersion === undefined ? {} : { protocolVersion: connection.protocolVersion }),
+    ...(connection.locale === undefined ? {} : { locale: connection.locale }),
+    ...(connection.principal === undefined ? {} : { principal: connection.principal }),
+    watching: [...connection.watching],
+    connectedAt: connection.connectedAt,
+  });
+
   return {
     clients,
+    // In arrival order, which is the order the set iterates in.
+    clientRegistry: { connected: () => [...connections].map(clientRow) },
     /*
      * Replaced whole, and every running session told.
      *
@@ -1996,10 +2019,15 @@ export function createHost(options: HostOptions): Host {
      */
     markRestartNeeded: () => { ctx.markRestart(); },
     daemonValuesMoved: () => ctx.daemonValuesMoved(),
-    accept(peer: Peer, principal?: Principal, root?: boolean) {
+    accept(peer: Peer, principal?: Principal, root?: boolean, opened?: Opened) {
       const connection: Connection = {
         peer, clientId: '', watching: new Set<string>(),
         tokens: new Map<string, Credential>(), aliases: new Map<string, string>(),
+        connectedAt: Date.now(),
+        // Where the socket came from, when the listener that opened it said.
+        ...(opened?.socket === undefined ? {} : { socket: opened.socket }),
+        ...(opened?.address === undefined ? {} : { address: opened.address }),
+        ...(opened?.forwardedFor === undefined ? {} : { forwardedFor: opened.forwardedFor }),
         /*
          * A socket that arrived on a personal connection token is already
          * somebody, so the gate reads this before the first command rather

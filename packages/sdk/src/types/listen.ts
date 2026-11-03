@@ -28,18 +28,30 @@ export interface Raw {
 }
 
 /**
- * Where a connection came in, and which node it is.
+ * Where a connection came in, what it is, and which node it is.
  *
  * The door decides who may open a connection, and the two runtimes hand the
  * request over separately, so the rest of what it carried arrives here: the
- * URL, which names a session's socket, and the node whose own token admitted
- * it - always both or neither, because only the join path admits a node.
+ * URL, which names a session's socket, the node whose own token admitted it -
+ * always both or neither, because only the join path admits a node - and what
+ * the runtime could say about the socket itself.
  */
 export interface Opened {
   /** The URL it was opened on, as the request carried it. */
   url?: string;
   /** The node whose own token admitted it, on the join path. */
   node?: string;
+  /** The number this socket was given, the one `Tap` reports each frame under. */
+  socket?: number;
+  /** The remote address the runtime reported for the socket. */
+  address?: string;
+  /**
+   * The `X-Forwarded-For` text the request carried, kept as it was sent.
+   *
+   * The client's claim and not a measurement: a proxy in front of this
+   * listener is what makes it worth reading, and nothing here trusts it.
+   */
+  forwardedFor?: string;
 }
 
 /**

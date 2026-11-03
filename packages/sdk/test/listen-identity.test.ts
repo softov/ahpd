@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { doorOf, listen, plainAnswer } from '../src/listen.js';
-import type { Arrival, Connected, Listener } from '../src/types/listen.js';
+import type { Arrival, Connected, Listener, Opened } from '../src/types/listen.js';
 import type { Peer } from '../src/types/rpc.js';
 import type { Principal } from '../src/types/users.js';
 
@@ -36,9 +36,12 @@ const doorOnly = (token: string): Arrival | undefined =>
 const arrived: (Principal | undefined)[] = [];
 /** And whether each was admitted as the host itself. */
 const roots: (boolean | undefined)[] = [];
-const watching = (_peer: Peer, principal?: Principal, root?: boolean): Connected => {
+/** And where each came from: its socket number, address and forwarded claim. */
+const openings: (Opened | undefined)[] = [];
+const watching = (_peer: Peer, principal?: Principal, root?: boolean, opened?: Opened): Connected => {
   arrived.push(principal);
   roots.push(root);
+  openings.push(opened);
   return { handle: async () => ({}), close: () => {} };
 };
 
@@ -126,6 +129,25 @@ it('refuses a person\'s token on the next connection once it is no longer theirs
   // The deployment's own token is unaffected: removal takes a person away and
   // not the door.
   expect(await knock(`${url}/?tkn=${ROOT}`)).toBe('open');
+});
+
+it('gives a Node socket its address, its number and the forwarded claim the request carried', async () => {
+  openings.length = 0;
+  running = await listen({ port: 0 }, watching);
+  const url = `ws://127.0.0.1:${running.port}`;
+  expect(await knock(url, { 'x-forwarded-for': '203.0.113.9' })).toBe('open');
+  // The loopback address the client really connected from, and the number
+  // the tap reports its frames under: the first accepted socket is one.
+  expect(openings).toHaveLength(1);
+  expect(openings[0]).toMatchObject({ socket: 1, address: '127.0.0.1', forwardedFor: '203.0.113.9' });
+});
+
+it('leaves the forwarded claim off a socket whose request carried none', async () => {
+  openings.length = 0;
+  running = await listen({ port: 0 }, watching);
+  expect(await knock(`ws://127.0.0.1:${running.port}`)).toBe('open');
+  expect(openings[0]?.address).toBe('127.0.0.1');
+  expect(openings[0]).not.toHaveProperty('forwardedFor');
 });
 
 it('admits an unknown token when no connection token is required, and names nobody', async () => {

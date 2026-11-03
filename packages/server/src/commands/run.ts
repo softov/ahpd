@@ -1900,7 +1900,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
    */
   const acceptConnection = (peer: Peer, principal?: Principal, root?: boolean, opened?: Opened): Connected | Raw => {
     const node = opened?.node;
-    if (node === undefined || nodes === undefined) return host.accept(peer, principal, root);
+    if (node === undefined || nodes === undefined) return host.accept(peer, principal, root, opened);
     return nodes.accept(node, peer, opened?.url);
   };
 
@@ -1908,7 +1908,7 @@ export async function runForeground(options: Options, typed: Readonly<Record<str
   const listener = options.stdio
     ? await overStdio(
       { tap },
-      (peer, principal, root) => host.accept(peer, principal, root),
+      (peer, principal, root, opened) => host.accept(peer, principal, root, opened),
     )
     : await listen(
       {
