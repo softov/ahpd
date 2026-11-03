@@ -41,7 +41,7 @@ A set reusing the held steering message's id while a turn runs is refused when i
 
 ## Validation
 
-- The new cases fail on `a8eff676` and pass after.
+- The new cases fail on `cde4dd6c` and pass after.
 - The touched test files pass, one at a time.
 - `pnpm run typecheck` and `pnpm run boundary` are clean.
 

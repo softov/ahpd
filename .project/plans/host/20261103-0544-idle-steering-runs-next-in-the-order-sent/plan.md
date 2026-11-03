@@ -1,12 +1,12 @@
 ---
 title: Idle steering runs next in the order sent
 domain: host
-status: active
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
-  - git://a8eff676 - the commit of ahpd this plan was checked at
+  - git://cde4dd6c - the commit of ahpd this plan was checked at
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13509-L13525 - steering to a provider that cannot take it is refused, idle or not, and an edit of held steering is refused, a queued set under its id included"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286 - the drain runs the first pending steering message next, ahead of queued ones"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentSessionMessage.ts#L17-L22 - pending steering, listed in the order the queue holds it"
@@ -35,10 +35,11 @@ The files read and the patterns to reuse are the `refs` in the frontmatter, each
 
 ### Searches performed
 
-- `rg -n "kind: 'queued'" packages/agent-*/src packages/bot/src packages/sdk/src/sessions` - every backend says an idle steering message as a queued one, at the tail of its queue.
+- `rg -n "steering: true" packages/agent-*/src packages/bot/src` - every backend puts an idle steering message at the head of its queue.
 - `rg -n "session.ran" packages/sdk/src/host/lifecycle.ts` - `beginOrRun` hands a command no kind.
 - `rg -n "holding" packages/sdk/src/host/chatactions.ts` - only a steering set is checked against the held steering message's id.
-- Round 2 built the head of the queue on a branch upstream had merged (`46251ea3`), with two parts the audit found contradicted.
+- `rg -n "activeHeld !== undefined" packages/sdk/src/host/chatactions.ts` - the refusal of steering to a backend with no `steer` holds only while a turn runs.
+- Main carries that exception and ACP's steering queue through `#195`, which merged round 2's union.
 
 ### What the sources say
 
@@ -130,22 +131,22 @@ client chat/pendingMessageSet queued under the held steering message's id, a tur
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - Idle steering runs ahead of the queue](task-01-idle-steering-runs-ahead.md) | doing | - |
-| [02 - Steering runs in the order sent](task-02-steering-runs-in-the-order-sent.md) | todo | 01 |
+| [01 - A backend that takes no steering refuses it](task-01-idle-steering-runs-ahead.md) | done | - |
+| [02 - Steering runs in the order sent](task-02-steering-runs-in-the-order-sent.md) | done | 01 |
 
 ## Risks and tradeoffs
 
-- The specification's reducer holds one steering message, so a client that set two sees the latest until both have run.
+- The specification's reducer holds one steering message, so a client that set two sees the latest until it runs or goes.
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** [task-01-idle-steering-runs-ahead.md](task-01-idle-steering-runs-ahead.md).
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** the examples and ACP take no steering, so the host refuses it before their queues.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `a8eff676` for the reason it names, and passes after the change.
+- [x] Each new case fails on `cde4dd6c` for the reason it names, and passes after the change.
 - [ ] The touched test files pass.
 - [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

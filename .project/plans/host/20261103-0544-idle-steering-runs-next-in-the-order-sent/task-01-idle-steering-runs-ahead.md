@@ -1,49 +1,54 @@
 ---
-title: Idle steering runs ahead of the queue
-status: doing
+title: A backend that takes no steering refuses it
+status: done
 depends: []
-layer: "sdk, agent-claude, agent-pi, agent-cofold, bot"
+layer: "sdk, agent-acp, examples"
 refs:
-  - "[code://packages/sdk/src/types/session.ts#L657-L672](../../../../packages/sdk/src/types/session.ts#L657-L672) - `Session.queue`"
-  - "[code://packages/sdk/src/host/lifecycle.ts#L1307-L1415](../../../../packages/sdk/src/host/lifecycle.ts#L1307-L1415) - `beginOrRun`"
-  - git://46251ea3 - the change, built for an earlier round on a branch upstream had merged, with its host and ACP parts
+  - "[code://packages/sdk/src/host/chatactions.ts#L1437-L1520](../../../../packages/sdk/src/host/chatactions.ts#L1437-L1520) - the pending message case and its refusal"
+  - "[code://packages/agent-acp/src/session/queue.ts](../../../../packages/agent-acp/src/session/queue.ts) - ACP's queue, which takes one kind"
+  - git://46251ea3 - the change upstream merged, whose idle exception and ACP queue this task takes back
 ---
 
 ## Objective
 
-A steering message sent while no turn runs goes ahead of every queued message in Claude, pi, cofold, the bot and the nested proxy.
-It is said as a steering message while it waits, and as one when it is taken back.
-The host keeps refusing steering to a backend that takes none.
+A steering message to a backend with no `steer` is refused, a turn running or not.
+ACP's queue and chat state, and both examples' queues, hold queued messages alone.
 
 ## Files
 
-- `UPDATE: packages/sdk/src/types/session.ts` - `Session.queue` takes the pending message's kind.
-- `UPDATE: packages/sdk/src/host/lifecycle.ts` - `beginOrRun` hands the kind to `queue`.
-- `UPDATE: packages/sdk/src/host/chatactions.ts` - the pending message case hands its kind on.
-- `UPDATE: packages/sdk/src/sessions/nested.ts` - the proxy carries the kind to the host inside.
-- `UPDATE: packages/agent-claude/src/session.ts` - the chat shows a waiting steering message as its `steeringMessage`.
-- `UPDATE: packages/agent-claude/src/session/turns.ts` - `queue` puts a steering message at the head, and says its kind.
-- `UPDATE: packages/agent-pi/src/session.ts` - the same for pi.
-- `UPDATE: packages/agent-cofold/src/session.ts` - the same chat state for cofold.
-- `UPDATE: packages/agent-cofold/src/turns.ts` - the same queue for cofold.
-- `UPDATE: packages/bot/src/chat.ts` - the same for the bot.
-- `UPDATE: packages/agent-cofold/test/agent-cofold-turn.test.ts` - an idle steering message runs ahead of what a stop left queued.
-- `UPDATE: packages/sdk/test/host-steering.test.ts` - an idle steering message to a backend that takes none is refused.
+- `UPDATE: packages/sdk/src/host/chatactions.ts:1452-1457` - the refusal holds whether or not a turn runs.
+- `UPDATE: packages/agent-acp/src/session.ts` - the chat state shows no steering entry.
+- `UPDATE: packages/agent-acp/src/session/queue.ts` - `queue` and `unqueue` take one kind.
+- `UPDATE: examples/echo/agent.ts` - the same for the example.
+- `UPDATE: examples/notes/agent.ts` - the same.
+- `UPDATE: packages/sdk/test/host-steering.test.ts` - a steering message to a backend that takes none is refused.
+- `UPDATE: packages/agent-acp/test/agent-acp-turn.test.ts` - the same for ACP.
+- `UPDATE: packages/agent-cofold/src/turns.ts` - the drain's citation.
+- `UPDATE: packages/sdk/src/types/session.ts` - `queue`'s `kind`, handed only to a backend with `steer`.
+- `UPDATE: packages/sdk/test/host-input.test.ts` - the drain's citation.
+- `UPDATE: packages/sdk/test/ahp-test-cases.test.ts` - the oracle row's citation.
 - `UPDATE: docs/sdk/AHP.md` - the `chat/pendingMessageSet` row.
-- `UPDATE: docs/sdk/CHATS.md` - where an idle steering message waits.
+- `UPDATE: docs/sdk/CHATS.md` - which backends take steering.
 
 ## Steps
 
-1. Apply `46251ea3` to upstream main without committing it.
-2. Restore the ACP and example files, and the two cases that held the dropped parts.
-3. Restore the refusal of steering to a backend with no `steer`, and the docs that said otherwise.
-4. Add the case that holds the refusal, and commit.
-5. Compare the commit's changed lines with `46251ea3`'s.
+1. Refuse steering to a backend with no `steer`, idle or not.
+2. Put ACP's queue and chat state, and both examples' queues, back to one kind.
+3. Change the two cases that held an idle steering message on such a backend.
+4. Move every citation of the drain's sentence from `L260-L262` to `L266-L267`.
+5. Write which backends take steering in `AHP.md` and `CHATS.md`.
 
 ## Validation
 
-- The cofold case fails on `a8eff676` and passes after.
-- The refusal case passes on both: it holds what main does.
-- The changed lines are `46251ea3`'s, less the dropped parts.
+- The two changed cases fail on `cde4dd6c` and pass after.
+- `host-steering.test.ts`, `agent-acp-turn.test.ts` and `agent-cofold-turn.test.ts` pass.
+- `pnpm run typecheck` is clean.
 
 ## Resume
+
+Built 2026-11-03 in `54aad468`.
+
+- Upstream merged round 2's union as `#195`, so main carries the idle exception and ACP's steering queue.
+- The host's refusal is main's line without `activeHeld !== undefined`.
+- ACP's and the examples' files come from `46251ea3~1`, which nothing else has touched since.
+- Task 02 is the order, which rests on this.
