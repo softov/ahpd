@@ -518,6 +518,12 @@ export interface WatchedTurn {
   message: { text: string; origin?: MessageFrom['origin'] };
   /** How it ended, once it has. */
   state: 'complete' | 'cancelled' | 'error';
+  /**
+   * The last turn of a replay that ended while the turn's request still ran,
+   * which reads back with VS Code's `executionInterrupted` error after its
+   * parts.
+   */
+  interrupted?: boolean;
   /** How long it took, in milliseconds, once it has ended. */
   duration?: number;
   /**

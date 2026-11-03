@@ -787,7 +787,7 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
   const told = (type: string): Bag[] => peer.seen
     .filter(({ method, params }) => method === 'action' && params?.action?.type === type)
     .map(({ params }) => params);
-  return { host, dispatch, told };
+  return { host, client, dispatch, told };
 };
 
 /*
@@ -825,6 +825,44 @@ it('answers a background request on a nested session to the client outside that 
   expect(told('session/creationFailed')).toEqual([]);
   expect(told('session/mcpServerBackgroundRequested').map((one) => [one.origin, one.rejectionReason]))
     .toEqual([[{ clientId: 'window', clientSeq: 9 }, undefined]]);
+  await host.close();
+});
+
+/*
+ * A client's read and archive of a nested session's lead chat go to the host
+ * inside, which runs the chat and answers the client, and the chat's bits out
+ * here are the ones that host says: the host running a session is the one
+ * producer of its state, and a relay forwards a client's messages to it. So a
+ * turn's start and end move the bit once, inside, and the archive of the lead
+ * chat is refused there.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
+ */
+it('carries a read and an archive of the lead chat to the host inside, whose bits the chat holds', async () => {
+  const inner = innerHost(backend());
+  const { host, client, dispatch, told } = await outside(inner);
+  const chat = chatUriFor('ahp-session:/outer');
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'hello' } });
+  await until(() => told('chat/turnComplete').length > 0 || told('session/creationFailed').length > 0);
+  expect(told('session/creationFailed')).toEqual([]);
+  await settleInner();
+  const carried = (type: string): Bag[] => inner.messages
+    .filter((message) => message.method === 'dispatchAction' && message.params?.action?.type === type);
+  // The turn moved the bit inside, at its start and its end, and out here a
+  // client heard each of those once.
+  expect(told('chat/isReadChanged').map((one) => [one.action.isRead, one.origin])).toEqual([[false, undefined]]);
+
+  await dispatch(2, { type: 'chat/isReadChanged', isRead: true });
+  await until(() => told('chat/isReadChanged').some((one) => one.origin?.clientSeq === 2));
+  expect(carried('chat/isReadChanged').map((message) => message.params.action)).toEqual([{ type: 'chat/isReadChanged', isRead: true }]);
+  const opened = await client.handle({ method: 'subscribe', params: { channel: chat } }) as { snapshot: { state: Bag } };
+  expect(Number(opened.snapshot.state.status) & Status.IsRead).toBe(Status.IsRead);
+
+  await dispatch(3, { type: 'chat/isArchivedChanged', isArchived: true });
+  await until(() => told('chat/isArchivedChanged').some((one) => one.origin?.clientSeq === 3));
+  expect(carried('chat/isArchivedChanged')).toHaveLength(1);
+  expect(told('chat/isArchivedChanged').map((one) => one.rejectionReason))
+    .toEqual(['Only a known independently manageable non-default chat can be archived.']);
   await host.close();
 });
 

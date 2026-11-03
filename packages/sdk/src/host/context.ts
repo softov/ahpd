@@ -292,6 +292,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   lifeOf: (uri: string) => object;
   /** The sessions being restarted now, by their own uri. */
   restarting: Map<string, Promise<void>>;
+  /**
+   * A stop that waits for the start of the turn it names, by its chat's
+   * channel, settled once the stop is applied or refused. Every other dispatch
+   * on that chat waits for it.
+   */
+  ahead: Map<string, Promise<void>>;
   /** What this host has learned about each backend, by the id clients name it by. */
   learned: Map<string, Learned>;
   /** The lead chat of a held session, when it has one. */

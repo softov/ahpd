@@ -1413,8 +1413,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     /*
      * The activity the inner host's chat reducer gave the chat: running,
      * waiting on somebody, failed or idle, as every client of the inner chat
-     * holds it. The read and archived bits are the outer host's own, which it
-     * lays over this.
+     * holds it. The outer host lays the read and archived bits over this, kept
+     * as the host inside says them.
      */
     status: (): number => (chat?.status ?? Status.Idle) & (Status.IsRead - 1),
     modifiedAt: (): string => chat?.modifiedAt ?? startedAt,
@@ -1610,6 +1610,14 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     },
     setDraft: (draft: Bag | undefined): void => {
       carry('chat', { type: 'chat/draftChanged', ...(draft === undefined ? {} : { draft }) });
+    },
+    /*
+     * The host inside runs the chat, so a client's read and archive go there,
+     * and its answer and its bits come back as every action of the chat does.
+     */
+    flag: (bit: 'read' | 'archived', on: boolean): boolean => {
+      carry('chat', bit === 'read' ? { type: 'chat/isReadChanged', isRead: on } : { type: 'chat/isArchivedChanged', isArchived: on });
+      return true;
     },
     /* Taken only while the inner chat has a turn running. */
     steer: (steerId: string, text: string): boolean => {

@@ -7,6 +7,7 @@ created: 2026-11-03
 revalidated: 2026-11-03
 refs:
   - git://c97d8459 - the commit of ahpd this plan was checked at
+  - git://fa9afa9a - the commit task 02 was checked at, task 01 built and merged
   - git://273af282 - the change that kept the inner lists back, so that a nested session names only channels the outer host serves
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55 - a relay forwards a remote host's messages both ways"
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228 - a mirror enqueues the source host's own envelopes for a session's chat and changeset channels"
@@ -66,6 +67,7 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 - A nested session's changesets are the outer folder's, which the machine's own git does not share.
 - A canvas the host inside opens is never listed or served out here.
 - The outer host is a second producer of the session's state.
+- After task 01 it still produces the lead chat's read and archived bits, and the host inside never hears a client's read.
 
 ## Answers
 
@@ -76,7 +78,8 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 | A nested session names only channels the outer host serves, which the relay keeps | git://273af282 | 01 |
 | The outer host lays no changesets of its own on the session's state, its record or its watched changesets, and no canvases on its chat | the first row: one producer | 01 |
 | A plugin out here opening a canvas on a nested chat is refused | the first row: one producer | 01 |
-| The read and archived bits of the lead chat's row stay the outer host's, laid on the status the host inside says, as on the chat's state | the backends' plan's row "A nested chat's status is the activity the inner host's reducer gave it" | 01 |
+| A client's read and archive of the lead chat go to the host inside, which answers the client; the read and archived bits that host says are the chat's, on its row and in its state, and the outer host moves none of them | the first row: one producer; [relayTransport.ts#L48-L55](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55), a relay forwards a client's messages to the host running the session | 02 |
+| The outer session's read bit follows the lead chat's bit the host inside says, as it follows any chat's | [chatactions.ts `sessionFollows`](../../../../packages/sdk/src/host/chatactions.ts) | 02 |
 | A changeset of a nested session nothing runs is refused | (defaulted: its host there answers it once the session runs) | 01 |
 | The lists the clients out here were told at a start are said again where the host inside holds others | the proxy's own rule for the title and the turns, [nested.ts#L1258-L1276](../../../../packages/sdk/src/sessions/nested.ts#L1258-L1276) | 01 |
 
@@ -94,22 +97,22 @@ subscribe <session>/changeset/<scope> -> changesetAt -> the outer folder's chang
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - The proxy relays the inner lists](task-01-the-proxy-relays-the-inner-lists.md) | done | - |
+| [02 - The lead chat's bits are the inner host's](task-02-the-lead-chats-bits-are-the-inner-hosts.md) | done | 01 |
 
 ## Risks and tradeoffs
 
 - A client out here sees a nested session's changesets only while the session runs.
-- The read and archived bits of a nested chat are the outer host's alone.
-  The host inside never hears a client mark the chat read.
+- A read or an archive of the lead chat waits for the host inside to answer it, as a turn does.
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-03.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
 - **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a relayed channel a client still watches when the host inside opens again.
 
 ## Final verification checklist
 
-- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] Each new case of task 01 fails on `c97d8459`'s sources, the one of task 02 on `fa9afa9a`'s, and each passes after its change.
 - [x] The touched files' test files pass, one file at a time.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
