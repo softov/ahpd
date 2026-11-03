@@ -1,6 +1,6 @@
 ---
 title: A write is bounded by the caller's grants
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

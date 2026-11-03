@@ -1,7 +1,7 @@
 ---
 title: No one gives a grant they do not hold
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -74,7 +74,7 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | implemented | - |
+| [01 - A write is bounded by the caller's grants](task-01-a-write-is-bounded-by-the-callers-grants.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -83,10 +83,10 @@ resourceWrite role://boss (reader: mo) -> recordsProvider.write -> putRecord -> 
 
 ## Resume state
 
-- **Done so far:** task-01 is built. `Records` gained an optional `bound(reader, id, body)`; `putRecord` and `removeRecord` ask it and both doors pass their `reader`, so `x-ahpd/users/put`, `x-ahpd/roles/put`, their `remove`, and writes and deletes of `user://<id>` and `role://<id>` all keep one rule. `people.ts` writes it for the two schemes that hold grants: a `user` write is bounded by the grants of the roles in the body and by `grantsOfPerson(id)`, a `role` write by the body's grants and by its grants now, and either removal by what it holds now. `packages/sdk/test/people-bound.test.ts` has seven cases, each run through both doors. The `user` and `role` rows of `docs/sdk/USERS.md` say so.
-- **Next action:** none; the plan has one task and it is implemented.
+- **Done so far:** task 01 is done, and [implemented.md](implemented.md) records it.
+- **Next action:** none. The plan is built.
 - **Open questions:** none.
-- **Watch out for:** the bound is asked only where a scheme declares one, so `team`, `project` and `policy` are written exactly as they were and do not gain a turn of the loop between a write and the next frame. Two doors reach the same records, the commands and the resource provider, so a bound added anywhere other than `putRecord` and `removeRecord` would have covered only one of them.
+- **Watch out for:** a bound added anywhere other than `putRecord` and `removeRecord` covers only one of the two doors.
 
 ## Final verification checklist
 

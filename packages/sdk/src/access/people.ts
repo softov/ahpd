@@ -125,12 +125,13 @@ const people = (directory: Users): Records => ({
    * A person is bounded by the roles a write would give them and by the ones
    * they hold now, which is what `user add` bounds as well: a body that names
    * no roles leaves theirs alone, and the grants they already hold are still
-   * something the caller would be editing.
+   * something the caller would be editing. A new person given no roles is made
+   * `guest`, so `guest` is what is given.
    */
   bound: async (reader, id, body) => {
-    const held = await directory.grantsOfPerson(id) ?? [];
-    const given = body === undefined ? [] : await directory.grantsOfRoles(listOf(body, 'roles', 'person') ?? []);
-    bounded(reader, [...given, ...held]);
+    const now = await directory.grantsOfPerson(id);
+    const named = body === undefined ? [] : listOf(body, 'roles', 'person') ?? (now === undefined ? ['guest'] : []);
+    bounded(reader, [...await directory.grantsOfRoles(named), ...now ?? []]);
   },
   put: async (id, body) => {
     const was = (await directory.list()).find((one) => one.id === id);
