@@ -8,7 +8,9 @@ import { createFileStore } from '@cofold/store-file';
 import type { ModelAdapter, ModelReply, ModelStreamEvent } from '@cofold/agents';
 import { Status } from '../../sdk/src/sessions/catalog.js';
 import { idOf } from '@ahpd/sdk';
+import type { Bag, Ran } from '@ahpd/sdk';
 import { createHost } from '../../sdk/src/host.js';
+import { DEFAULT_CLIENT_TOOL_TIMEOUT_MS } from '../../sdk/src/tools/clientcalls.js';
 import { chatUriFor } from '../../sdk/src/host/channels.js';
 import { shellTerminals } from '../../sdk/src/machines/terminals.js';
 import { chatReducer } from '@microsoft/agent-host-protocol';
@@ -785,6 +787,35 @@ it('leaves out a tool whose schema cofold refuses, and offers the rest', () => {
     run: () => 'ok',
   };
   expect(cofoldTools([refused, plain]).map((one) => one.name)).toEqual(['plain']);
+});
+
+/*
+ * A command running as the chat's turn that a turn sent after it took the
+ * place of ends in no history, as the reducer keeps none of the turn it
+ * replaced, and the turn that took its place runs once it is over.
+ */
+it('keeps no history of a !command turn a turn sent after it took the place of', async () => {
+  const notes: Bag[] = [];
+  const session = cofoldAgent({ adapter: createFakeModel({ script: [{ text: 'after it' }], stream: true }), memory: true }).create({
+    uri: 'ahp-session:/replaced',
+    chatUri: 'ahp-chat:/replaced',
+    settings: {},
+    schema: () => ({ type: 'object', properties: {} }),
+    emit: (_channel, action) => { notes.push(action); },
+    clientToolTimeoutMs: DEFAULT_CLIENT_TOOL_TIMEOUT_MS,
+  });
+  let done: (ran: Ran) => void = () => {};
+  session.ran?.('t1', 'make', () => new Promise<Ran>((resolve) => { done = resolve; }));
+  await until(() => notes.some((one) => one.type === 'chat/toolCallStart' && one.turnId === 't1'));
+  session.begin('t2', 'hello');
+  done({ success: true, said: 'Ran make', output: '', code: 0 });
+  try {
+    await until(() => notes.some((one) => one.type === 'chat/turnComplete' && one.turnId === 't2'));
+    expect((((session.chatState() as Bag).turns ?? []) as Bag[]).map((turn) => turn.id)).toEqual(['t2']);
+  }
+  finally {
+    await session.close();
+  }
 });
 
 it('runs a !command in a shell rather than asking a model', async () => {

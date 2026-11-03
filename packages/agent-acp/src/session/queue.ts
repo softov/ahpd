@@ -146,9 +146,12 @@ export function createQueue(ctx: SessionContext): Queue {
       const duration = Date.now() - began;
       turn.state = done.success ? 'complete' : 'error';
       turn.duration = duration;
-      turns.push(turn);
+      // A command turn a later one took the place of is in no history, as the
+      // reducer keeps none of it, and its failure is not the chat's.
+      const gone = ctx.replaced.delete(turnId);
+      if (!gone) turns.push(turn);
       ctx.active = undefined;
-      if (!done.success) ctx.failed = done.said;
+      if (!done.success && !gone) ctx.failed = done.said;
       /*
        * The turn closes like any other.
        *

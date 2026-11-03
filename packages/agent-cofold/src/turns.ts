@@ -816,7 +816,9 @@ export const createTurns = (
       const duration = Date.now() - began;
       ctx.active.state = done.success ? 'complete' : 'error';
       ctx.active.duration = duration;
-      turns.push(ctx.active);
+      // A command turn a later one took the place of is in no history, as the
+      // reducer keeps none of it.
+      if (!ctx.replaced.delete(turnId)) turns.push(ctx.active);
       ctx.active = undefined;
       /*
        * The turn closes like any other.
