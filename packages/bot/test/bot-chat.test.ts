@@ -483,10 +483,10 @@ it('steers a message into the open turn, which goes on', async () => {
   expect(state['turns']).toMatchObject([{ id: 't1', state: 'complete', responseParts: [{ kind: 'markdown', content: 'done' }] }]);
   expect(state['steeringMessage']).toBeUndefined();
 
-  // Read back, the steer is still there, on its own line against the turn.
+  // Read back, the chat shows the turn the steer went into, as it does live.
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
-  expect(read?.map((turn) => turn.message.text)).toEqual(['hello', 'stop that']);
+  expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
   expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
@@ -595,20 +595,23 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   expect(heard.map((one) => one.text)).toEqual(['hello', 'and then this']);
 });
 
-it('reads an old steering line as a turn of its own', async () => {
+/*
+ * A chat read back shows the turn a steer went into, as the live chat does once
+ * the message is handed on: the reference host hands a steering message into
+ * the running turn, which goes on, and the Claude backend reads a steering
+ * prompt back inside the turn it steered.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
+ */
+it('reads a steering line back in the turn it went into', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);
   await talkTo(client);
   const chat = turns(HELD);
   chat.onMessage = () => {};
   await said(client, 't1', 'hello');
+  chat.reply('done');
 
-  /*
-   * A log written before a steer was a turn of its own: the line names the turn
-   * it went into and says nothing about how it went. A reader takes it as the
-   * turn it now would be - finished, with that message and no reply - rather
-   * than folding it into the turn it steered.
-   */
+  // The line names the turn it went into, which is the turn it is read in.
   appendFileSync(
     join(configDir, BOTS_DIR, 'backer', 'logs', 'one.jsonl'),
     `${JSON.stringify({ id: 't1', steering: true, message: { text: 'stop that', origin: { kind: 'user' } } })}\n`,
@@ -616,11 +619,8 @@ it('reads an old steering line as a turn of its own', async () => {
 
   const fresh = await backend(configDir, records);
   const read = await fresh.transcript?.('one');
-  expect(read?.map((turn) => turn.message.text)).toEqual(['hello', 'stop that']);
-  expect(read?.[1]).toMatchObject({ state: 'complete', responseParts: [] });
-  // A turn of its own needs an id of its own: the old line names the turn it
-  // went into, and the two would otherwise fold into one.
-  expect(read?.[1]?.id).not.toBe('t1');
+  expect(read?.map((turn) => [turn.id, turn.message.text])).toEqual([['t1', 'hello']]);
+  expect(read?.[0]?.responseParts).toEqual([{ id: 't1:reply', kind: 'markdown', content: 'done' }]);
 });
 
 it('waits a queued message out, and starts it when the turn in front ends', async () => {

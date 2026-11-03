@@ -380,22 +380,16 @@ const logAt = (path: string): { turns: ChatTurn[]; mark: Bag | undefined } | und
     if (typeof said !== 'object' || said === null || Array.isArray(said)) continue;
     const held = said as Bag;
     /*
-     * A message somebody said into a turn that was already running.
+     * A message somebody said into a turn that was already running, which the
+     * line names: the turn it went into, whose answer is its answer.
      *
-     * It is read as a turn of its own, finished, with the steered message and
-     * no reply. The line's id is the id of the turn it went into, so a turn of
-     * its own takes one derived from it: folding the two together would lose
-     * the steer the person watched happen.
+     * The line is the record that it was said, and the chat read back shows
+     * the turn it steered, as the live chat does once the message is handed on
+     * and as the Claude backend reads a steering prompt back inside its turn.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L171-L208
      */
     if (held['steering'] === true) {
       mark ??= markIn(held);
-      const one = turnOf(held);
-      if (one === undefined) continue;
-      let steered = `${one.id}:steer`;
-      for (let n = 2; at.has(steered); n += 1) steered = `${one.id}:steer${n}`;
-      one.id = steered;
-      at.set(steered, turns.length);
-      turns.push(one);
       continue;
     }
     const one = turnOf(held);
