@@ -27,8 +27,11 @@ const scripts = fileURLToPath(new URL('../shellintegration', import.meta.url));
 
 const nonce = 'the-terminal-nonce';
 
-/** What a shell is started with, or a failure saying why it is not. */
-const injectionOf = (shell: string, args: string[] = []) => getShellIntegrationInjection(shell, args, nonce, {});
+/** A Linux machine, so the injection's answers are the same on every runner. */
+const linux = { platform: 'linux', windowsBuild: () => 0 };
+
+/** What a shell is started with on Linux, or a failure saying why it is not. */
+const injectionOf = (shell: string, args: string[] = []) => getShellIntegrationInjection(shell, args, nonce, {}, linux);
 
 describe('the injection a shell is given', () => {
   it('starts bash, fish, pwsh and zsh with the script VS Code ships for each', () => {
@@ -89,7 +92,19 @@ describe('the injection a shell is given', () => {
     }
   });
 
-  it('copies the files zsh reads before it answers', () => {
+  it('follows VS Code\'s rules on Windows: pwsh, powershell and bash only, from build 18309', () => {
+    const windows = (build: number) => ({ platform: 'win32', windowsBuild: () => build });
+    expect(getShellIntegrationInjection('C:\\Program Files\\PowerShell\\7\\pwsh.exe', [], nonce, {}, windows(22631)))
+      .toMatchObject({ type: 'injection' });
+    expect(getShellIntegrationInjection('C:\\Windows\\System32\\cmd.exe', [], nonce, {}, windows(22631)))
+      .toEqual({ type: 'failure', reason: 'UnsupportedShell' });
+    expect(getShellIntegrationInjection('C:\\Program Files\\PowerShell\\7\\pwsh.exe', [], nonce, {}, windows(17763)))
+      .toEqual({ type: 'failure', reason: 'UnsupportedWindowsBuild' });
+  });
+
+  // The port starts nothing, but it copies zsh's files, which a Windows runner
+  // has no zsh to read.
+  it.skipIf(process.platform === 'win32')('copies the files zsh reads before it answers', () => {
     const answer = shellIntegration('/bin/zsh', [], {}, nonce);
     expect(answer?.newArgs).toEqual(['-i']);
     const folder = answer?.envMixin?.ZDOTDIR ?? '';
@@ -132,7 +147,8 @@ describe('a real shell given the integration', () => {
     return { arrived, last: done().at(-1) };
   };
 
-  it('reads the code a command exited with from the mark bash writes', async (context) => {
+  // `/bin/bash` is not there on Windows.
+  it.skipIf(process.platform === 'win32')('reads the code a command exited with from the mark bash writes', async (context) => {
     const { pty: spawn } = await pty();
     if (spawn === undefined) { context.skip(); return; }
     // Another bash, so the code is a command's: `exit 3` on its own would end
