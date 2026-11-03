@@ -1,13 +1,13 @@
 ---
 title: A stop waits for the start it names
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
 refs:
   - git://c97d8459 - the commit of ahpd this plan was checked at
-  - git://9c6c1582 - the commit task 02 was checked at, task 01 built
+  - git://fa9afa9a - the commit task 02 was checked at, task 01 built and merged
   - "https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L12476-L12480 - a client's action on a session the host holds is applied when it comes"
   - git://c97d8459 - the last commit that holds .project/problems/a-stop-sent-while-a-turn-starts-is-lost.md, which this plan covers
   - "https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentHostTurnService.ts#L126-L172 - a client's start is applied to the state at once, and its send to the agent follows"
@@ -94,7 +94,7 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 | Task | Status | Depends on |
 | --- | --- | --- |
 | [01 - A stop waits for an owed start](task-01-a-stop-waits-for-an-owed-start.md) | done | - |
-| [02 - What comes after a waiting stop waits for it](task-02-what-comes-after-a-waiting-stop-waits.md) | todo | 01 |
+| [02 - What comes after a waiting stop waits for it](task-02-what-comes-after-a-waiting-stop-waits.md) | done | 01 |
 
 ## Risks and tradeoffs
 
@@ -103,13 +103,13 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 
 ## Resume state
 
-- **Done so far:** task 01, 2026-11-03.
-- **Next action:** task 02.
+- **Done so far:** tasks 01 and 02, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a start the host says ahead of a turn's end, which answers the start and lets the stop go too.
 
 ## Final verification checklist
 
-- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] Each new case of task 01 fails on `c97d8459`'s sources, each of task 02 on `fa9afa9a`'s, and each passes after its change.
 - [x] The touched files' test files pass, one file at a time.
 - [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.

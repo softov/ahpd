@@ -1,6 +1,6 @@
 ---
 title: What comes after a waiting stop waits for it
-status: todo
+status: done
 depends: [01]
 layer: host
 refs:
@@ -32,6 +32,6 @@ The stopped turn is cancelled in the history.
 
 ## Validation
 
-- The new case fails on `9c6c1582`'s sources and passes after.
+- The new case fails on `fa9afa9a`'s sources and passes after.
 - `echo-origin.test.ts` passes alone at one worker.
 - `pnpm run typecheck` and `pnpm run boundary` are clean.
