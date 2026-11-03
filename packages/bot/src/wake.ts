@@ -55,6 +55,8 @@ export interface Looked {
   chat: string;
   /** Whether a turn is running in it. A message into a working session steers rather than begins. */
   working: boolean;
+  /** The turn running in it, where one is: what a stop of the main turn cancels. */
+  turn?: string;
 }
 
 /** What the wake reads and sends through. */
@@ -156,6 +158,16 @@ export interface Wake {
    */
   main(backSession: string): Answering | undefined;
   /**
+   * A client stopped a main turn: each back session answering it stops its
+   * running turn too, and answers that main turn no more.
+   *
+   * The reference host cancels the running turn of each subagent session of a
+   * chat whose turn is stopped, with the time it ran, and this host's back
+   * session is that subagent's: the work a stopped turn waited on.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483
+   */
+  stopped(session: string, turnId: string): Promise<void>;
+  /**
    * Answer the main turn one back session is answering, and let it go.
    *
    * False where no main turn is waiting on this session - it is not a back
@@ -255,6 +267,14 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
   const starting = new Map<string, Promise<string>>();
   /** The bot each back session belongs to, by that session's URI. */
   const started = new Map<string, string>();
+  /**
+   * The last turn this wake began in each back session and when, by that
+   * session's URI: the clock a stop's `duration` is read off, as a client
+   * measures a turn it stops by its own stopwatch and says zero for one it
+   * never timed.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035
+   */
+  const begun = new Map<string, { turn: string; at: number }>();
 
   /**
    * The sessions this host already had, each with the bot that started it.
@@ -441,6 +461,34 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
   return {
     main: (backSession) => answering.get(backSession),
 
+    stopped: async (session, turnId) => {
+      const backs = [...answering].filter(([, held]) => held.session === session && held.turnId === turnId).map(([back]) => back);
+      for (const back of backs) {
+        // Answered by nothing more: what the back session says after the stop
+        // is about a turn that is over.
+        answering.delete(back);
+        let looked: Looked;
+        try {
+          looked = await seams.look(back);
+        }
+        catch (error) {
+          seams.problem(`${back} was not stopped: ${reason(error)}`);
+          continue;
+        }
+        if (looked.turn === undefined) continue;
+        const clock = begun.get(back);
+        const duration = clock?.turn === looked.turn ? Date.now() - clock.at : 0;
+        let refused: string | undefined;
+        try {
+          refused = await seams.send(looked.chat, { type: 'chat/turnCancelled', turnId: looked.turn, duration });
+        }
+        catch (error) {
+          refused = reason(error);
+        }
+        if (refused !== undefined) seams.problem(`${back}'s turn was not stopped: ${refused}`);
+      }
+    },
+
     /*
      * Read live, from the bot as the store holds it now: the store replaces a
      * record on each write, which is what makes an edit reach a session that
@@ -568,9 +616,11 @@ export function botWake(seams: WakeSeams, absent: MainTurnAbsence = 'post'): Wak
        * the call is that turn's own and not the interrupted turn's.
        */
       handle.working?.(looked.chat, bot.name);
+      const action = looked.working ? steer(block, message) : turn(block, message);
+      if (action['type'] === 'chat/turnStarted') begun.set(session, { turn: String(action['turnId']), at: Date.now() });
       let refused: string | undefined;
       try {
-        refused = await seams.send(looked.chat, looked.working ? steer(block, message) : turn(block, message));
+        refused = await seams.send(looked.chat, action);
       }
       catch (error) {
         // A send that could not be made at all - the connection's own refusal,
