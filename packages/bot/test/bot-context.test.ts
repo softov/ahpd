@@ -56,7 +56,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
 });
 
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, turnId, text });
+const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', turnId, text });
 
 /** A handle over a main turn, and what was said through it. */
 interface Recorded {
@@ -115,8 +115,6 @@ async function sitting(record: BotRecord = bot()) {
   const at = new Map<string, string>();
   /** Whose each session is: a URI absent here is one this host no longer has. */
   const owners = new Map<string, Owner>();
-  /** The back sessions a turn is running in, which is what a message steers. */
-  const working = new Set<string>();
   const sent: { channel: string; action: Bag }[] = [];
   let minted = 0;
 
@@ -142,7 +140,7 @@ async function sitting(record: BotRecord = bot()) {
     look: async (session) => {
       const chat = at.get(session);
       if (chat === undefined) throw new Error(`${session} names no chat to say a message in`);
-      return { chat, working: working.has(session) };
+      return { chat };
     },
     send: async (channel, action) => {
       sent.push({ channel, action });
@@ -151,7 +149,7 @@ async function sitting(record: BotRecord = bot()) {
     problem: () => {},
   });
 
-  return { wake, store, configDir, sent, working };
+  return { wake, store, configDir, sent };
 }
 
 it('writes one line for each field, between its tags', () => {
@@ -212,16 +210,15 @@ it('puts the context block in front of a turn that wakes a session', async () =>
   expect(block).toMatch(/time: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/m);
 });
 
-it('puts the context block in front of a steer', async () => {
+it('puts the context block in front of a message the main chat steers into its open turn', async () => {
   const one = await sitting();
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
-  one.working.add('ahp-session:/1');
 
   await one.wake.woken(message('t1', 'stop that'), said.handle);
 
   const action = one.sent[1]?.action ?? {};
-  expect(action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'steering' });
+  expect(action).toMatchObject({ type: 'chat/pendingMessageSet', kind: 'queued' });
   const text = textOf(action);
   expect(text).toMatch(/^<context>\nmain chat: bot:\/backer\/ana\nfrom: ana\ntime: [^\n]+\n<\/context>\n\nstop that$/);
 });

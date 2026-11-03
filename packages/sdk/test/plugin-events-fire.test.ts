@@ -321,6 +321,27 @@ it('fires message, turn_start and turn_end once each, and nothing per delta', as
   expect(about[2]).toMatchObject({ turn: 'turn-1', status: 'complete' });
 });
 
+/*
+ * A turn that takes up a queued message names it, so a plugin that queued the
+ * message knows which turn it became: the queued message's id is the one thing
+ * it holds of it.
+ */
+it('names the queued message a turn took up on its turn_start', async () => {
+  const { seen, client } = watched({ agents: [echo({ path: DIR, pace: 0 })] });
+  await hello(client);
+  await client.handle({ method: 'createSession', params: { channel: 'ahp-session:/queued', provider: 'echo' } });
+  await client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/queued') } });
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUriFor('ahp-session:/queued'), action: { type: 'chat/pendingMessageSet', kind: 'queued', id: 'q-1', message: { text: 'later' } } },
+  });
+  await wait(200);
+
+  const started = seen.filter((event) => event.type === 'turn_start');
+  expect(started).toHaveLength(1);
+  expect(started[0]).toMatchObject({ session: 'ahp-session:/queued', queuedMessageId: 'q-1' });
+});
+
 it('fires turn_end cancelled when a running turn is stopped', async () => {
   const { seen, client } = watched({ agents: [echo({ path: DIR, pace: 60 })] });
   await hello(client);

@@ -16,6 +16,7 @@ import type { MainTurnAbsence } from '../src/wake.js';
 import type { ChatMessage, TurnHandle } from '../src/chat.js';
 import type { BotSessions } from '../src/provider.js';
 import type { BotRecord } from '../src/record.js';
+import type { Bag } from '../../sdk/src/types/common.js';
 import type { ToolCall } from '../../sdk/src/types/host.js';
 import type { LoaderContext, SessionRequest } from '../../sdk/src/types/plugin.js';
 import type { Owner } from '../../sdk/src/types/usage.js';
@@ -65,7 +66,7 @@ const bot = (over: Partial<BotRecord> = {}): BotRecord => ({
 });
 
 /** One message in a main chat, as `chat.ts` hands the plugin one. */
-const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, turnId, text });
+const message = (turnId: string, text: string): ChatMessage => ({ session: CHAT, chat: 'ahp-chat:/main', turnId, text });
 
 /** A handle over a main turn, and what was said through it. */
 interface Recorded {
@@ -129,6 +130,8 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
   const at = new Map<string, string>();
   /** Whose each session is: a URI absent here is one this host no longer has. */
   const owners = new Map<string, Owner>();
+  /** What the wake sent the back sessions. */
+  const sent: Bag[] = [];
   let minted = 0;
 
   const sessions: BotSessions = {
@@ -153,21 +156,29 @@ async function sitting(record: BotRecord = bot(), absent: MainTurnAbsence = 'pos
     look: async (session) => {
       const chat = at.get(session);
       if (chat === undefined) throw new Error(`${session} names no chat to say a message in`);
-      return { chat, working: false };
+      return { chat };
     },
     // What the message becomes in the back session is task 03's, and what it
     // carries is not what a post answers: nothing here is refused.
-    send: async () => undefined,
+    send: async (_channel, action) => {
+      sent.push(action);
+      return undefined;
+    },
     problem: () => {},
   }, absent);
 
-  return { wake, post: postMessage(wake) };
+  return { wake, post: postMessage(wake), sent };
 }
 
-/** A message that wakes the one back session, and the turn it leaves open. */
+/**
+ * A message that wakes the one back session, and the turn it leaves open. The
+ * back session takes the message up as its turn, as its host does at once
+ * when the session is idle.
+ */
 async function woken(one: Awaited<ReturnType<typeof sitting>>): Promise<Recorded> {
   const said = turn();
   await one.wake.woken(message('t1', 'hello'), said.handle);
+  one.wake.taken('ahp-session:/1', 'r1', String(one.sent.at(-1)?.['id']));
   return said;
 }
 

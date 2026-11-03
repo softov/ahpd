@@ -297,7 +297,7 @@ it('holds a turn open until the handle answers it', async () => {
   expect(lines(configDir, 'one')).toHaveLength(1);
   expect(actions(notes, CHAT).map((one) => one['type'])).not.toContain('chat/turnComplete');
   // And whoever answers this chat was told what was said, and in which turn.
-  expect(heard).toEqual([{ session: HELD, turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
 
   chat.reply('hello yourself');
 
@@ -331,12 +331,13 @@ it('holds a turn open until the handle answers it', async () => {
 });
 
 /*
- * The message whoever answers the chat is told is the whole of it: the model
- * and the agent it named, and what it carried beside its words, which the
- * agent doing the work is the one to take.
- * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/specification/chat-channel.md#L254-L261
+ * Whoever answers the chat is told the words and where they were said: the
+ * back session is handed the words alone, as the reference Agents window sends
+ * a message into another session, and the model, agent and attachments stay
+ * with the message the main chat keeps.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/sessions/contrib/remoteSessions/browser/remoteSessionMessageRouter.ts#L271-L282
  */
-it('tells whoever answers the chat the model, the agent and the attachments a message carried', async () => {
+it('tells whoever answers the chat the words and the chat they were said in, and keeps the rest on the turn', async () => {
   const { host } = made();
   const notes: Notes = [];
   const client = await anyone(host, notes);
@@ -356,7 +357,8 @@ it('tells whoever answers the chat the model, the agent and the attachments a me
       },
     },
   });
-  expect(heard).toEqual([{ session: HELD, turnId: 't1', text: 'read this', model: { id: 'opus' }, agent: { uri: 'agent:/reviewer' }, attachments }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'read this' }]);
+  expect((await stateOf(client))['activeTurn']).toMatchObject({ message: { text: 'read this', model: { id: 'opus' }, attachments } });
 });
 
 /*
@@ -474,8 +476,8 @@ it('steers a message into the open turn, which goes on', async () => {
     ['chat/pendingMessageRemoved', 'steering', 's1'],
   ]);
   expect(heard).toEqual([
-    { session: HELD, turnId: 't1', text: 'hello' },
-    { session: HELD, turnId: 't1', text: 'stop that' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'stop that' },
   ]);
 
   chat.reply('done');
@@ -645,7 +647,7 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(waiting['activeTurn']).toMatchObject({ id: 't1', message: { text: 'hello' } });
   expect(waiting['turns']).toEqual([]);
   expect(waiting['queuedMessages']).toMatchObject([{ id: 'q1', message: { text: 'and then this' } }]);
-  expect(heard).toEqual([{ session: HELD, turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: HELD, chat: CHAT, turnId: 't1', text: 'hello' }]);
   expect(lines(configDir, 'one')).toHaveLength(1);
 
   chat.reply('one');
@@ -658,8 +660,8 @@ it('waits a queued message out, and starts it when the turn in front ends', asyn
   expect(started['turns']).toMatchObject([{ id: 't1', state: 'complete' }]);
   expect(next).toMatchObject({ message: { text: 'and then this' } });
   expect(heard).toEqual([
-    { session: HELD, turnId: 't1', text: 'hello' },
-    { session: HELD, turnId: String(next['id']), text: 'and then this' },
+    { session: HELD, chat: CHAT, turnId: 't1', text: 'hello' },
+    { session: HELD, chat: CHAT, turnId: String(next['id']), text: 'and then this' },
   ]);
   // And the client is told both ways a queued entry ends: taken out of its
   // queue, and named on the turn it became.
@@ -1158,7 +1160,7 @@ it('tells a resumed chat\'s messages to the agent\'s listener, as it does a new 
 
   session.begin('t1', 'hello');
 
-  expect(heard).toEqual([{ session: 'bot-chat:/again', turnId: 't1', text: 'hello' }]);
+  expect(heard).toEqual([{ session: 'bot-chat:/again', chat: 'ahp-chat:/again', turnId: 't1', text: 'hello' }]);
   expect(turns('bot-chat:/again').onMessage).toBeDefined();
 });
 

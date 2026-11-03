@@ -1365,6 +1365,7 @@ export function createSpawn(ctx: HostContext): Spawn {
             chat: chatUri,
             turn,
             ...(sender === undefined ? {} : { sender }),
+            ...(typeof action.queuedMessageId === 'string' ? { queuedMessageId: action.queuedMessageId } : {}),
           });
         }
         else if (action.type === 'chat/turnComplete' || action.type === 'chat/turnCancelled') {
