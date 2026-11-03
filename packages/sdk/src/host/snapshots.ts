@@ -46,7 +46,7 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     relayed,
     changesetAt, operationsOf, shown, changesetsOf,
     readFacts, startWatchingDir, describes,
-    mergedConfig, sessionSchema, storedConfig,
+    mergedConfig, sessionSchema, storedConfig, contributedDefaults,
     waitingFor, startedBy, chatCatalogOf, movable, restoredSubagentSummary, activityOf,
     past, restoredSubagents, restoredParentChat, linkedTurns, titles,
     recordedChats, recordedChat, homeId,
@@ -666,6 +666,11 @@ export function createSnapshots(ctx: HostContext): Snapshots {
     const lead = recorded.find((one) => one.default === true);
     const listedAt = moves.get(nameOf(id)) ?? stamp;
     const offered = ctx.laidCustomizations(nameOf(id), about(owner.provider).seeds);
+    const running = {
+      schema: sessionSchema(owner),
+      values: { ...owner.defaults(), ...contributedDefaults(), ...storedConfig(owner, id) },
+    };
+    const mine = decided.get(nameOf(id));
     return {
       kind: 'session',
       state: {
@@ -728,13 +733,20 @@ export function createSnapshots(ctx: HostContext): Snapshots {
         // What its backend offers, since nothing is running to say what this
         // session in particular was given, with what its clients handed it.
         ...(offered === undefined ? {} : { customizations: offered }),
-        // The same schema a live session reports. Leaving it out drew no
-        // controls at all on a browsed row - no permission mode, no effort -
-        // which are the settings somebody wants *before* continuing one.
-        config: {
-          schema: sessionSchema(owner),
-          values: { ...owner.defaults(), ...storedConfig(owner, id) },
-        },
+        /*
+         * The config this session runs with, composed as its state composes
+         * it once its backend runs: the backend's schema with a plugin's keys,
+         * the backend's and a plugin's defaults, the stored values over them,
+         * and this host's own keys laid on. A browsed row draws its controls
+         * from it before anybody continues the session, and a wake keeps the
+         * state read here, since no action carries a schema. The reference host
+         * resolves a restored session's config with the call that resolved its
+         * created one, and lays it in before a client reads the state.
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14864-L14898
+         * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L10960-L10981
+         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/actions.ts#L614-L620
+         */
+        config: mine === undefined ? running : mergedConfig(nameOf(id), running, mine),
       },
     };
   };
