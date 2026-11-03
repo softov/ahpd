@@ -1906,6 +1906,24 @@ export function createSpawn(ctx: HostContext): Spawn {
       if (Array.isArray(turns) && turns.length > 0) dispatch(chatUri, { type: 'chat/turnsLoaded', turns });
     }
     ctx.chatMoved(chatUri);
+    /*
+     * A session whose state this host holds already - read from its record, or
+     * kept across a sleep - is told the customizations of the backend that now
+     * leads it, where they are not what the state says. The reference host
+     * says an agent's list on a held state whenever it differs from the one
+     * the state holds, and says a new session's first list to the clients that
+     * subscribed while it was read.
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L609-L647
+     * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L6419-L6422
+     */
+    const state = ctx.stateOf(uri);
+    if (state !== undefined && held.defaultChat === chatUri) {
+      const reported = session.customizations();
+      const laid = ctx.laidCustomizations(uri, reported) ?? [];
+      if (JSON.stringify(laid) !== JSON.stringify(state.customizations ?? [])) {
+        dispatch(uri, { type: 'session/customizationsChanged', customizations: reported });
+      }
+    }
     return session;
   };
 
