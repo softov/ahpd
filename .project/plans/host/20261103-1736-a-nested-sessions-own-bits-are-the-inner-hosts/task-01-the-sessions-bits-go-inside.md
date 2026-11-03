@@ -1,6 +1,6 @@
 ---
 title: The session's bits go inside
-status: todo
+status: done
 depends: []
 layer: host
 refs:
