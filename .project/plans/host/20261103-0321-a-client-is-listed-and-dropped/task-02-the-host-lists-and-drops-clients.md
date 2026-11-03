@@ -1,6 +1,6 @@
 ---
 title: The host lists and drops its clients
-status: implemented
+status: done
 depends:
   - task-01-a-connection-knows-its-address.md
 layer: "sdk, server, docs"

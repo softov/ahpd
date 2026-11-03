@@ -35,6 +35,8 @@ Waiting, because this box has neither runtime and no daemon was started:
 - A client connected over WebSocket on Node is a row on `x-ahpd-clients://` with its address, version and connect time.
 - A reader without `client:read` is refused, `drop` without `client:drop` is refused, and a drop's answer arrives before the socket closes.
 - Frames and bytes grow in each direction and reach a reader within 5 seconds, on a running daemon.
+- By hand on 2026-11-03, at `c97d8459`, on a test daemon: a row with its address, protocol version and connect time; `forwardedFor` beside the socket address; counters that reach a reader within 5 seconds; a drop answered before the socket closes, the caller's own included; a new row on reconnect; and a refusal for an unknown socket.
+- The refusals without `client:read` and `client:drop` are checked by `packages/sdk/test/clients-channel.test.ts` only, because the test daemon had no users file.
 
 ## Departures from the plan
 

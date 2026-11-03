@@ -1,6 +1,6 @@
 ---
 title: A row counts frames and bytes
-status: implemented
+status: done
 depends:
   - task-02-the-host-lists-and-drops-clients.md
 layer: "sdk, server, docs"

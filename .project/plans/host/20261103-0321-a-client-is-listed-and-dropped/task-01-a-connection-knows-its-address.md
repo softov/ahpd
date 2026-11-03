@@ -1,6 +1,6 @@
 ---
 title: A connection knows its address
-status: implemented
+status: done
 depends: []
 layer: "sdk"
 refs:

@@ -1,7 +1,7 @@
 ---
 title: A client is listed and dropped
 domain: host
-status: planned
+status: built
 priority: medium
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -84,6 +84,7 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 | The drop operation has `id: drop`, `kind: host`, `scopes: ['client']`, a `confirmation`, and `client:drop` | (defaulted: the host declares it, and a destructive operation asks first, as a tunnel's `remove` does) | 02 |
 | `targetOf` takes a target for every scope other than `list`, and names the scope in its refusal | (defaulted: the connector `ui` brief adds a `connector` scope next, and one rule serves all of them) | 02 |
 | Counters reach readers at most once each 5 seconds, and only while the channel has a subscriber | (defaulted: a refresh on each frame would send a diff on each frame) | 03 |
+| The host property is `clientRegistry`, because `clients` is the resource-provider view and their `watch` calls differ | Softov, 2026-11-03, chose "Keep clientRegistry" | 02 |
 | `?owner=me` is refused on this channel | (defaulted: no answer covers a person reading only their own clients, so the grant is the whole rule) | 02 |
 
 ## Proposed architecture
@@ -98,9 +99,9 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A connection knows its address](task-01-a-connection-knows-its-address.md) | implemented | - |
-| [02 - The host lists and drops its clients](task-02-the-host-lists-and-drops-clients.md) | implemented | 01 |
-| [03 - A row counts frames and bytes](task-03-a-row-counts-frames-and-bytes.md) | implemented | 02 |
+| [01 - A connection knows its address](task-01-a-connection-knows-its-address.md) | done | - |
+| [02 - The host lists and drops its clients](task-02-the-host-lists-and-drops-clients.md) | done | 01 |
+| [03 - A row counts frames and bytes](task-03-a-row-counts-frames-and-bytes.md) | done | 02 |
 
 ## Risks and tradeoffs
 
@@ -112,17 +113,17 @@ x-ahpd/invokeOperation { channel: x-ahpd-clients://, operationId: drop, target: 
 
 ## Resume state
 
-- **Done so far:** tasks 01, 02 and 03 implemented. `Opened` and `Connection` hold the socket number, the address, the forwarded claim and the connect time. `Host.clientRegistry` lists, watches and drops connections. `x-ahpd-clients://` serves the rows with `client:read`, offers `drop` with `client:drop`, and carries the frames and bytes in each direction. The daemon counts them in its `Tap` and serves the list. It refreshes on each arrival and departure, and once each 5 seconds while someone reads it.
-- **Next action:** every task is implemented. Review the plan, run the by-hand checks, and then set it `done`.
-- **Open questions:** task 02 says to add `clients: ClientRegistry` to `Host`, and that name is taken by `Clients`, the resource-provider view. Its `watch(client, uri, options)` would clash with `ClientRegistry.watch(onChange)` on any merged type. The build used `clientRegistry`, named for its type as `HostOptions.nodes` is. If you want another name, it is one property and one export to rename.
-- **Watch out for:** an arrival is said from `host/handshake.ts`, through `clientsChanged` on the host context, because `host.ts` cannot see the handshake. The counter timer starts in the channel's `snapshot`, because the host records the subscription after the snapshot returns.
+- **Done so far:** tasks 01 to 03 are done. ahpd #197 merged them. The checks by hand passed on 2026-11-03 at `c97d8459`, on a test daemon.
+- **Next action:** none. The plan is built, and [implemented.md](implemented.md) records it.
+- **Open questions:** none.
+- **Watch out for:** an arrival is said from `host/handshake.ts`, through `clientsChanged` on the host context, because `host.ts` cannot see the handshake.
 
 ## Final verification checklist
 
-- [ ] A client connected over WebSocket on Node is a row on `x-ahpd-clients://` with its address, version and connect time.
-- [ ] A request with `X-Forwarded-For` shows that text in `forwardedFor`, and the socket address in `address`.
-- [ ] A reader without `client:read` is refused the channel.
-- [ ] `drop` without `client:drop` is refused, and with it the answer arrives before the socket closes.
-- [ ] A dropped client reconnects at once and is a new row.
-- [ ] Frames and bytes grow in each direction, and reach a reader within 5 seconds.
-- [ ] `pnpm typecheck` and `pnpm --filter @ahpd/sdk test` pass, and `pnpm --filter @ahpd/server test` passes after them.
+- [x] A client connected over WebSocket on Node is a row on `x-ahpd-clients://` with its address, version and connect time.
+- [x] A request with `X-Forwarded-For` shows that text in `forwardedFor`, and the socket address in `address`.
+- [x] A reader without `client:read` is refused the channel.
+- [x] `drop` without `client:drop` is refused, and with it the answer arrives before the socket closes.
+- [x] A dropped client reconnects at once and is a new row.
+- [x] Frames and bytes grow in each direction, and reach a reader within 5 seconds.
+- [x] `pnpm typecheck` and `pnpm --filter @ahpd/sdk test` pass, and `pnpm --filter @ahpd/server test` passes after them.
