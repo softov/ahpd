@@ -210,6 +210,15 @@ describe('driving a turn', () => {
     }).snapshot.state;
     expect(open.inputNeeded?.[0]?.request?.answers).toEqual({ q1: answer });
 
+    // Submitted the same way, which is what answers a required question.
+    client.handle({
+      method: 'dispatchAction',
+      params: {
+        channel: chatUri,
+        action: { type: 'chat/inputAnswerChanged', requestId: request.id, questionId: 'q1', answer: { ...answer, state: 'submitted' } },
+      },
+    });
+    await settle();
     client.handle({
       method: 'dispatchAction',
       params: {

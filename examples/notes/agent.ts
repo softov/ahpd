@@ -439,8 +439,11 @@ export function notes(options: NotesOptions): Agent {
       if (!given) return undefined;
       const answer = (given.name ?? {}) as Bag;
       const value = (answer.value ?? {}) as Bag;
-      // Selected says which option; freeform is the person's own words.
-      return String(value.optionId ?? value.text ?? answer.value ?? '') || undefined;
+      // A picked note is the value's own; a name typed instead of picked is
+      // its first freeform value.
+      // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/state.ts#L618-L623
+      const typed = Array.isArray(value.freeformValues) ? value.freeformValues[0] : undefined;
+      return String(value.value || typed || '') || undefined;
     };
 
     const beginTurn = (turnId: string, text: string, queuedMessageId?: string): void => {

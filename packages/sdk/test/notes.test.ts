@@ -216,7 +216,7 @@ it('asks which note when the line did not say, and reads the one named', async (
         type: 'chat/inputCompleted',
         requestId: request.id,
         response: 'accept',
-        answers: { name: { value: { kind: 'selected', optionId: 'monday.md' } } },
+        answers: { name: { state: 'submitted', value: { kind: 'selected', value: 'monday.md' } } },
       },
     },
   });
