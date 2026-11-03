@@ -124,9 +124,9 @@ it('asks a session\'s grants for a row a backend keeps on disk, and for a name t
   const made = host({ users: directory({ r: ['session:read', 'session:write'], g: ['file:read'] }), agents: [agent] });
   const member = await withRole(made, 'r');
   expect(await call(member.client, 'subscribe', { channel: 'ahp-session:/disk' })).toMatchObject({ result: { snapshot: { resource: 'ahp-session:/disk' } } });
-  // The row is listed as `ahp-session:/disk`, and that is its one name: the
-  // same id in the backend's scheme names no session here.
-  expect(await call(member.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ code: -32001 });
+  // The row is listed as `ahp-session:/disk`, and the same id in a scheme this
+  // host serves names the same session, answered under the name asked for.
+  expect(await call(member.client, 'subscribe', { channel: 'claude:/disk' })).toMatchObject({ result: { snapshot: { resource: 'claude:/disk' } } });
   // Marking a row read is what a client does from the catalogue, and writes
   // the session's flags: `session:mark`, whatever the channel names. The
   // refusal is said on the channel the client named.
@@ -262,10 +262,18 @@ it('keeps config for a channel that names no session out of the store', async ()
   const admin = await withRole(made, 'a');
   await admin.send('zzz:/nothing', { type: 'session/configChanged', config: { voice: 'shouty' } });
   await admin.send('ahp-session:/disk', { type: 'session/configChanged', config: { voice: 'shouty', isolation: 'worktree' } });
-  // The row's id in another scheme names no session and is ignored, with
-  // nothing said, and the row's config stays what its own name was given.
+  /*
+   * A scheme this host serves no agent for names no session, whatever id it
+   * carries, as the reference host answers a URI no agent of its own serves,
+   * so the change is refused and the row's config stays what its own name was
+   * given.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L14091-L14096
+   */
   await admin.send('zzz:/disk', { type: 'session/configChanged', config: { voice: 'whisper' } });
-  expect(admin.refused()).toEqual(['zzz:/nothing: zzz:/nothing is not a session here']);
+  expect(admin.refused()).toEqual([
+    'zzz:/nothing: zzz:/nothing is not a session here',
+    'zzz:/disk: zzz:/disk is not a session here',
+  ]);
   expect(store.config('nothing')).toBeUndefined();
   // The row that is a session keeps the backend's key and not this host's own.
   expect(store.config('disk')).toEqual({ voice: 'shouty' });

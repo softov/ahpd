@@ -15,7 +15,6 @@ import type { HostContext } from './context.js';
 export interface Routing {
   spaceHere(uri: string): Space | undefined;
   nameOf(id: string): string;
-  heldElsewhere(uri: string): boolean;
   keepName(id: string): void;
   sessionOfChat(uri: string): string | undefined;
   sessionFor(channel: string): string;
@@ -48,25 +47,12 @@ export function createRouting(ctx: HostContext): Routing {
    *
    * The name a listing or a start gave the session's row, the name the store
    * kept for it before anything here listed it, or `ahp-session:/<id>` for an
-   * id nothing has named. A session keeps the URI it was created with, a
-   * provider's scheme included, and that URI is the only one it is answered
-   * under: the id keys what the store holds of it, and is never read out of a
-   * URI a client names.
+   * id nothing has named. One name per session, which is the `resource` its
+   * row and every notification about it carry; a client that names the
+   * session another way is answered under the name it used, through
+   * `meantBy` and the alias `answeredAs` keeps.
    */
   const nameOf = (id: string): string => names.get(id) ?? ctx.kept.uri?.(id) ?? uriFor(id);
-
-  /**
-   * Whether the session a URI's id names is published here under another name.
-   *
-   * A listing or a start named the session, or the store kept its name, and
-   * the URI is some other spelling of the id. Such a URI names no session
-   * here, and no VS Code window sends one: a window dispatches on the URIs
-   * this host gave it.
-   */
-  const heldElsewhere = (uri: string): boolean => {
-    const published = names.get(idOf(uri)) ?? ctx.kept.uri?.(idOf(uri));
-    return published !== undefined && published !== uri;
-  };
 
   /**
    * Keep the name a session is published under in its row.
@@ -92,25 +78,35 @@ export function createRouting(ctx: HostContext): Routing {
       ?? (owners.has(session) ? ctx.recordedChats(idOf(session)).find((one) => one.default === true)?.uri : undefined);
 
   /**
-   * The session a default or a worker chat's URI belongs to.
+   * The session a default or a worker chat's URI belongs to, under the name
+   * this host publishes that session by.
    *
-   * Only the URI this host would build for that session reads as one: the
-   * session's default chat while the session records no default chat or
-   * records this one, and a worker's chat by the session it was opened in. A
-   * default chat URI whose session has moved its default to another chat
-   * names nothing, as the reference host gives a derived default chat an
-   * owner only while the session's record agrees, and so does every other
-   * chat URI here: a peer chat's session is the record's.
+   * A chat URI carries the session it was minted for, and a session has a name
+   * for every scheme it answers to: the reference host derives a chat from
+   * each identity of a session - its registered URI, `ahp-session:/<id>` and
+   * `<provider>:/<id>` - and gives that chat the session it was derived for,
+   * while the session's record agrees about its default chat. So the session
+   * is read by the id inside the URI, and the spelling is a name rather than a
+   * second session. A worker's chat belongs to the session it was opened in,
+   * by the same id.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L226-L242
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
    */
   const sessionOfChat = (uri: string): string | undefined => {
-    const session = shapedSession(uri);
-    if (session === undefined) return undefined;
+    const minted = shapedSession(uri);
+    if (minted === undefined) return undefined;
+    const session = nameOf(idOf(minted));
     const callId = toolCallOfSubagentChat(uri);
-    if (callId !== undefined) return subagentChatUri(session, callId) === uri ? session : undefined;
-    if (chatUriFor(session) !== uri) return undefined;
+    if (callId !== undefined) return subagentChatUri(minted, callId) === uri ? session : undefined;
+    if (chatUriFor(minted) !== uri) return undefined;
+    // The session's record agrees while its default chat is the one derived
+    // from a spelling of its own id; a session that moved its default to a
+    // chat of its own owns no derived chat.
     const recorded = defaultChatOf(session);
-    return recorded === undefined || recorded === uri ? session : undefined;
+    const from = recorded === undefined ? undefined : shapedSession(recorded);
+    return recorded === undefined || (from !== undefined && chatUriFor(from) === recorded && idOf(from) === idOf(minted))
+      ? session
+      : undefined;
   };
 
   /**
@@ -126,28 +122,48 @@ export function createRouting(ctx: HostContext): Routing {
   /**
    * The channel a client's URI means here.
    *
-   * A session, a chat, a terminal or a watch is the URI the client named. The
-   * root is one channel under `ahp-root://` and under the `ahp-root:` a client
-   * prints after parsing it, and the automations catalogue under any authority
-   * it was given; those are the host's own channels, and the name the client
-   * used is remembered as an alias so it is also what the client is told.
+   * A terminal or a watch is the URI the client named. The root is one channel
+   * under `ahp-root://` and under the `ahp-root:` a client prints after parsing
+   * it, and the automations catalogue under any authority it was given.
+   *
+   * A session is one channel under every spelling of its id, and so is a chat
+   * derived from one: the reference host answers a session under each identity
+   * it has and derives that session's chat from each of them, so a spelling is
+   * a name for the channel rather than a second channel. The name the client
+   * used is remembered as an alias, so it is also what the client is told.
+   * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentHostChatOwnershipService.ts#L264-L287
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/state/sessionState.ts#L894-L898
    */
   const meantBy = (channel: string): string => {
     if (isAutomations(channel)) return automationsChannel(channel);
     if (isRootChannel(channel)) return ROOT;
-    return channel;
+    // A session channel, and its marks and changesets with it, by the id in it.
+    const base = baseOf(channel);
+    if (spaceHere(base) === 'session') {
+      const published = names.get(idOf(base)) ?? ctx.kept.uri?.(idOf(base));
+      return published === undefined ? channel : `${published}${channel.slice(base.length)}`;
+    }
+    const session = sessionOfChat(channel);
+    if (session === undefined || session === shapedSession(channel)) return channel;
+    const callId = toolCallOfSubagentChat(channel);
+    if (callId !== undefined) return subagentChatUri(session, callId);
+    return defaultChatOf(session) ?? chatUriFor(session);
   };
 
   /**
    * Whether an older VS Code window can see a chat in a session: its URI is
-   * shaped and names that session. Such a window reads a chat's session out of
-   * its URI, so a chat moved here from another session, which keeps its URI,
-   * names the session it came from and stays out of its sight. The reference
-   * host keeps where a moved chat came from in a record; here the URI is that
-   * record.
+   * shaped and was minted for that session, whichever spelling of the id it
+   * carries. Such a window reads a chat's session out of its URI, so a chat
+   * moved here from another session keeps the URI it was minted under and
+   * stays out of its sight in the session it moved to, as the reference host
+   * hides a chat whose recorded origin is another session.
    * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/protocolServerHandler.ts#L4344-L4351
    */
-  const shownToOlder = (chat: unknown, session: string): boolean => typeof chat === 'string' && shapedSession(chat) === session;
+  const shownToOlder = (chat: unknown, session: string): boolean => {
+    if (typeof chat !== 'string') return false;
+    const minted = shapedSession(chat);
+    return minted !== undefined && idOf(minted) === idOf(session);
+  };
 
   /**
    * Whether a connection may see a session.
@@ -337,7 +353,7 @@ export function createRouting(ctx: HostContext): Routing {
   };
 
   return {
-    spaceHere, nameOf, heldElsewhere, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
+    spaceHere, nameOf, keepName, sessionOfChat, sessionFor, meantBy, sessionHolding, channelKind, sessionChannel, homeOf,
     answeredAs, visible, sessionVisible, chatShown, claimable, unheld, openedBy,
   };
 }
