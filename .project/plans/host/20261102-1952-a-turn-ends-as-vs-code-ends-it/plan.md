@@ -1,7 +1,7 @@
 ---
 title: A turn ends as VS Code ends it
 domain: host
-status: built
+status: active
 priority: high
 created: 2026-11-02
 revalidated: 2026-11-02
@@ -53,7 +53,9 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 | B7: a bot's turn whose back session's turn failed ends with `chat/error`, in that turn's words | [agentSideEffects.ts#L1854-L1860](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1854-L1860) | 02 |
 | P1: fixed by `host/20261101-1556-every-backend-says-its-state-by-actions`, in main | [code://packages/agent-pi/src/session.ts](../../../../packages/agent-pi/src/session.ts) | - |
 | P5, Q28, X22: no change; pi aborts its agent, ACP cancels its session, and the proxy carries the stop inside, as the reference host aborts on a stop | [agentSideEffects.ts#L1921-L1956](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1921-L1956) | - |
-| B5: not built; a stop ends the bot's turn and leaves the back session running, and the wake holds no running turn of it to stop | [code://packages/bot/src/chat.ts#L1046-L1056](../../../../packages/bot/src/chat.ts#L1046-L1056) | - |
+| B5: a stop of a bot's turn stops the back session's running turn, with the time the bot timed it or zero, and the back session answers that turn no more | [agentSideEffects.ts#L1942](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1942); [agentSideEffects.ts#L1470-L1483](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483) | 03 |
+| B5: the bot's back session is the reference host's subagent session, the work a stopped turn waited on, so the reference host's cancel of a subagent's running turn is the rule | [agentSideEffects.ts#L1470-L1483](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1470-L1483) | 03 |
+| B5: the bot cancels as a client, and a client's `duration` is its own stopwatch's, zero for a turn it never timed | [agentHostSessionHandler.ts#L2030-L2035](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2030-L2035) | 03 |
 | E32, X5, Q15: open; the reference host says `session/ready` once its agent's session is live, at creation or at a provisional session's first message, and these backends start theirs at the first turn | [agentService.ts#L6475-L6477](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L6475-L6477); [agentService.ts#L10826-L10828](https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L10826-L10828) | - |
 | Q18, Q19, CS5, CS4: left as they are; VS Code's host was not read for them in this plan | `(defaulted: each stays as it is)` | - |
 
@@ -69,6 +71,7 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 | --- | --- | --- |
 | [01 - A nested turn says how long it ran](task-01-a-nested-turn-says-how-long-it-ran.md) | done | - |
 | [02 - A bot's failed turn ends as failed](task-02-a-bots-failed-turn-ends-as-failed.md) | done | - |
+| [03 - A bot's stop stops its back session](task-03-a-bots-stop-stops-its-back-session.md) | todo | - |
 
 ## Risks and tradeoffs
 
@@ -77,7 +80,7 @@ a back session's turn ends in error -> turn_end -> wake.finished -> the main tur
 ## Resume state
 
 - **Done so far:** tasks 01 and 02, 2026-11-02.
-- **Next action:** none; see [implemented.md](implemented.md).
+- **Next action:** task 03.
 - **Open questions:** none.
 - **Watch out for:** a halt ends the outer turn too, so both endings take the turn's start.
 
