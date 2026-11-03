@@ -106,19 +106,21 @@ export interface PiBackend {
    */
   rewind(entryId: string): Promise<boolean>;
   /**
-   * Continue from a failed reply, without a new message. The promise spans the
-   * whole run.
+   * Continue from a failed reply or a cut-off request, without a new message.
+   * The promise spans the whole run.
    *
-   * The failed reply stays in pi's file and leaves the model's context, the
-   * way pi's own retry leaves it: a context edit with `null` on its entry. pi
-   * then continues from the message before it, so the calls the turn already
-   * ran are not run again. Answers `false`, and runs nothing, when the
-   * conversation does not end at a failed reply.
+   * A failed reply, and an answer cut off while it asked for tools, stay in
+   * pi's file and leave the model's context, the way pi's own retry leaves a
+   * failed one: a context edit with `null` on its entry. pi then continues
+   * from the message before it, so the calls the turn already ran are not run
+   * again. A request cut off at its prompt or at a tool's result goes on from
+   * there. Answers `false`, and runs nothing, where `resumePoint` finds
+   * nothing to continue from.
    *
-   * A conversation that ends at that edit, over the failed reply, is one an
-   * earlier resume left when its continue threw before pi wrote anything. It
-   * still ends at the failed reply, and is continued again without a second
-   * edit: the reference host marks a resume that failed resumable, so a
+   * A conversation that ends at that edit, over the failed or cut-off answer,
+   * is one an earlier resume left when its continue threw before pi wrote
+   * anything. It still ends at that answer, and is continued again without a
+   * second edit: the reference host marks a resume that failed resumable, so a
    * client may ask again.
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1850-L1873
    *
@@ -244,20 +246,29 @@ export function promptOf(branch: readonly SessionEntry[], after: string | undefi
 }
 
 /**
- * The failed reply a resume continues from, and whether its context edit is
- * written already, or nothing when the conversation does not end at one.
+ * Where a resume continues a conversation from, or nothing when its last
+ * request ended.
  *
- * It ends at one when its last entry is the reply, or is the context edit an
- * earlier resume wrote over it, with nothing after: that resume's continue
- * threw before pi wrote anything.
+ * A failed reply, and an answer cut off while it asked for tools, are what the
+ * resume `drop`s from the model's context before it asks the model again. One
+ * an earlier resume dropped already, with the context edit it wrote as the
+ * last entry, is continued from with nothing more dropped: that resume's
+ * continue threw before pi wrote anything. A request cut off at its prompt or
+ * at a tool's result goes on from there, as pi's `Agent.continue` does from a
+ * user message or a tool's result. The same reading `replay.ts` marks a turn
+ * interrupted by.
  */
-export function failedReply(manager: Pick<SessionManager, 'getLeafEntry' | 'getEntry'>): { id: string; edited: boolean } | undefined {
+export function resumePoint(manager: Pick<SessionManager, 'getLeafEntry' | 'getEntry'>): { drop?: string } | undefined {
   const leaf = manager.getLeafEntry();
   const edited = leaf?.type === 'context_edit' && leaf.replacement === null && leaf.parentId === leaf.targetId;
   const entry = edited ? manager.getEntry(leaf.targetId) : leaf;
   const message = entry?.type === 'message' ? entry.message as { role?: string; stopReason?: string } : undefined;
-  if (entry === undefined || message?.role !== 'assistant' || message.stopReason !== 'error') return undefined;
-  return { id: entry.id, edited };
+  if (entry === undefined || message === undefined) return undefined;
+  if (message.role === 'assistant') {
+    if (message.stopReason !== 'error' && message.stopReason !== 'toolUse') return undefined;
+    return edited ? {} : { drop: entry.id };
+  }
+  return !edited && (message.role === 'user' || message.role === 'toolResult') ? {} : undefined;
 }
 
 /**
@@ -482,10 +493,10 @@ function wrap(sdk: Pi, session: AgentSession): PiBackend {
       return !moved.cancelled;
     },
     resume: async () => {
-      const failed = failedReply(session.sessionManager);
-      if (failed === undefined) return false;
-      if (!failed.edited) {
-        session.sessionManager.appendContextEdit(failed.id, null);
+      const point = resumePoint(session.sessionManager);
+      if (point === undefined) return false;
+      if (point.drop !== undefined) {
+        session.sessionManager.appendContextEdit(point.drop, null);
         session.refreshContext();
       }
       await session.agent.continue();

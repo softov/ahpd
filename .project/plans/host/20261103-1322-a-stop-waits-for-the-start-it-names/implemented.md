@@ -3,6 +3,7 @@ title: A stop waits for the start it names - implemented
 date: 2026-11-03
 refs:
   - git://2ec7d16d - the change
+  - git://bbe4ea34 - task 02's change
   - "[code://packages/sdk/src/host/chatactions.ts](../../../../packages/sdk/src/host/chatactions.ts)"
   - "[code://packages/sdk/src/host.ts](../../../../packages/sdk/src/host.ts)"
 ---
@@ -28,6 +29,23 @@ The stop's connection sends nothing more until the stop is answered, and the wai
 - The turn test files of ACP and cofold that stop a turn through a host pass, one file at a time.
 - `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
 
+## Task 02
+
+A dispatch on a chat that comes while a stop there waits for the start it names is applied after that stop, from any connection.
+So a turn another window sends meanwhile takes the chat only once the stop has ended the turn it named.
+That turn is cancelled in the history.
+
+- [`code://packages/sdk/src/host.ts`](../../../../packages/sdk/src/host.ts), [`code://packages/sdk/src/host/context.ts`](../../../../packages/sdk/src/host/context.ts) - `ahead`, the waiting stop by its chat.
+- [`code://packages/sdk/src/host/chatactions.ts`](../../../../packages/sdk/src/host/chatactions.ts) - the waiting stop held in `ahead`, and a dispatch on its chat applied after it.
+- [`code://packages/sdk/test/echo-origin.test.ts`](../../../../packages/sdk/test/echo-origin.test.ts) - a turn a third connection sends while the stop waits.
+- [`code://docs/sdk/AHP.md`](../../../../docs/sdk/AHP.md) - the `chat/turnCancelled` row, which says task 01's wait as well.
+
+Verified:
+
+- On `fa9afa9a`'s sources the new case fails: the second turn is said before the stop, which is said as sent and stops nothing.
+- With the change the new case passes, and the origins test file passes alone at one worker.
+- `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+
 ## Departures from the plan
 
-None.
+- The `chat/turnCancelled` row of AHP.md says task 01's wait, which task 01 left unsaid.

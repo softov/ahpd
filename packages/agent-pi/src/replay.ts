@@ -84,6 +84,13 @@ const raise = (turn: PiTurn, event: Bag, at?: number): void => {
  * result followed, and `complete` otherwise. What it used is every answer's
  * usage summed, as a live turn says it.
  *
+ * The last turn of a file that ends while the turn's request still ran, its
+ * last answer asking for tools or no answer at all, ends in error after its
+ * parts with VS Code's `executionInterrupted` part, as VS Code's reader ends a
+ * turn whose request is still active at the end of its events.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/copilot/copilotAgent.ts#L7987-L7990
+ * https://github.com/microsoft/vscode/blob/3a2421399905c0c044dade3048a797d1e9ba33d4/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts#L1128-L1130
+ *
  * Entries with no turn meaning are skipped: pi's leading system message, the
  * model and thinking level changes, context edits, labels, session info and
  * an extension's own entries. A model change still names the model the turns
@@ -220,12 +227,21 @@ export function replayEntries(entries: readonly SessionEntry[]): Replayed {
       open.endedAt = entry.timestamp;
     }
   }
+  const running = open !== undefined && (open.answered === undefined || open.answered.stopReason === 'toolUse');
   seal();
+  if (running) {
+    const cut = turns.at(-1) as WatchedTurn;
+    cut.parts.push({
+      kind: 'error',
+      error: { errorType: 'executionInterrupted', message: 'The agent was interrupted before this request finished.' },
+    });
+    cut.state = 'error';
+  }
   /*
-   * The last turn, when it failed, is the one a client may resume: its failed
-   * reply is the file's last word, which a resume takes out of the model's
-   * context. An earlier failed turn has turns after it, and the protocol
-   * resumes only the latest.
+   * The last turn, when it failed or was cut off, is the one a client may
+   * resume: its failed reply or its cut-off request is the file's last word,
+   * which a resume takes up again, as `resumePoint` reads it. An earlier
+   * failed turn has turns after it, and the protocol resumes only the latest.
    */
   const last = turns.at(-1);
   const part = last?.state === 'error' ? last.parts.at(-1) : undefined;
