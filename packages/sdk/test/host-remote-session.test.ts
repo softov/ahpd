@@ -148,7 +148,8 @@ const made = async (
       channel: SESSION,
       provider: 'claude',
       ...(config === undefined ? {} : { config }),
-      ...(active === undefined ? {} : { activeClient: active }),
+      // Under this connection's own id, which the creator's entry must name.
+      ...(active === undefined ? {} : { activeClient: { clientId: 'probe', ...active } }),
       ...(meta === undefined ? {} : { _meta: meta }),
     },
   });

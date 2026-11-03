@@ -959,8 +959,8 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
       /*
        * The creator's entry names the creator. The protocol says its
        * `clientId` MUST match the one this connection gave at `initialize`,
-       * and VS Code's host refuses a request whose entry names another client,
-       * before anything is made for it.
+       * and VS Code's host refuses a request whose entry names another client
+       * or none, before anything is made for it.
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-session/commands.ts#L77-L85
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/protocolServerHandler.ts#L2209-L2213
        */
@@ -968,7 +968,7 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
         ? params.activeClient as Bag
         : undefined;
       const clientId = connection.clientId || 'anonymous';
-      if (typeof claimed?.clientId === 'string' && claimed.clientId !== clientId)
+      if (claimed !== undefined && claimed.clientId !== clientId)
         throw new RpcError(INVALID_PARAMS, 'createSession.activeClient.clientId must match the connection\'s clientId');
       unheld(uri);
       /*
@@ -1063,11 +1063,10 @@ export function createSessionMethods(ctx: HostContext, conn: ConnectionContext):
          * subscribe to yet has nobody to tell.
          *
          * The entry is the one the creator sent, `tools` included or left
-         * out, as the reference host holds a creator's entry. A `clientId` it
-         * left out is this connection's, as a set's is.
+         * out, as the reference host holds a creator's entry.
          * https://github.com/microsoft/vscode/blob/58a595f76bdc150460d7e0d279d26cc6fc577b0a/src/vs/platform/agentHost/node/agentService.ts#L6404
          */
-        const activeClient: Bag | undefined = claimed === undefined ? undefined : { ...claimed, clientId };
+        const activeClient: Bag | undefined = claimed;
         let here: Map<string, Bag> | undefined;
         if (activeClient !== undefined) {
           here = presence.get(idOf(uri)) ?? new Map<string, Bag>();
