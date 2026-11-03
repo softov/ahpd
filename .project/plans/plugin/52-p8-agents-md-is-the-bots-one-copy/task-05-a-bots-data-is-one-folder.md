@@ -4,10 +4,10 @@ status: implemented
 depends: [task-02-the-persona-is-read-from-agents-md.md]
 layer: "packages/sdk, packages/server, packages/bot"
 refs:
-  - "[code://packages/sdk/src/plugins/plugins.ts#L987-L1002](../../../../packages/sdk/src/plugins/plugins.ts#L987-L1002) - `records` takes only a slug, so a collection cannot be in a subfolder"
-  - "[code://packages/bot/src/provider.ts#L77](../../../../packages/bot/src/provider.ts#L77) - the `bot-chats` collection"
-  - "[code://packages/bot/src/names.ts#L24](../../../../packages/bot/src/names.ts#L24) - the `bot-sessions` collection"
-  - "[code://packages/bot/src/chat.ts#L131](../../../../packages/bot/src/chat.ts#L131) - the chat logs in `bot-chats/`"
+  - "[code://packages/sdk/src/plugins/plugins.ts#L1367-L1395](../../../../packages/sdk/src/plugins/plugins.ts#L1367-L1395) - `records` takes a path of slugs and a `file`, and the claim is on the first slug"
+  - "[code://packages/bot/src/provider.ts#L118-L123](../../../../packages/bot/src/provider.ts#L118-L123) - `chats`, one bot's main chat rows in `bots/<slug>/chats`"
+  - "[code://packages/bot/src/names.ts#L30-L38](../../../../packages/bot/src/names.ts#L30-L38) - `chatsOf`, `sessionsOf` and `logsOf`, one path per bot"
+  - "[code://packages/bot/src/chat.ts#L216-L231](../../../../packages/bot/src/chat.ts#L216-L231) - `logDirs`, every bot's `logs/` folder read at once"
   - "[code://packages/server/src/records.ts#L115-L125](../../../../packages/server/src/records.ts#L115-L125) - `fileRecords`, which keeps record `<id>` at `<name>/<id>.md`"
   - "[code://packages/server/src/records.ts#L30](../../../../packages/server/src/records.ts#L30) - the reserved collection names"
   - "[code://packages/sdk/src/types/records.ts#L31-L40](../../../../packages/sdk/src/types/records.ts#L31-L40) - `CollectionOptions`, which has only `body`"
