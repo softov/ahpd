@@ -5,7 +5,7 @@ import type { CommandShell } from '../access/commandautoapprover.js';
 import type { Bag } from './common.js';
 import type { FileEdit } from './changes.js';
 import type { WireTurn } from './wire.js';
-import type { Emit, Handed, PlanUpdate, Session, SubagentChat, SubagentRequest } from './session.js';
+import type { Emit, PlanUpdate, Session, SubagentChat, SubagentRequest } from './session.js';
 import type { ToolDefinition } from '@microsoft/agent-host-protocol';
 import type { Account, Offered } from './probe.js';
 import type { ResourceStore } from './resources.js';
@@ -440,25 +440,9 @@ export interface Start {
   emit: Emit;
   /**
    * Where the actions of a channel `Session.channel` serves go, under the name
-   * the host asked for it by. `handed` is as for `emit`.
+   * the host asked for it by. Each is the host's own action, as for `emit`.
    */
-  emitOn?: (channel: string, action: Bag, handed?: Handed) => void;
-  /**
-   * The client's action the host handed this backend, for a backend that
-   * answers it in a later turn of the event loop (`Handed`).
-   *
-   * `action` is what the backend will say back. The host finds the client's
-   * dispatch it answers as it finds the one an echo answers: the dispatch
-   * being applied, when `action` is of its kind and about its turn, or a turn
-   * or a queued message handed over after the host waited on a machine or a
-   * policy check, by the id `action` names. Undefined when `action` answers
-   * no client, as for a call the host makes of its own accord.
-   *
-   * `channel` is the channel the action came on where it is one
-   * `Session.channel` serves; a session's action is otherwise the session's,
-   * and any other the chat's.
-   */
-  handed?: (action: Bag, channel?: string) => Handed | undefined;
+  emitOn?: (channel: string, action: Bag) => void;
   /**
    * Ask the host for a read-only chat for one of this backend's tool calls.
    *

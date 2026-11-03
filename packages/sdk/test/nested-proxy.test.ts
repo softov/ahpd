@@ -742,9 +742,8 @@ it('a restart goes on when the host inside it stopped will not go', async () => 
 }, 30_000);
 
 /*
- * A client of the host outside dispatches the turn, and the host inside says
- * it back: the turn the proxy carries out is that client's own, under the
- * clientSeq it sent, however late the host inside answers.
+ * A client of the host outside dispatches the turn, which is said out here as
+ * that client's own, under the clientSeq it sent, and carried inside.
  */
 it('gives a turn on a nested session the origin of the client outside that sent it', async () => {
   const inner = innerHost(backend());
@@ -791,9 +790,9 @@ const outside = async (inner: ReturnType<typeof innerHost>) => {
 };
 
 /*
- * Every action a client sends a nested session comes back from the host inside,
- * after the dispatch outside was applied. Each is that client's own echo, under
- * the clientSeq it sent, however late the host inside says it.
+ * Every action a client sends a nested session is said out here as that
+ * client's own, under the clientSeq it sent, and then carried inside, whose
+ * echo of it goes no further than the mirror.
  */
 it('gives a draft on a nested session the origin of the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -814,9 +813,9 @@ it('gives a message queued on a nested session the origin of the client outside 
 });
 
 /*
- * A background request on a nested session is the host inside's to answer,
- * whatever its backend makes of it, and that answer reaches the client outside
- * under the clientSeq it sent.
+ * A background request on a nested session is said out here, under the
+ * clientSeq its client sent, and carried to the host inside, whose backend
+ * makes of it what it does.
  */
 it('answers a background request on a nested session to the client outside that sent it', async () => {
   const { host, dispatch, told } = await outside(innerHost(backend()));
@@ -829,16 +828,14 @@ it('answers a background request on a nested session to the client outside that 
 });
 
 /*
- * A client's read and archive of a nested session's lead chat go to the host
- * inside, which runs the chat and answers the client, and the chat's bits out
- * here are the ones that host says: the host running a session is the one
- * producer of its state, and a relay forwards a client's messages to it. So a
- * turn's start and end move the bit once, inside, and the archive of the lead
- * chat is refused there.
- * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+ * A client's read of a nested session's lead chat is said out here and
+ * carried to the host inside, which runs the chat, and the chat's bits out
+ * here follow what that host says of them: a turn's start and end move the bit
+ * once, inside. An archive of the lead chat is refused out here, as any
+ * session's default chat's is, and reaches nothing inside.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
  */
-it('carries a read and an archive of the lead chat to the host inside, whose bits the chat holds', async () => {
+it('carries a read of the lead chat to the host inside, whose bits the chat holds, and refuses an archive of it', async () => {
   const inner = innerHost(backend());
   const { host, client, dispatch, told } = await outside(inner);
   const chat = chatUriFor('ahp-session:/outer');
@@ -860,78 +857,17 @@ it('carries a read and an archive of the lead chat to the host inside, whose bit
 
   await dispatch(3, { type: 'chat/isArchivedChanged', isArchived: true });
   await until(() => told('chat/isArchivedChanged').some((one) => one.origin?.clientSeq === 3));
-  expect(carried('chat/isArchivedChanged')).toHaveLength(1);
+  await settleInner();
+  expect(carried('chat/isArchivedChanged')).toEqual([]);
   expect(told('chat/isArchivedChanged').map((one) => one.rejectionReason))
     .toEqual(['Only a known independently manageable non-default chat can be archived.']);
   await host.close();
 });
 
 /*
- * The host inside refusing what the host outside handed it is a refusal of the
- * client outside that sent it, with the inside's reason, and the chat stays as
- * it was. The echo backend takes no message mid-turn.
- */
-it('refuses to the client outside an action the host inside refused, and changes nothing', async () => {
-  const { host, dispatch, told } = await outside(innerHost(backend(40)));
-  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'a long enough answer to steer' } });
-  await until(() => told('chat/responsePart').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
-  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'shorter' } });
-  await until(() => told('chat/pendingMessageSet').length > 0 || told('chat/turnComplete').length > 0);
-  const steering = told('chat/pendingMessageSet');
-  expect(steering).toHaveLength(1);
-  expect(steering[0]?.origin).toEqual({ clientId: 'window', clientSeq: 7 });
-  expect(steering[0]?.rejectionReason).toBe('This backend cannot take a message mid-turn');
-  await host.close();
-}, 30_000);
-
-/*
- * A steering message a client outside takes back is carried inside as the
- * steering message the inner chat holds, and the host inside's answer reaches
- * the client outside under the clientSeq it sent. The backend inside holds the
- * message until it is taken back.
- */
-it('takes back a steering message on a nested session through the host inside', async () => {
-  const { agent } = scriptedAgent(() => {});
-  let held: Bag | undefined;
-  const holding = {
-    ...agent,
-    create: (session: Start) => {
-      const made = agent.create(session) as unknown as Bag & { chatState: () => Bag };
-      return {
-        ...made,
-        chatState: () => ({ ...made.chatState(), ...(held === undefined ? {} : { steeringMessage: held }) }),
-        steer: (id: string, text: string) => {
-          held = { id, message: { text } };
-          session.emit('chat', { type: 'chat/pendingMessageSet', kind: 'steering', id, message: { text } });
-          return true;
-        },
-        unqueue: (id: string) => {
-          if (held?.id !== id) return;
-          held = undefined;
-          session.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
-        },
-      };
-    },
-  } as unknown as Agent;
-  const { host, dispatch, told } = await outside(innerHost(holding));
-  await dispatch(6, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'go on' } });
-  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
-  expect(told('session/creationFailed')).toEqual([]);
-  await dispatch(7, { type: 'chat/pendingMessageSet', kind: 'steering', id: 's1', message: { origin: { kind: 'user' }, text: 'shorter' } });
-  await until(() => told('chat/pendingMessageSet').length > 0);
-  await dispatch(8, { type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' });
-  await until(() => told('chat/pendingMessageRemoved').length > 0);
-  expect(told('chat/pendingMessageRemoved').map((one) => [one.action, one.origin, one.rejectionReason]))
-    .toEqual([[{ type: 'chat/pendingMessageRemoved', kind: 'steering', id: 's1' }, { clientId: 'window', clientSeq: 8 }, undefined]]);
-  expect(held).toBeUndefined();
-  await host.close();
-}, 30_000);
-
-/*
- * A switch the host outside says itself once the session took it, said to its
- * clients once. The session hands the switch to the host inside, whose echo
- * moves the session's mirror and goes no further.
+ * A switch the host outside says itself, to its clients once. The session
+ * hands the switch to the host inside, whose echo moves the session's mirror
+ * and goes no further.
  */
 it('says a customization switch on a nested session to the clients outside once', async () => {
   const plugin = { type: 'plugin', id: 'plugin-a', name: 'a' };
@@ -958,25 +894,24 @@ it('says a customization switch on a nested session to the clients outside once'
 }, 30_000);
 
 /*
- * A turn reaches the session in a machine once the host outside has set the
- * machine where its branch is, after the dispatch outside was applied, and the
- * host inside refusing it is still that client's refusal.
+ * A turn the host outside said, which the host inside would not start, ends
+ * out here in an error with the inside's reason, as a send that fails ends its
+ * own turn, and the session ending later fails no turn a second time.
  */
-it('refuses to the client outside a turn the host inside refused', async () => {
+it('ends a turn the host inside would not start in an error out here', async () => {
   const inner = innerHost(backend());
   inner.host.refuseTurns('The host inside is stopping');
   const { host, dispatch, told } = await outside(inner);
   await dispatch(8, { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
-  await until(() => told('chat/turnStarted').length > 0 || told('session/creationFailed').length > 0);
+  await until(() => told('chat/error').length > 0 || told('session/creationFailed').length > 0);
   expect(told('session/creationFailed')).toEqual([]);
-  const started = told('chat/turnStarted');
-  expect(started).toHaveLength(1);
-  expect(started[0]?.origin).toEqual({ clientId: 'window', clientSeq: 8 });
-  expect(started[0]?.rejectionReason).toBe('The host inside is stopping');
-  // Nothing ran under the turn, so the session ending fails no turn.
+  expect(told('chat/turnStarted').map((one) => [one.origin, one.rejectionReason])).toEqual([[{ clientId: 'window', clientSeq: 8 }, undefined]]);
+  expect(told('chat/error').map((one) => [one.action.turnId, (one.action.part as Bag | undefined)?.error])).toEqual([
+    ['t1', { errorType: 'turnFailed', message: 'The host inside is stopping' }],
+  ]);
   inner.crash();
   await until(() => told('session/creationFailed').length > 0);
-  expect(told('chat/error')).toEqual([]);
+  expect(told('chat/error')).toHaveLength(1);
   await host.close();
 });
 
@@ -2170,7 +2105,7 @@ const throughHost = async (inside: Partial<HostOptions>, outside: Partial<HostOp
 /*
  * A nested session's changesets are the host inside's, the one producer of
  * the session's state: listed as it lists them, each served out here from it,
- * and reviewed there.
+ * and reviewed there once a client's review is said out here.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/missionControl/missionControlSessionMirror.ts#L227-L228
  */
 it('lists a nested session\'s changesets as the host inside does, and serves and reviews each from there', async () => {
@@ -2202,7 +2137,7 @@ it('lists a nested session\'s changesets as the host inside does, and serves and
     method: 'dispatchAction',
     params: { channel: changeset, clientSeq: 7, action: { type: 'changeset/filesReviewChanged', files: [file.id], reviewed: true } },
   });
-  await until(() => peer.seen.some(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged'));
+  await until(() => reviews.length > 0 && peer.seen.some(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged'));
   expect(reviews).toEqual([{ files: [file.id], reviewed: true }]);
   const echo = peer.seen.find(({ params }) => params?.channel === changeset && params?.action?.type === 'changeset/filesReviewChanged');
   expect(echo?.params.origin).toEqual({ clientId: 'window', clientSeq: 7 });

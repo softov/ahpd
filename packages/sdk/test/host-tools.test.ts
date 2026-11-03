@@ -2967,21 +2967,24 @@ describe('a customization switched for one session', () => {
     expect((await two.plugin())?.enablement).toBeUndefined();
   });
 
-  it('refuses a skill of the plugin out loud, with the list sent again', async () => {
+  /*
+   * A switch of a skill is said, and the session holds it as the protocol's
+   * reducer took it; the backend is asked, and the log says it has no switch.
+   * VS Code's host records a client's enablement for plugins and servers, so a
+   * skill's is the state's alone.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L204-L227
+   */
+  it('says a switch of a skill of the plugin the backend cannot make live, which the session holds', async () => {
     const { said, told, open } = await switchable();
     const one = await open('one');
 
     await one.toggle('skill:agents-md', false);
     await settle();
 
-    // The backend has no switch for a skill, and says so by refusing it: a
-    // control that reports success and changes nothing is worse than one that
-    // says it cannot.
     expect(said.some((line) => line.includes('skill:agents-md has no runtime switch'))).toBe(true);
     expect(told).toEqual([['skill:agents-md', false]]);
-    // And nothing was kept, so the skill stays as the backend reports it.
     const plugin = await one.plugin();
-    expect((plugin?.children as Record<string, unknown>[])[0]?.enablement).toBeUndefined();
+    expect((plugin?.children as Record<string, unknown>[])[0]?.enabled).toBe(false);
   });
 });
 

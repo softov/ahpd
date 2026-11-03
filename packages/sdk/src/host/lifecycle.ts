@@ -151,12 +151,13 @@ export interface Lifecycle {
     queuedAs?: string,
     attachments?: MessageAttachment[],
     kind?: 'queued' | 'steering',
+    said?: () => void,
   ): string | undefined | Promise<string | undefined>;
-  /** A turn begun, or a turn refused, from what `beginOrRun` answered. */
+  /** A turn begun, or a turn refused, from what `beginOrRun` answered, and what is still to come of it. */
   beginTurn(
     begun: string | undefined | Promise<string | undefined>,
     refused: (why: string) => void,
-  ): void;
+  ): Promise<void> | undefined;
   /** The model a message names, or nothing when it names none. */
   modelIn(value: unknown): { id: string; config?: Record<string, string | number | boolean | null> } | undefined;
   /** Who a message came from, read off the message itself, and what it picked. */
@@ -1308,6 +1309,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
    *
    * `sender` is who asked, held against this turn for as long as it runs.
    *
+   * `said` says the client's action this turn came from, once the turn's
+   * checks have passed and before the backend is handed it: a client's action
+   * is said by this host itself, after its checks and before any side effect.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679
+   *
    * A promise only for a turn that had to be asked about, or one in a machine:
    * everything else is answered here and now, which is what keeps the actions of
    * a turn in the order they were already written in.
@@ -1323,6 +1329,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
     queuedAs?: string,
     attachments?: MessageAttachment[],
     kind?: 'queued' | 'steering',
+    said?: () => void,
   ): string | undefined | Promise<string | undefined> => {
     /*
      * No new turn while an embedder is on its way out.
@@ -1370,13 +1377,13 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
        */
       const command = text.startsWith(BANG) ? text.slice(BANG.length).trim() : '';
       /*
-       * A turn asked for while one runs is the backend's to begin, a command's
-       * as much as a question's, with no refusal in between: the backend says
-       * its start at once, so it takes the running turn's place in every
-       * client's state, as the protocol's reducer replaces the active turn, and
-       * runs it once the work in front of it is done. The reference host
-       * refuses a start only while a workspace changes, and otherwise applies
-       * it and hands it to its agent.
+       * A turn asked for while one runs is begun all the same, a command's as
+       * much as a question's, with no refusal in between: its start is said at
+       * once, so it takes the running turn's place in every client's state, as
+       * the protocol's reducer replaces the active turn, and the backend runs it
+       * once the work in front of it is done. The reference host refuses a
+       * start only while a workspace changes, and otherwise applies it and
+       * hands it to its agent.
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L13429-L13435
        * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentSideEffects.ts#L1810-L1815
        * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/types/channels-chat/reducer.ts#L358-L387
@@ -1398,6 +1405,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
          * the same thing, and the only thing that decides it is what the
          * session holds at the moment the turn starts.
          */
+        said?.();
         if (queuedAs === undefined) session.begin(turnId, text, model, from, attachments, ctx.turnInstructions(session.uri));
         else session.queue(queuedAs, text, model, from, attachments, ctx.turnInstructions(session.uri), kind);
         return undefined;
@@ -1408,6 +1416,7 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
         forgetKeys(queuedAs ?? turnId);
         return `${provider} cannot run a command in a turn; use a terminal instead`;
       }
+      said?.();
       ctx.commandTurns.set(commandTurnKey(session.chatUri, queuedAs ?? turnId), false);
       const first = session.workingDirectories()[0];
       const where = first === undefined ? options.path : localPath(first);
@@ -1483,9 +1492,11 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   /**
    * A turn begun, or a turn refused, from what `beginOrRun` answered.
    *
-   * For the two call sites that stand in a `switch` and cannot wait. An answer
-   * that came already is taken at once; one that is still to come is taken when
-   * it comes, and a turn nothing refused is begun then as well.
+   * For the two call sites that stand in a `switch`. An answer that came
+   * already is taken at once; one that is still to come is taken when it
+   * comes, and a turn nothing refused is begun then as well. What is still to
+   * come is returned, so the connection that asked holds its later dispatches
+   * until the turn's client action is said or refused.
    *
    * A promise that rejects is a refusal too, in the thrown error's own words: an
    * answer later than the tick it was asked in comes from a backend, a machine
@@ -1497,14 +1508,15 @@ export function createLifecycle(ctx: HostContext): Lifecycle {
   const beginTurn = (
     begun: string | undefined | Promise<string | undefined>,
     refused: (why: string) => void,
-  ): void => {
+  ): Promise<void> | undefined => {
     if (typeof begun === 'string') refused(begun);
     else if (begun !== undefined) {
-      void begun.then(
+      return begun.then(
         (why) => { if (why !== undefined) refused(why); },
         (error: unknown) => { refused(error instanceof Error ? error.message : String(error)); },
       );
     }
+    return undefined;
   };
 
   /**

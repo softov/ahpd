@@ -27,7 +27,7 @@ It says no client's action, keeps no queue, and refuses nothing the host has app
 4. Rename `withdraw` to `withdrawSteeringMessage`, the host's one call at a client's removal (rows 14, 20, 33).
 5. Remove `clearSteering`, since the host removes pending steering itself (row 19).
 6. Remove `queue`, `unqueue`, `reorder` and `ran` (rows 15, 22).
-7. Turn the refusals of D-0024, D-0025 and D-0050 to D-0053 into reconciliations.
+7. Turn the refusals of D-0024, D-0025 and D-0050 into reconciliations; D-0051 to D-0053 landed in 01.
 
 ## Validation
 

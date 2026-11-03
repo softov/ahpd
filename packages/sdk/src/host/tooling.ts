@@ -290,8 +290,11 @@ export interface Tooling {
   moving: Map<string, Move>;
   /** Give a chat a title, its held state and its row together, and say so. */
   renameChat(uri: string, chatUri: string, title: string): void;
-  /** Give a session a title from its own channel, and its sole chat with it, and say so. */
-  renameSession(uri: string, title: string): void;
+  /**
+   * Give a session a title from its own channel, and its sole chat with it, and
+   * say so, unless a client's rename on that channel was `said` already.
+   */
+  renameSession(uri: string, title: string, said?: boolean): void;
   /** What a host tool sees of this host, from inside one chat. */
   toolContext(uri: string, chatUri: string, provider?: string): ToolCall;
   /**
@@ -1377,14 +1380,17 @@ export function createTooling(ctx: HostContext): Tooling {
    * down onto a sole default chat; with peer chats, the default chat's held
    * state and row keep the title they have.
    * https://github.com/microsoft/vscode/blob/a12547442f722dfe0a6ec105f986cfe65b8d6f22/src/vs/platform/agentHost/node/chatContributions/sessionTitle/sessionTitleContribution.ts#L74-L100
+   *
+   * `said` when a client's rename on the session's channel was said there
+   * already, as its own action.
    */
-  const renameSession = (uri: string, title: string): void => {
+  const renameSession = (uri: string, title: string, said = false): void => {
     const held = sessions.get(uri);
     const found = held?.chats.get(held.defaultChat);
     if (held === undefined || found === undefined) throw new Error(`${uri} is not a session this host is running`);
     found.setTitle?.(title);
     keepTitle(uri, held.defaultChat, title);
-    dispatch(uri, { type: 'session/titleChanged', title });
+    if (!said) dispatch(uri, { type: 'session/titleChanged', title });
     if (readAggregate(ctx, uri).length <= 1) updateChatTitle(uri, held.defaultChat, title);
     summaryMoved(uri);
     operationsMoved(uri);

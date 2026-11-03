@@ -727,7 +727,7 @@ describe('turning a customization on and off', () => {
     expect(sdk.mcpToggled).toEqual([{ name: 'desk', enabled: true }]);
   });
 
-  it('refuses a prompt out loud, and puts the switch back', async () => {
+  it('says a switch of a prompt the CLI cannot switch, and says so in the log', async () => {
     const said: string[] = [];
     sdk.init = { commands: [{ name: 'review' }] };
     const host = createHost({
@@ -748,13 +748,12 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
 
-    // The CLI has no runtime switch for a prompt, a skill or a subagent. A
-    // control that reports success and changes nothing is worse than one that
-    // says it cannot.
+    // The switch is said, as VS Code's host says a client's toggle, and the
+    // CLI has no runtime switch for a prompt, a skill or a subagent, which the
+    // log says.
+    expect(actions(p, 'ahp-session:/live').filter((e) => e.action.type === 'session/customizationToggled')
+      .map((e) => e.rejectionReason)).toEqual([undefined]);
     expect(said.some((line) => line.includes('command:review has no runtime switch'))).toBe(true);
-    // And the list goes back out, so the switch a client drew from it returns
-    // to where it was rather than showing a change that did not happen.
-    expect(actions(p, 'ahp-session:/live').some((e) => e.action.type === 'session/customizationsChanged')).toBe(true);
   });
 
   it('takes a plugin toggle, and keeps the row after the CLI stops reporting it', async () => {
@@ -979,9 +978,8 @@ describe('turning a customization on and off', () => {
     });
     await settle(8);
 
-    // A backend that has the call is asked first, and one that takes the
-    // request says what follows it, so the host says nothing of its own.
-    // Once: asking twice would run whatever the backend does twice.
+    // A backend that has the call is asked once the request is said. Once:
+    // asking twice would run whatever the backend does twice.
     expect(asked).toEqual(['mcp:desk']);
   });
 
@@ -989,7 +987,7 @@ describe('turning a customization on and off', () => {
     ['has no call for it', undefined, false],
     ['declines it', async (): Promise<boolean> => false, false],
     ['declines it, inside a plugin', async (): Promise<boolean> => false, true],
-  ])('says a background request on a blocking server a backend %s to every client, then the blocking it keeps', async (_, call, inPlugin) => {
+  ])('says a background request on a blocking server a backend %s to every client, and keeps the state the reducer leaves', async (_, call, inPlugin) => {
     // A server still starting and holding the session's turns back on it,
     // listed on its own or as a plugin's, where the protocol's reducer finds
     // it in the plugin's `children`.
@@ -1011,9 +1009,9 @@ describe('turning a customization on and off', () => {
           // state it opens with: what clients hold is what it said.
           const inner = backend.create({
             ...start,
-            emit: (channel, action, handed) => start.emit(channel, action.type === 'session/customizationsChanged'
+            emit: (channel, action) => start.emit(channel, action.type === 'session/customizationsChanged'
               ? { ...action, customizations: [server] }
-              : action, handed),
+              : action),
           });
           return {
             ...inner,
@@ -1046,23 +1044,21 @@ describe('turning a customization on and off', () => {
     await settle(8);
 
     // The request is said to every client of the session, the sender's copy
-    // answering the sender, and the state this host keeps follows it: the
-    // server is still blocking (the host "MAY restore `blocking: true` via
-    // `session/mcpServerStateChanged` to reject the request",
-    // https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/mcp.md).
+    // answering the sender, and nothing restores the blocking the protocol's
+    // reducer clears, as VS Code's host leaves it.
+    // https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L2066-L2072
     expect(actions(p, uri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 5)
       .map((e) => [e.action.type, e.rejectionReason])).toEqual([['session/mcpServerBackgroundRequested', undefined]]);
     expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerBackgroundRequested')).toHaveLength(1);
-    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerStateChanged')
-      .map((e) => [e.action.id, e.action.state])).toEqual([['mcp:desk', { kind: 'starting', blocking: true }]]);
+    expect(actions(q, uri).filter((e) => e.action.type === 'session/mcpServerStateChanged')).toEqual([]);
     // So each client, reducing what it was told with the protocol's reducer,
-    // holds the server as this host does.
+    // holds the server starting with nothing held back on it.
     for (const [r, opened] of [[p, mine], [q, theirs]] as const) {
       const held = actions(r, uri)
         .filter((e) => e.serverSeq > opened.snapshot.fromSeq && e.rejectionReason === undefined)
         .reduce((state, e) => sessionReducer(state, e.action as never), opened.snapshot.state);
       const listed = held.customizations?.find((one) => one.id === server.id) as { children?: unknown[] } | undefined;
-      expect(inPlugin ? listed?.children?.[0] : listed).toHaveProperty('state', { kind: 'starting', blocking: true });
+      expect(inPlugin ? listed?.children?.[0] : listed).toHaveProperty('state', { kind: 'starting', blocking: false });
     }
   });
 });

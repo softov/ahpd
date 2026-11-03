@@ -55,7 +55,7 @@ import type { Agent, Start } from '../types/agent.js';
 import type { BackgroundTask } from '../types/background.js';
 import type { Bag } from '../types/common.js';
 import type { ComputerPort, HandedAgent, HandedRecord, NestedHost, NestedStarted } from '../types/computers.js';
-import type { Chosen, Handed, MessageAttachment, MessageFrom, Session, SessionChannel, SubagentChat, TurnOptions } from '../types/session.js';
+import type { Chosen, MessageAttachment, MessageFrom, Session, SessionChannel, SubagentChat, TurnOptions } from '../types/session.js';
 
 /** How many of the inner host's own lines are kept for a failure's sentence. */
 const TAIL = 12;
@@ -478,29 +478,16 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   const awaited = new Set<string>();
   /** What was asked for before the inner session existed, in order. */
   const waiting: (() => void)[] = [];
-  /** The name this session's client gives itself to the host inside. */
+  /**
+   * The name this session's client gives itself to the host inside.
+   *
+   * The host outside says each client action itself before this session
+   * carries it, so what the host inside says under this client's origin moves
+   * the mirror and goes no further: a second copy would tell the clients
+   * outside of one change twice. A rejection under it is this session's to
+   * log, and a turn the host inside would not start ends in an error out here.
+   */
   const clientId = `ahpd-nested-${id}`;
-  /**
-   * The actions clients outside sent that the host inside has been handed and
-   * has not answered, by the `clientSeq` this session's client sent each with.
-   *
-   * The host inside answers each one on the envelope that carries that
-   * client's origin, with its echo or its rejection, and that answer is the
-   * one the client outside is owed for its own action.
-   */
-  const answering = new Map<number, Handed>();
-  /**
-   * The actions the host outside says itself once this session took them, by
-   * the `clientSeq` this session's client sent each with: a setting, a switch
-   * and an answer.
-   *
-   * The host inside answers each with its echo, which moves the mirror and goes
-   * no further: the host outside has said the action to its own clients, and a
-   * second copy would tell them of one change twice.
-   */
-  const saidOutside = new Set<number>();
-  /** The actions clients outside sent that wait, with `waiting`, for the host inside. */
-  const unsent = new Set<Handed>();
   /** A changeset or a canvas of the host inside that a client out here subscribed to. */
   interface Relay {
     /** Its name inside. */
@@ -535,51 +522,45 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   };
 
   /**
-   * One action for the host inside, and the client action outside it carries
-   * out, when a client sent one: held until the host inside answers it, and
-   * refused when nothing will. One the host outside says itself is marked so,
-   * and its echo goes no further than the mirror.
+   * A turn the host outside started that the host inside will not run, ended
+   * out here in an error with `why`, as a send that fails ends its own turn.
+   */
+  const unstarted = (action: Bag, why: string): void => {
+    if (action.type !== 'chat/turnStarted') return;
+    const named = String(action.turnId ?? '');
+    start.emit('chat', {
+      type: 'chat/error',
+      turnId: named,
+      duration: turn === named ? Math.max(0, Date.now() - turnBegan) : 0,
+      part: { kind: 'error', error: { errorType: 'turnFailed', message: why } },
+    });
+    if (turn === named) turn = undefined;
+  };
+
+  /**
+   * A client's action, carried to the host inside once the host outside has
+   * said it, and held with `waiting` while the host inside is not up yet.
    *
    * `channel` is the session's, the chat's, or the inner name of a changeset
    * or a canvas this session relays.
    */
-  const deliver = (channel: string, action: Bag, handed?: Handed, said = false): void => {
+  const carry = (channel: string, action: Bag): void => {
+    // A session that ended carries nothing: the host answers a turn on it with
+    // the sentence `ended` gives, before the turn would reach this session.
     if (closed || ended !== undefined) {
-      handed?.refuse(ended ?? `${provider}'s session in computer://${id} has closed`);
+      log(`${provider} in computer://${id}: ${String(action.type)} was not carried: ${ended ?? 'the session has closed'}`);
       return;
     }
-    if (handed !== undefined) unsent.add(handed);
     gate(() => {
-      // Refused while it waited, and so let go of by the client that sent it.
-      if (handed !== undefined && !unsent.delete(handed)) return;
       try {
         const to = channel === 'chat' ? innerChat : channel === 'session' ? innerSession : channel;
-        const sent = client?.dispatch(to, action as unknown as StateAction);
-        if (sent !== undefined && handed !== undefined) answering.set(sent.clientSeq, handed);
-        if (sent !== undefined && said) saidOutside.add(sent.clientSeq);
+        client?.dispatch(to, action as unknown as StateAction);
       }
       catch (error) {
         log(`${provider}: could not reach the host inside computer://${id}: ${reason(error)}`);
-        handed?.refuse(`${provider}'s host inside computer://${id} could not be reached: ${reason(error)}`);
+        unstarted(action, `${provider}'s host inside computer://${id} could not be reached: ${reason(error)}`);
       }
     });
-  };
-
-  /** A client's action, carried to the host inside and answered from there to the client that sent it. */
-  const carry = (channel: 'session' | 'chat', action: Bag): void => { deliver(channel, action, start.handed?.(action)); };
-
-  /**
-   * Refuse every client action the host inside will not answer now.
-   *
-   * Its answers would come over the connection that has gone, or from a
-   * session that has ended, and each client outside holds its action until
-   * it hears one.
-   */
-  const unanswered = (sentence: string): void => {
-    for (const handed of [...answering.values(), ...unsent]) handed.refuse(sentence);
-    answering.clear();
-    unsent.clear();
-    for (const relay of relays.values()) relay.refuse?.(sentence);
   };
 
   /**
@@ -594,7 +575,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     ended = message;
     halted = undefined;
     log(`${provider} in computer://${id}: ${message}`);
-    unanswered(message);
+    for (const relay of relays.values()) relay.refuse?.(message);
     start.emit('session', { type: 'session/creationFailed', error: { errorType: 'sessionStartFailed', message } });
     if (turn !== undefined) {
       // How long the turn ran, which a client draws as the turn's elapsed time.
@@ -624,7 +605,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     halted = message;
     ready = false;
     log(`${provider} in computer://${id}: ${message}`);
-    unanswered(message);
+    for (const relay of relays.values()) relay.refuse?.(message);
     start.emit('session', { type: 'session/creationFailed', error: { errorType: 'sessionStartFailed', message } });
     if (turn !== undefined) {
       start.emit('chat', {
@@ -658,7 +639,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return;
     }
     if (restart === 'reconnect') {
-      unanswered(`${provider}'s host inside computer://${id} ended${why === '' ? '' : `: ${why}`}, and the session is being opened again there`);
+      const sentence = `${provider}'s host inside computer://${id} ended${why === '' ? '' : `: ${why}`}, and the session is being opened again there`;
+      for (const relay of relays.values()) relay.refuse?.(sentence);
       void reopen(why);
       return;
     }
@@ -1056,25 +1038,15 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         }
         if (event.type !== 'action') continue;
         const { action, origin, rejectionReason } = event.params;
+        // The echo of what this session carried, said out here already.
+        const ours = origin?.clientId === clientId;
         /*
-         * The answer to a client action outside, when it carries this client's
-         * origin: the host inside says the echo of what it was handed, or
-         * rejects it, on the envelope that names the `clientSeq` it came under.
-         */
-        const sentAs = origin?.clientId === clientId ? origin.clientSeq : undefined;
-        const handed = sentAs === undefined ? undefined : answering.get(sentAs);
-        if (sentAs !== undefined) answering.delete(sentAs);
-        const saidAlready = sentAs !== undefined && saidOutside.delete(sentAs);
-        /*
-         * A rejection changes nothing, inside or out: the client that sent the
-         * action is refused with the reason the host inside gave, and the
-         * mirror and every other client are left as they were.
+         * A rejection changes nothing in the mirror. A turn the host inside
+         * would not start, which the host out here said, ends in an error.
          */
         if (rejectionReason !== undefined) {
-          if (handed !== undefined) handed.refuse(rejectionReason);
-          else log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
-          // A turn refused inside never runs, so nothing ends it here either.
-          if (action.type === 'chat/turnStarted' && turn === action.turnId) turn = undefined;
+          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
+          if (ours) unstarted(action as unknown as Bag, rejectionReason);
           continue;
         }
         /*
@@ -1111,10 +1083,9 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
             if (turn === action.turnId) turn = undefined;
           }
         }
-        // Said out here already, by the host outside to its own clients.
-        if (saidAlready) continue;
+        if (ours) continue;
         const shown = served(channel, action as unknown as Bag);
-        if (shown !== undefined) start.emit(channel, shown, handed);
+        if (shown !== undefined) start.emit(channel, shown);
       }
     }
     catch (error) {
@@ -1139,8 +1110,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
   /**
    * One relayed channel's subscription, pumped as the session's own are: each
    * action reduced into what the relay holds, with the protocol's own reducer,
-   * and said out here under the outer name, as the echo of the client action
-   * it answers or as that action's refusal.
+   * and said out here under the outer name, but for the echo of what this
+   * session carried, said out here already.
    */
   const pumpRelay = async (outer: string, relay: Relay, subscription: Subscription): Promise<void> => {
     try {
@@ -1148,12 +1119,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         if (ended !== undefined || closed || relays.get(outer) !== relay) return;
         if (event.type !== 'action') continue;
         const { action, origin, rejectionReason } = event.params;
-        const sentAs = origin?.clientId === clientId ? origin.clientSeq : undefined;
-        const handed = sentAs === undefined ? undefined : answering.get(sentAs);
-        if (sentAs !== undefined) answering.delete(sentAs);
         if (rejectionReason !== undefined) {
-          if (handed !== undefined) handed.refuse(rejectionReason);
-          else log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
+          log(`${provider} in computer://${id}: the host inside refused ${action.type}: ${rejectionReason}`);
           continue;
         }
         try {
@@ -1164,7 +1131,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
         catch (error) {
           log(`${provider}: kept the inner ${relay.kind} action ${action.type} out of the snapshot: ${reason(error)}`);
         }
-        start.emitOn?.(outer, outward(action) as Bag, handed);
+        if (origin?.clientId !== clientId) start.emitOn?.(outer, outward(action) as Bag);
       }
     }
     catch { /* the session's own subscriptions say why it ended */ }
@@ -1500,8 +1467,8 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
      * A changeset or a canvas of the host inside, which this session serves
      * out here under the outer name, as it serves the session and its chat:
      * followed from the first subscribe until nobody here watches it, a
-     * client's action on it carried inside, and a command about it asked
-     * inside, each answered from there.
+     * client's action on it carried inside once the host out here has said
+     * it, and a command about it asked inside and answered from there.
      */
     channel: (uri: string): SessionChannel | undefined => {
       const inner = innerChannel(uri);
@@ -1530,7 +1497,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
           }
           return outward(relay.state) as Bag;
         },
-        dispatch: (action: Bag): void => { deliver(inner, action, start.handed?.(action, uri)); },
+        dispatch: (action: Bag): void => { carry(inner, action); },
         request: async (method: string, params: Bag): Promise<unknown> => {
           const held = client;
           if (held === undefined || ended !== undefined || closed) throw new Error(ended ?? `${provider}'s session in computer://${id} has closed`);
@@ -1620,12 +1587,11 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       carry('chat', { type: 'chat/draftChanged', ...(draft === undefined ? {} : { draft }) });
     },
     /*
-     * The host inside runs the chat, so a client's read and archive go there,
-     * and its answer and its bits come back as every action of the chat does.
+     * The host inside runs the chat, so a client's read and archive go there
+     * too, and its own bits come back as every action of the chat does.
      */
-    flag: (bit: 'read' | 'archived', on: boolean): boolean => {
+    flag: (bit: 'read' | 'archived', on: boolean): void => {
       carry('chat', bit === 'read' ? { type: 'chat/isReadChanged', isRead: on } : { type: 'chat/isArchivedChanged', isArchived: on });
-      return true;
     },
     /* Taken only while the inner chat has a turn running. */
     steer: (steerId: string, text: string, _attachments?: MessageAttachment[], from?: MessageFrom): boolean => {
@@ -1668,7 +1634,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
     answer: (requestId: string, accepted: boolean, answers: Bag): boolean => {
       const open = (session?.inputNeeded ?? []).some((entry) => entry.id === requestId) || asking(requestId);
       if (!open) return false;
-      deliver('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers }, undefined, true);
+      carry('chat', { type: 'chat/inputCompleted', requestId, response: accepted ? 'accept' : 'decline', answers });
       return true;
     },
     /* Taken only for an input request the running inner turn has open. */
@@ -1686,16 +1652,16 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       const property = declared(key);
       if (property === undefined) return `${provider} in computer://${id} has no setting called ${key}`;
       if (property.sessionMutable === false) return `${key} is fixed once the session has started`;
-      deliver('session', { type: 'session/configChanged', config: { [key]: value } }, undefined, true);
+      carry('session', { type: 'session/configChanged', config: { [key]: value } });
       return true;
     },
     setCustomizationEnabled: async (customizationId: string, enabled: boolean): Promise<boolean> => {
       if (!holds(session?.customizations, customizationId)) return false;
-      deliver('session', {
+      carry('session', {
         type: 'session/customizationToggled',
         id: customizationId,
         enablement: [{ kind: 'session', enabled }],
-      }, undefined, true);
+      });
       return true;
     },
     startMcpServer: async (serverId: string): Promise<boolean> => {
@@ -1709,15 +1675,12 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       return true;
     },
     /*
-     * Handed inside, and answered from there.
+     * Carried inside, where it is acted on.
      *
-     * Whether the server was blocking is the inner session's own state, so
-     * there is nothing to decide out here: the action is carried to the host
-     * inside, whose answer reaches the client outside that sent it. True,
-     * because the request reached the host that can do something about it -
-     * and no `holds` check, because the answer either way is the same action,
-     * and the inner host treats one for a server it does not have as the no-op
-     * it is.
+     * Whether the server was blocking is the inner session's own state, which
+     * the host inside reads. True, because the request reached the host that
+     * can do something about it; carried for any server, because the inner
+     * host treats one for a server it does not have as the no-op it is.
      */
     backgroundMcpServerStartup: async (serverId: string): Promise<boolean> => {
       carry('session', { type: 'session/mcpServerBackgroundRequested', id: serverId });
@@ -1783,7 +1746,7 @@ const nestedSession = (provider: string, variant: boolean, start: Start, options
       closing ??= (async () => {
         closed = true;
         const removing = reason === 'dispose';
-        unanswered(`${provider}'s session in computer://${id} has closed`);
+        for (const relay of relays.values()) relay.refuse?.(`${provider}'s session in computer://${id} has closed`);
         /*
          * A restart that arrives while the host inside is still coming up has
          * no process to stop yet: `host` is set once `startInside` has answered,

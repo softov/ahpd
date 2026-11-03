@@ -22,8 +22,7 @@ import { BASELINE_TURN } from '../types/changes.js';
 import type { Bag } from '../types/common.js';
 import type { Agent, AutoApproval, AutoApprovalKind, Start } from '../types/agent.js';
 import type { Connection } from '../types/host.js';
-import type { Handed, Session, SubagentChat, SubagentRequest } from '../types/session.js';
-import type { Dispatched } from './state.js';
+import type { Session, SubagentChat, SubagentRequest } from '../types/session.js';
 import type { MessageAttachment } from '@microsoft/agent-host-protocol';
 import type { ResourceStore } from '../types/resources.js';
 import type { MayRunTool, RunClientTool, ToolsChanged, ToolsEndpoint } from '../tools/server.js';
@@ -192,8 +191,6 @@ export function createSpawn(ctx: HostContext): Spawn {
     contributedDefaults, runningSchema, chatSummary, subagentSummary, summaryMoved, summaryKept, learnModels,
     learnAccount, movableMoved,
   } = ctx;
-  /** The client's dispatch each action a backend holds through `Start.handed` came from. */
-  const handedFrom = new WeakMap<Handed, Dispatched>();
 
   /** Whether a tool call, or a tool call action, spawns a worker whose chat URI it does not carry yet. */
   const unstamped = (meta: unknown): meta is Bag =>
@@ -1175,64 +1172,17 @@ export function createSpawn(ctx: HostContext): Spawn {
        * call, and what that list still knows comes up through `planUpdate`.
        */
       ...(options.plan === undefined ? {} : { plan: true }),
-      /*
-       * The client's action `action` answers, held for the backend that
-       * answers it later. The dispatch stays with this host, in `handedFrom`,
-       * and the refusal goes to the client that sent it. The dispatch is marked
-       * taken, so the host leaves its answer to the backend.
-       */
-      handed: (action, channel) => {
-        const at = ctx.answering(channel ?? (String(action.type ?? '').startsWith('session/') ? uri : chatUri), action);
-        if (at === undefined) return undefined;
-        at.taken = true;
-        const handed: Handed = {
-          refuse: (reason) => {
-            ctx.refuse(at.peer, at.channel, at.action, at.origin, reason);
-            // A turn or a queued message refused here never runs, so no turn's
-            // end lets go of who sent it or the keys its check chose.
-            const named = at.action.type === 'chat/turnStarted' ? at.action.turnId
-              : at.action.type === 'chat/pendingMessageSet' && at.action.kind === 'queued' ? at.action.id
-              : undefined;
-            if (typeof named === 'string') {
-              forgetSender(named);
-              forgetKeys(named);
-            }
-          },
-        };
-        handedFrom.set(handed, at);
-        return handed;
+      /* An action on a channel this session's backend serves, said under this host's name for it. */
+      emitOn: (channel, action) => {
+        dispatch(channel, action);
       },
       /*
-       * An action on a channel this session's backend serves, said under this
-       * host's name for it, and the client's echo where it answers one.
+       * What a backend says is this host's own action, said as the reference
+       * host says its agent's: its background work and its session's activity
+       * as much as its turns.
+       * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
        */
-      emitOn: (channel, action, handed) => {
-        dispatch(channel, action, handed === undefined ? undefined : handedFrom.get(handed)?.origin);
-      },
-      emit: (channel, action, handed) => {
-        /*
-         * Background work is the host's to draw.
-         *
-         * A row is the protocol's shape with a `_meta` flag and a snapshot
-         * beside it, all of which the host builds from `backgroundTasks` - so
-         * an action a backend emitted itself would be a second builder, and
-         * the one a late subscriber never sees. Dropped rather than refused,
-         * because a backend mid-migration should not fail a turn over it, and
-         * logged because silence is how it goes unnoticed.
-         */
-        if (action.type === 'chat/backgroundWorkSet' || action.type === 'chat/backgroundWorkRemoved') {
-          log(`dropped ${action.type} from ${agent.provider}: the host draws background work`);
-          return;
-        }
-        /*
-         * And what the session is doing is the host's to say.
-         *
-         * A session's activity is the activity of the chat that decides its
-         * status, which only the host can read across every chat of it, and
-         * it says it as each chat's own activity moves. A backend's own is its
-         * chat's, which the chat's `chat/activityChanged` already carries.
-         */
-        if (action.type === 'session/activityChanged') return;
+      emit: (channel, action) => {
         /*
          * A chat's read and archived bits are the ones this host keeps, laid
          * over the status a backend says on the chat's row, as they are on the
@@ -1298,32 +1248,6 @@ export function createSpawn(ctx: HostContext): Spawn {
          * nothing is sent where there is nobody to name, so a host with no
          * users directory sends exactly what it sent before.
          */
-        const answers = handed === undefined ? ctx.answering(where, action) : handedFrom.get(handed);
-        const origin = handed === undefined ? undefined : answers?.origin;
-        /*
-         * What goes out where this answers a client's dispatch is that
-         * client's own action, as it sent it: the backend says when the action
-         * is taken, and the client's echo carries what the client sent, as the
-         * reference host emits the client's action itself. A backend's own
-         * rebuilding of it - its start time, a model it filled in, the fields of
-         * a decision it did not pass on - stays the backend's.
-         * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
-         *
-         * A field the client left out, and a message's origin, are the
-         * backend's: every reducer reads a turn's start time and a message's
-         * origin, and the server's echo is the one that wins where the two
-         * differ.
-         * https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md#L60
-         */
-        const own = answers?.action;
-        const word = (action.message ?? {}) as Bag;
-        const said = own === undefined ? action : {
-          ...action,
-          ...own,
-          ...(typeof own.message === 'object' && own.message !== null
-            ? { message: { ...(word.origin === undefined ? {} : { origin: word.origin }), ...(own.message as Bag) } }
-            : {}),
-        };
         /*
          * The bits of a chat whose backend runs it on another host, as that
          * host says them: kept here, where every row and state of the chat
@@ -1339,18 +1263,18 @@ export function createSpawn(ctx: HostContext): Spawn {
           const on = bit === Status.IsRead ? action.isRead === true : action.isArchived === true;
           kept.setChatFlags(idOf(uri), chatUri, on ? flags | bit : flags & ~bit);
         }
-        if (sender !== undefined && said.type === 'chat/turnStarted') {
+        if (sender !== undefined && action.type === 'chat/turnStarted') {
           kept.setSender(idOf(uri), turn, sender);
           // On the message as well as the action: the message is what a
           // chat's state keeps, and a turn read back says its sender there.
-          const message = (said.message ?? {}) as Bag;
+          const message = (action.message ?? {}) as Bag;
           dispatch(where, asSent({
-            ...said,
-            _meta: { ...(said._meta as Bag | undefined), 'ahpd.sender': sender },
+            ...action,
+            _meta: { ...(action._meta as Bag | undefined), 'ahpd.sender': sender },
             message: { ...message, _meta: { ...(message._meta as Bag | undefined), 'ahpd.sender': sender } },
-          }), origin);
+          }));
         }
-        else dispatch(where, asSent(said), origin);
+        else dispatch(where, asSent(action));
         if (bit === Status.IsRead) sessionFollows(ctx, uri, chatUri, readBefore);
         // A tool call that finished may have written to this session's tree, so
         // the changeset is re-read then rather than waiting for the turn's end.
@@ -1718,12 +1642,12 @@ export function createSpawn(ctx: HostContext): Spawn {
      * the same queue, which keeps the endings in the order they were said.
      */
     const backendEmit = wired.emit;
-    let holding: { channel: 'session' | 'chat' | 'terminal'; action: Bag; handed: Handed | undefined }[] | undefined;
+    let holding: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[] | undefined;
     const wait = (ms: number): Promise<void> => new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
       timer.unref?.();
     });
-    const release = async (queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag; handed: Handed | undefined }[]): Promise<void> => {
+    const release = async (queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[]): Promise<void> => {
       const deadline = Date.now() + PLAN_HOLD_MS;
       while ((planUpdates.size > 0 || planDraws.size > 0) && Date.now() < deadline) {
         await Promise.race([
@@ -1732,22 +1656,22 @@ export function createSpawn(ctx: HostContext): Spawn {
         ]);
       }
       holding = undefined;
-      for (const one of queued) backendEmit(one.channel, one.action, one.handed);
+      for (const one of queued) backendEmit(one.channel, one.action);
     };
-    wired.emit = (channel, action, handed) => {
+    wired.emit = (channel, action) => {
       if (holding !== undefined) {
-        holding.push({ channel, action, handed });
+        holding.push({ channel, action });
         return;
       }
       if (channel === 'chat' && ENDINGS.has(String(action.type)) && planUpdates.size > 0) {
-        const queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag; handed: Handed | undefined }[] = [{ channel, action, handed }];
+        const queued: { channel: 'session' | 'chat' | 'terminal'; action: Bag }[] = [{ channel, action }];
         holding = queued;
         void release(queued).catch((error: unknown) => {
           log(`the held turn end of ${uri} was not sent: ${reason(error)}`);
         });
         return;
       }
-      backendEmit(channel, action, handed);
+      backendEmit(channel, action);
     };
     /*
      * Whether this chat is one the session's own backend does not serve.

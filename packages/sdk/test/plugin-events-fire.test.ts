@@ -198,7 +198,16 @@ const asked = (event: HostEvent): { turn: string; sender?: string } => {
   return sender === undefined ? { turn } : { turn, sender };
 };
 
-/** One client saying something into a chat, under the id it calls the turn. */
+/**
+ * What one client says into a chat, under the id it gives it, in the shape the
+ * protocol gives a start or a queued message: the host says a client's action
+ * as the client sent it.
+ */
+const said = (id: string, text: string, type: string): Bag => (type === 'chat/turnStarted'
+  ? { type, turnId: id, startedAt: new Date().toISOString(), message: { text, origin: { kind: 'user' } } }
+  : { type, kind: 'queued', id, message: { text, origin: { kind: 'user' } } });
+
+/** One client saying something into a chat, under the id it gives it. */
 const send = (
   client: ReturnType<ReturnType<typeof createHost>['accept']>,
   channel: string,
@@ -207,7 +216,7 @@ const send = (
   type = 'chat/turnStarted',
 ) => client.handle({
   method: 'dispatchAction',
-  params: { channel, action: { type, id, kind: 'queued', turnId: id, message: { text } } },
+  params: { channel, action: said(id, text, type) },
 });
 
 it('fires session_start with its provider, and session_end when it is disposed', async () => {
@@ -412,7 +421,13 @@ it('names who sent each turn, and a queued message keeps its sender when it runs
   expect(of(seen, 'turn_end').map(asked)).toEqual(started);
 });
 
-it('says on the wire who sent a turn, and says nothing on a host with nobody to name', async () => {
+/*
+ * Who sent a turn is this host's own record, which the events above read, and
+ * a client's start goes out as the client sent it, as the reference host
+ * applies a client's action and says it with the client's origin.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L2745-L2752
+ */
+it('says a client\'s start on the wire as the client sent it, on a host with somebody to name', async () => {
   /** The `chat/turnStarted` frame a client was sent, out of what it saw. */
   const started = (notes: { method: string; params: unknown }[]): Bag | undefined => notes
     .filter((note) => note.method === 'action')
@@ -427,21 +442,11 @@ it('says on the wire who sent a turn, and says nothing on a host with nobody to 
   await ana.handle({ method: 'createSession', params: { channel: 'ahp-session:/who', provider: 'echo' } });
   // Watching the chat first, because an action goes to whoever is listening.
   await ana.handle({ method: 'subscribe', params: { channel: chat } });
-  await send(ana, chat, 'turn-who', 'hello there');
+  const action = said('turn-who', 'hello there', 'chat/turnStarted');
+  await ana.handle({ method: 'dispatchAction', params: { channel: chat, action } });
   await wait(100);
-  expect(started(on.notes)).toMatchObject({ _meta: { 'ahpd.sender': 'user:ana' } });
-
-  // And the absence, which is the whole of what a host with no directory has
-  // to say: the action the protocol has, with nothing of this host's on it.
-  const alone = watched();
-  await hello(alone.client);
-  await alone.client.handle({ method: 'createSession', params: { channel: 'ahp-session:/alone', provider: 'echo' } });
-  await alone.client.handle({ method: 'subscribe', params: { channel: chatUriFor('ahp-session:/alone') } });
-  await send(alone.client, chatUriFor('ahp-session:/alone'), 'turn-nobody', 'hello there');
-  await wait(100);
-  const quiet = started(alone.peer.notes);
-  expect(quiet).toMatchObject({ type: 'chat/turnStarted' });
-  expect(quiet?._meta).toBeUndefined();
+  expect(started(on.notes)).toEqual(action);
+  expect(of(named.seen, 'turn_start').map(asked)).toEqual([{ turn: 'turn-who', sender: 'user:ana' }]);
 });
 
 it('names the maker of an automation as the sender of the turn it started', async () => {

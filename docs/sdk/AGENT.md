@@ -266,26 +266,16 @@ that turn's id. A stop that names another turn or none, and a stop on a chat wit
 no turn running, goes to every client of the chat as the client's own action and
 reaches no backend.
 
-### Answering later
+### A client's action is the host's to say
 
-A client's action reaches a session through one of the methods above, and what
-the session says back goes out as that client's echo, carrying its origin: what
-it emits while the host applies the action, and a turn begun or stopped or a
-message queued that it says once it is ready. The client holds its action as
-pending until it hears that echo or a rejection.
-
-A session that can answer only later, such as the proxy for a session in a
-machine, whose answers come from the host inside, takes
-`start.handed(action)` inside the method, with the action it will say back,
-and answers through it once it knows: `start.emit(channel, action, handed)` is
-the echo, with the client's origin, and `handed.refuse(reason)` refuses the
-action to that client alone. The host finds the client's action the way it
-finds the one an echo answers: the action it is applying, when `action` is of
-its kind and about its turn, or a turn or a queued message it handed over after
-waiting on a machine or a policy check, by the id `action` names. It is
-undefined for an action that answers no client. A turn that reaches a session
-while the one before it is still beginning, which only the session can see, is
-refused the same way, as the Claude session refuses it in `begin`.
+The host says a client's action itself, as the client sent it and with its
+origin, once its own checks of it have passed and before it calls the method
+that hands it to the session: the echo the client holds its action pending for.
+Everything a session emits is the host's own action, said with no origin, as
+[VS Code's host](https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentService.ts#L13654-L13679)
+says a client's action and then runs the side effect that reaches its agent. A
+start a session says of a turn the chat holds already is not said again, since
+a second start would open the turn again in every client's state.
 
 ## The rules that fail silently
 
@@ -294,7 +284,7 @@ this repository a bug.
 
 | | |
 | --- | --- |
-| **Say the turn back** | `chat/turnStarted` arrives from the client and you emit it again. Nothing in a client applies what it sent itself, so a backend that reduced it privately goes on to emit response parts for a turn no client has - and the whole answer lands nowhere until somebody reopens the session |
+| **Say a turn you start** | A client's `chat/turnStarted` is said by the host before `begin`. A turn the session starts of its own accord, such as a queued message it takes up, is the session's to say before its first part: nothing in a client applies a turn nobody said, so response parts for it land nowhere until somebody reopens the session |
 | **A part exists before it streams** | `chat/responsePart` creates it, `chat/delta` appends to it. A delta naming a part nobody opened appends to nothing |
 | **The append action follows the part** | `chat/delta` is defined against a *markdown* part and `chat/reasoning` against a *reasoning* one, and a client's reducer returns the part unchanged when they do not match. Thinking sent as a `chat/delta` opens a part and never fills it |
 | **The running turn is `activeTurn`** | and is not in `turns`. It moves across when it completes. A client reading only the history shows an empty conversation for exactly as long as somebody is watching one happen |

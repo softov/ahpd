@@ -815,12 +815,6 @@ it('appends a new run under the same session id when a finished session is resum
   expect(await second.transcript?.('one')).toHaveLength(2);
 });
 
-/** The refusals a host would carry back to the client whose turn this session was handed. */
-const refusals = (): { refused: { action: Bag; reason: string }[]; handed: NonNullable<Start['handed']> } => {
-  const refused: { action: Bag; reason: string }[] = [];
-  return { refused, handed: (action) => ({ refuse: (reason) => { refused.push({ action, reason }); } }) };
-};
-
 /*
  * A turn handed while another runs takes its place, said at once as the
  * reducer replaces the active turn, and runs once the run in front of it is
@@ -840,15 +834,13 @@ it('takes a second turn handed while a resumed session opens, said at once and r
    * either has started. Both wait for the read, and the second finds the
    * first running.
    */
-  const { refused, handed } = refusals();
   const second = backend(root, createFakeModel({ script: [{ text: 'second' }, { text: 'third' }], stream: true }), allowAll());
-  const after = open(second, 'one', sweep, { resume: 'one', seed: [], handed });
+  const after = open(second, 'one', sweep, { resume: 'one', seed: [] });
   after.session.begin('t2', 'say second');
   after.session.begin('t3', 'say third');
   const done = (turnId: string): boolean => after.view.notes.some((one) => one.action.type === 'chat/turnComplete' && one.action.turnId === turnId);
   await until(() => done('t3'));
 
-  expect(refused).toEqual([]);
   const started = after.view.notes.filter((one) => one.action.type === 'chat/turnStarted').map((one) => one.action.turnId);
   expect(started).toEqual(['t2', 't3']);
   // t3 is said before t2's run is over, and runs after it.
@@ -883,9 +875,8 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
    * it has, that run is the chat's turn again, and the new one takes its place
    * and waits for it.
    */
-  const { refused, handed } = refusals();
   const second = backendOf(await restart(), root, createFakeModel({ script: [{ text: 'done' }], stream: true }), asks);
-  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool], handed });
+  const after = open(second, 'one', sweep, { resume: 'one', tools: [tool] });
   after.session.begin('t2', 'something else');
   await until(
     () => after.view.notes.some((one) => one.action.type === 'chat/turnStarted' && one.action.turnId === 't2'),
@@ -893,7 +884,6 @@ it('takes a turn handed while a paused run reopens, said at once in its place', 
     () => JSON.stringify(after.view.notes.map((one) => one.action.type)),
   );
 
-  expect(refused).toEqual([]);
   expect((after.session.chatState().activeTurn as Bag | undefined)?.id).toBe('t2');
 });
 

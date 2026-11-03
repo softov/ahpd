@@ -163,6 +163,9 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 | F-0010, F-0011, F-0089, F-0141, F-0142, a failed command recorded as an error | 06 | The call completes with the exit or the failure, and the turn completes (row 34) |
 | F-0095, F-0153, F-0155, steering handed back or sent while a turn prepares, run as its own turn | 05, 08 | False defers and the host hands it again on the turn's next action (rows 13, 17); handed back, it steers the active turn (row 18) |
 | F-0019, F-0116, F-0135, the turn's instructions never reaching ACP, cofold or pi | 08 | Each send carries them into that turn's prompt (row 35) |
+| C-0019, C-0023, a backend holding an echo, and the echo filled with its fields | 01 | The host says the client's action itself (rows 1, 2) |
+| C-0020, C-0021, a backend's background work and session activity dropped | 01 | A backend's action is the host's action (row 2); the session's activity is folded into its state |
+| D-0051 to D-0053, a toggle, a server start and a background request refused after the echo | 01 | A refusal after the echo cannot be one (row 4) |
 
 ## Proposed architecture
 
@@ -176,7 +179,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - The host says the client's action](task-01-the-host-says-the-clients-action.md) | todo | - |
+| [01 - The host says the client's action](task-01-the-host-says-the-clients-action.md) | done | - |
 | [02 - The queue waits for prerequisites only](task-02-the-queue-waits-for-prerequisites.md) | todo | 01 |
 | [03 - A turn is admitted after its echo](task-03-a-turn-is-admitted-after-its-echo.md) | todo | 01 |
 | [04 - The Session contract follows IAgent](task-04-the-session-contract-follows-iagent.md) | todo | 01 |
@@ -201,7 +204,7 @@ VS Code: client action -> per-client queue (prerequisites only) -> host checks -
 ## Resume state
 
 - **Done so far:** the plan, from the audit's rows and VS Code at `6b68d3fe`.
-- **Next action:** [task-01-the-host-says-the-clients-action.md](task-01-the-host-says-the-clients-action.md).
+- **Next action:** [task-02-the-queue-waits-for-prerequisites.md](task-02-the-queue-waits-for-prerequisites.md).
 - **Answered:**
   1. The afternoon's turn branches this plan replaces are dropped, not merged.
   2. What of them the plan does not touch is rebuilt on top of it.

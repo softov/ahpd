@@ -100,26 +100,6 @@ const failer = (): Agent => {
   };
 };
 
-/** A backend that answers each turn in a later tick, by refusing it. */
-const refusing = (): Agent => {
-  const inner = echo({ path: DIR, pace: 0 });
-  return {
-    ...inner,
-    provider: 'refusing',
-    displayName: 'Refusing',
-    create: (start) => {
-      const session = inner.create(start);
-      return {
-        ...session,
-        begin: (turnId, text) => {
-          const handed = start.handed?.({ type: 'chat/turnStarted', turnId, message: { text } });
-          void Promise.resolve().then(() => { handed?.refuse('the machine will not take it'); });
-        },
-      };
-    },
-  };
-};
-
 /** One host with somebody to name, Ana connected to it, and one session of `provider`. */
 async function signedIn(over: Partial<HostOptions> = {}, provider = 'echo') {
   const host = createHost({ path: DIR, agents: [echo({ path: DIR, pace: 0 })], users: directory(), ...over });
@@ -182,17 +162,6 @@ describe('a turn lets go of its sender', () => {
       .map((note) => (note.params as { rejectionReason?: string }).rejectionReason)
       .find((reason): reason is string => typeof reason === 'string');
     expect(refused).toContain('cannot run a command in a turn');
-    expect(held()).toEqual(EMPTY);
-  });
-
-  it('when a backend that answers later refuses the turn it was handed', async () => {
-    const { dispatch, held, peer: p } = await signedIn({ agents: [refusing()] }, 'refusing');
-    await dispatch({ type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'hello' } });
-    await wait(50);
-    const refused = p.notes
-      .map((note) => note.params as { action?: Bag; rejectionReason?: string })
-      .filter((params) => params.rejectionReason !== undefined);
-    expect(refused.map((params) => [params.action?.type, params.rejectionReason])).toEqual([['chat/turnStarted', 'the machine will not take it']]);
     expect(held()).toEqual(EMPTY);
   });
 

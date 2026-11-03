@@ -268,7 +268,11 @@ export function createTerminals(ctx: HostContext): Terminals {
         },
         waitForExit: () => terminal.waitForExit(),
         write: (data) => { terminal.write(data); },
-        resize: (cols, rows) => { terminal.resize(cols, rows); },
+        // The backend's own resize, which is this host's to say.
+        resize: (cols, rows) => {
+          terminal.resize(cols, rows);
+          dispatch(uri, { type: 'terminal/resized', cols, rows });
+        },
         // Ends the process and leaves the row, the way `commanded` does: the
         // channel may still be what something points at.
         kill: () => { terminal.close(); },
@@ -341,22 +345,10 @@ export function createTerminals(ctx: HostContext): Terminals {
         resize: (nextCols, nextRows) => {
           cols = nextCols;
           rows = nextRows;
-          dispatch(uri, { type: 'terminal/resized', cols, rows });
         },
-        clear: () => {
-          content = '';
-          dispatch(uri, { type: 'terminal/cleared' });
-        },
-        setTitle: (next) => {
-          if (title === next) return false;
-          title = next;
-          dispatch(uri, { type: 'terminal/titleChanged', title });
-          return true;
-        },
-        setClaim: (next) => {
-          claim = next;
-          dispatch(uri, { type: 'terminal/claimed', claim });
-        },
+        clear: () => { content = ''; },
+        setTitle: (next) => { title = next; },
+        setClaim: (next) => { claim = next; },
         close: () => {
           finish();
           outputs.delete(uri);

@@ -10,7 +10,7 @@ import type { Terminal } from '../types/terminals.js';
 import type { StoredWorktree } from '../types/sessions.js';
 import type { DebugLogs } from '../sessions/debuglogs.js';
 import type { CallLinks } from '../automations/calllinks.js';
-import type { Claiming, Claimed, Dispatched, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
+import type { Claiming, Claimed, Held, HeldState, Learned, LiveSubagent, Origin } from './state.js';
 import type { Admission } from './admission.js';
 import type { Relay } from './relay.js';
 import type { ChatRecord } from './chatrecord.js';
@@ -293,11 +293,10 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** The sessions being restarted now, by their own uri. */
   restarting: Map<string, Promise<void>>;
   /**
-   * A stop that waits for the start of the turn it names, by its chat's
-   * channel, settled once the stop is applied or refused. Every other dispatch
-   * on that chat waits for it.
+   * The turns a client resumed that run now, by their chat and their id: the
+   * time each ran before and when it ran again, which its stop is said with.
    */
-  ahead: Map<string, Promise<void>>;
+  resumedTurns: Map<string, { duration: number; since: number }>;
   /** What this host has learned about each backend, by the id clients name it by. */
   learned: Map<string, Learned>;
   /** The lead chat of a held session, when it has one. */
@@ -345,48 +344,12 @@ export interface HostContext extends ChatRecord, Routing, Relay, Changesets, Fac
   /** A token any connected client lent for a resource, and has not run out. */
   lent: (resource: string) => string | undefined;
   /**
-   * Say one thing on one channel, as though this host did it.
+   * Say one thing on one channel.
    *
-   * With no `origin` it is this host's own action, unless it is the echo of
-   * the dispatch being applied right now (the client's own action, said back)
-   * or the echo a backend owes a client through `owe`: those carry the
-   * client's origin. The few sites that say an echo in a later turn of the
-   * event loop pass the origin themselves.
+   * With `origin`, the action is that client's own, said as it sent it: its
+   * echo. With none, it is this host's own action, whatever produced it.
    */
   dispatch: (channel: string, given: Record<string, unknown>, origin?: Origin | undefined) => void;
-  /**
-   * The dispatch being applied, handed to a backend that says it back when it
-   * is ready.
-   *
-   * `chat/turnStarted` under the turn it names and `chat/pendingMessageSet`
-   * under the queued message's id, each on the channel the dispatch came on,
-   * go out carrying the client's origin, however long the backend takes;
-   * nothing else does. A dispatch the backend already said back owes nothing.
-   */
-  owe: (type: 'chat/turnStarted' | 'chat/pendingMessageSet', name: string) => void;
-  /**
-   * Settled once the start of `turnId` that a backend owes on `channel` is
-   * said or refused, or nothing when no backend owes one.
-   */
-  startOwed: (channel: string, turnId: string) => Promise<void> | undefined;
-  /**
-   * The client's dispatch `action`, said on `channel`, says back: the one
-   * being applied, when `action` is on its channel, of its kind and names
-   * what it names, or one owed on `channel` under the turn or the queued
-   * message `action` names. Matched as an echo's origin is, and let go of only
-   * by the answer. A backend that answers later holds it through
-   * `Start.handed`.
-   */
-  answering: (channel: string, action: Record<string, unknown>) => Dispatched | undefined;
-  /**
-   * Whether the dispatch being applied still has no answer: nothing has said
-   * it back or refused it, and no backend has taken it to answer later.
-   *
-   * What the host reads after handing a client's action to a backend, so an
-   * action the held state accepts and the backend has nothing to say for is
-   * said back by the host, and every client reduces it.
-   */
-  unanswered: () => boolean;
   /**
    * Send every streamed delta still held in the window, oldest first.
    *
@@ -524,7 +487,7 @@ export interface ConnectionContext {
   alive: boolean;
   /** `wait`, or a failure saying what was waited on once `WAIT_LIMIT` has passed. */
   bounded: <T>(wait: Promise<T>, what: string) => Promise<T>;
-  /** A dispatch applied now, as the one this host is applying. */
+  /** A dispatch applied now, under the origin its client sent it with, and what it waits on when it waits. */
   applyNow: (params: Record<string, unknown>, origin: Origin) => Promise<void> | undefined;
   /**
    * The dev containers this connection opened, by the client's own name.

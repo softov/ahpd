@@ -62,6 +62,75 @@ async function twoAutomationOwners() {
 type Catalogue = { snapshot: { state: { entries: { resource: string }[] } } };
 
 describe('what it says it is doing', () => {
+  /**
+   * The echo backend, its chat saying `activity` once a turn begins, and its
+   * session saying `own` when given one and nothing otherwise.
+   */
+  const doing = (activity: string, own?: string): Agent => {
+    const base = echo({ path: '/home/softov', pace: 1000 });
+    return {
+      ...base,
+      create: (start: Start) => {
+        const session = base.create({
+          ...start,
+          emit: (channel, action) => { if (action.type !== 'session/activityChanged') start.emit(channel, action); },
+        });
+        return {
+          ...session,
+          begin: (...args: Parameters<typeof session.begin>) => {
+            session.begin(...args);
+            start.emit('chat', { type: 'chat/activityChanged', activity });
+            if (own !== undefined) start.emit('session', { type: 'session/activityChanged', activity: own });
+          },
+        };
+      },
+    };
+  };
+  const begun = async (agent: Agent) => {
+    const host = createHost({ path: '/home/softov', agents: [agent] });
+    const p = peer();
+    const client = host.accept(p);
+    await client.handle(hello(['0.9.0'], { initialSubscriptions: ['ahp-root://'] }));
+    const uri = 'ahp-session:/doing';
+    await client.handle({ method: 'createSession', params: { channel: uri, provider: 'echo' } });
+    await client.handle({ method: 'subscribe', params: { channel: uri } });
+    const chatUri = chatUriFor(uri);
+    await client.handle({ method: 'subscribe', params: { channel: chatUri } });
+    await client.handle({
+      method: 'dispatchAction',
+      params: { channel: chatUri, clientSeq: 1, action: { type: 'chat/turnStarted', turnId: 't1', startedAt: new Date().toISOString(), message: { origin: { kind: 'user' }, text: 'one two three four' } } },
+    });
+    await settle(8);
+    return { host, client, p, uri };
+  };
+
+  /*
+   * The session's activity is its driving chat's, folded into the session's
+   * held state with no action of the host's own, as VS Code's host folds its
+   * chats into a session's state; a client watching the session reads the
+   * chat's row, and a snapshot and the catalogue read the fold.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentHostStateManager.ts#L3280-L3334
+   */
+  it('folds the chat that drives a session into the session\'s activity, with no action of its own', async () => {
+    const { host, client, p, uri } = await begun(doing('Reading'));
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged')).toEqual([]);
+    const held = await client.handle({ method: 'subscribe', params: { channel: uri } }) as { snapshot: { state: { activity?: string } } };
+    expect(held.snapshot.state.activity).toBe('Reading');
+    await host.close();
+  });
+
+  /*
+   * A backend's own word for what its session is doing is said as it came, as
+   * VS Code's host says what its agent reports.
+   * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
+   */
+  it('says a session activity its backend says, as it came', async () => {
+    const { host, p, uri } = await begun(doing('Reading', 'Reading the tree'));
+    expect(actions(p, uri).filter((e) => e.action.type === 'session/activityChanged').map((e) => [e.action.activity, e.origin]))
+      .toEqual([['Reading the tree', undefined]]);
+    await host.close();
+  });
+
   it('names the tool, and stops naming it when the turn ends', async () => {
     const { client, peer: p, uri, chatUri } = await running();
     client.handle({

@@ -16,28 +16,11 @@ export type { MessageAttachment };
  * and `terminal` a terminal's own - the emitter knows which of its channels it
  * is talking about and the host knows what each is called.
  *
- * `handed` says the action answers a client's action the host handed this
- * backend earlier (`Start.handed`), and it goes out as that client's echo,
- * carrying the client's origin.
+ * What a backend emits is the host's own action, said with no client's origin,
+ * as the reference host says what its agents report.
+ * https://github.com/microsoft/vscode/blob/6b68d3fe7dd7db9a3aaa052efc1f3a1fd4432eb2/src/vs/platform/agentHost/node/agentSideEffects.ts#L901-L912
  */
-export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag, handed?: Handed) => void;
-
-/**
- * A client's action, held by the backend the host handed it to.
- *
- * The protocol has the client that sent an action hold it as pending until
- * the host answers it, with the action carrying its origin or with a rejection
- * (https://github.com/microsoft/agent-host-protocol/blob/v1.0.0/docs/guide/reconciliation.md).
- * A backend answers most actions while the host is handing them over, and the
- * host gives that answer the origin itself. A backend that answers later, once
- * something else has answered it (the proxy, once the host inside a machine
- * has), keeps this from `Start.handed` and answers through it: an action
- * emitted with it is the echo, and `refuse` is the rejection.
- */
-export interface Handed {
-  /** Refuse the action to the client that sent it, with `reason`. */
-  refuse: (reason: string) => void;
-}
+export type Emit = (channel: 'session' | 'chat' | 'terminal', action: Bag) => void;
 
 /**
  * A channel of a session that its backend serves under this host's name for
@@ -51,7 +34,7 @@ export interface Handed {
 export interface SessionChannel {
   /** The channel's state now. */
   snapshot(): Promise<Bag>;
-  /** A client's action on the channel, answered through `Start.handed` as any action a backend holds. */
+  /** A client's action on the channel, carried to the backend once the host has said it. */
   dispatch(action: Bag): void;
   /** A command a client sent about the channel, with its params as sent, answered by the backend. */
   request(method: string, params: Bag): Promise<unknown>;
@@ -221,12 +204,6 @@ export interface SessionOptions {
   seedModels?: { id: string; name: string }[];
   /** Where state actions go. */
   emit: Emit;
-  /**
-   * The client's action the host handed this session, for an action it
-   * answers or refuses after the host has stopped applying it
-   * (`Start.handed`).
-   */
-  handed?: (action: Bag) => Handed | undefined;
   /**
    * Environment for the agent's own process.
    *
@@ -759,17 +736,16 @@ export interface Session {
   /** Reorder what is waiting. Anything not named keeps its place behind what is. */
   reorder(order: string[]): void;
   /**
-   * A client's read or archived bit for the chat, carried to the host that
-   * runs the chat, which answers the client.
+   * A client's read or archived bit for the chat, once this host has said and
+   * kept it, carried to the host that runs the chat.
    *
    * A backend that runs its chat on another host takes it, as the proxy of a
-   * session in a machine does: that host is the one producer of the chat's
-   * state, and its `chat/isReadChanged` and `chat/isArchivedChanged` are the
-   * chat's bits here. True when the backend carried it. A backend that leaves
-   * it out has its chat's bits kept by this host.
-   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/relayTransport.ts#L48-L55
+   * session in a machine does, and the `chat/isReadChanged` and
+   * `chat/isArchivedChanged` that host says of its own clients are the chat's
+   * bits here too. A backend that leaves it out has its chat's bits kept by
+   * this host alone.
    */
-  flag?(bit: 'read' | 'archived', on: boolean): boolean;
+  flag?(bit: 'read' | 'archived', on: boolean): void;
 
   /**
    * Answer a tool call the agent is waiting on.
