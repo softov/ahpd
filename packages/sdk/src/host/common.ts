@@ -56,11 +56,14 @@ export const HOSTS_OWN = [
  * The config properties this host takes on a running session and reads
  * itself, each with the property every session's schema declares.
  *
- * Such a key moves on a running session, and no backend is asked about it or
- * handed it. `sensitiveEditLocations` is the workspace-relative
- * paths whose writes always ask: VS Code sends it before each turn, and its host
- * declares the property on its sessions and reads it when it judges a write.
+ * Such a key moves on a running session without any backend being asked about
+ * it, and every backend is handed it, at its start and as it moves, as the
+ * reference host hands its agents every key but its own.
+ * `sensitiveEditLocations` is the workspace-relative paths whose writes
+ * always ask: VS Code sends it before each turn, and its host declares the
+ * property on its sessions and reads it when it judges a write.
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/common/agentHostSchema.ts#L347-L366
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/agentService.ts#L520-L528
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts#L2273-L2286
  * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/sessionPermissions.ts#L774-L815
  */
