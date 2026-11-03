@@ -104,7 +104,7 @@ back session turn starts -> host raises turn_start -> bot plugin: not a waiting 
 - **Done so far:** [task-02-a-withdrawn-copy-clears-at-once.md](task-02-a-withdrawn-copy-clears-at-once.md) and [task-03-a-back-turn-opens-a-main-turn.md](task-03-a-back-turn-opens-a-main-turn.md) are implemented, with their cases in the bot package tests. A withdrawn copy clears at once, and a turn begun in a back session opens a turn in the main chat.
 - **Next action:** [task-01-the-back-session-checks-pass.md](task-01-the-back-session-checks-pass.md) by hand: it needs a test daemon, and this build was told not to start one. Its checks are waiting.
 - **Open questions:** none. The plan's Answers table covered every choice the two built tasks met.
-- **Watch out for:** a test daemon writes Softov's `~/.config/ahpd` unless `XDG_CONFIG_HOME` points at a scratch folder. Never use ports 5180 or 37537. Task 03's `began` takes the main chat's session and the back session's chat beyond the four parameters its step 6 names, because `stopped` matches on the former and `working` shows the latter; the task's Resume explains why.
+- **Watch out for:** a test daemon writes Softov's `~/.config/ahpd` unless `XDG_CONFIG_HOME` points at a scratch folder. Never use ports 5180 or 37537. Task 03's `began` also takes the main chat's session and the back session's chat, more than the four parameters of its step 6. `stopped` matches on the first, and `working` shows the second.
 
 ## Final verification checklist
 
