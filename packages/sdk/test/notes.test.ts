@@ -274,9 +274,11 @@ it('lets a cancelled turn go rather than leaving it waiting for an answer', asyn
   say(client, chatUri, 'write held something');
   await until(() => actions(p, uri).some((a) => a.type === 'session/inputNeededSet'));
 
+  // The stop names the running turn, as a client's does.
+  const running = actions(p, chatUri).find((a) => a.type === 'chat/turnStarted')?.turnId;
   await client.handle({
     method: 'dispatchAction',
-    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '' } },
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: running } },
   });
   await settle();
 

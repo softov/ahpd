@@ -262,9 +262,10 @@ person pressing Approve and nothing at all happening.
 a question standing is a session reporting `InputNeeded` for the rest of its
 life over a promise nothing will ever settle.
 
-The host calls `cancel` while the chat runs a turn, with that turn's id, a
-client's stop that names no turn included. A stop on a chat with no turn running
-is refused before it reaches a backend, as the protocol has a server refuse it.
+The host calls `cancel` when a client's stop names the turn the chat runs, with
+that turn's id. A stop that names another turn or none, and a stop on a chat with
+no turn running, goes to every client of the chat as the client's own action and
+reaches no backend.
 
 ### Answering later
 

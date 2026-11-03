@@ -413,22 +413,26 @@ function heldModel(): ModelAdapter {
   return held;
 }
 
-it('ends the running turn on a cancel that names no turn', async () => {
+it('stops nothing on a cancel that names no turn', async () => {
   const { client, peer: p, chatUri } = await talking(heldModel());
   begin(client, chatUri, 't1', 'hi');
   await until(() => types(p, chatUri).includes('chat/delta'));
 
-  // A client with no id to give means the running turn, and the host hands
-  // this backend that turn's own id.
+  // A stop stops the turn it names: one naming none is said as sent, and the
+  // running turn is still there for the stop that names it.
   client.handle({
     method: 'dispatchAction',
     params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: '', duration: 0 } },
   });
   await until(() => types(p, chatUri).includes('chat/turnCancelled'));
+  client.handle({
+    method: 'dispatchAction',
+    params: { channel: chatUri, action: { type: 'chat/turnCancelled', turnId: 't1', duration: 0 } },
+  });
+  await until(() => types(p, chatUri).filter((type) => type === 'chat/turnCancelled').length === 2);
 
-  const said = types(p, chatUri);
-  expect(said.filter((type) => type === 'chat/turnCancelled')).toHaveLength(1);
-  expect(said.at(-1)).toBe('chat/turnCancelled');
+  const said = actions(p, chatUri).filter((e) => e.action.type === 'chat/turnCancelled');
+  expect(said.map((e) => e.action.turnId)).toEqual(['', 't1']);
 });
 
 it('ends a cancelled turn as turnCancelled, once', async () => {

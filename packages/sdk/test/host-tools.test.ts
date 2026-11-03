@@ -1625,6 +1625,26 @@ describe('tools a client contributes', () => {
       .toEqual([['chat/toolCallComplete', 'call-1', undefined]]);
   });
 
+  /*
+   * The client's action as it sent it: the reference host says it so, and the
+   * protocol's reducer completes a call only in the turn the action names.
+   * https://github.com/microsoft/vscode/blob/8fb60541db0e1a371ea40157e0f58951ae4a485d/src/vs/platform/agentHost/node/agentService.ts#L13625-L13650
+   * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L274-L283
+   */
+  it('says a client\'s result that names no turn as it was sent', async () => {
+    const { client, peer: p, chatUri } = await providing();
+    await calling(client, chatUri);
+    const answering = offered().find((tool) => tool.name === 'probe__openFile')?.handler({ path: '/a.txt' });
+    await settle();
+    const action = { type: 'chat/toolCallComplete', toolCallId: 'call-1', result: { success: true, content: [{ type: 'text', text: 'opened /a.txt' }] } };
+    client.handle({ method: 'dispatchAction', params: { channel: chatUri, clientSeq: 9, action } });
+    await answering;
+    await settle();
+
+    const answered = actions(p, chatUri).filter((e) => e.origin?.clientId === 'probe' && e.origin.clientSeq === 9);
+    expect(answered.map((e) => e.action)).toEqual([action]);
+  });
+
   it('answers the first of two results for one call with its completion, and refuses the second', async () => {
     const { client, peer: p, chatUri } = await providing();
     await calling(client, chatUri);

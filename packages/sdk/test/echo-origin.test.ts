@@ -202,18 +202,30 @@ it('gives a stop its origin when the backend says it once the turn has let go', 
   await host.close();
 });
 
-it('gives a stop that names no turn its origin, under the turn it stopped', async () => {
-  const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 50 })));
-  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six seven eight' } });
+/*
+ * A stop names the turn it stops: the reference host matches the turn before
+ * it stops anything and says a stop of any other turn as sent, and the
+ * protocol's reducer ends only the turn a stop names.
+ * https://github.com/microsoft/vscode/blob/37eba0937fdca3097d4bb88e870abf3fc70dbde0/src/vs/platform/agentHost/node/agentService.ts#L13530-L13535
+ * https://github.com/microsoft/agent-host-protocol/blob/5f16d81bb7045b66d7bc768d244feab75002d943/types/channels-chat/reducer.ts#L186-L188
+ */
+it.each([
+  ['an empty turn id', { turnId: '' }],
+  ['no turn id', {}],
+])('says a stop naming %s as sent, with its origin, and stops nothing', async (_, named) => {
+  const { host, p, dispatch } = await serving(waiting(echo({ path: dir, pace: 20 })));
+  await dispatch(1, { type: 'chat/turnStarted', turnId: 't1', message: { text: 'one two three four five six' } });
   await until(() => p.heard.some((one) => one.action.type === 'chat/delta'), 'the first word');
   p.heard.length = 0;
 
-  await dispatch(4, { type: 'chat/turnCancelled', turnId: '' });
+  await dispatch(4, { type: 'chat/turnCancelled', ...named, duration: 0 });
   await until(() => p.heard.some((one) => one.action.type === 'chat/turnCancelled'), 'the stop');
+  await until(() => p.heard.some((one) => one.action.type === 'chat/turnComplete'), 'the turn\'s end');
 
-  const stopped = p.heard.find((one) => one.action.type === 'chat/turnCancelled');
-  expect(stopped?.action.turnId).toBe('t1');
-  expect(stopped?.origin).toEqual({ clientId: 'window', clientSeq: 4 });
+  const stops = p.heard.filter((one) => one.action.type === 'chat/turnCancelled')
+    .map((one) => ({ channel: one.channel, action: one.action, origin: one.origin }));
+  expect(stops).toEqual([{ channel: CHAT, action: { type: 'chat/turnCancelled', ...named, duration: 0 }, origin: { clientId: 'window', clientSeq: 4 } }]);
+  expect(p.heard.find((one) => one.action.type === 'chat/turnComplete')?.action.turnId).toBe('t1');
   await host.close();
 });
 
