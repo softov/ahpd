@@ -528,6 +528,38 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   expect(started.at(-1)?.queuedMessageId).toBe('waiting');
 });
 
+/*
+ * A client's reorder, or removal, while nothing runs runs the reference host's
+ * drain, which starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it.each([
+  ['reorders', 'reorder'],
+  ['takes a message back from', 'unqueue'],
+] as const)('starts the head once a client %s a stopped turn\'s queue', async (_, change) => {
+  const { session, chat } = await opened();
+  const [first, rest] = splitAfter(fixture('claude-stopped-turn.jsonl'), isDelta);
+  const [stopped] = splitAfter(rest, (frame) => frame.type === 'result');
+  session.begin(HALTED, COUNT_TEXT);
+  await settle();
+  sdk.push(...first);
+  await settle();
+  session.queue('waiting', BETA_TEXT);
+  session.queue('later', GAMMA_TEXT);
+  await settle();
+  session.cancel(HALTED);
+  await settle();
+  sdk.push(...stopped);
+  await settle();
+  const started = (): Bag[] => chat.filter((one) => one.type === 'chat/turnStarted');
+  expect(started()).toHaveLength(1);
+
+  if (change === 'reorder') session.reorder(['later', 'waiting']);
+  else session.unqueue('waiting');
+  await settle();
+  expect(started().at(-1)?.queuedMessageId).toBe('later');
+});
+
 it('opens no turn for a steering message the CLI took in before the stop', async () => {
   const { session, chat, before } = await opened();
   const [first, rest] = splitAfter(fixture('claude-folded-stop.jsonl'), isToolCall);

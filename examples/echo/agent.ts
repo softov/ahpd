@@ -321,12 +321,19 @@ export function echo(options: EchoOptions): Agent {
         start.emit('chat', { type: 'chat/draftChanged', ...(next !== undefined ? { draft: next } : {}) });
       },
 
+      /*
+       * A client taking a message back, or reordering what waits, starts the
+       * head once nothing runs, as VS Code's host drains a queue a stop left
+       * waiting.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+       */
       unqueue: (id) => {
         const at = queued.findIndex((held) => held.id === id);
         if (at < 0) return;
         const [held] = queued.splice(at, 1);
         start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
         touch();
+        startNext();
       },
 
       reorder: (order) => {
@@ -345,6 +352,7 @@ export function echo(options: EchoOptions): Agent {
         queued.push(...moved);
         start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
         touch();
+        startNext();
       },
 
       cancel: (turnId) => {

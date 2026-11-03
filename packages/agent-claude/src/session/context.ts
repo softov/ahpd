@@ -290,12 +290,14 @@ export interface SessionContext extends Omit<Config, 'methods'>, Omit<ClientTool
    */
   owed: Map<string, Owed>;
   /**
-   * A start of the queue a message asked for while nothing ran and the CLI
-   * still owed an answer, made once that answer comes.
+   * A start of the queue a client's change to it asked for while nothing ran
+   * and the CLI still owed an answer, made once that answer comes.
    *
-   * A stopped turn's prompt is owed until its result, and a message queued
-   * meanwhile starts the head of the queue when it comes, as the reference
-   * host takes the first queued message once a message is set while idle.
+   * A stopped turn's prompt is owed until its result, and a message queued,
+   * taken back or reordered meanwhile starts the head of the queue when it
+   * comes, as the reference host's drain takes the head once a client changes
+   * the queue while idle.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
    * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L245-L286
    */
   deferred: boolean;

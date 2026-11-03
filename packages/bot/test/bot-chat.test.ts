@@ -592,6 +592,65 @@ it('starts nothing behind a stopped turn, and its queue\'s head once a message i
   expect(heard.map((one) => one.text)).toEqual(['hello', 'and then this']);
 });
 
+/*
+ * A client's reorder while nothing runs runs the reference host's drain, which
+ * starts the head of a queue a stop left waiting.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+ */
+it('starts the head once a client reorders a stopped turn\'s queue', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const heard: ChatMessage[] = [];
+  turns(HELD).onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await queued(client, 'q1', 'and then this');
+  await queued(client, 'q2', 'one more');
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/turnCancelled', turnId: 't1' } },
+  });
+  expect((await stateOf(client))['activeTurn']).toBeUndefined();
+
+  await client.handle({
+    method: 'dispatchAction',
+    params: { channel: CHAT, action: { type: 'chat/queuedMessagesReordered', order: ['q2', 'q1'] } },
+  });
+  const after = await stateOf(client);
+  expect(after['activeTurn']).toMatchObject({ message: { text: 'one more' } });
+  expect(after['queuedMessages']).toMatchObject([{ id: 'q1' }]);
+  expect(heard.map((one) => one.text)).toEqual(['hello', 'one more']);
+});
+
+/*
+ * A failed turn starts nothing behind it, as the reference host drains its
+ * queue after a success alone, and a client taking a message back while nothing
+ * runs starts the head.
+ * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L55-L90
+ */
+it('starts nothing behind a failed turn, and the head once a client takes a message back', async () => {
+  const { host } = made();
+  const client = await anyone(host, []);
+  await talkTo(client);
+  const chat = turns(HELD);
+  const heard: ChatMessage[] = [];
+  chat.onMessage = (message) => { heard.push(message); };
+
+  await said(client, 't1', 'hello');
+  await queued(client, 'q1', 'and then this');
+  await queued(client, 'q2', 'one more');
+  chat.fail?.('the work failed');
+  const failed = await stateOf(client);
+  expect(failed['activeTurn']).toBeUndefined();
+  expect(failed['queuedMessages']).toMatchObject([{ id: 'q1' }, { id: 'q2' }]);
+
+  await taken(client, 'q1');
+  const after = await stateOf(client);
+  expect(after['activeTurn']).toMatchObject({ message: { text: 'one more' } });
+  expect(heard.map((one) => one.text)).toEqual(['hello', 'one more']);
+});
+
 it('reads an old steering line as a turn of its own', async () => {
   const { host, configDir, records } = made();
   const client = await anyone(host);

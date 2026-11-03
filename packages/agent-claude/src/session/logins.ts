@@ -344,10 +344,10 @@ export function createLogins(ctx: SessionContext): Logins {
       await ctx.again(steers);
       return;
     }
+    // A failed turn, which leaves the queue behind it waiting.
     const why = `The conversation could not start over on another login: ${restarted.failed}`;
     ctx.failTurn(held.said === '' ? why : `${held.said}\n${why}`);
     await ctx.again(steers.filter((owed) => owed.cli !== 'started'));
-    ctx.startNext();
   };
 
   const answered = (): void => {

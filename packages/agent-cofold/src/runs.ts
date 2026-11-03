@@ -148,10 +148,15 @@ export const createRuns = (ctx: SessionContext): Runs => {
        * catalogue alone still learns somebody is being asked.
        */
       start.emit(type.startsWith('session/') ? 'session' : 'chat', action);
-      // Somebody stopping a turn is stopping this conversation; a queued
-      // message behind it is the opposite of what they asked for. After the
-      // ending, so the next turn starts after the last one ended.
-      if (ended && ending !== 'cancelled') ctx.startNext();
+      /*
+       * Only a turn that completed starts the queue, as the reference host
+       * drains it after a success: somebody stopping a turn is stopping this
+       * conversation, and a failed turn leaves what waits for a client to
+       * start. After the ending, so the next turn starts after the last one
+       * ended.
+       * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L66-L68
+       */
+      if (ended && ending === 'complete') ctx.startNext();
     }
     hold();
     if (mapped.settled !== undefined) pending.delete(mapped.settled);

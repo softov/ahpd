@@ -1,6 +1,6 @@
 import { run } from '@cofold/agents';
 import type { Agent as CofoldAgent, ContentPart, ImagePart, TextPart } from '@cofold/agents';
-import { bag, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
+import { bag, holdsTheQueue, partsOf, reason, str, titleFrom } from '@ahpd/sdk';
 import type { Bag, Chosen, CommandTerminal, MessageAttachment, MessageFrom, RunCommand, Session } from '@ahpd/sdk';
 import { modelReferenceOf } from './agent.js';
 import { mapTurn } from './mapping.js';
@@ -577,6 +577,8 @@ export const createTurns = (
       return;
     }
     if (ctx.active !== undefined || ctx.closed) return;
+    // Nor behind a failure a client can resume, which waits to be resumed.
+    if (holdsTheQueue(turns.at(-1))) return;
     /*
      * A steering message the run it was sent into never took in, before the
      * queue: it was meant for the turn that just ended. Its turn names it in
@@ -743,10 +745,12 @@ export const createTurns = (
    * back is the same shape as any other turn: it opens, carries one tool
    * call, and completes. What waits on a busy session is the command itself
    * and not the text of it, so when its turn comes `startNext` runs it
-   * rather than handing `!ping` to a model.
+   * rather than handing `!ping` to a model. A queued one set while nothing
+   * runs starts the head, as a queued message does.
    */
   const ran: Session['ran'] = (turnId, command, run, queuedAs) => {
-    if (ctx.active !== undefined || ctx.opening !== undefined || (queuedAs !== undefined && queued.length > 0)) {
+    if (ctx.active !== undefined || ctx.opening !== undefined
+      || (queuedAs !== undefined && (queued.length > 0 || holdsTheQueue(turns.at(-1))))) {
       const id = queuedAs ?? turnId;
       const message = { text: `!${command}`, origin: { kind: 'user' } };
       const entry = { id, command: { text: command, run }, message };
@@ -755,6 +759,7 @@ export const createTurns = (
       else queued.push(entry);
       start.emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
       ctx.touch();
+      if (queuedAs !== undefined) startNext();
       return;
     }
     runCommand(turnId, command, run, queuedAs);
@@ -798,6 +803,11 @@ export const createTurns = (
    * is the run's: `RunHandle.submit` takes approve, deny, answer, steer and
    * cancel, and none of them gives a steer back, so nothing is said here and
    * the host answers the client.
+   *
+   * A client taking a message back, or reordering what waits, runs the
+   * reference host's drain, so the head starts once nothing runs: a queue a
+   * stop or a failure left waiting starts from here as well.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
    */
   const unqueue: Session['unqueue'] = (id) => {
     const left = ctx.untaken.findIndex((held) => held.id === id);
@@ -806,6 +816,7 @@ export const createTurns = (
       if (ctx.steering?.id === id) ctx.steering = undefined;
       start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: 'steering', id });
       ctx.touch();
+      startNext();
       return;
     }
     const at = queued.findIndex((held) => held.id === id);
@@ -813,6 +824,7 @@ export const createTurns = (
     const [held] = queued.splice(at, 1);
     start.emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
     ctx.touch();
+    startNext();
   };
 
   const reorder: Session['reorder'] = (order) => {
@@ -831,6 +843,7 @@ export const createTurns = (
     queued.push(...moved);
     start.emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
     ctx.touch();
+    startNext();
   };
 
   return {

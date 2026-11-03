@@ -234,7 +234,8 @@ export function createQueue(ctx: SessionContext): Queue {
    * it. The command waits its turn when one is already running, because a
    * shell that jumped the queue would run against a tree the turn in front
    * of it is still editing - and what waits is the command, not its text, so
-   * `startNext` runs it rather than asking the server about `!ping`.
+   * `startNext` runs it rather than asking the server about `!ping`. A queued
+   * one set while nothing runs starts the head, as a queued message does.
    */
   const ran: NonNullable<Session['ran']> = (turnId, command, run, queuedAs) => {
     if (ctx.active !== undefined || (queuedAs !== undefined && queued.length > 0)) {
@@ -246,6 +247,7 @@ export function createQueue(ctx: SessionContext): Queue {
       else queued.push(entry);
       emit('chat', { type: 'chat/pendingMessageSet', kind: 'queued', id, message });
       touch();
+      startNext();
       return;
     }
     runCommand(turnId, command, run, queuedAs);
@@ -274,12 +276,19 @@ export function createQueue(ctx: SessionContext): Queue {
     startNext();
   };
 
+  /*
+   * A client taking a message back, or reordering what waits, runs the
+   * reference host's drain, so the head starts once nothing runs: a queue a
+   * stop or a failure left waiting starts from here as well.
+   * https://github.com/microsoft/vscode/blob/a4e689ae13ef7a1fe9b515656b51c9be7c274294/src/vs/platform/agentHost/node/chatContributions/queueDrain/queueDrainContribution.ts#L71-L90
+   */
   const unqueue: Session['unqueue'] = (id) => {
     const at = queued.findIndex((held) => held.id === id);
     if (at < 0) return;
     const [held] = queued.splice(at, 1);
     emit('chat', { type: 'chat/pendingMessageRemoved', kind: held?.steering === true ? 'steering' : 'queued', id });
     touch();
+    startNext();
   };
 
   const reorder: Session['reorder'] = (order) => {
@@ -298,6 +307,7 @@ export function createQueue(ctx: SessionContext): Queue {
     queued.push(...moved);
     emit('chat', { type: 'chat/queuedMessagesReordered', order: moved.map((held) => String(held.id)) });
     touch();
+    startNext();
   };
 
   return { begin, startNext, ran, queue, unqueue, reorder };
