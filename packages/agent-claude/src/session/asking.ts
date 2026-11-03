@@ -64,8 +64,19 @@ const KEPT_IN: Record<string, string> = {
  * `stream.ts` reads a call's server back from. The rule is VS Code's, built
  * from `<server>/<tool>`, so that is the name the host is asked about; a tool
  * the CLI runs itself keeps its own name, which is what the rule names for it.
+ *
+ * A hook is told which server served the call, and that is the name the rule
+ * uses: the prefix can spell a server differently, and a server's own name can
+ * contain the `__` a split would stop at. `canUseTool` is told no server, so it
+ * keeps the split, which is the best reading of a name alone.
  */
-const referenceName = (toolName: string): string => {
+const referenceName = (toolName: string, server?: string): string => {
+  if (server !== undefined) {
+    const prefix = `mcp__${server}__`;
+    if (toolName.startsWith(prefix)) return `${server}/${toolName.slice(prefix.length)}`;
+    const after = /^mcp__(?:.+?)__(.+)$/.exec(toolName);
+    if (after !== null) return `${server}/${after[1]}`;
+  }
   const named = /^mcp__(.+?)__(.+)$/.exec(toolName);
   return named === null ? toolName : `${named[1]}/${named[2]}`;
 };
@@ -600,7 +611,7 @@ export function createAsking(ctx: SessionContext): Asking {  /**
      * chat and then run the tool with nothing the person said.
      */
     if (toolName === 'AskUserQuestion') return {};
-    if (ctx.options.getAutoApproval?.('tool', referenceName(toolName)) !== 'ask') return {};
+    if (ctx.options.getAutoApproval?.('tool', referenceName(toolName, input.mcp_server?.name)) !== 'ask') return {};
     const callId = input.tool_use_id;
     if (ctx.settings.permissionMode === 'dontAsk') {
       remember(callId, 'deny');
@@ -612,11 +623,13 @@ export function createAsking(ctx: SessionContext): Asking {  /**
         },
       };
     }
+    const agentId = input.agent_id;
     const answered = await askPerson({
       toolName,
       raw: bag(input.tool_input),
       callId,
       suggestions: [],
+      ...(agentId !== undefined ? { agentId } : {}),
       ...(options?.signal !== undefined ? { signal: options.signal } : {}),
     });
     remember(callId, answered.behavior);

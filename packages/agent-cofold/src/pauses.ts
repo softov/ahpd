@@ -160,7 +160,7 @@ export const createPauses = (
   const autoApprove = async (requestId: string, name: string, input: unknown): Promise<boolean> => {
     // Only a command line has a terminal rule that could answer it.
     if (name !== 'shell_exec') return false;
-    if (start.getAutoApproval?.('tool', name) === 'ask') return false;
+    if (start.getAutoApproval?.('tool', ruleName(ctx.offered, name)) === 'ask') return false;
     const command = bag(input).command;
     if (typeof command !== 'string') return false;
     if ((await start.getAutoApproval?.('shell', command, shellOf())) !== 'not-needed') return false;

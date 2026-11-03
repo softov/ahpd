@@ -110,6 +110,8 @@ it('runs a shell command the owner\'s rules allow, without asking', async () => 
   await when(() => ended(notes));
 
   expect(asked).toEqual([
+    // The hook reads the rule for every call, before the policy.
+    { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     { kind: 'shell', line: 'echo hi', shell: SHELL },
   ]);
@@ -129,6 +131,9 @@ it('asks for a shell command no rule matches', async () => {
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   expect(asked).toEqual([
+    // The hook reads the rule for every call, before the policy.
+    { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
+    // The approval the run paused on, which no rule answers.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     { kind: 'shell', line: 'echo hi', shell: SHELL },
     // The mapping reads the rule again as it shapes the question's choices.
@@ -167,9 +172,13 @@ it('asks the check only about cofold\'s shell', async () => {
   session.begin('t1', 'write it');
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
-  // The rule is read for the call's tool name; a file write is not a command
-  // line, and the terminal rules are about command lines.
-  expect(asked).toEqual([{ kind: 'tool', line: 'write_file', shell: undefined, tool: undefined }]);
+  // The rule is read for the call's tool name, by the hook and again as the
+  // question's choices are shaped; a file write is not a command line, and the
+  // terminal rules are about command lines.
+  expect(asked).toEqual([
+    { kind: 'tool', line: 'write_file', shell: undefined, tool: undefined },
+    { kind: 'tool', line: 'write_file', shell: undefined, tool: undefined },
+  ]);
   session.confirm('c1', false);
   await when(() => ended(notes));
   rmSync(dir, { recursive: true, force: true });
@@ -194,6 +203,9 @@ it('asks for a shell tool the rule names, and offers no session choice', async (
   await when(() => of(notes, 'session/inputNeededSet').length > 0);
 
   expect(asked).toEqual([
+    // The hook, before the policy.
+    { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
+    // The approval the run paused on, which the rule answers with a question.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
     // Once more as the mapping shapes the question's choices.
     { kind: 'tool', line: 'shell_exec', shell: undefined, tool: undefined },
@@ -261,6 +273,75 @@ it('remembers no session choice for a tool the rule named after the question was
   await when(() => of(notes, 'session/inputNeededSet').length > 1);
   session.confirm('c2', false);
   await when(() => endings(notes) === 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+/** One read of a file in the workspace, which the policy lets run unaided in every mode but `dontAsk`. */
+const read = [
+  { toolCalls: [{ name: 'read_file', input: { path: 'a.txt' }, callId: 'c1' }] },
+  { text: 'done' },
+];
+
+it.each(['auto', 'acceptEdits', 'bypassPermissions'] as const)(
+  'asks for a tool the rule names in %s mode',
+  async (permissionMode) => {
+    const { check } = ruling(['read_file']);
+    const { session, notes, dir } = await open({ script: read, check, settings: { permissionMode } });
+    session.begin('t1', 'read it');
+    await when(() => of(notes, 'session/inputNeededSet').length > 0);
+
+    const entry = of(notes, 'session/inputNeededSet')[0]?.request as Bag;
+    expect(ids(bag(entry.toolCall).options)).toEqual(['allow-once', 'deny']);
+    session.confirm('c1', false);
+    await when(() => endings(notes) === 1);
+    rmSync(dir, { recursive: true, force: true });
+  },
+);
+
+it('refuses a tool the rule names in dontAsk mode, without asking', async () => {
+  const { check } = ruling(['read_file']);
+  const { session, notes, dir } = await open({ script: read, check, settings: { permissionMode: 'dontAsk' } });
+  session.begin('t1', 'read it');
+  await when(() => endings(notes) === 1);
+
+  expect(of(notes, 'session/inputNeededSet')).toEqual([]);
+  expect(of(notes, 'chat/toolCallComplete').find((action) => action.toolCallId === 'c1')?.result)
+    .toMatchObject({ success: false, error: { message: 'read_file asks every time and the mode is dontAsk' } });
+  rmSync(dir, { recursive: true, force: true });
+});
+
+it('asks a tool the rule names even when a session approval was already remembered', async () => {
+  const named: string[] = [];
+  const check: Check = (kind, line) =>
+    (kind === 'tool' && named.includes(line) ? 'ask' as NonNullable<ReturnType<Check>> : undefined);
+  const { session, notes, dir } = await open({
+    script: [
+      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c1' }] },
+      { text: 'done' },
+      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c2' }] },
+      { text: 'done' },
+      { toolCalls: [{ name: 'shell_exec', input: { command: 'echo hi' }, callId: 'c3' }] },
+      { text: 'done' },
+    ],
+    check,
+  });
+  session.begin('t1', 'run it');
+  await when(() => of(notes, 'session/inputNeededSet').length > 0);
+  // Allowed for the session before any rule names the tool, so cofold keeps it.
+  session.confirm('c1', true, 'allow-session');
+  await when(() => endings(notes) === 1);
+
+  // The remembered approval is what answers the question, not the policy.
+  session.begin('t2', 'run it again');
+  await when(() => endings(notes) === 2);
+  expect(of(notes, 'session/inputNeededSet')).toHaveLength(1);
+
+  // The rule names the tool, and the remembered approval no longer answers it.
+  named.push('shell_exec');
+  session.begin('t3', 'run it once more');
+  await when(() => of(notes, 'session/inputNeededSet').length > 1);
+  session.confirm('c3', false);
+  await when(() => endings(notes) === 3);
   rmSync(dir, { recursive: true, force: true });
 });
 

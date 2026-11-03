@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { DEFAULT_TOOLS, capabilitiesOf } from './capabilities.js';
 import { defaultStoreRoot, modelOf, modelReferenceOf } from './agent.js';
 import type { CofoldOptions, Held } from './agent.js';
-import { cofoldTools, describe } from './tools.js';
+import { cofoldTools, describe, ruleName } from './tools.js';
 import type { ClientToolCall, ClientToolRelay } from './tools.js';
 import type { HarnessConfig } from './config.js';
 import type { SessionContext } from './context.js';
@@ -105,6 +105,9 @@ const modeOf = (values: Record<string, unknown>): PermissionMode => {
     ? named as PermissionMode
     : 'auto';
 };
+
+/** What the model reads when a tool the rule names is refused without a question. */
+const asksEveryTime = (name: string): string => `${name} asks every time and the mode is dontAsk`;
 
 /**
  * The cofold agent id.
@@ -380,10 +383,27 @@ export const createTurnAgent = (
        * order, because cofold runs this hook before it announces the call.
        */
       hooks: {
-        beforeTool: ({ call, tool }) => {
+        beforeTool: async ({ call, tool, run }) => {
           const path = editPathOf(where, tool, call.input);
           if (path !== undefined) announceEdit(call.callId, path);
-          return { decision: 'allow' };
+          if (start.getAutoApproval?.('tool', ruleName(ctx.offered, call.name)) !== 'ask') {
+            return { decision: 'allow' };
+          }
+          /*
+           * A matched call asks in every mode. `dontAsk` is the one mode that
+           * answers a question by refusing it, so the refusal is made here
+           * rather than left to the policy, which allows a tool it sees no
+           * reason to ask about.
+           */
+          if (modeOf(values) === 'dontAsk') return { decision: 'deny', reason: asksEveryTime(call.name) };
+          /*
+           * cofold answers an ask from the approval it remembered at
+           * `approvals/<session>/<tool>`, and a hook's `approval` is skipped by
+           * one. The entry goes, so the question is put again however the tool
+           * was allowed for the session before the rule named it.
+           */
+          await run.kv.agent.delete(`approvals/${run.sessionId}/${tool.name}`);
+          return { decision: 'approval' };
         },
         afterTool: ({ call, output }) => {
           settleEdit(call.callId);

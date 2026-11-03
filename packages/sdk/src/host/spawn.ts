@@ -140,7 +140,7 @@ const ENDINGS = new Set(['chat/turnComplete', 'chat/turnCancelled', 'chat/error'
  * read where it is kept on each call rather than remembered at a start, so a
  * push reaches a session already running.
  */
-const asksForTool = (rootConfig: Record<string, unknown>, tool: string): boolean => {
+export const asksForTool = (rootConfig: Record<string, unknown>, tool: string): boolean => {
   const held = rootConfig.eligibleForAutoApproval;
   if (held === null || typeof held !== 'object' || Array.isArray(held)) return false;
   const rules = held as Record<string, unknown>;
