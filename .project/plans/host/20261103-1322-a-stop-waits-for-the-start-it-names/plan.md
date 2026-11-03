@@ -1,7 +1,7 @@
 ---
 title: A stop waits for the start it names
 domain: host
-status: planned
+status: built
 priority: high
 created: 2026-11-03
 revalidated: 2026-11-03
@@ -86,7 +86,7 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 
 | Task | Status | Depends on |
 | --- | --- | --- |
-| [01 - A stop waits for an owed start](task-01-a-stop-waits-for-an-owed-start.md) | todo | - |
+| [01 - A stop waits for an owed start](task-01-a-stop-waits-for-an-owed-start.md) | done | - |
 
 ## Risks and tradeoffs
 
@@ -94,13 +94,13 @@ chat/turnCancelled -> the held running turn is not the one it names -> said as s
 
 ## Resume state
 
-- **Done so far:** nothing.
-- **Next action:** task 01.
+- **Done so far:** task 01, 2026-11-03.
+- **Next action:** none; see [implemented.md](implemented.md).
 - **Open questions:** none.
 - **Watch out for:** a start the host says ahead of a turn's end, which answers the start and lets the stop go too.
 
 ## Final verification checklist
 
-- [ ] Each new case fails on `c97d8459`'s sources and passes after the change.
-- [ ] The touched files' test files pass, one file at a time.
-- [ ] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
+- [x] Each new case fails on `c97d8459`'s sources and passes after the change.
+- [x] The touched files' test files pass, one file at a time.
+- [x] `pnpm run typecheck` and `pnpm run boundary` report no errors, and the prose lint is clean.
